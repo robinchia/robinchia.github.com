@@ -1199,6 +1199,325 @@ HotSpot的PermGen是用来实现Java虚拟机规范中的“<strong>方法区</s
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/">记录帖：碰到的一些Java问题（更新于2013</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-java-2013-03-06-">记录帖：碰到的一些Java问题（更新于2013-03-06）</h1>
+<h1 id="-bluedavy-blog-https-blog-bluedavy-com-"><a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a></h1>
+<p>{互联网，OSGi，Java, High Scalability, High Performance,HA}</p>
+<ul>
+<li><a href="https://blog.bluedavy.com/" target="_blank">Home</a></li>
+<li><a href="https://blog.bluedavy.com/?page_id=2" target="_blank">About</a></li>
+<li><a href="https://blog.bluedavy.com/?page_id=81" target="_blank">Photos</a></li>
+</ul>
+<h2 id="-java-2013-03-06-https-blog-bluedavy-com-p-300-java-2013-03-06-"><a href="https://blog.bluedavy.com/?p=300" title="记录帖：碰到的一些Java问题（更新于2013-03-06）" target="_blank">记录帖：碰到的一些Java问题（更新于2013-03-06）</a></h2>
+<p>Aug 09</p>
+<p><a href="http://bluedavy.com/" title="Visit bluedavy’s website" target="_blank">bluedavy</a><a href="https://blog.bluedavy.com/?cat=63" title="View all posts in Java" target="_blank">Java</a>, <a href="https://blog.bluedavy.com/?cat=13" title="View all posts in jvm" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=btrace" target="_blank">btrace</a>, <a href="https://blog.bluedavy.com/?tag=java-cases" target="_blank">Java Cases</a>, <a href="https://blog.bluedavy.com/?tag=java-troubleshooting" target="_blank">Java Troubleshooting</a>, <a href="https://blog.bluedavy.com/?tag=java%e9%97%ae%e9%a2%98" target="_blank">Java问题</a> <a href="&quot;Comment on 记录帖：碰到的一些Java问题（更新于2013-03-06）&quot;">11 Comments</a>
+这个贴用于记录自己碰到过的一些Java问题，会根据经验不断增加，以便总结，:)</p>
+<p>case: 一次非常诡异的CMS GC频繁问题的排查
+详细见此贴：<a href="https://bluedavy.com/?p=424" target="_blank"><a href="https://bluedavy.com/?p=424">https://bluedavy.com/?p=424</a></a></p>
+<p>case: 某应用在压测一台物理机上的多台虚拟机时不能保持线性增长的案例
+现象描述：
+一台16 core（HT）的物理机上，创建了8个虚拟机，每个虚拟机独占两个core，每个虚拟机里部署的都是同样的应用，按道理来说，在应用没有瓶颈的情况下，每增加一台虚拟机，tps应该可以保持线性增长，不过在压测的时候发现，在增加到第四台的时候（每次4台挑选的都是不同的机器），有些时候能线性增长，有些时候不能。
+解决过程：
+1、经过手工调整其中某台虚拟机的cpu，发现在12/13 cpu加入时，整个tps就会下降，于是猜想莫非和这两个核还有关系；
+2、猜测是和中断处理有关系，发现core 12处理的中断确实比较其他的多一些，于是把irqbalance关了，调整了中断的绑定，还是一样的现象；
+3、看了下四台虚拟机绑定的cpu的分布状况，发现12/13刚好和其中一台虚拟机绑定的4/5是同样的两个core，4/12其实是同一个core HT的，5/13是另一个core HT的，而这个应用是很耗cpu的，单压某个虚拟机cpu us就可以到90%左右，所以如果压测的4台如果有CPU刚好是同一个Core HT的，性能自然是上不去的。
+总结：
+和各种文章中讲的一样，CPU HT只有在理论的某些场景能达到2个真实core的性能，但多数情况都达不到，貌似很多场景的经验值是2 core(HT) = 1.3 Core。</p>
+<p>case: 一个Java应用频繁抛异常导致cpu us诡异现象的案例
+详细见此贴：<a href="http://blog.bluedavy.com/?p=409" target="_blank"><a href="http://blog.bluedavy.com/?p=409">http://blog.bluedavy.com/?p=409</a></a></p>
+<p>case: 某应用在运行个一两天后就会把物理内存耗光
+解决过程：
+1、先按经验查了下有没有错误使用Inflater和Deflater，没有，于是继续；
+2、继续上perftools，看看到底什么原因造成的，结果在6u21版本上看到的很诡异，是JVM_handle_linux_signal占了最多，觉得不靠谱，于是先升级成了6u26；
+3、再分析，看到os::malloc占用了最多，但其他的就完全没头绪了；
+4、在@JosephWang_CN的帮助下，图形分析下了perftools的stack trace，才发现还是unsafe_allocate的地方，但这次现象和上个case不同，不同点在于这次是由于cms gc的bug造成的，bug id为7112034，这个bug会造成即使direct bytebuffer已经无引用了，但在cms gc时其并不会被清除掉，而要等到full gc才会清除，官方版本在6u32中修复此bug（这个很容易验证，如果没开启ExplicitGCInvokesConcurrent，用jmap -histo:live强制触发下）；
+5、在fix了这个bug的前提下，还需要限制-XX:MaxDirectMemorySize的大小才行，否则可能会出现还没到触发cms gc时，物理内存就用完了的现象。
+总结：
+根据多次排查Java Heap外内存泄露的问题，目前的经验为：
+1、先查查看有没有错误使用Inflater和Deflater，如有则基本就搞定了；
+2、多执行几次jmap -histo:live，看看内存会不会下降，如果会的话，多数和GC的bug有关；
+3、perftools，对调用次数的那列进行排序(pprof –text … | sort -n -r -k4)，如果看到是Unsafe_Allocate比较多，且为server端应用，则通常说明是哪个地方分配了Direct ByteBuffer，但来不及释放引用，然后嘛，就是用btrace跟踪下看看谁干的，分析原因。</p>
+<p>case: 某应用在压测一段时间后就会把物理内存耗光
+解决过程：
+1、从gc log以及jstat信息来看，java heap内的内存消耗并不多，但堆外消耗非常严重，导致了物理内存被耗光；
+2、于是装上google perftools，看看堆外到底是什么原因造成的消耗；
+3、分析了下google perftools的内存malloc消耗，主要是调用Unsafe.allocate造成的；
+4、通常调用Unsafe.allocateMemory来分配内存的，只有Direct ByteBuffer和AWT，这应用是没用AWT的，Direct ByteBuffer倒是用到了；
+5、网上google了一会，找到一个貌似和这个应用的场景很像的内存泄露的现象，具体信息请见：<a href="http://t.co/S9jvDt8O" title="SocketChannel.write Direct ByteBuffer memory leak" target="_blank"><a href="http://t.co/S9jvDt8O">http://t.co/S9jvDt8O</a></a>，号称是SocketChannel.write的时候，如果是Direct ByteBuffer会导致memory leak，而且Trustin Lee(Mina/Netty的作者)也这么说的：”it’s a known bug”;
+6、于是建议应用的同学将ByteBuffer的地方改成不用direct方式；
+7、改完后，重新压测，物理内存消耗是没那么严重了，但java heap用满了后回收不了了；
+8、于是dump内存，用mat分析后发现是由于这个应用本身处理上的一些缺失造成的，简单说下，这个应用是一个基于mina的应用，而应用没有对session上的发送请求做限流，而mina来不及发送，导致积压了很多WriteRequest，从而内存被耗光了；
+9、对这个问题的解决方法是：限流，当未发送的字节数到达某个比率后，就暂时先不发送了，或者报错等等，用netty能对这个现象有一定的缓解，但限流动作还是要做，否则可能会出现接收方处理慢，从而导致发送方内存用完的现象。</p>
+<p>case: 某应用在压测时很容易出现promotion failed的现象
+解决过程：
+1、从promotion failed时的gc日志来看，状况为新生代中有1.5g的对象存活，旧生代此时的空余空间为4g，足以放下新生代存活的这些对象，于是只能猜测可能是cms gc的情况下旧生代的碎片问题导致的，其实心里是不太相信的，因为这空间空闲了如此的多呀；
+2、首先增加-XX:+PrintPromotionFailure看看Promotion Failed的时候是不是有很大的对象要晋升到旧生代，结果打出来的日志显示在晋升的时候失败的竟然只是申请262146个block的空间而已，这是在开启了压缩指针的情况，因此每个block为4个字节；
+3、还是不能确定，于是增加-XX:+CMSDumpAtPromotionFailure，看看OLD Gen的碎片状况；
+4、打出来的信息显示old gen拥有最多free block的chunk也只有99977个而已，有53w+个chunk，里面大部分都只有999个free block，可见碎片相当严重；
+5、到这步只是确定了碎片很严重，暂时能想到的只有每天半夜的时候主动执行下jmap -histo:live，尽可能减少碎片吧，如果后续有什么改进的动作，再来记录。</p>
+<p>case: 某应用在发布的过程中突然crash了几台
+解决过程：
+1、应用crash后hs_err/*.log以及core.[pid]文件都没生成；
+2、先打开core dump;
+3、crash后gdb core dump看：
+<a href="">?</a>1</p>
+<p>2
+3</p>
+<p>4
+(gdb) bt</p>
+<p>/#0  0x00002ba466f82971 in ?? () from /opt/jdk-1.6.0_26/jre/lib/amd64/server/libjvm.so
+/#1  0x00002aab78a7e20d in Java_java_net_SocketOutputStream_socketWrite0 ()</p>
+<p>from /opt/jdk-1.6.0_26/jre/lib/amd64/libnet.so</p>
+<p>4、看到上面的core dump完全木有头绪，后来@rednaxelafx 介入处理，才知道原来jstack是可以跟core dump文件提取出当时java程序的状况的；
+5、jstack出来一看，发现程序里有个地方无限递归…so…
+总结：
+@rednaxelafx接着又进一步分析了为什么没有生成hs_err/<em>.log，是因为从jdk 5.0以后的版本，hs_err/</em>.log就是在crash的那个线程来生成，而这个案例中crash时的那个线程无限递归，而且正在native栈上，栈空间被消耗光了，所以hs_err/*.log文件就没生成出来。</p>
+<p>Case: 某应用偶尔会出现极为频繁的Promotion failed，导致cms gc切换为串行full gc，从而响应变得超级慢
+解决过程：
+1、从promotion failed的日志来看，应该是在那段时间内内存被消耗光了造成的，因此在promotion failed的时候dump了内存；
+2、可惜dump出来的那个内存文件打不开，几次都是如此；
+3、还好我们自己定制的jdk版本这个时候发挥了作用，这个版本中有个功能是如果代码中有地方分配了超级大的数组，会打印出堆栈；
+4、在某次出问题的时候，我们看到了这样的堆栈信息：
+<a href="">?</a>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13==WARNNING==  allocating large array: thread_id[0x00002aaac2d85800], thread_name[ajp-0.0.0.0-8009-48], array_size[782611408 bytes], array_length[195652847 el</p>
+<p>ememts]</p>
+<p>at java.util.Arrays.copyOf(Arrays.java:2734)</p>
+<p>at java.util.ArrayList.ensureCapacity(ArrayList.java:167)</p>
+<p>at java.util.ArrayList.add(ArrayList.java:351)</p>
+<p>at net.sf.json.JSONArray._fromJSONTokener(JSONArray.java:1154)</p>
+<p>at net.sf.json.JSONArray.fromObject(JSONArray.java:147)</p>
+<p>at net.sf.json.util.JSONTokener.nextValue(JSONTokener.java:358)</p>
+<p>at net.sf.json.JSONObject._fromJSONTokener(JSONObject.java:1128)</p>
+<p>at net.sf.json.JSONObject._fromString(JSONObject.java:1317)</p>
+<p>at net.sf.json.JSONObject.fromObject(JSONObject.java:185)</p>
+<p>at net.sf.json.JSONObject.fromObject(JSONObject.java:154)</p>
+<p>at 我们自己的代码...</p>
+<p>5、有这个堆栈后就可以知道是由于自己的代码这个地方触发了json创建了一个巨大的array；
+6、于是怀疑是我们传给了json一个很大的String，就先在应用层做了个保护，超过一定大小的String就直接抛错；
+7、加上了这个保护后还是出问题了；
+8、因此怀疑是json内部有bug，导致传了某种格式的String后就会出现死循环什么的；
+9、“神”看代码后，构造了一个这样的String s = “{tag:[0,1,”;然后调用JSONObject.fromObject(s)，就会OOM；
+10、于是修改了json的代码，修复此bug…</p>
+<p>Case: 某应用cms gc时concurrent-mark阶段应用竟然没有响应…
+解决过程：
+1、在cms gc进行的过程中用pstack采集目前java进程正在做什么；
+2、从日志分析来看貌似是在concurrent-mark时，很多的java线程在分配内存的时候被锁住了…
+3、将相关信息发给官方的gc dev maillist，只是得到了升级到6u28试试的建议…
+目前问题尚未解决，先在此mark下，和这个url提到的问题基本一致：<a href="http://t.co/EU92I8nN" target="_blank"><a href="http://t.co/EU92I8nN">http://t.co/EU92I8nN</a></a></p>
+<p>Case: 某应用cms gc非常频繁，并且很容易出现concurrent mode failure造成Full GC
+解决过程：
+1、从gc日志来看，cms gc每次在旧生代使用才到18%左右的时候就触发了，而设置的触发比率是80%，并且不允许JVM自行触发；
+2、每几次cms gc还会偶尔出现concurrent mode failure的现象，看了下，这时旧生代的空间是非常充足的；
+3、根据cms gc的触发机制，猜测是permGen的问题造成的，于是通过jstat -gcutil看了下permGen的占用比例，果然过一会就超过下92%（不过这里有个问题，就是permGen其实是还没达到MaxPermSize的，看来在cms gc的情况下，maxPermSize要采用不同策略）；
+4、于是适当的调大permGen，不过仍然没有解决，原因是permGen增长实在太快了；
+5、应用方发现有地方会不断的创建classLoader，加载class，因此导致了permGen的增长，修改后问题解决。
+总结：
+CMS GC的日志其实打的有些问题，应该把cms gc触发时的原因输出下；
+另外就是在大部分情况下，只要不是cms gc触发的比例设置的太有问题，如果cms gc频繁或full gc频繁都是应用本身的问题造成的。</p>
+<p>Case: 某应用出现启动后集群中部分node成功，部分node失败
+解决过程：
+1、失败的node抛出的是NoClassDefFoundError，这些node在环境上和应用包上是完全一致的，因此猜想是classloader装载class时出现了什么问题；
+2、在启动参数上增加了-XX:+TraceClassLoading，想看看成功的node和失败的node是不是从第一个地方加载的相应的类，悲催的是成功的node加上了这参数后启动超慢，于是只好放弃；
+3、由于不能用TraceClassLoading，只好从ClassLoader方面来跟踪这个类的加载，于是从应用层上做了相应的分析，找出了相应的classloader，然后用btrace相应的进行了跟踪，才终于发现成功的node和失败的node装载此类时不是从同一地方装载的，而其中有一个地方的这个类引用了一个不存在的类，于是就出现了NoClassDefFoundError。
+总结：
+在经过分析后，猜想是在这两个不同的node上classloader在list一个目录下的文件时，出现了顺序不同的现象，于是后来写了一个简单的程序在两个node上list那个目录的文件，发现返回的顺序果然不同，这个具体的原因为File.listFiles最后会调用到readdir函数，而这个函数返回的文件列表是按inode number排序的，因此在每台linux机器上确实有可能不同，当一个目录下有两个jar中有相同名字但不同内容的class时（话说这也是java应用中比较麻烦的问题，这个专门写篇blog来说下，java 8的模块化真的非常重要），就悲催了，一个保护做法是在实现classloader时，最好是先对listFiles排下序，避免集群中node出现表现不一致的问题。</p>
+<p>Case: 某应用GC频繁但不一直不抛OOM的问题
+解决过程：
+这个应用是期待在内存不够的情况下快速抛出OOM的，但在执行中却发现执行了4个多小时的Full GC，就是没有抛OOM，导致应用出现了问题，从GC代码来看，目前要比较快的触发OOM，只能是调整GCTimeLimit和GCHeapFreeLimit，不过都不好调，后来暂时是靠调整了GCHeapFreeLimit来帮助快速抛出OOM。</p>
+<p>Case: 某应用堆外内存泄露的bug
+具体解决过程可参考这篇blog：<a href="http://blog.bluedavy.com/?p=205" title="两个OOM Cases" target="_blank"><a href="http://blog.bluedavy.com/?p=205">http://blog.bluedavy.com/?p=205</a></a>和<a href="http://goo.gl/mYsV5" title="里面有关于google perftools安装的说明" target="_blank">这篇blog</a>。
+总结：
+堆外内存泄露基本就是靠google perf-tools来查找了，目前来看堆外内存泄露基本都是使用Deflater，却没有显式调用end造成的。</p>
+<p>Case: 某应用压测时压力上不去的问题
+解决过程：
+1、查看压测的目标服务器的cpu、网卡流量，发现都没到瓶颈；
+2、继续查看压测的目标Server的线程状况，发现Server的线程数也没到瓶颈，有个诡异的现象是随着客户端施加的压力上升，服务器端线程数也没上升，而且网卡流量也没上升；
+3、于是猜测是客户端本身的问题，客户端的CPU、网卡流量也没到瓶颈，但发现客户端的线程数随着施加的请求数增加，也没上升，因此猜想是客户端这个地方的线程数已经达到了最大值；
+4、由于代码是第三方的，于是用btrace写了个脚本，跟踪查找了该线程池的最大线程数，发现果然是这个最大线程数比较小，因此做了相应的修改，放大最大线程数，继续压测就OK了。
+ps: 这个Case还出现了一个状况，就是客户端的网卡流量随着施加的压力上升，却没发生变化，因此猜测是网络上有流量限制…
+总结：
+从查这次的问题来看，在压测时压力上不去时，需要查看从请求发起到响应返回的整个过程，资源的消耗状况，是否某个地方资源消耗到极限了，如果硬件资源未到极限，通常会是线程blocked或线程被消耗完了。</p>
+<p>Case: 某应用GC频繁的问题
+这个专门写了一篇blog来描述，具体请见：<a href="http://blog.bluedavy.com/?p=290" title="一个GC频繁的Case" target="_blank"><a href="http://blog.bluedavy.com/?p=290">http://blog.bluedavy.com/?p=290</a></a></p>
+<p>Case: 某应用一直没响应。
+解决过程：
+1、jstack多次后分析，很多的线程都在Blocked状态，等待一把锁，而持有这把锁的线程一直停在了Log4j的ConsoleLog的write上；
+2、于是问题就集中到为什么ConsoleLog write的时候竟然会停住，最早猜测的原因是console是不是也输出到了一个文件，而这个文件出问题了，但经过检查发现一切正常；
+3、通过ps auxf查看脚本看看console有没有输出到文件，发现这个脚本嵌套了好几层，但都输出到了外部的文件，而外部这个文件是没什么问题的；
+4、仔细查看发现这个Java进程是在代码里通过调用脚本启动的，猜想是不是没有正确处理标准输出流和错误流造成的，于是翻看代码，发现代码只处理了输出流，但没处理错误流，并且在处理输出流时只处理了10000行，超过10000的时候就没再去读了，对于这种未将console重定向到外部文件的场景，linux会将其写到一个缓冲区，缓冲区写满后就会导致应用程序阻塞住，这个在Java的API上也有说明：
+The parent process uses these streams(Process.getOutputStream(), Process.getInputStream(), Process.getErrorStream()) to feed input to and get output from the subprocess. Because some native platforms only provide limited buffer size for standard input and output streams, failure to promptly write the input stream or read the output stream of the subprocess may cause the subprocess to block, and even deadlock.
+5、到这步后就可以确认问题的原因了。
+解决方法：
+1、把输出到Console的Logger方式去掉了，这样自然就没问题了；
+2、程序上修改，不是读到1w行就不读了，而是一直读到没有输出流和错误流了才结束，通常来说比较正确的做法请见这篇贴：<a href="http://goo.gl/sllmv" target="_blank">http://goo.gl/sllmv</a>
+总结：
+在Java中启动外部程序时一定要注意正确处理输出流和错误流。</p>
+<p><a href="https://blog.bluedavy.com/?p=290" target="_blank">一个GC频繁的Case</a> <a href="https://blog.bluedavy.com/?p=309" target="_blank">HBase随机写以及随机读性能测试</a></p>
+<h3 id="11-comments-add-yours-">11 Comments <em>(<a href="">+add yours?</a>)</em></h3>
+<ol>
+<li><img src="https://secure.gravatar.com/avatar/dbaac4591255b0c52e86868bcabc6bd9?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> nova
+<strong>Aug 29, 2011</strong> @ 13:20:16
+你好，看了你的blog，觉得你在jvm方面研究很深。</li>
+</ol>
+<p>想问你一个jvm方面的问题，我目前在用一个hudson的服务器，跑在tomcat上，不知道为什么，总是jvm崩溃，然后生成一个 pidXXXX.log的文件，里面的内容不知所云。</p>
+<p>请问如何分析这种jvm crash产生的 pidXXX.log文件啊？</p>
+<ol>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Aug 29, 2011</strong> @ 16:32:39
+只能看看这个日志里的内容是什么了，然后相应的解决。</li>
+<li><img src="https://secure.gravatar.com/avatar/17dce1595a6c2594969d8fb9ee332df8?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> blueswind
+<strong>Sep 16, 2011</strong> @ 11:36:40
+毕玄大牛好！
+请教一下，在一个应用中，我发现会偶尔出现Full GC，但是这个应用是不允许Full GC出现的，观察gc.log感觉很奇怪：
+553887.031: [GC 553887.031: [ParNew: 6448271K-&gt;69532K(7188480K), 0.0676760 secs] 10144883K-&gt;3766882K(12513280K), 0.0679280 secs] [Times: user=0.46 sys=0.01, real=0.07 secs]
+553891.774: [GC 553891.774: [ParNew: 6459292K-&gt;75749K(7188480K), 0.1285440 secs] 10156642K-&gt;3774046K(12513280K), 0.1288140 secs] [Times: user=0.92 sys=0.00, real=0.13 secs]
+553896.757: [GC 553896.757: [ParNew (promotion failed): 6465509K-&gt;6485588K(7188480K), 2.1091440 secs]553898.866: [CMS: 3699438K-&gt;1483627K(5324800K), 17.0428180 secs] 10163806K-&gt;1483627K(12513280K), [CMS Perm : 95598K-&gt;52896K(131072K)], 19.1523340 secs] [Times: user=19.27 sys=0.02, real=19.16 secs]
+553943.432: [GC 553943.432: [ParNew: 6389760K-&gt;113975K(7188480K), 0.0698770 secs] 7873387K-&gt;1597603K(12513280K), 0.0700800 secs] [Times: user=0.47 sys=0.00, real=0.07 secs]
+553948.178: [GC 553948.178: [ParNew: 6503735K-&gt;90637K(7188480K), 0.0667370 secs] 7987363K-&gt;1574265K(12513280K), 0.0669710 secs] [Times: user=0.42 sys=0.01, real=0.07 secs]</li>
+</ol>
+<p>导致promotion failed的那个时刻似乎并没有进行MinorGC，而OldGen又没有到达我设置的80%，我的jvm参数如下：
+-Xmx13000m -Xms13000m -Xmn7800m -Xss256k -XX:PermSize=64m -XX:MaxPermSize=128m -XX:ParallelGCThreads=20 -XX:+UseConcMarkSweepGC -XX:+UseParNewGC -XX:SurvivorRatio=8 -XX:TargetSurvivorRatio=100 -XX:MaxTenuringThreshold=15 -XX:CMSInitiatingOccupancyFraction=80 -XX:SoftRefLRUPolicyMSPerMB=0 -XX:+UseCMSCompactAtFullCollection -XX:CMSMaxAbortablePrecleanTime=30000 -XX:CMSScheduleRemarkEdenPenetration=1 -server -XX:+PrintGCDetails -Xloggc:./log/gc.log</p>
+<p>由于这个Full GC出现的很少，所以很难重现，如果遇到这种问题，应该如何追查呢？请教毕玄大牛哈~~</p>
+<ol>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Sep 16, 2011</strong> @ 17:33:47
+@blueswind
+promotion failed就是minor gc进行的时候出现的，so…
+至于这个时候为什么产生了full gc，原因就是因为promotion failed了…
+promotion failed的原因主要是旧生代装不下要晋升到old中的对象，建议调整下参数…把新生代放小点吧，或者把cms的触发比率降低点吧。</li>
+<li><img src="https://secure.gravatar.com/avatar/17dce1595a6c2594969d8fb9ee332df8?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> blueswind
+<strong>Sep 29, 2011</strong> @ 19:06:16
+毕玄你好~
+上次的那个promotion failed的问题仔细分析了一下，怀疑可能是由于CMSGC时的内存碎片导致的，以下是我的分析和解决过程，请拍砖！
+发生promotion failed时，OldGen还有1.6G的空间，同时使用gcLogViewer查看平均新生代晋升大小（AVG PTOS），只有几十K。所以怀疑是由于OldGen在距离上次CMSGC后，经过一段时间又产生了大量内存碎片，当某个时间点在OldGen中的连续空间没有一块足够58K的话，就会导致的promotion failed。
+这种情况下的解决方法难道只有调小CMS触发比率或缩小新生代吗？因为这样的话必然会导致系统吞吐量的下降，难道没有很好的解决内存碎片的方法吗？</li>
+<li><img src="https://secure.gravatar.com/avatar/0af46e7838cb5c6bed0d132b865d6ead?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> Edward Lee
+<strong>Oct 27, 2011</strong> @ 10:00:01
+毕玄，首先非常感谢你与我们分享工作中的经验，真得非常感谢！</li>
+</ol>
+<p>对于你的 Case 1 情况，你在文中说道“一个保护做法是在实现classloader时，最好是先对listFiles排下序”。我感觉用处不大。</p>
+<p>比如，App 中至少有 3 个 jar 包出现 3 个同样的 class 类型，而正确的那个类处于中间位置（不管你升序，还是降序），还是一样会抛出NoClassDefFoundError异常。</p>
+<p>我觉得合理的做法：在自定义classloader装载类时，若发生异常，则继续尝试加载下一个符合的class类型，直到装载成功为止。</p>
+<p>不知你是如何看待这个问题的？</p>
+<ol>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Oct 27, 2011</strong> @ 10:56:34
+@Edward Lee
+排序的意思是为了避免集群中各node出现不一致的表现，至少保持一致，冲突的问题这个最好不要智能解决，因为很难说应用到底想加载哪个…</li>
+<li><img src="https://secure.gravatar.com/avatar/0af46e7838cb5c6bed0d132b865d6ead?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> Edward Lee
+<strong>Oct 27, 2011</strong> @ 15:17:06
+@bluedavy
+“冲突的问题这个最好不要智能解决，因为很难说应用到底想加载哪个…”
+呵呵，对，多谢提醒啊！</li>
+<li><img src="https://secure.gravatar.com/avatar/1ddf3edd708b8f29b60ccfa68d855fd3?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> 震子
+<strong>Dec 13, 2011</strong> @ 16:18:02
+对于permGen的问题造成的的full gc貌似gc日志里面可以指示出来的，从《java_performance》这本书里面看到
+在304页
+Concurrent Permanent Generation Garbage Collection
+Full garbage collections may also occur as a result of a full permanent generation
+space. Monitoring the garbage collection data looking for full garbage collections and
+then observing the occupancy of the permanent generation space identifies whether
+they occur as a result of permanent generation space filling up. Here is an example
+full garbage collection initiated by permanent generation space filling up:
+2010-12-16T17:14:32.533-0600: [Full GC
+[CMS: 95401K-&gt;287072K(1048576K), 0.5317934 secs]
+482111K-&gt;287072K(5190464K),
+[CMS Perm : 65534K-&gt;58281K(65536K)], 0.5319635</li>
+<li><img src="https://secure.gravatar.com/avatar/1ddf3edd708b8f29b60ccfa68d855fd3?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> 震子
+<strong>Dec 13, 2011</strong> @ 16:23:48
+Case: 某应用压测时压力上不去的问题
+对于这个case，我也分享一下，呵呵，如果用的loadrunner的话，一定要注意loadrunner的内存使用，如果内存使用一直涨，那么肯定loadrunner的压力上不去，典型的是：我这边在使用loadrunner的Parameter List的时候就出现了这种情况，loadrunner使用的内存一直在涨。</li>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Dec 16, 2011</strong> @ 20:43:52
+@震子
+还是jstat比较容易判断。<h3 id="leave-a-reply">Leave a Reply</h3>
+</li>
+</ol>
+<p><a href="">Cancel</a></p>
+<p>Name (required)</p>
+<p>Mail (required)</p>
+<p>Website</p>
+<p><img src="https://blog.bluedavy.com/wp-content/plugins/si-captcha-for-wordpress/captcha/securimage_show.php?si_form_id=com&amp;prefix=K89yTXStz1vAkC0u" alt="CAPTCHA Image" title="CAPTCHA Image"></p>
+<p><a href="&quot;Refresh Image&quot;"><img src="" alt="Refresh Image"></a></p>
+<p>CAPTCHA Code /*</p>
+<p><style type='text/css'>/#submit {display:none;}</style><br /> <input name="submit" type="submit" id="submit-alt" tabindex="6" value="Submit Comment" /></p>
+<p>July 2013 M T W T F S S <a href="https://blog.bluedavy.com/?m=201303" title="View posts for March 2013" target="_blank">« Mar</a>     1234567 891011121314 15161718192021 22232425262728 293031  </p>
+<h3 id="categories">Categories</h3>
+<ul>
+<li><a href="https://blog.bluedavy.com/?cat=63" title="View all posts filed under Java" target="_blank">Java</a> (10)</li>
+<li><a href="https://blog.bluedavy.com/?cat=13" title="View all posts filed under jvm" target="_blank">jvm</a> (19)</li>
+<li><a href="https://blog.bluedavy.com/?cat=56" title="View all posts filed under NoSQL" target="_blank">NoSQL</a> (7)</li>
+<li><a href="https://blog.bluedavy.com/?cat=4" title="View all posts filed under SOA" target="_blank">SOA</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=11" title="关于《分布式Java应用：基础与实践》书部分章节的公开、书内容的纠错以及补充完善。" target="_blank">书:分布式Java应用</a> (5)</li>
+<li><a href="https://blog.bluedavy.com/?cat=6" title="View all posts filed under 互联网" target="_blank">互联网</a> (5)</li>
+<li><a href="https://blog.bluedavy.com/?cat=46" title="View all posts filed under 产品总结" target="_blank">产品总结</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=18" title="View all posts filed under 优化案例" target="_blank">优化案例</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=12" title="View all posts filed under 圆桌交流" target="_blank">圆桌交流</a> (2)</li>
+<li><a href="https://blog.bluedavy.com/?cat=8" title="View all posts filed under 容量规划" target="_blank">容量规划</a> (2)</li>
+<li><a href="https://blog.bluedavy.com/?cat=97" title="View all posts filed under 迁户口" target="_blank">迁户口</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=52" title="View all posts filed under 高可用" target="_blank">高可用</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=3" title="View all posts filed under 高并发" target="_blank">高并发</a> (3)</li>
+<li><p><a href="https://blog.bluedavy.com/?cat=1" title="关于性能优化方面的一些东西。" target="_blank">高性能</a> (2)</p>
+<h3 id="recent-comments">Recent Comments</h3>
+</li>
+<li><p><a href="http://code1.riaos.com/?p=5030138" target="_blank">JVM调优 | code1（code1.riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16520" target="_blank">说说MaxTenuringThreshold这个参数</a></p>
+</li>
+<li><a href="http://architecture1.riaos.com/?p=3063358" target="_blank">JVM调优 | architecture（riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16519" target="_blank">说说MaxTenuringThreshold这个参数</a></li>
+<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16462" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+<li>xiaobo on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16460" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16459" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+</ul>
+<h3 id="tags">Tags</h3>
+<p><a href="https://blog.bluedavy.com/?tag=btrace" title="2 topics" target="_blank">btrace</a> <a href="https://blog.bluedavy.com/?tag=c1" title="1 topic" target="_blank">c1</a> <a href="https://blog.bluedavy.com/?tag=c2" title="1 topic" target="_blank">c2</a> <a href="https://blog.bluedavy.com/?tag=deflater" title="1 topic" target="_blank">Deflater</a> <a href="https://blog.bluedavy.com/?tag=facebook" title="2 topics" target="_blank">facebook</a> <a href="https://blog.bluedavy.com/?tag=gc" title="4 topics" target="_blank">gc</a> <a href="https://blog.bluedavy.com/?tag=gc-tuning" title="2 topics" target="_blank">gc tuning</a> <a href="https://blog.bluedavy.com/?tag=grizzly" title="2 topics" target="_blank">Grizzly</a> <a href="https://blog.bluedavy.com/?tag=hbase" title="6 topics" target="_blank">HBase</a> <a href="https://blog.bluedavy.com/?tag=hotspot" title="1 topic" target="_blank">hotspot</a> <a href="https://blog.bluedavy.com/?tag=inflater" title="1 topic" target="_blank">Inflater</a> <a href="https://blog.bluedavy.com/?tag=interpreter" title="1 topic" target="_blank">interpreter</a> <a href="https://blog.bluedavy.com/?tag=javac" title="1 topic" target="_blank">javac</a> <a href="https://blog.bluedavy.com/?tag=java-code-generation" title="1 topic" target="_blank">java code generation</a> <a href="https://blog.bluedavy.com/?tag=javaone" title="4 topics" target="_blank">JavaOne</a> <a href="https://blog.bluedavy.com/?tag=javaone-general-technical-session" title="1 topic" target="_blank">javaone general technical session</a> <a href="https://blog.bluedavy.com/?tag=java%e4%bb%a3%e7%a0%81%e6%89%a7%e8%a1%8c" title="1 topic" target="_blank">java代码执行</a> <a href="https://blog.bluedavy.com/?tag=java-%e5%b9%b6%e5%8f%91" title="1 topic" target="_blank">Java 并发</a> <a href="https://blog.bluedavy.com/?tag=jit" title="1 topic" target="_blank">jit</a> <a href="https://blog.bluedavy.com/?tag=jvm" title="12 topics" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=memory-management" title="1 topic" target="_blank">memory management</a> <a href="https://blog.bluedavy.com/?tag=native-memory-leak" title="1 topic" target="_blank">Native Memory Leak</a> <a href="https://blog.bluedavy.com/?tag=nosql" title="2 topics" target="_blank">NoSQL</a> <a href="https://blog.bluedavy.com/?tag=oom" title="1 topic" target="_blank">oom</a> <a href="https://blog.bluedavy.com/?tag=oracle-keynote" title="1 topic" target="_blank">oracle keynote</a> <a href="https://blog.bluedavy.com/?tag=pessimism-policy" title="1 topic" target="_blank">pessimism policy</a> <a href="https://blog.bluedavy.com/?tag=references" title="1 topic" target="_blank">references</a> <a href="https://blog.bluedavy.com/?tag=rpc" title="2 topics" target="_blank">RPC</a> <a href="https://blog.bluedavy.com/?tag=serial-gc" title="1 topic" target="_blank">serial gc</a> <a href="https://blog.bluedavy.com/?tag=soa" title="2 topics" target="_blank">SOA</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk" title="1 topic" target="_blank">sun jdk</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk-oom" title="1 topic" target="_blank">sun jdk oom</a> <a href="https://blog.bluedavy.com/?tag=web%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92%e7%9a%84%e8%89%ba%e6%9c%af" title="1 topic" target="_blank">Web容量规划的艺术</a> <a href="https://blog.bluedavy.com/?tag=yuanzhuo" title="1 topic" target="_blank">yuanzhuo</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6" title="1 topic" target="_blank">书:分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6%e8%af%84" title="1 topic" target="_blank">书评</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%92%e8%81%94%e7%bd%91%e6%8a%80%e6%9c%af" title="1 topic" target="_blank">互联网技术</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86" title="1 topic" target="_blank">内存管理</a> <a href="https://blog.bluedavy.com/?tag=%e5%88%86%e5%b8%83%e5%bc%8fjava%e5%ba%94%e7%94%a8" title="2 topics" target="_blank">分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e5%9c%86%e6%a1%8c%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">圆桌交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92" title="2 topics" target="_blank">容量规划</a> <a href="https://blog.bluedavy.com/?tag=%e6%82%b2%e8%a7%82%e7%ad%96%e7%95%a5" title="3 topics" target="_blank">悲观策略</a> <a href="https://blog.bluedavy.com/?tag=%e6%9c%8d%e5%8a%a1%e6%a1%86%e6%9e%b6" title="1 topic" target="_blank">服务框架</a> <a href="https://blog.bluedavy.com/?tag=%e7%a1%85%e8%b0%b7%e5%85%ac%e5%8f%b8" title="1 topic" target="_blank">硅谷公司</a></p>
+<h3 id="-">订阅</h3>
+<h3 id="-">推荐书籍</h3>
+<h3 id="my-book">My Book</h3>
+<p><a href="http://book.douban.com/subject/4848587/" title="分布式Java应用：基础与实践" target="_blank"><img src="" alt=""></a> <a href="http://book.douban.com/subject/3843896/" title="OSGi原理与最佳实践" target="_blank"><img src="" alt=""></a>
+© <a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a> 2013</p>
+<p><a href="http://icondock.com/" target="_blank">Icons</a> &amp; <a href="http://www.ndesign-studio.com/wp-themes" target="_blank">Wordpress Theme</a> by <a href="http://www.ndesign-studio.com/" target="_blank">N.Design</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩/">虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩/">feb. 2 2014</a></time></span>      
@@ -1601,325 +1920,6 @@ P.S. 画图真的很辛苦，加上JavaEye的带宽也不是无限的……所�
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/">记录帖：碰到的一些Java问题（更新于2013</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-java-2013-03-06-">记录帖：碰到的一些Java问题（更新于2013-03-06）</h1>
-<h1 id="-bluedavy-blog-https-blog-bluedavy-com-"><a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a></h1>
-<p>{互联网，OSGi，Java, High Scalability, High Performance,HA}</p>
-<ul>
-<li><a href="https://blog.bluedavy.com/" target="_blank">Home</a></li>
-<li><a href="https://blog.bluedavy.com/?page_id=2" target="_blank">About</a></li>
-<li><a href="https://blog.bluedavy.com/?page_id=81" target="_blank">Photos</a></li>
-</ul>
-<h2 id="-java-2013-03-06-https-blog-bluedavy-com-p-300-java-2013-03-06-"><a href="https://blog.bluedavy.com/?p=300" title="记录帖：碰到的一些Java问题（更新于2013-03-06）" target="_blank">记录帖：碰到的一些Java问题（更新于2013-03-06）</a></h2>
-<p>Aug 09</p>
-<p><a href="http://bluedavy.com/" title="Visit bluedavy’s website" target="_blank">bluedavy</a><a href="https://blog.bluedavy.com/?cat=63" title="View all posts in Java" target="_blank">Java</a>, <a href="https://blog.bluedavy.com/?cat=13" title="View all posts in jvm" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=btrace" target="_blank">btrace</a>, <a href="https://blog.bluedavy.com/?tag=java-cases" target="_blank">Java Cases</a>, <a href="https://blog.bluedavy.com/?tag=java-troubleshooting" target="_blank">Java Troubleshooting</a>, <a href="https://blog.bluedavy.com/?tag=java%e9%97%ae%e9%a2%98" target="_blank">Java问题</a> <a href="&quot;Comment on 记录帖：碰到的一些Java问题（更新于2013-03-06）&quot;">11 Comments</a>
-这个贴用于记录自己碰到过的一些Java问题，会根据经验不断增加，以便总结，:)</p>
-<p>case: 一次非常诡异的CMS GC频繁问题的排查
-详细见此贴：<a href="https://bluedavy.com/?p=424" target="_blank"><a href="https://bluedavy.com/?p=424">https://bluedavy.com/?p=424</a></a></p>
-<p>case: 某应用在压测一台物理机上的多台虚拟机时不能保持线性增长的案例
-现象描述：
-一台16 core（HT）的物理机上，创建了8个虚拟机，每个虚拟机独占两个core，每个虚拟机里部署的都是同样的应用，按道理来说，在应用没有瓶颈的情况下，每增加一台虚拟机，tps应该可以保持线性增长，不过在压测的时候发现，在增加到第四台的时候（每次4台挑选的都是不同的机器），有些时候能线性增长，有些时候不能。
-解决过程：
-1、经过手工调整其中某台虚拟机的cpu，发现在12/13 cpu加入时，整个tps就会下降，于是猜想莫非和这两个核还有关系；
-2、猜测是和中断处理有关系，发现core 12处理的中断确实比较其他的多一些，于是把irqbalance关了，调整了中断的绑定，还是一样的现象；
-3、看了下四台虚拟机绑定的cpu的分布状况，发现12/13刚好和其中一台虚拟机绑定的4/5是同样的两个core，4/12其实是同一个core HT的，5/13是另一个core HT的，而这个应用是很耗cpu的，单压某个虚拟机cpu us就可以到90%左右，所以如果压测的4台如果有CPU刚好是同一个Core HT的，性能自然是上不去的。
-总结：
-和各种文章中讲的一样，CPU HT只有在理论的某些场景能达到2个真实core的性能，但多数情况都达不到，貌似很多场景的经验值是2 core(HT) = 1.3 Core。</p>
-<p>case: 一个Java应用频繁抛异常导致cpu us诡异现象的案例
-详细见此贴：<a href="http://blog.bluedavy.com/?p=409" target="_blank"><a href="http://blog.bluedavy.com/?p=409">http://blog.bluedavy.com/?p=409</a></a></p>
-<p>case: 某应用在运行个一两天后就会把物理内存耗光
-解决过程：
-1、先按经验查了下有没有错误使用Inflater和Deflater，没有，于是继续；
-2、继续上perftools，看看到底什么原因造成的，结果在6u21版本上看到的很诡异，是JVM_handle_linux_signal占了最多，觉得不靠谱，于是先升级成了6u26；
-3、再分析，看到os::malloc占用了最多，但其他的就完全没头绪了；
-4、在@JosephWang_CN的帮助下，图形分析下了perftools的stack trace，才发现还是unsafe_allocate的地方，但这次现象和上个case不同，不同点在于这次是由于cms gc的bug造成的，bug id为7112034，这个bug会造成即使direct bytebuffer已经无引用了，但在cms gc时其并不会被清除掉，而要等到full gc才会清除，官方版本在6u32中修复此bug（这个很容易验证，如果没开启ExplicitGCInvokesConcurrent，用jmap -histo:live强制触发下）；
-5、在fix了这个bug的前提下，还需要限制-XX:MaxDirectMemorySize的大小才行，否则可能会出现还没到触发cms gc时，物理内存就用完了的现象。
-总结：
-根据多次排查Java Heap外内存泄露的问题，目前的经验为：
-1、先查查看有没有错误使用Inflater和Deflater，如有则基本就搞定了；
-2、多执行几次jmap -histo:live，看看内存会不会下降，如果会的话，多数和GC的bug有关；
-3、perftools，对调用次数的那列进行排序(pprof –text … | sort -n -r -k4)，如果看到是Unsafe_Allocate比较多，且为server端应用，则通常说明是哪个地方分配了Direct ByteBuffer，但来不及释放引用，然后嘛，就是用btrace跟踪下看看谁干的，分析原因。</p>
-<p>case: 某应用在压测一段时间后就会把物理内存耗光
-解决过程：
-1、从gc log以及jstat信息来看，java heap内的内存消耗并不多，但堆外消耗非常严重，导致了物理内存被耗光；
-2、于是装上google perftools，看看堆外到底是什么原因造成的消耗；
-3、分析了下google perftools的内存malloc消耗，主要是调用Unsafe.allocate造成的；
-4、通常调用Unsafe.allocateMemory来分配内存的，只有Direct ByteBuffer和AWT，这应用是没用AWT的，Direct ByteBuffer倒是用到了；
-5、网上google了一会，找到一个貌似和这个应用的场景很像的内存泄露的现象，具体信息请见：<a href="http://t.co/S9jvDt8O" title="SocketChannel.write Direct ByteBuffer memory leak" target="_blank"><a href="http://t.co/S9jvDt8O">http://t.co/S9jvDt8O</a></a>，号称是SocketChannel.write的时候，如果是Direct ByteBuffer会导致memory leak，而且Trustin Lee(Mina/Netty的作者)也这么说的：”it’s a known bug”;
-6、于是建议应用的同学将ByteBuffer的地方改成不用direct方式；
-7、改完后，重新压测，物理内存消耗是没那么严重了，但java heap用满了后回收不了了；
-8、于是dump内存，用mat分析后发现是由于这个应用本身处理上的一些缺失造成的，简单说下，这个应用是一个基于mina的应用，而应用没有对session上的发送请求做限流，而mina来不及发送，导致积压了很多WriteRequest，从而内存被耗光了；
-9、对这个问题的解决方法是：限流，当未发送的字节数到达某个比率后，就暂时先不发送了，或者报错等等，用netty能对这个现象有一定的缓解，但限流动作还是要做，否则可能会出现接收方处理慢，从而导致发送方内存用完的现象。</p>
-<p>case: 某应用在压测时很容易出现promotion failed的现象
-解决过程：
-1、从promotion failed时的gc日志来看，状况为新生代中有1.5g的对象存活，旧生代此时的空余空间为4g，足以放下新生代存活的这些对象，于是只能猜测可能是cms gc的情况下旧生代的碎片问题导致的，其实心里是不太相信的，因为这空间空闲了如此的多呀；
-2、首先增加-XX:+PrintPromotionFailure看看Promotion Failed的时候是不是有很大的对象要晋升到旧生代，结果打出来的日志显示在晋升的时候失败的竟然只是申请262146个block的空间而已，这是在开启了压缩指针的情况，因此每个block为4个字节；
-3、还是不能确定，于是增加-XX:+CMSDumpAtPromotionFailure，看看OLD Gen的碎片状况；
-4、打出来的信息显示old gen拥有最多free block的chunk也只有99977个而已，有53w+个chunk，里面大部分都只有999个free block，可见碎片相当严重；
-5、到这步只是确定了碎片很严重，暂时能想到的只有每天半夜的时候主动执行下jmap -histo:live，尽可能减少碎片吧，如果后续有什么改进的动作，再来记录。</p>
-<p>case: 某应用在发布的过程中突然crash了几台
-解决过程：
-1、应用crash后hs_err/*.log以及core.[pid]文件都没生成；
-2、先打开core dump;
-3、crash后gdb core dump看：
-<a href="">?</a>1</p>
-<p>2
-3</p>
-<p>4
-(gdb) bt</p>
-<p>/#0  0x00002ba466f82971 in ?? () from /opt/jdk-1.6.0_26/jre/lib/amd64/server/libjvm.so
-/#1  0x00002aab78a7e20d in Java_java_net_SocketOutputStream_socketWrite0 ()</p>
-<p>from /opt/jdk-1.6.0_26/jre/lib/amd64/libnet.so</p>
-<p>4、看到上面的core dump完全木有头绪，后来@rednaxelafx 介入处理，才知道原来jstack是可以跟core dump文件提取出当时java程序的状况的；
-5、jstack出来一看，发现程序里有个地方无限递归…so…
-总结：
-@rednaxelafx接着又进一步分析了为什么没有生成hs_err/<em>.log，是因为从jdk 5.0以后的版本，hs_err/</em>.log就是在crash的那个线程来生成，而这个案例中crash时的那个线程无限递归，而且正在native栈上，栈空间被消耗光了，所以hs_err/*.log文件就没生成出来。</p>
-<p>Case: 某应用偶尔会出现极为频繁的Promotion failed，导致cms gc切换为串行full gc，从而响应变得超级慢
-解决过程：
-1、从promotion failed的日志来看，应该是在那段时间内内存被消耗光了造成的，因此在promotion failed的时候dump了内存；
-2、可惜dump出来的那个内存文件打不开，几次都是如此；
-3、还好我们自己定制的jdk版本这个时候发挥了作用，这个版本中有个功能是如果代码中有地方分配了超级大的数组，会打印出堆栈；
-4、在某次出问题的时候，我们看到了这样的堆栈信息：
-<a href="">?</a>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13==WARNNING==  allocating large array: thread_id[0x00002aaac2d85800], thread_name[ajp-0.0.0.0-8009-48], array_size[782611408 bytes], array_length[195652847 el</p>
-<p>ememts]</p>
-<p>at java.util.Arrays.copyOf(Arrays.java:2734)</p>
-<p>at java.util.ArrayList.ensureCapacity(ArrayList.java:167)</p>
-<p>at java.util.ArrayList.add(ArrayList.java:351)</p>
-<p>at net.sf.json.JSONArray._fromJSONTokener(JSONArray.java:1154)</p>
-<p>at net.sf.json.JSONArray.fromObject(JSONArray.java:147)</p>
-<p>at net.sf.json.util.JSONTokener.nextValue(JSONTokener.java:358)</p>
-<p>at net.sf.json.JSONObject._fromJSONTokener(JSONObject.java:1128)</p>
-<p>at net.sf.json.JSONObject._fromString(JSONObject.java:1317)</p>
-<p>at net.sf.json.JSONObject.fromObject(JSONObject.java:185)</p>
-<p>at net.sf.json.JSONObject.fromObject(JSONObject.java:154)</p>
-<p>at 我们自己的代码...</p>
-<p>5、有这个堆栈后就可以知道是由于自己的代码这个地方触发了json创建了一个巨大的array；
-6、于是怀疑是我们传给了json一个很大的String，就先在应用层做了个保护，超过一定大小的String就直接抛错；
-7、加上了这个保护后还是出问题了；
-8、因此怀疑是json内部有bug，导致传了某种格式的String后就会出现死循环什么的；
-9、“神”看代码后，构造了一个这样的String s = “{tag:[0,1,”;然后调用JSONObject.fromObject(s)，就会OOM；
-10、于是修改了json的代码，修复此bug…</p>
-<p>Case: 某应用cms gc时concurrent-mark阶段应用竟然没有响应…
-解决过程：
-1、在cms gc进行的过程中用pstack采集目前java进程正在做什么；
-2、从日志分析来看貌似是在concurrent-mark时，很多的java线程在分配内存的时候被锁住了…
-3、将相关信息发给官方的gc dev maillist，只是得到了升级到6u28试试的建议…
-目前问题尚未解决，先在此mark下，和这个url提到的问题基本一致：<a href="http://t.co/EU92I8nN" target="_blank"><a href="http://t.co/EU92I8nN">http://t.co/EU92I8nN</a></a></p>
-<p>Case: 某应用cms gc非常频繁，并且很容易出现concurrent mode failure造成Full GC
-解决过程：
-1、从gc日志来看，cms gc每次在旧生代使用才到18%左右的时候就触发了，而设置的触发比率是80%，并且不允许JVM自行触发；
-2、每几次cms gc还会偶尔出现concurrent mode failure的现象，看了下，这时旧生代的空间是非常充足的；
-3、根据cms gc的触发机制，猜测是permGen的问题造成的，于是通过jstat -gcutil看了下permGen的占用比例，果然过一会就超过下92%（不过这里有个问题，就是permGen其实是还没达到MaxPermSize的，看来在cms gc的情况下，maxPermSize要采用不同策略）；
-4、于是适当的调大permGen，不过仍然没有解决，原因是permGen增长实在太快了；
-5、应用方发现有地方会不断的创建classLoader，加载class，因此导致了permGen的增长，修改后问题解决。
-总结：
-CMS GC的日志其实打的有些问题，应该把cms gc触发时的原因输出下；
-另外就是在大部分情况下，只要不是cms gc触发的比例设置的太有问题，如果cms gc频繁或full gc频繁都是应用本身的问题造成的。</p>
-<p>Case: 某应用出现启动后集群中部分node成功，部分node失败
-解决过程：
-1、失败的node抛出的是NoClassDefFoundError，这些node在环境上和应用包上是完全一致的，因此猜想是classloader装载class时出现了什么问题；
-2、在启动参数上增加了-XX:+TraceClassLoading，想看看成功的node和失败的node是不是从第一个地方加载的相应的类，悲催的是成功的node加上了这参数后启动超慢，于是只好放弃；
-3、由于不能用TraceClassLoading，只好从ClassLoader方面来跟踪这个类的加载，于是从应用层上做了相应的分析，找出了相应的classloader，然后用btrace相应的进行了跟踪，才终于发现成功的node和失败的node装载此类时不是从同一地方装载的，而其中有一个地方的这个类引用了一个不存在的类，于是就出现了NoClassDefFoundError。
-总结：
-在经过分析后，猜想是在这两个不同的node上classloader在list一个目录下的文件时，出现了顺序不同的现象，于是后来写了一个简单的程序在两个node上list那个目录的文件，发现返回的顺序果然不同，这个具体的原因为File.listFiles最后会调用到readdir函数，而这个函数返回的文件列表是按inode number排序的，因此在每台linux机器上确实有可能不同，当一个目录下有两个jar中有相同名字但不同内容的class时（话说这也是java应用中比较麻烦的问题，这个专门写篇blog来说下，java 8的模块化真的非常重要），就悲催了，一个保护做法是在实现classloader时，最好是先对listFiles排下序，避免集群中node出现表现不一致的问题。</p>
-<p>Case: 某应用GC频繁但不一直不抛OOM的问题
-解决过程：
-这个应用是期待在内存不够的情况下快速抛出OOM的，但在执行中却发现执行了4个多小时的Full GC，就是没有抛OOM，导致应用出现了问题，从GC代码来看，目前要比较快的触发OOM，只能是调整GCTimeLimit和GCHeapFreeLimit，不过都不好调，后来暂时是靠调整了GCHeapFreeLimit来帮助快速抛出OOM。</p>
-<p>Case: 某应用堆外内存泄露的bug
-具体解决过程可参考这篇blog：<a href="http://blog.bluedavy.com/?p=205" title="两个OOM Cases" target="_blank"><a href="http://blog.bluedavy.com/?p=205">http://blog.bluedavy.com/?p=205</a></a>和<a href="http://goo.gl/mYsV5" title="里面有关于google perftools安装的说明" target="_blank">这篇blog</a>。
-总结：
-堆外内存泄露基本就是靠google perf-tools来查找了，目前来看堆外内存泄露基本都是使用Deflater，却没有显式调用end造成的。</p>
-<p>Case: 某应用压测时压力上不去的问题
-解决过程：
-1、查看压测的目标服务器的cpu、网卡流量，发现都没到瓶颈；
-2、继续查看压测的目标Server的线程状况，发现Server的线程数也没到瓶颈，有个诡异的现象是随着客户端施加的压力上升，服务器端线程数也没上升，而且网卡流量也没上升；
-3、于是猜测是客户端本身的问题，客户端的CPU、网卡流量也没到瓶颈，但发现客户端的线程数随着施加的请求数增加，也没上升，因此猜想是客户端这个地方的线程数已经达到了最大值；
-4、由于代码是第三方的，于是用btrace写了个脚本，跟踪查找了该线程池的最大线程数，发现果然是这个最大线程数比较小，因此做了相应的修改，放大最大线程数，继续压测就OK了。
-ps: 这个Case还出现了一个状况，就是客户端的网卡流量随着施加的压力上升，却没发生变化，因此猜测是网络上有流量限制…
-总结：
-从查这次的问题来看，在压测时压力上不去时，需要查看从请求发起到响应返回的整个过程，资源的消耗状况，是否某个地方资源消耗到极限了，如果硬件资源未到极限，通常会是线程blocked或线程被消耗完了。</p>
-<p>Case: 某应用GC频繁的问题
-这个专门写了一篇blog来描述，具体请见：<a href="http://blog.bluedavy.com/?p=290" title="一个GC频繁的Case" target="_blank"><a href="http://blog.bluedavy.com/?p=290">http://blog.bluedavy.com/?p=290</a></a></p>
-<p>Case: 某应用一直没响应。
-解决过程：
-1、jstack多次后分析，很多的线程都在Blocked状态，等待一把锁，而持有这把锁的线程一直停在了Log4j的ConsoleLog的write上；
-2、于是问题就集中到为什么ConsoleLog write的时候竟然会停住，最早猜测的原因是console是不是也输出到了一个文件，而这个文件出问题了，但经过检查发现一切正常；
-3、通过ps auxf查看脚本看看console有没有输出到文件，发现这个脚本嵌套了好几层，但都输出到了外部的文件，而外部这个文件是没什么问题的；
-4、仔细查看发现这个Java进程是在代码里通过调用脚本启动的，猜想是不是没有正确处理标准输出流和错误流造成的，于是翻看代码，发现代码只处理了输出流，但没处理错误流，并且在处理输出流时只处理了10000行，超过10000的时候就没再去读了，对于这种未将console重定向到外部文件的场景，linux会将其写到一个缓冲区，缓冲区写满后就会导致应用程序阻塞住，这个在Java的API上也有说明：
-The parent process uses these streams(Process.getOutputStream(), Process.getInputStream(), Process.getErrorStream()) to feed input to and get output from the subprocess. Because some native platforms only provide limited buffer size for standard input and output streams, failure to promptly write the input stream or read the output stream of the subprocess may cause the subprocess to block, and even deadlock.
-5、到这步后就可以确认问题的原因了。
-解决方法：
-1、把输出到Console的Logger方式去掉了，这样自然就没问题了；
-2、程序上修改，不是读到1w行就不读了，而是一直读到没有输出流和错误流了才结束，通常来说比较正确的做法请见这篇贴：<a href="http://goo.gl/sllmv" target="_blank">http://goo.gl/sllmv</a>
-总结：
-在Java中启动外部程序时一定要注意正确处理输出流和错误流。</p>
-<p><a href="https://blog.bluedavy.com/?p=290" target="_blank">一个GC频繁的Case</a> <a href="https://blog.bluedavy.com/?p=309" target="_blank">HBase随机写以及随机读性能测试</a></p>
-<h3 id="11-comments-add-yours-">11 Comments <em>(<a href="">+add yours?</a>)</em></h3>
-<ol>
-<li><img src="https://secure.gravatar.com/avatar/dbaac4591255b0c52e86868bcabc6bd9?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> nova
-<strong>Aug 29, 2011</strong> @ 13:20:16
-你好，看了你的blog，觉得你在jvm方面研究很深。</li>
-</ol>
-<p>想问你一个jvm方面的问题，我目前在用一个hudson的服务器，跑在tomcat上，不知道为什么，总是jvm崩溃，然后生成一个 pidXXXX.log的文件，里面的内容不知所云。</p>
-<p>请问如何分析这种jvm crash产生的 pidXXX.log文件啊？</p>
-<ol>
-<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
-<strong>Aug 29, 2011</strong> @ 16:32:39
-只能看看这个日志里的内容是什么了，然后相应的解决。</li>
-<li><img src="https://secure.gravatar.com/avatar/17dce1595a6c2594969d8fb9ee332df8?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> blueswind
-<strong>Sep 16, 2011</strong> @ 11:36:40
-毕玄大牛好！
-请教一下，在一个应用中，我发现会偶尔出现Full GC，但是这个应用是不允许Full GC出现的，观察gc.log感觉很奇怪：
-553887.031: [GC 553887.031: [ParNew: 6448271K-&gt;69532K(7188480K), 0.0676760 secs] 10144883K-&gt;3766882K(12513280K), 0.0679280 secs] [Times: user=0.46 sys=0.01, real=0.07 secs]
-553891.774: [GC 553891.774: [ParNew: 6459292K-&gt;75749K(7188480K), 0.1285440 secs] 10156642K-&gt;3774046K(12513280K), 0.1288140 secs] [Times: user=0.92 sys=0.00, real=0.13 secs]
-553896.757: [GC 553896.757: [ParNew (promotion failed): 6465509K-&gt;6485588K(7188480K), 2.1091440 secs]553898.866: [CMS: 3699438K-&gt;1483627K(5324800K), 17.0428180 secs] 10163806K-&gt;1483627K(12513280K), [CMS Perm : 95598K-&gt;52896K(131072K)], 19.1523340 secs] [Times: user=19.27 sys=0.02, real=19.16 secs]
-553943.432: [GC 553943.432: [ParNew: 6389760K-&gt;113975K(7188480K), 0.0698770 secs] 7873387K-&gt;1597603K(12513280K), 0.0700800 secs] [Times: user=0.47 sys=0.00, real=0.07 secs]
-553948.178: [GC 553948.178: [ParNew: 6503735K-&gt;90637K(7188480K), 0.0667370 secs] 7987363K-&gt;1574265K(12513280K), 0.0669710 secs] [Times: user=0.42 sys=0.01, real=0.07 secs]</li>
-</ol>
-<p>导致promotion failed的那个时刻似乎并没有进行MinorGC，而OldGen又没有到达我设置的80%，我的jvm参数如下：
--Xmx13000m -Xms13000m -Xmn7800m -Xss256k -XX:PermSize=64m -XX:MaxPermSize=128m -XX:ParallelGCThreads=20 -XX:+UseConcMarkSweepGC -XX:+UseParNewGC -XX:SurvivorRatio=8 -XX:TargetSurvivorRatio=100 -XX:MaxTenuringThreshold=15 -XX:CMSInitiatingOccupancyFraction=80 -XX:SoftRefLRUPolicyMSPerMB=0 -XX:+UseCMSCompactAtFullCollection -XX:CMSMaxAbortablePrecleanTime=30000 -XX:CMSScheduleRemarkEdenPenetration=1 -server -XX:+PrintGCDetails -Xloggc:./log/gc.log</p>
-<p>由于这个Full GC出现的很少，所以很难重现，如果遇到这种问题，应该如何追查呢？请教毕玄大牛哈~~</p>
-<ol>
-<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
-<strong>Sep 16, 2011</strong> @ 17:33:47
-@blueswind
-promotion failed就是minor gc进行的时候出现的，so…
-至于这个时候为什么产生了full gc，原因就是因为promotion failed了…
-promotion failed的原因主要是旧生代装不下要晋升到old中的对象，建议调整下参数…把新生代放小点吧，或者把cms的触发比率降低点吧。</li>
-<li><img src="https://secure.gravatar.com/avatar/17dce1595a6c2594969d8fb9ee332df8?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> blueswind
-<strong>Sep 29, 2011</strong> @ 19:06:16
-毕玄你好~
-上次的那个promotion failed的问题仔细分析了一下，怀疑可能是由于CMSGC时的内存碎片导致的，以下是我的分析和解决过程，请拍砖！
-发生promotion failed时，OldGen还有1.6G的空间，同时使用gcLogViewer查看平均新生代晋升大小（AVG PTOS），只有几十K。所以怀疑是由于OldGen在距离上次CMSGC后，经过一段时间又产生了大量内存碎片，当某个时间点在OldGen中的连续空间没有一块足够58K的话，就会导致的promotion failed。
-这种情况下的解决方法难道只有调小CMS触发比率或缩小新生代吗？因为这样的话必然会导致系统吞吐量的下降，难道没有很好的解决内存碎片的方法吗？</li>
-<li><img src="https://secure.gravatar.com/avatar/0af46e7838cb5c6bed0d132b865d6ead?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> Edward Lee
-<strong>Oct 27, 2011</strong> @ 10:00:01
-毕玄，首先非常感谢你与我们分享工作中的经验，真得非常感谢！</li>
-</ol>
-<p>对于你的 Case 1 情况，你在文中说道“一个保护做法是在实现classloader时，最好是先对listFiles排下序”。我感觉用处不大。</p>
-<p>比如，App 中至少有 3 个 jar 包出现 3 个同样的 class 类型，而正确的那个类处于中间位置（不管你升序，还是降序），还是一样会抛出NoClassDefFoundError异常。</p>
-<p>我觉得合理的做法：在自定义classloader装载类时，若发生异常，则继续尝试加载下一个符合的class类型，直到装载成功为止。</p>
-<p>不知你是如何看待这个问题的？</p>
-<ol>
-<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
-<strong>Oct 27, 2011</strong> @ 10:56:34
-@Edward Lee
-排序的意思是为了避免集群中各node出现不一致的表现，至少保持一致，冲突的问题这个最好不要智能解决，因为很难说应用到底想加载哪个…</li>
-<li><img src="https://secure.gravatar.com/avatar/0af46e7838cb5c6bed0d132b865d6ead?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> Edward Lee
-<strong>Oct 27, 2011</strong> @ 15:17:06
-@bluedavy
-“冲突的问题这个最好不要智能解决，因为很难说应用到底想加载哪个…”
-呵呵，对，多谢提醒啊！</li>
-<li><img src="https://secure.gravatar.com/avatar/1ddf3edd708b8f29b60ccfa68d855fd3?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> 震子
-<strong>Dec 13, 2011</strong> @ 16:18:02
-对于permGen的问题造成的的full gc貌似gc日志里面可以指示出来的，从《java_performance》这本书里面看到
-在304页
-Concurrent Permanent Generation Garbage Collection
-Full garbage collections may also occur as a result of a full permanent generation
-space. Monitoring the garbage collection data looking for full garbage collections and
-then observing the occupancy of the permanent generation space identifies whether
-they occur as a result of permanent generation space filling up. Here is an example
-full garbage collection initiated by permanent generation space filling up:
-2010-12-16T17:14:32.533-0600: [Full GC
-[CMS: 95401K-&gt;287072K(1048576K), 0.5317934 secs]
-482111K-&gt;287072K(5190464K),
-[CMS Perm : 65534K-&gt;58281K(65536K)], 0.5319635</li>
-<li><img src="https://secure.gravatar.com/avatar/1ddf3edd708b8f29b60ccfa68d855fd3?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> 震子
-<strong>Dec 13, 2011</strong> @ 16:23:48
-Case: 某应用压测时压力上不去的问题
-对于这个case，我也分享一下，呵呵，如果用的loadrunner的话，一定要注意loadrunner的内存使用，如果内存使用一直涨，那么肯定loadrunner的压力上不去，典型的是：我这边在使用loadrunner的Parameter List的时候就出现了这种情况，loadrunner使用的内存一直在涨。</li>
-<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
-<strong>Dec 16, 2011</strong> @ 20:43:52
-@震子
-还是jstat比较容易判断。<h3 id="leave-a-reply">Leave a Reply</h3>
-</li>
-</ol>
-<p><a href="">Cancel</a></p>
-<p>Name (required)</p>
-<p>Mail (required)</p>
-<p>Website</p>
-<p><img src="https://blog.bluedavy.com/wp-content/plugins/si-captcha-for-wordpress/captcha/securimage_show.php?si_form_id=com&amp;prefix=K89yTXStz1vAkC0u" alt="CAPTCHA Image" title="CAPTCHA Image"></p>
-<p><a href="&quot;Refresh Image&quot;"><img src="" alt="Refresh Image"></a></p>
-<p>CAPTCHA Code /*</p>
-<p><style type='text/css'>/#submit {display:none;}</style><br /> <input name="submit" type="submit" id="submit-alt" tabindex="6" value="Submit Comment" /></p>
-<p>July 2013 M T W T F S S <a href="https://blog.bluedavy.com/?m=201303" title="View posts for March 2013" target="_blank">« Mar</a>     1234567 891011121314 15161718192021 22232425262728 293031  </p>
-<h3 id="categories">Categories</h3>
-<ul>
-<li><a href="https://blog.bluedavy.com/?cat=63" title="View all posts filed under Java" target="_blank">Java</a> (10)</li>
-<li><a href="https://blog.bluedavy.com/?cat=13" title="View all posts filed under jvm" target="_blank">jvm</a> (19)</li>
-<li><a href="https://blog.bluedavy.com/?cat=56" title="View all posts filed under NoSQL" target="_blank">NoSQL</a> (7)</li>
-<li><a href="https://blog.bluedavy.com/?cat=4" title="View all posts filed under SOA" target="_blank">SOA</a> (1)</li>
-<li><a href="https://blog.bluedavy.com/?cat=11" title="关于《分布式Java应用：基础与实践》书部分章节的公开、书内容的纠错以及补充完善。" target="_blank">书:分布式Java应用</a> (5)</li>
-<li><a href="https://blog.bluedavy.com/?cat=6" title="View all posts filed under 互联网" target="_blank">互联网</a> (5)</li>
-<li><a href="https://blog.bluedavy.com/?cat=46" title="View all posts filed under 产品总结" target="_blank">产品总结</a> (1)</li>
-<li><a href="https://blog.bluedavy.com/?cat=18" title="View all posts filed under 优化案例" target="_blank">优化案例</a> (1)</li>
-<li><a href="https://blog.bluedavy.com/?cat=12" title="View all posts filed under 圆桌交流" target="_blank">圆桌交流</a> (2)</li>
-<li><a href="https://blog.bluedavy.com/?cat=8" title="View all posts filed under 容量规划" target="_blank">容量规划</a> (2)</li>
-<li><a href="https://blog.bluedavy.com/?cat=97" title="View all posts filed under 迁户口" target="_blank">迁户口</a> (1)</li>
-<li><a href="https://blog.bluedavy.com/?cat=52" title="View all posts filed under 高可用" target="_blank">高可用</a> (1)</li>
-<li><a href="https://blog.bluedavy.com/?cat=3" title="View all posts filed under 高并发" target="_blank">高并发</a> (3)</li>
-<li><p><a href="https://blog.bluedavy.com/?cat=1" title="关于性能优化方面的一些东西。" target="_blank">高性能</a> (2)</p>
-<h3 id="recent-comments">Recent Comments</h3>
-</li>
-<li><p><a href="http://code1.riaos.com/?p=5030138" target="_blank">JVM调优 | code1（code1.riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16520" target="_blank">说说MaxTenuringThreshold这个参数</a></p>
-</li>
-<li><a href="http://architecture1.riaos.com/?p=3063358" target="_blank">JVM调优 | architecture（riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16519" target="_blank">说说MaxTenuringThreshold这个参数</a></li>
-<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16462" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
-<li>xiaobo on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16460" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
-<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16459" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
-</ul>
-<h3 id="tags">Tags</h3>
-<p><a href="https://blog.bluedavy.com/?tag=btrace" title="2 topics" target="_blank">btrace</a> <a href="https://blog.bluedavy.com/?tag=c1" title="1 topic" target="_blank">c1</a> <a href="https://blog.bluedavy.com/?tag=c2" title="1 topic" target="_blank">c2</a> <a href="https://blog.bluedavy.com/?tag=deflater" title="1 topic" target="_blank">Deflater</a> <a href="https://blog.bluedavy.com/?tag=facebook" title="2 topics" target="_blank">facebook</a> <a href="https://blog.bluedavy.com/?tag=gc" title="4 topics" target="_blank">gc</a> <a href="https://blog.bluedavy.com/?tag=gc-tuning" title="2 topics" target="_blank">gc tuning</a> <a href="https://blog.bluedavy.com/?tag=grizzly" title="2 topics" target="_blank">Grizzly</a> <a href="https://blog.bluedavy.com/?tag=hbase" title="6 topics" target="_blank">HBase</a> <a href="https://blog.bluedavy.com/?tag=hotspot" title="1 topic" target="_blank">hotspot</a> <a href="https://blog.bluedavy.com/?tag=inflater" title="1 topic" target="_blank">Inflater</a> <a href="https://blog.bluedavy.com/?tag=interpreter" title="1 topic" target="_blank">interpreter</a> <a href="https://blog.bluedavy.com/?tag=javac" title="1 topic" target="_blank">javac</a> <a href="https://blog.bluedavy.com/?tag=java-code-generation" title="1 topic" target="_blank">java code generation</a> <a href="https://blog.bluedavy.com/?tag=javaone" title="4 topics" target="_blank">JavaOne</a> <a href="https://blog.bluedavy.com/?tag=javaone-general-technical-session" title="1 topic" target="_blank">javaone general technical session</a> <a href="https://blog.bluedavy.com/?tag=java%e4%bb%a3%e7%a0%81%e6%89%a7%e8%a1%8c" title="1 topic" target="_blank">java代码执行</a> <a href="https://blog.bluedavy.com/?tag=java-%e5%b9%b6%e5%8f%91" title="1 topic" target="_blank">Java 并发</a> <a href="https://blog.bluedavy.com/?tag=jit" title="1 topic" target="_blank">jit</a> <a href="https://blog.bluedavy.com/?tag=jvm" title="12 topics" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=memory-management" title="1 topic" target="_blank">memory management</a> <a href="https://blog.bluedavy.com/?tag=native-memory-leak" title="1 topic" target="_blank">Native Memory Leak</a> <a href="https://blog.bluedavy.com/?tag=nosql" title="2 topics" target="_blank">NoSQL</a> <a href="https://blog.bluedavy.com/?tag=oom" title="1 topic" target="_blank">oom</a> <a href="https://blog.bluedavy.com/?tag=oracle-keynote" title="1 topic" target="_blank">oracle keynote</a> <a href="https://blog.bluedavy.com/?tag=pessimism-policy" title="1 topic" target="_blank">pessimism policy</a> <a href="https://blog.bluedavy.com/?tag=references" title="1 topic" target="_blank">references</a> <a href="https://blog.bluedavy.com/?tag=rpc" title="2 topics" target="_blank">RPC</a> <a href="https://blog.bluedavy.com/?tag=serial-gc" title="1 topic" target="_blank">serial gc</a> <a href="https://blog.bluedavy.com/?tag=soa" title="2 topics" target="_blank">SOA</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk" title="1 topic" target="_blank">sun jdk</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk-oom" title="1 topic" target="_blank">sun jdk oom</a> <a href="https://blog.bluedavy.com/?tag=web%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92%e7%9a%84%e8%89%ba%e6%9c%af" title="1 topic" target="_blank">Web容量规划的艺术</a> <a href="https://blog.bluedavy.com/?tag=yuanzhuo" title="1 topic" target="_blank">yuanzhuo</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6" title="1 topic" target="_blank">书:分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6%e8%af%84" title="1 topic" target="_blank">书评</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%92%e8%81%94%e7%bd%91%e6%8a%80%e6%9c%af" title="1 topic" target="_blank">互联网技术</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86" title="1 topic" target="_blank">内存管理</a> <a href="https://blog.bluedavy.com/?tag=%e5%88%86%e5%b8%83%e5%bc%8fjava%e5%ba%94%e7%94%a8" title="2 topics" target="_blank">分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e5%9c%86%e6%a1%8c%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">圆桌交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92" title="2 topics" target="_blank">容量规划</a> <a href="https://blog.bluedavy.com/?tag=%e6%82%b2%e8%a7%82%e7%ad%96%e7%95%a5" title="3 topics" target="_blank">悲观策略</a> <a href="https://blog.bluedavy.com/?tag=%e6%9c%8d%e5%8a%a1%e6%a1%86%e6%9e%b6" title="1 topic" target="_blank">服务框架</a> <a href="https://blog.bluedavy.com/?tag=%e7%a1%85%e8%b0%b7%e5%85%ac%e5%8f%b8" title="1 topic" target="_blank">硅谷公司</a></p>
-<h3 id="-">订阅</h3>
-<h3 id="-">推荐书籍</h3>
-<h3 id="my-book">My Book</h3>
-<p><a href="http://book.douban.com/subject/4848587/" title="分布式Java应用：基础与实践" target="_blank"><img src="" alt=""></a> <a href="http://book.douban.com/subject/3843896/" title="OSGi原理与最佳实践" target="_blank"><img src="" alt=""></a>
-© <a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a> 2013</p>
-<p><a href="http://icondock.com/" target="_blank">Icons</a> &amp; <a href="http://www.ndesign-studio.com/wp-themes" target="_blank">Wordpress Theme</a> by <a href="http://www.ndesign-studio.com/" target="_blank">N.Design</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -1990,7 +1990,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:28:49</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:47:11</em></span></div>
 </div>
 <div class="clearfix"></div>
 

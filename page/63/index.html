@@ -110,290 +110,619 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency2-原子操作/">深入浅出 Java Concurrency (2)</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-proguard--开源混淆工具ProGuard配置详解及配置实例/">开源混淆工具ProGuard配置详解及配置实例</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency2-原子操作/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-proguard--开源混淆工具ProGuard配置详解及配置实例/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-java-concurrency-2-">深入浅出 Java Concurrency (2): 原子操作</h1>
-<p>从相对简单的Atomic入手（java.util.concurrent是基于Queue的并发包，而Queue，很多情况下使用到了Atomic操作，因此首先从这里开始）。很多情况下我们只是需要一个简单的、高效的、线程安全的递增递减方案。注意，这里有三个条件：简单，意味着程序员尽可能少的操作底层或者实现起来要比较容易；高效意味着耗用资源要少，程序处理速度要快；线程安全也非常重要，这个在多线程下能保证数据的正确性。这三个条件看起来比较简单，但是实现起来却难以令人满意。</p>
-<p>通常情况下，在Java里面，++i或者--i不是线程安全的，这里面有三个独立的操作：或者变量当前值，为该值+1/-1，然后写回新的值。在没有额外资源可以利用的情况下，只能使用加锁才能保证读-改-写这三个操作时“原子性”的。</p>
-<p>Doug Lea在未将<a href="http://backport-jsr166.sourceforge.net/" target="_blank">backport-util-concurrent</a>合并到<a href="http://jcp.org/en/jsr/detail?id=166" target="_blank">JSR 166</a>里面来之前，是采用纯Java实现的，于是不可避免的采用了synchronized关键字。</p>
-<p>public final synchronized void set(int newValue);</p>
-<p>public final synchronized int getAndSet(int newValue);</p>
-<p>public final synchronized int incrementAndGet();</p>
-<p>同时在变量上使用了volatile （后面会具体来讲volatile到底是个什么东东）来保证get()的时候不用加锁。尽管synchronized的代价还是很高的，但是在没有JNI的手段下纯Java语言还是不能实现此操作的。</p>
-<p>JSR 166提上日程后，backport-util-concurrent就合并到JDK 5.0里面了，在这里面重复使用了现代CPU的特性来降低锁的消耗。后本章的最后小结中会谈到这些原理和特性。在此之前先看看API的使用。</p>
-<p>一切从java.util.concurrent.atomic.AtomicInteger开始。</p>
-<p>int addAndGet(int delta)
-          以原子方式将给定值与当前值相加。 实际上就是等于线程安全版本的i =i+delta操作。</p>
-<p>boolean compareAndSet(int expect, int update)
-          如果当前值 == 预期值，则以原子方式将该值设置为给定的更新值。 如果成功就返回true，否则返回false，并且不修改原值。</p>
-<p>int decrementAndGet()
-          以原子方式将当前值减 1。 相当于线程安全版本的--i操作。</p>
-<p>int get()
-          获取当前值。</p>
-<p>int getAndAdd(int delta)
-          以原子方式将给定值与当前值相加。 相当于线程安全版本的t=i;i+=delta;return t;操作。</p>
-<p>int getAndDecrement()
-          以原子方式将当前值减 1。 相当于线程安全版本的i--操作。</p>
-<p>int getAndIncrement()
-          以原子方式将当前值加 1。 相当于线程安全版本的i++操作。</p>
-<p>int getAndSet(int newValue)
-          以原子方式设置为给定值，并返回旧值。 相当于线程安全版本的t=i;i=newValue;return t;操作。</p>
-<p>int incrementAndGet()
-          以原子方式将当前值加 1。 相当于线程安全版本的++i操作。 </p>
-<p>void lazySet(int newValue)
-          最后设置为给定值。 延时设置变量值，这个等价于set()方法，但是由于字段是volatile类型的，因此次字段的修改会比普通字段（非volatile字段）有稍微的性能延时（尽管可以忽略），所以如果不是想立即读取设置的新值，允许在“后台”修改值，那么此方法就很有用。如果还是难以理解，这里就类似于启动一个后台线程如执行修改新值的任务，原线程就不等待修改结果立即返回（这种解释其实是不正确的，但是可以这么理解）。</p>
-<p>void set(int newValue)
-          设置为给定值。 直接修改原始值，也就是i=newValue操作。</p>
-<p>boolean weakCompareAndSet(int expect, int update)
-          如果当前值 == 预期值，则以原子方式将该设置为给定的更新值。JSR规范中说：以原子方式读取和有条件地写入变量但<em>不</em> 创建任何 happen-before 排序，因此不提供与除 weakCompareAndSet 目标外任何变量以前或后续读取或写入操作有关的任何保证。大意就是说调用weakCompareAndSet时并不能保证不存在happen-before的发生（也就是可能存在指令重排序导致此操作失败）。但是从Java源码来看，其实此方法并没有实现JSR规范的要求，最后效果和compareAndSet是等效的，都调用了unsafe.compareAndSwapInt()完成操作。
-下面的代码是一个测试样例，为了省事就写在一个方法里面来了。
-<img src="" alt="">package xylz.study.concurrency.atomic;
-<img src="" alt="">
-<img src="" alt="">import java.util.concurrent.atomic.AtomicInteger;
-<img src="" alt="">
-<img src="" alt="">import org.junit.Test;
-<img src="" alt="">
-<img src="" alt="">import static org.junit.Assert./*;
-<img src="" alt="">
-<img src="" alt="">public class AtomicIntegerTest {
-<img src="" alt="">
-<img src="" alt="">    @Test
-<img src="" alt="">    public void testAll() throws InterruptedException{
-<img src="" alt="">        final AtomicInteger value = new AtomicInteger(10);
-<img src="" alt="">        assertEquals(value.compareAndSet(1, 2), false);
-<img src="" alt="">        assertEquals(value.get(), 10);
-<img src="" alt="">        assertTrue(value.compareAndSet(10, 3));
-<img src="" alt="">        assertEquals(value.get(), 3);
-<img src="" alt="">        value.set(0);
-<img src="" alt="">        //
-<img src="" alt="">        assertEquals(value.incrementAndGet(), 1);
-<img src="" alt="">        assertEquals(value.getAndAdd(2),1);
-<img src="" alt="">        assertEquals(value.getAndSet(5),3);
-<img src="" alt="">        assertEquals(value.get(),5);
-<img src="" alt="">        //
-<img src="" alt="">        final int threadSize = 10;
-<img src="" alt="">        Thread[] ts = new Thread[threadSize];
-<img src="" alt="">        for (int i = 0; i &lt; threadSize; i++) {
-<img src="" alt="">            ts[i] = new Thread() {
-<img src="" alt="">                public void run() {
-<img src="" alt="">                    value.incrementAndGet();
-<img src="" alt="">                }
-<img src="" alt="">            };
-<img src="" alt="">        }
-<img src="" alt="">        //
-<img src="" alt="">        for(Thread t:ts) {
-<img src="" alt="">            t.start();
-<img src="" alt="">        }
-<img src="" alt="">        for(Thread t:ts) {
-<img src="" alt="">            t.join();
-<img src="" alt="">        }
-<img src="" alt="">        //
-<img src="" alt="">        assertEquals(value.get(), 5+threadSize);
-<img src="" alt="">    }
-<img src="" alt="">
-<img src="" alt="">}
-<img src="" alt="">
- 由于这里例子比较简单，这里就不做过多介绍了。
-AtomicInteger和AtomicLong、AtomicBoolean、AtomicReference差不多，这里就不介绍了。在下一篇中就介绍下数组、字段等其他方面的原子操作。
- 参考资料：
-(1)<a href="http://stackoverflow.com/questions/2443239/java-atomicinteger-what-are-the-differences-between-compareandset-and-weakcompar" target="_blank"><a href="http://stackoverflow.com/questions/2443239/java-atomicinteger-what-are-the-differences-between-compareandset-and-weakcompar">http://stackoverflow.com/questions/2443239/java-atomicinteger-what-are-the-differences-between-compareandset-and-weakcompar</a></a>
-(2)<a href="http://stackoverflow.com/questions/1468007/atomicinteger-lazyset-and-set" target="_blank"><a href="http://stackoverflow.com/questions/1468007/atomicinteger-lazyset-and-set">http://stackoverflow.com/questions/1468007/atomicinteger-lazyset-and-set</a></a></p>
-<p>来源： <a href="[http://www.blogjava.net/xylz/archive/2010/07/01/324988.html](http://www.blogjava.net/xylz/archive/2010/07/01/324988.html)">[http://www.blogjava.net/xylz/archive/2010/07/01/324988.html](http://www.blogjava.net/xylz/archive/2010/07/01/324988.html)</a></p>
-<p>在这一部分开始讨论数组原子操作和一些其他的原子操作。</p>
-<p><strong>AtomicIntegerArray/AtomicLongArray/AtomicReferenceArray</strong>的API类似，选择有代表性的AtomicIntegerArray来描述这些问题。</p>
-<p><strong>int get(int i)</strong></p>
-<p>获取位置 </p>
-<p>i
- 的当前值。很显然，由于这个是数组操作，就有索引越界的问题（IndexOutOfBoundsException异常）。</p>
-<p>对于下面的API起始和AtomicInteger是类似的，这种通过方法、参数的名称就能够得到函数意义的写法是非常值得称赞的。在<a href="http://www.china-pub.com/12901" target="_blank">《重构：改善既有代码的设计》</a>和<a href="http://www.china-pub.com/196266" target="_blank">《代码整洁之道》</a>中都非常推崇这种做法。</p>
-<p><strong>void set(int i, int newValue)</strong>
-<strong>void lazySet(int i, int newValue)
-int getAndSet(int i, int newValue)
-boolean compareAndSet(int i, int expect, int update)
-boolean weakCompareAndSet(int i, int expect, int update)
-int getAndIncrement(int i)
-int getAndDecrement(int i)
-int getAndAdd(int i, int delta)
-int incrementAndGet(int i)
-int decrementAndGet(int i)
-int addAndGet(int i, int delta)</strong></p>
-<p>整体来说，数组的原子操作在理解上还是相对比较容易的，这些API就是有多使用才能体会到它们的好处，而不仅仅是停留在理论阶段。</p>
-<p>现在关注字段的原子更新。</p>
-<p><strong>AtomicIntegerFieldUpdater<T>/AtomicLongFieldUpdater<T>/AtomicReferenceFieldUpdater<T,V></strong>是基于反射的原子更新字段的值。</p>
-<p>相应的API也是非常简单的，但是也是有一些约束的。</p>
-<p>（1）字段必须是volatile类型的！在后面的章节中会详细说明为什么必须是volatile，volatile到底是个什么东西。</p>
-<p>（2）字段的描述类型（修饰符public/protected/default/private）是与调用者与操作对象字段的关系一致。也就是说调用者能够直接操作对象字段，那么就可以反射进行原子操作。但是对于父类的字段，子类是不能直接操作的，尽管子类可以访问父类的字段。</p>
-<p>（3）只能是实例变量，不能是类变量，也就是说不能加static关键字。</p>
-<p>（4）只能是可修改变量，不能使final变量，因为final的语义就是不可修改。实际上final的语义和volatile是有冲突的，这两个关键字不能同时存在。</p>
-<p>（5）对于<strong>AtomicIntegerFieldUpdater</strong>和<strong>AtomicLongFieldUpdater</strong>只能修改int/long类型的字段，不能修改其包装类型（Integer/Long）。如果要修改包装类型就需要使用<strong>AtomicReferenceFieldUpdater</strong>。</p>
-<p>在下面的例子中描述了操作的方法。</p>
-<p><img src="" alt="">package xylz.study.concurrency.atomic; 
-<img src="" alt="">
-<img src="" alt="">import java.util.concurrent.atomic.AtomicIntegerFieldUpdater; 
-<img src="" alt="">
-<img src="" alt="">public class AtomicIntegerFieldUpdaterDemo { 
-<img src="" alt="">
-<img src="" alt="">   class DemoData{
-<img src="" alt="">       public volatile int value1 = 1;
-<img src="" alt="">       volatile int value2 = 2;
-<img src="" alt="">       protected volatile int value3 = 3;
-<img src="" alt="">       private volatile int value4 = 4;
-<img src="" alt="">   }
-<img src="" alt="">    AtomicIntegerFieldUpdater<DemoData> getUpdater(String fieldName) {
-<img src="" alt="">        return AtomicIntegerFieldUpdater.newUpdater(DemoData.class, fieldName);
-<img src="" alt="">    }
-<img src="" alt="">    void doit() {
-<img src="" alt="">        DemoData data = new DemoData();
-<img src="" alt="">        System.out.println(&quot;1 ==&gt; &quot;+getUpdater(&quot;value1&quot;).getAndSet(data, 10));
-<img src="" alt="">        System.out.println(&quot;3 ==&gt; &quot;+getUpdater(&quot;value2&quot;).incrementAndGet(data));
-<img src="" alt="">        System.out.println(&quot;2 ==&gt; &quot;+getUpdater(&quot;value3&quot;).decrementAndGet(data));
-<img src="" alt="">        System.out.println(&quot;true ==&gt; &quot;+getUpdater(&quot;value4&quot;).compareAndSet(data, 4, 5));
-<img src="" alt="">    }
-<img src="" alt="">    public static void main(String[] args) {
-<img src="" alt="">        AtomicIntegerFieldUpdaterDemo demo = new AtomicIntegerFieldUpdaterDemo();
-<img src="" alt="">        demo.doit();
-<img src="" alt="">    }
-<img src="" alt="">} 
-<img src="" alt="">
-<img src="" alt=""></p>
-<p>在上面的例子中DemoData的字段value3/value4对于AtomicIntegerFieldUpdaterDemo类是不可见的，因此通过反射是不能直接修改其值的。</p>
-<p><strong>AtomicMarkableReference</strong>类描述的一个<Object,Boolean>的对，可以原子的修改Object或者Boolean的值，这种数据结构在一些缓存或者状态描述中比较有用。这种结构在单个或者同时修改Object/Boolean的时候能够有效的提高吞吐量。</p>
-<p><strong>AtomicStampedReference</strong>类维护带有整数“标志”的对象引用，可以用原子方式对其进行更新。对比<strong>AtomicMarkableReference</strong>类的<Object,Boolean>，<strong>AtomicStampedReference</strong>维护的是一种类似<Object,int>的数据结构，其实就是对对象（引用）的一个并发计数。但是与<strong>AtomicInteger</strong>不同的是，此数据结构可以携带一个对象引用（Object），并且能够对此对象和计数同时进行原子操作。</p>
-<p>在后面的章节中会提到“ABA问题”，而<strong>AtomicMarkableReference/**</strong>AtomicStampedReference<strong>在解决“ABA问题”上很有用</strong>。**</p>
-<hr>
-<p>原子操作的使用大概就是这么多，大体来说还算是比较清晰的，在下一个章节中，将对象原子操作进行总结，重点介绍下原子操作的原理和设计思想。
-来源： <a href="[http://www.blogjava.net/xylz/archive/2010/07/02/325079.html](http://www.blogjava.net/xylz/archive/2010/07/02/325079.html)">[http://www.blogjava.net/xylz/archive/2010/07/02/325079.html](http://www.blogjava.net/xylz/archive/2010/07/02/325079.html)</a> </p>
-<p>在这个小结里面重点讨论原子操作的原理和设计思想。</p>
-<p>由于在下一个章节中会谈到锁机制，因此此小节中会适当引入锁的概念。</p>
-<p>在<a href="http://www.amazon.com/exec/obidos/ASIN/0321349601/ref=nosim/none0b69" title="http://www.amazon.com/exec/obidos/ASIN/0321349601/ref=nosim/none0b69" target="_blank">Java Concurrency in Practice</a>中是这样定义线程安全的：
-<strong>当多个线程访问一个类时，如果不用考虑这些线程在运行时环境下的调度和交替运行，并且不需要额外的同步及在调用方代码不必做其他的协调，这个类的行为仍然是正确的，那么这个类就是线程安全的。</strong></p>
-<p>显然只有资源竞争时才会导致线程不安全，因此<strong><em>无状态对象永远是线程安全的</em></strong>。</p>
-<p>原子操作的描述是： 多个线程执行一个操作时，其中<strong><em>任何一个线程要么完全执行完此操作，要么没有执行此操作的任何步骤</em></strong>，那么这个操作就是原子的。</p>
-<p>枯燥的定义介绍完了，下面说更枯燥的理论知识。</p>
-<p><strong>指令重排序</strong></p>
-<p>Java语言规范规定了JVM线程内部维持顺序化语义，也就是说只要程序的最终结果等同于它在严格的顺序化环境下的结果，那么指令的执行顺序就可能与代码的顺序不一致。这个过程通过叫做指令的重排序。指令重排序存在的意义在于：JVM能够根据处理器的特性（CPU的多级缓存系统、多核处理器等）适当的重新排序机器指令，使机器指令更符合CPU的执行特点，最大限度的发挥机器的性能。</p>
-<p>程序执行最简单的模型是按照指令出现的顺序执行，这样就与执行指令的CPU无关，最大限度的保证了指令的可移植性。这个模型的专业术语叫做顺序化一致性模型。但是现代计算机体系和处理器架构都不保证这一点（因为人为的指定并不能总是保证符合CPU处理的特性）。</p>
-<p>我们来看最经典的一个案例。
-<img src="" alt="">package xylz.study.concurrency.atomic; 
-<img src="" alt="">
-<img src="" alt="">public class ReorderingDemo { 
-<img src="" alt="">
-<img src="" alt="">    static int x = 0, y = 0, a = 0, b = 0; 
-<img src="" alt="">
-<img src="" alt="">    public static void main(String[] args) throws Exception { 
-<img src="" alt="">
-<img src="" alt="">        for (int i = 0; i &lt; 100; i++) {
-<img src="" alt="">            x=y=a=b=0;
-<img src="" alt="">            Thread one = new Thread() {
-<img src="" alt="">                public void run() {
-<img src="" alt="">                    a = 1;
-<img src="" alt="">                    x = b;
-<img src="" alt="">                }
-<img src="" alt="">            };
-<img src="" alt="">            Thread two = new Thread() {
-<img src="" alt="">                public void run() {
-<img src="" alt="">                    b = 1;
-<img src="" alt="">                    y = a;
-<img src="" alt="">                }
-<img src="" alt="">            };
-<img src="" alt="">            one.start();
-<img src="" alt="">            two.start();
-<img src="" alt="">            one.join();
-<img src="" alt="">            two.join();
-<img src="" alt="">            System.out.println(x + &quot; &quot; + y);
-<img src="" alt="">        }
-<img src="" alt="">    } 
-<img src="" alt="">
-<img src="" alt="">}
-<img src="" alt="">
-<img src="" alt="">
-在这个例子中one/two两个线程修改区x,y,a,b四个变量，在执行100次的情况下，可能得到(0 1)或者（1 0）或者（1 1）。事实上按照JVM的规范以及CPU的特性有很可能得到（0 0）。当然上面的代码大家不一定能得到（0 0），因为run()里面的操作过于简单，可能比启动一个线程花费的时间还少，因此上面的例子难以出现（0,0）。但是在现代CPU和JVM上确实是存在的。由于run()里面的动作对于结果是无关的，因此里面的指令可能发生指令重排序，即使是按照程序的顺序执行，数据变化刷新到主存也是需要时间的。假定是按照a=1;x=b;b=1;y=a;执行的，x=0是比较正常的，虽然a=1在y=a之前执行的，但是由于线程one执行a=1完成后还没有来得及将数据1写回主存（这时候数据是在线程one的堆栈里面的），线程two从主存中拿到的数据a可能仍然是0（显然是一个过期数据，但是是有可能的），这样就发生了数据错误。</p>
-<p>在两个线程交替执行的情况下数据的结果就不确定了，在机器压力大，多核CPU并发执行的情况下，数据的结果就更加不确定了。</p>
-<p><strong>Happens-before法则</strong></p>
-<p>Java存储模型有一个happens-before原则，就是如果动作B要看到动作A的执行结果（无论A/B是否在同一个线程里面执行），那么A/B就需要满足happens-before关系。</p>
-<p>在介绍happens-before法则之前介绍一个概念：JMM动作（Java Memeory Model Action），Java存储模型动作。一个动作（Action）包括：变量的读写、监视器加锁和释放锁、线程的start()和join()。后面还会提到锁的的。</p>
-<p>happens-before完整规则：
-（1）同一个线程中的每个Action都happens-before于出现在其后的任何一个Action。</p>
-<p>（2）对一个监视器的解锁happens-before于每一个后续对同一个监视器的加锁。</p>
-<p>（3）对volatile字段的写入操作happens-before于每一个后续的同一个字段的读操作。</p>
-<p>（4）Thread.start()的调用会happens-before于启动线程里面的动作。</p>
-<p>（5）Thread中的所有动作都happens-before于其他线程检查到此线程结束或者Thread.join（）中返回或者Thread.isAlive()==false。</p>
-<p>（6）一个线程A调用另一个另一个线程B的interrupt（）都happens-before于线程A发现B被A中断（B抛出异常或者A检测到B的isInterrupted（）或者interrupted()）。</p>
-<p>（7）一个对象构造函数的结束happens-before与该对象的finalizer的开始</p>
-<p>（8）如果A动作happens-before于B动作，而B动作happens-before与C动作，那么A动作happens-before于C动作。</p>
-<p><strong>volatile语义</strong></p>
-<p>到目前为止，我们多次提到volatile，但是却仍然没有理解volatile的语义。</p>
-<p>volatile相当于synchronized的弱实现，也就是说volatile实现了类似synchronized的语义，却又没有锁机制。它确保对volatile字段的更新以可预见的方式告知其他的线程。</p>
-<p>volatile包含以下语义：</p>
-<p>（1）Java 存储模型不会对valatile指令的操作进行重排序：这个保证对volatile变量的操作时按照指令的出现顺序执行的。</p>
-<p>（2）volatile变量不会被缓存在寄存器中（只有拥有线程可见）或者其他对CPU不可见的地方，每次总是从主存中读取volatile变量的结果。也就是说对于volatile变量的修改，其它线程总是可见的，并且不是使用自己线程栈内部的变量。也就是在happens-before法则中，对一个valatile变量的写操作后，其后的任何读操作理解可见此写操作的结果。</p>
-<p>尽管volatile变量的特性不错，但是volatile并不能保证线程安全的，也就是说volatile字段的操作不是原子性的，volatile变量只能保证可见性（一个线程修改后其它线程能够理解看到此变化后的结果），要想保证原子性，目前为止只能加锁！</p>
-<p>volatile通常在下面的场景：</p>
-<p><img src="" alt="">volatile boolean done = false;
-<img src="" alt="">
-<img src="" alt="">…
-<img src="" alt="">
-<img src="" alt="">    while( ! done ){
-<img src="" alt="">        dosomething();
-<img src="" alt="">    }</p>
-<p>应用volatile变量的三个原则：
-（1）写入变量不依赖此变量的值，或者只有一个线程修改此变量</p>
-<p>（2）变量的状态不需要与其它变量共同参与不变约束</p>
-<p>（3）访问变量不需要加锁</p>
-<p><strong>这一节理论知识比较多，但是这是很面很多章节的基础，在后面的章节中会多次提到这些特性。</strong></p>
-<p>本小节中还是没有谈到原子操作的原理和思想，在下一节中将根据上面的一些知识来介绍原子操作。</p>
-<p>参考资料：</p>
-<p>（1）<a href="http://www.amazon.com/exec/obidos/ASIN/0321349601/ref=nosim/none0b69" title="http://www.amazon.com/exec/obidos/ASIN/0321349601/ref=nosim/none0b69" target="_blank">Java Concurrency in Practice</a></p>
-<p>（2）<a href="http://www.ibm.com/developerworks/cn/java/j-jtp06197.html" target="_blank">正确使用 Volatile 变量</a>
-来源： <a href="[http://www.blogjava.net/xylz/archive/2010/07/03/325168.html](http://www.blogjava.net/xylz/archive/2010/07/03/325168.html)">[http://www.blogjava.net/xylz/archive/2010/07/03/325168.html](http://www.blogjava.net/xylz/archive/2010/07/03/325168.html)</a> </p>
-<p>在JDK 5之前Java语言是靠synchronized关键字保证同步的，这会导致有锁（后面的章节还会谈到锁）。</p>
-<p>锁机制存在以下问题：</p>
-<p>（1）在多线程竞争下，加锁、释放锁会导致比较多的上下文切换和调度延时，引起性能问题。</p>
-<p>（2）一个线程持有锁会导致其它所有需要此锁的线程挂起。</p>
-<p>（3）如果一个优先级高的线程等待一个优先级低的线程释放锁会导致优先级倒置，引起性能风险。</p>
-<p>volatile是不错的机制，但是volatile不能保证原子性。因此对于同步最终还是要回到锁机制上来。</p>
-<p>独占锁是一种悲观锁，synchronized就是一种独占锁，会导致其它所有需要锁的线程挂起，等待持有锁的线程释放锁。而另一个更加有效的锁就是乐观锁。所谓乐观锁就是，每次不加锁而是假设没有冲突而去完成某项操作，如果因为冲突失败就重试，直到成功为止。</p>
-<p><strong>CAS 操作</strong></p>
-<p>上面的乐观锁用到的机制就是CAS，Compare and Swap。</p>
-<p>CAS有3个操作数，内存值V，旧的预期值A，要修改的新值B。当且仅当预期值A和内存值V相同时，将内存值V修改为B，否则什么都不做。</p>
-<p><strong>非阻塞算法 （nonblocking algorithms）</strong>
-一个线程的失败或者挂起不应该影响其他线程的失败或挂起的算法。</p>
-<p>现代的CPU提供了特殊的指令，可以自动更新共享数据，而且能够检测到其他线程的干扰，而 compareAndSet() 就用这些代替了锁定。</p>
-<p>拿出AtomicInteger来研究在没有锁的情况下是如何做到数据正确性的。
-private volatile int value;</p>
-<p>首先毫无以为，在没有锁的机制下可能需要借助volatile原语，保证线程间的数据是可见的（共享的）。</p>
-<p>这样才获取变量的值的时候才能直接读取。
-public final int get() {
-        return value;
-    }</p>
-<p>然后来看看++i是怎么做到的。</p>
-<p>public final int incrementAndGet() {
-    for (;;) {
-        int current = get();
-        int next = current + 1;
-        if (compareAndSet(current, next))
-            return next;
+        <h1 id="-proguard-">开源混淆工具ProGuard配置详解及配置实例</h1>
+<p>开源混淆工具ProGuard配置详解及配置实例</p>
+<p>ProGuard是一个免费的java类文件压缩,优化,混淆器.它探测并删除没有使用的类,字段,方法和属性.它删除没有用的说明并使用字节码得到最大优化.它使用无意义的名字来重命名类,字段和方法.</p>
+<p>ProGuard的作用: </p>
+<p>1.创建紧凑的代码文档是为了更快的网络传输,快速装载和更小的内存占用. 
+2.创建的程序和程序库很难使用反向工程. 
+3.所以它能删除来自源文件中的没有调用的代码 
+4.充分利用java6的快速加载的优点来提前检测和返回java6中存在的类文件. </p>
+<p><strong>参数： </strong></p>
+<p>-include {filename}    从给定的文件中读取配置参数 
+-basedirectory {directoryname}    指定基础目录为以后相对的档案名称 
+-injars {class_path}    指定要处理的应用程序jar,war,ear和目录 
+-outjars {class_path}    指定处理完后要输出的jar,war,ear和目录的名称 
+-libraryjars {classpath}    指定要处理的应用程序jar,war,ear和目录所需要的程序库文件 
+-dontskipnonpubliclibraryclasses    指定不去忽略非公共的库类。 
+-dontskipnonpubliclibraryclassmembers    指定不去忽略包可见的库类的成员。 
+<strong>保留选项 </strong>
+-keep {Modifier} {class_specification}    保护指定的类文件和类的成员 
+-keepclassmembers {modifier} {class_specification}    保护指定类的成员，如果此类受到保护他们会保护的更好 
+-keepclasseswithmembers {class_specification}    保护指定的类和类的成员，但条件是所有指定的类和类成员是要存在。 
+-keepnames {class_specification}    保护指定的类和类的成员的名称（如果他们不会压缩步骤中删除） 
+-keepclassmembernames {class_specification}    保护指定的类的成员的名称（如果他们不会压缩步骤中删除） 
+-keepclasseswithmembernames {class_specification}    保护指定的类和类的成员的名称，如果所有指定的类成员出席（在压缩步骤之后） 
+-printseeds {filename}    列出类和类的成员-keep选项的清单，标准输出到给定的文件 </p>
+<p><strong>压缩 </strong>
+-dontshrink    不压缩输入的类文件 
+-printusage {filename} 
+-whyareyoukeeping {class_specification}     </p>
+<p><strong>优化 </strong>
+-dontoptimize    不优化输入的类文件 
+-assumenosideeffects {class_specification}    优化时假设指定的方法，没有任何副作用 
+-allowaccessmodification    优化时允许访问并修改有修饰符的类和类的成员 </p>
+<p><strong>混淆 </strong>
+-dontobfuscate    不混淆输入的类文件 
+-printmapping {filename} 
+-applymapping {filename}    重用映射增加混淆 
+-obfuscationdictionary {filename}    使用给定文件中的关键字作为要混淆方法的名称 
+-overloadaggressively    混淆时应用侵入式重载 
+-useuniqueclassmembernames    确定统一的混淆类的成员名称来增加混淆 
+-flattenpackagehierarchy {package_name}    重新包装所有重命名的包并放在给定的单一包中 
+-repackageclass {package_name}    重新包装所有重命名的类文件中放在给定的单一包中 
+-dontusemixedcaseclassnames    混淆时不会产生形形色色的类名 
+-keepattributes {attribute_name,...}    保护给定的可选属性，例如LineNumberTable, LocalVariableTable, SourceFile, Deprecated, Synthetic, Signature, and InnerClasses. 
+-renamesourcefileattribute {string}    设置源文件中给定的字符串常量
+<strong>Ant Example:</strong>
+<!-- This Ant build file illustrates how to process applications,
+     by including ProGuard-style configuration options.
+     Usage: ant -f applications2.xml --></p>
+<p><project name="Applications" default="obfuscate" basedir="../.."></p>
+<p><target name="obfuscate">
+  <taskdef resource="proguard/ant/task.properties"
+           classpath="lib/proguard.jar" />
+  <proguard>
+    <!-- Specify the input jars, output jars, and library jars. -->
+    -injars  in.jar
+    -outjars out.jar
+    -libraryjars ${java.home}/lib/rt.jar
+    <!-- -libraryjars junit.jar    -->
+    <!-- -libraryjars servlet.jar  -->
+    <!-- -libraryjars jai_core.jar -->
+    <!-- ...                       -->
+    <!-- Save the obfuscation mapping to a file, and preserve line numbers. -->
+    -printmapping out.map
+    -renamesourcefileattribute SourceFile
+    -keepattributes SourceFile,LineNumberTable
+    <!-- Preserve all annotations. -->
+    -keepattributes /<em>Annotation/</em>
+    <!-- Preserve all public applications. -->
+    -keepclasseswithmembers public class /<em> {
+        public static void main(java.lang.String[]);
     }
-}</p>
-<p>在这里采用了CAS操作，每次从内存中读取数据然后将此数据和+1后的结果进行CAS操作，如果成功就返回结果，否则重试直到成功为止。</p>
-<p>而compareAndSet利用JNI来完成CPU指令的操作。
-public final boolean compareAndSet(int expect, int update) {<br>    return unsafe.compareAndSwapInt(this, valueOffset, expect, update);
-    }</p>
-<p>整体的过程就是这样子的，利用CPU的CAS指令，同时借助JNI来完成Java的非阻塞算法。其它原子操作都是利用类似的特性完成的。</p>
-<p>而整个J.U.C都是建立在CAS之上的，因此对于synchronized阻塞算法，J.U.C在性能上有了很大的提升。参考资料的文章中介绍了如果利用CAS构建非阻塞计数器、队列等数据结构。</p>
-<p>CAS看起来很爽，但是会导致“ABA问题”。</p>
-<p>CAS算法实现一个重要前提需要取出内存中某时刻的数据，而在下时刻比较并替换，那么在这个时间差类会导致数据的变化。</p>
-<p>比如说一个线程one从内存位置V中取出A，这时候另一个线程two也从内存中取出A，并且two进行了一些操作变成了B，然后two又将V位置的数据变成A，这时候线程one进行CAS操作发现内存中仍然是A，然后one操作成功。尽管线程one的CAS操作成功，但是不代表这个过程就是没有问题的。如果链表的头在变化了两次后恢复了原值，但是不代表链表就没有变化。因此前面提到的原子操作AtomicStampedReference/AtomicMarkableReference就很有用了。这允许一对变化的元素进行原子操作。</p>
-<p>参考资料：</p>
-<p>（1）<a href="http://www.ibm.com/developerworks/cn/java/j-jtp04186/" target="_blank">非阻塞算法简介</a></p>
-<p>（2）<a href="https://www.ibm.com/developerworks/cn/java/j-jtp11234/" target="_blank">流行的原子</a>
-来源： <a href="[http://www.blogjava.net/xylz/archive/2010/07/04/325206.html](http://www.blogjava.net/xylz/archive/2010/07/04/325206.html)">[http://www.blogjava.net/xylz/archive/2010/07/04/325206.html](http://www.blogjava.net/xylz/archive/2010/07/04/325206.html)</a> </p>
+    <!-- Preserve all native method names and the names of their classes. -->
+    -keepclasseswithmembernames class /</em> {
+        native &lt;methods&gt;;
+    }
+    <!-- Preserve the methods that are required in all enumeration classes. -->
+    -keepclassmembers class /<em> extends java.lang.Enum {
+        public static /</em>/<em>[] values();
+        public static /</em>/<em> valueOf(java.lang.String);
+    }
+    <!-- Explicitly preserve all serialization members. The Serializable
+         interface is only a marker interface, so it wouldn't save them.
+         You can comment this out if your library doesn't use serialization.
+         If your code contains serializable classes that have to be backward
+         compatible, please refer to the manual. -->
+    -keepclassmembers class /</em> implements java.io.Serializable {
+        static final long serialVersionUID;
+        static final java.io.ObjectStreamField[] serialPersistentFields;
+        private void writeObject(java.io.ObjectOutputStream);
+        private void readObject(java.io.ObjectInputStream);
+        java.lang.Object writeReplace();
+        java.lang.Object readResolve();
+    }
+    <!-- Your application may contain more items that need to be preserved;
+         typically classes that are dynamically created using Class.forName -->
+  </proguard>
+</target>
+</project>
+来源： <a href="[http://www.kaiyuanba.cn/html/1/131/138/7820.htm](http://www.kaiyuanba.cn/html/1/131/138/7820.htm)">[http://www.kaiyuanba.cn/html/1/131/138/7820.htm](http://www.kaiyuanba.cn/html/1/131/138/7820.htm)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/proguard/">proguard</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/proguard/" class="label label-success">proguard</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-proguard--开源混淆工具ProGuard配置详解及配置实例/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-proguard--开源混淆工具ProGuard配置详解及配置实例" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--Java内存泄露监控工具-JVM监控工具介绍jstack-jconsole-jinfo-/">Java 内存泄露监控工具</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--Java内存泄露监控工具-JVM监控工具介绍jstack-jconsole-jinfo-/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-jvm-jstack-jconsole-jinfo-jmap-jdb-jstat">Java 内存泄露监控工具-- JVM监控工具介绍jstack, jconsole, jinfo, jmap, jdb, jstat</h1>
+<hr>
+<p><strong>jstack </strong>-- 如果java程序崩溃生成core文件，jstack工具可以用来获得core文件的java stack和native stack的信息，从而可以轻松地知道java程序是如何崩溃和在程序何处发生问题。另外，jstack工具还可以附属到正在运行的java程序中，看到 当时运行的java程序的java stack和native stack的信息, 如果现在运行的java程序呈现hung的状态，jstack是非常有用的。目前只有在Solaris和Linux的JDK版本里面才有。</p>
+<p><strong>jconsole </strong>– jconsole是基于<a href="http://java.chinaitlab.com/" target="_blank">Java </a>Management Extensions (JMX)的实时图形化监测工具，这个工具利用了内建到JVM里面的JMX指令来提供实时的性能和资源的监控，包括了<a href="http://java.chinaitlab.com/" target="_blank">Java </a>程序的内存使用，Heap size, 线程的状态，类的分配状态和空间使用等等。</p>
+<p><strong>jinfo </strong>– jinfo可以从core文件里面知道崩溃的Java应用程序的配置信息，目前只有在Solaris和Linux的JDK版本里面才有。</p>
+<p><strong>jmap </strong>– jmap 可以从core文件或进程中获得内存的具体匹配情况，包括Heap size, Perm size等等，目前只有在Solaris和Linux的JDK版本里面才有。</p>
+<p><strong>jdb </strong>– jdb 用来对core文件和正在运行的Java进程进行实时地调试，里面包含了丰富的命令帮助您进行调试，它的功能和Sun studio里面所带的dbx非常相似，但 jdb是专门用来针对Java应用程序的。</p>
+<p><strong>jstat </strong>– jstat利用了JVM内建的指令对Java应用程序的资源和性能进行实时的命令行的监控，包括了对Heap size和垃圾回收状况的监控等等。</p>
+<p><strong>jps </strong>– jps是用来查看JVM里面所有进程的具体状态, 包括进程ID，进程启动的路径等等。 </p>
+<p><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jstatd.html" target="_blank"><strong>jstatd</strong> </a>
+启动jvm监控服务。它是一个基于rmi的应用，向远程机器提供本机jvm应用程序的信息。默认端口1099。
+实例：jstatd -J-Djava.security.policy=my.policy
+my.policy文件需要自己建立，内如如下：
+grant codebase &quot;file:$JAVA_HOME/lib/tools.jar&quot; {
+permission java.security.AllPermission;
+};
+这是安全策略文件，因为jdk对jvm做了jaas的安全检测，所以我们必须设置一些策略，使得jstatd被允许作网络操作</p>
+<p>上面的操作没有通过，出现：</p>
+<p>Could not create remote object
+access denied (java.util.PropertyPermission java.rmi.server.ignoreSubClasses write)
+java.security.AccessControlException: access denied (java.util.PropertyPermission java.rmi.server.ignoreSubClasses write)
+at java.security.AccessControlContext.checkPermission(AccessControlContext.java:323)
+at java.security.AccessController.checkPermission(AccessController.java:546)
+at java.lang.SecurityManager.checkPermission(SecurityManager.java:532)
+at java.lang.System.setProperty(System.java:727)
+at sun.tools.jstatd.Jstatd.main(Jstatd.java:122)</p>
+<p>create in your usr/java/bin the jstatd.all.policy file, with the content must be</p>
+<ol>
+<li>grant codebase &quot;file:${java.home}/../lib/tools.jar&quot; {  </li>
+<li>permission java.security.AllPermission;  </li>
+<li>}; </li>
+</ol>
+<p><strong><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jps.html" target="_blank">jps </a></strong>
+列出所有的jvm实例
+实例：
+jps
+列出本机所有的jvm实例
+jps 192.168.0.77
+列出远程服务器192.168.0.77机器所有的jvm实例，采用rmi协议，默认连接端口为1099
+（前提是远程服务器提供jstatd服务）
+输出内容如下：
+jones@jones:~/data/ebook/java/j2se/jdk_gc$ jps
+6286 Jps
+6174  Jstat
+<strong>jconsole </strong>
+一个图形化界面，可以观察到java进程的gc，class，内存等信息。虽然比较直观，但是个人还是比较倾向于使用jstat命令（在最后一部分会对jstat作详细的介绍）。
+<strong><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jinfo.html" target="_blank">jinfo </a></strong>（linux下特有）
+观察运行中的java程序的运行环境参数：参数包括Java System属性和JVM命令行参数
+实例：jinfo 2083
+其中2083就是java进程id号，可以用jps得到这个id号。
+输出内容太多了，不在这里一一列举，大家可以自己尝试这个命令。
+<strong><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jstack.html" target="_blank">jstack </a></strong>（linux下特有）
+可以观察到jvm中当前所有线程的运行情况和线程当前状态
+jstack 2083
+输出内容如下：
+<img src="" alt=""> 
+<strong><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jmap.html" target="_blank">jmap </a></strong>（linux下特有，也是很常用的一个命令）
+观察运行中的jvm物理内存的占用情况。
+参数如下：<strong>-heap</strong> ：打印jvm heap的情况
+<strong>-histo：</strong> 打印jvm heap的直方图。其输出信息包括类名，对象数量，对象占用大小。
+<strong>-histo：live ：</strong> 同上，但是只答应存活对象的情况
+<strong>-permstat：</strong> 打印permanent generation heap情况
+命令使用：
+jmap -heap 2083
+可以观察到New Generation（Eden Space，From Space，To Space）,tenured generation,Perm Generation的内存使用情况
+输出内容：
+<img src="" alt=""> 
+jmap -histo 2083 ｜ jmap -histo:live 2083
+可以观察heap中所有对象的情况（heap中所有生存的对象的情况）。包括对象数量和所占空间大小。
+输出内容：
+<img src="" alt=""> 
+写个脚本，可以很快把占用heap最大的对象找出来，对付内存泄漏特别有效。
+<strong><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jstat.html" target="_blank">jstat </a>
+</strong>最后要重点介绍下这个命令。
+这是jdk命令中比较重要，也是相当实用的一个命令，可以观察到classloader，compiler，gc相关信息
+具体参数如下：
+-class：统计class loader行为信息
+-compile：统计编译行为信息
+-gc：统计jdk gc时heap信息
+-gccapacity：统计不同的generations（不知道怎么翻译好，包括新生区，老年区，permanent区）相应的heap容量情况
+-gccause：统计gc的情况，（同-gcutil）和引起gc的事件
+-gcnew：统计gc时，新生代的情况
+-gcnewcapacity：统计gc时，新生代heap容量
+-gcold：统计gc时，老年区的情况
+-gcoldcapacity：统计gc时，老年区heap容量
+-gcpermcapacity：统计gc时，permanent区heap容量
+-gcutil：统计gc时，heap情况
+-printcompilation：不知道干什么的，一直没用过。
+一般比较常用的几个参数是：
+jstat -class 2083 1000 10 （每隔1秒监控一次，一共做10次）
+输出内容含义如下：</p>
+<p>Loaded Number of classes loaded. Bytes Number of Kbytes loaded. Unloaded Number of classes unloaded. Bytes Number of Kbytes unloaded. Time Time spent performing class load and unload operations.
+jstat -gc 2083 2000 20（每隔2秒监控一次，共做10）
+输出内容含义如下：
+S0C Current survivor space 0 capacity (KB). EC Current eden space capacity (KB). EU Eden space utilization (KB). OC Current old space capacity (KB). OU Old space utilization (KB). PC Current permanent space capacity (KB). PU Permanent space utilization (KB). YGC Number of young generation GC Events. YGCT Young generation garbage collection time. FGC Number of full GC events. FGCT Full garbage collection time. GCT Total garbage collection time.
+输出内容：
+<img src="" alt="">
+如果能熟练运用这些命令，尤其是在linux下，那么完全可以代替jprofile等监控工具了，谁让它收费呢。呵呵。
+用命令的好处就是速度快，并且辅助于其他命令，比如grep gawk sed等，可以组装多种符合自己需求的工具。</p>
+<h1 id="-u-jps-"><a href=""></a>u               jps 的用法</h1>
+<p>用来查看 JVM 里面所有进程的具体状态 , 包括进程 ID ，进程启动的路径等等。 与 unix 上的 ps 类似，用来显示本地的java 进程，可以查看本地运行着几个 java 程序，并显示他们的进程号。</p>
+<p><strong>[root@localhost ~]/# jps</strong></p>
+<p>25517 Jps</p>
+<p>25444 Bootstrap</p>
+<h1 id="-u-jstack-"><a href=""></a>u               jstack 的用法</h1>
+<p>如果 java 程序崩溃生成 core 文件， jstack 工具可以用来获得 core 文件的 java stack 和 native stack 的信息，从而可以轻松地知道 java 程序是如何崩溃和在程序何处发生问题。另外， jstack 工具还可以附属到正在运行的 java 程序中，看到当时运行的 java 程序的 java stack 和 native stack 的信息 , 如果现在运行的 java 程序呈现 hung 的状态， jstack 是非常有用的。目前只有在 Solaris 和 Linux 的 JDK 版本里面才有。</p>
+<p><strong>[root@localhost bin]/# jstack **</strong>25444**</p>
+<p>Attaching to process ID 25917, please wait...</p>
+<p>Debugger attached successfully.</p>
+<p>Client compiler detected.</p>
+<p>JVM version is 1.5.0_08-b03</p>
+<p>Thread 25964: (state = BLOCKED)</p>
+<p>Error occurred during stack walking:</p>
+<p>sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerException: get_thread_regs failed for a lwp</p>
+<pre><code>    at sun.jvm.hotspot.debugger.linux.LinuxDebuggerLocal$LinuxDebuggerLocalWorkerThread.execute(LinuxDebuggerLocal.java:134)
+
+    at sun.jvm.hotspot.debugger.linux.LinuxDebuggerLocal.getThreadIntegerRegisterSet(LinuxDebuggerLocal.java:437)
+
+    at sun.jvm.hotspot.debugger.linux.LinuxThread.getContext(LinuxThread.java:48)
+
+    at
+</code></pre><h1 id="-u-jstat-"><a href=""></a>u               jstat 的用法</h1>
+<p>用以判断JVM 是否存在内存问题呢？如何判断JVM 垃圾回收是否正常？一般的top 指令基本上满足不了这样的需求，因为它主要监控的是总体的系统资源，很难定位到java 应用程序。</p>
+<p>Jstat 是JDK 自带的一个轻量级小工具。全称“Java Virtual Machine statistics monitoring tool” ，它位于java 的bin 目录下，主要利用JVM 内建的指令对Java 应用程序的资源和性能进行实时的命令行的监控，包括了对Heap size 和垃圾回收状况的监控。可见，Jstat 是轻量级的、专门针对JVM 的工具，非常适用。由于JVM 内存设置较大，图中百分比变化不太明显</p>
+<p>一个极强的监视 VM 内存工具。可以用来监视 VM 内存内的各种堆和非堆的大小及其内存使用量。</p>
+<p>jstat 工具特别强大，有众多的可选项，详细查看堆内各个部分的使用量，以及加载类的数量。使用时，需加上查看进程的进程 id ，和所选参数。</p>
+<p>语法结构：</p>
+<p>Usage: jstat -help|-options</p>
+<pre><code>   jstat -&lt;option&gt; [-t] [-h&lt;lines&gt;] &lt;vmid&gt; [&lt;interval&gt; [&lt;count&gt;]]
+</code></pre><p>参数解释：</p>
+<p>Options — 选项，我们一般使用 -gcutil 查看gc 情况</p>
+<p>vmid    — VM 的进程号，即当前运行的java 进程号</p>
+<p>interval– 间隔时间，单位为秒或者毫秒</p>
+<p>count   — 打印次数，如果缺省则打印无数次</p>
+<p>S0  — Heap 上的 Survivor space 0 区已使用空间的百分比 
+S1  — Heap 上的 Survivor space 1 区已使用空间的百分比 
+E   — Heap 上的 Eden space 区已使用空间的百分比 
+O   — Heap 上的 Old space 区已使用空间的百分比 
+P   — Perm space 区已使用空间的百分比 
+YGC — 从应用程序启动到采样时发生 Young GC 的次数 
+YGCT– 从应用程序启动到采样时 Young GC 所用的时间( 单位秒 )
+FGC — 从应用程序启动到采样时发生 Full GC 的次数 
+FGCT– 从应用程序启动到采样时 Full GC 所用的时间( 单位秒 )
+GCT — 从应用程序启动到采样时用于垃圾回收的总时间( 单位秒)</p>
+<p>实例使用1 ：</p>
+<p><strong>[root@localhost bin]/# jstat -gcutil 25444</strong></p>
+<p>  S0      S1     E      O      P     YGC     YGCT    FGC    FGCT     GCT</p>
+<p>  11.63   0.00    56.46  66.92  98.49 162    0.248    6       0.331    0.579</p>
+<p>实例使用 2 ：</p>
+<p><strong>[root@localhost bin]/# jstat -gcutil 25444 1000 5</strong></p>
+<p>  S0     S1     E      O      P     YGC     YGCT    FGC    FGCT     GCT</p>
+<p>  73.54   0.00  99.04  67.52  98.49    166    0.252     6    0.331    0.583</p>
+<p>  73.54   0.00  99.04  67.52  98.49    166    0.252     6    0.331    0.583</p>
+<p>  73.54   0.00  99.04  67.52  98.49    166    0.252     6    0.331    0.583</p>
+<p>  73.54   0.00  99.04  67.52  98.49    166    0.252     6    0.331    0.583</p>
+<p>  73.54   0.00  99.04  67.52  98.49    166    0.252     6    0.331    0.583</p>
+<p>我们可以看到，5 次young gc 之后，垃圾内存被从Eden space 区(E) 放入了Old space 区(O) ，并引起了百分比的变化，导致Survivor space 使用的百分比从73.54%(S0) 降到0%(S1) 。有效释放了内存空间。绿框中，我们可以看到，一次full gc 之后，Old space 区(O) 的内存被回收，从99.05% 降到67.52% 。</p>
+<p>图中同时打印了young gc 和full gc 的总次数、总耗时。而，每次young gc 消耗的时间，可以用相间隔的两行YGCT 相减得到。每次full gc 消耗的时间，可以用相隔的两行FGCT 相减得到。例如红框中表示的第一行、第二行之间发生了1次young gc ，消耗的时间为0.252-0.252 ＝0.0 秒。</p>
+<p>常驻内存区(P) 的使用率，始终停留在98.49% 左右，说明常驻内存没有突变，比较正常。</p>
+<p>如果young gc 和full gc 能够正常发生，而且都能有效回收内存，常驻内存区变化不明显，则说明java 内存释放情况正常，垃圾回收及时，java 内存泄露的几率就会大大降低。但也不能说明一定没有内存泄露。</p>
+<p>GCT 是YGCT 和FGCT 的时间总和。</p>
+<p>以上，介绍了Jstat 按百分比查看gc 情况的功能。其实，它还有功能，例如加载类信息统计功能、内存池信息统计功能等，那些是以绝对值的形式打印出来的，比较少用，在此就不做介绍。</p>
+<p><strong>[root@localhost bin]/# ps -ef | grep java</strong></p>
+<p>root     25917     1  2 23:23 pts /2    00:00:05 /usr/local/jdk1.5/bin/java -Djava.endorsed.dirs=/usr/local/jakarta-tomcat-5.0.30/common/endorsed -classpath /usr/local/jdk1.5/lib/tools.jar:/usr/local/jakarta-tomcat-5.0.30/bin/bootstrap.jar:/usr/local/jakarta-tomcat-5.0.30/bin/commons-logging-api.jar -Dcatalina.base=/usr/local/jakarta-tomcat-5.0.30 -Dcatalina.home=/usr/local/jakarta-tomcat-5.0.30 -Djava.io.tmpdir=/usr/local/jakarta-tomcat-5.0.30/temp org.apache.catalina.startup.Bootstrap start</p>
+<p>jstat -class pid: 显示加载 class 的数量，及所占空间等信息。</p>
+<p>实例使用3 ：</p>
+<p><strong>[root@localhost bin]/# jstat -class 25917</strong></p>
+<p>Loaded  Bytes  Unloaded  Bytes     Time</p>
+<p>2629     2916.8       29   24.6     0.90</p>
+<p>jstat -compiler pid: 显示 VM 实时编译的数量等信息。</p>
+<p>实例使用 4 ：</p>
+<p><strong>[root@localhost bin]/# jstat -compiler 25917</strong></p>
+<p>Compiled Failed Invalid   Time   FailedType FailedMethod</p>
+<pre><code> 768      0       0   0.70             0
+</code></pre><p>jstat –gccapacity : 可以显示， VM 内存中三代（ young,old,perm ）对象的使用和占用大小，如： PGCMN 显示的是最小 perm 的内存使用量， PGCMX 显示的是 perm 的内存最大使用量， PGC 是当前新生成的 perm 内存占用量， PC 是但前 perm 内存占用量。其他的可以根据这个类推， OC 是 old 内纯的占用量。</p>
+<p><strong>[root@localhost bin]/# jstat -gccapacity 25917</strong></p>
+<p>NGCMN       640.0</p>
+<p>NGCMX       4992.0</p>
+<p>NGC         832.0</p>
+<p>S0C         64.0</p>
+<p>S1C         64.0</p>
+<p>EC          704.0</p>
+<p>OGCMN       1408.0</p>
+<p>OGCMX       60544.0</p>
+<p>OGC         9504.0</p>
+<p>OC          9504.0                  OC 是 old 内纯的占用量</p>
+<p>PGCMN       8192.0                  PGCMN 显示的是最小 perm 的内存使用量</p>
+<p>PGCMX       65536.0                 PGCMX 显示的是 perm 的内存最大使用量</p>
+<p>PGC         12800.0                 PGC 是当前新生成的 perm 内存占用量</p>
+<p>PC          12800.0                 PC 是但前 perm 内存占用量</p>
+<p>YGC         164</p>
+<p>FGC         6</p>
+<p>jstat -gcnew pid: new 对象的信息</p>
+<p><strong>[root@localhost bin]/# jstat -gcnew 25917</strong></p>
+<p>  S0C    S1C    S0U    S1U   TT MTT  DSS      EC       EU     YGC     YGCT</p>
+<p>  64.0   64.0   47.4   0.0    2  15   32.0    704.0    145.7    168    0.254</p>
+<p>jstat -gcnewcapacity pid: new 对象的信息及其占用量</p>
+<p><strong>[root@localhost bin]/# jstat -gcnewcapacity 25917</strong></p>
+<p>  NGCMN   NGCMX    NGC    S0CMX  S0C    S1CMX   S1C   ECMX    EC      YGC   FGC</p>
+<p>640.0   4992.0   832.0 64.0     448.0 448.0   64.0   4096.0   704.0  168     6</p>
+<p>jstat -gcold pid: old 对象的信息。</p>
+<p><strong>[root@localhost bin]/# jstat -gcold 25917</strong></p>
+<p>   PC       PU        OC          OU       YGC    FGC    FGCT     GCT</p>
+<p>  12800.0  12617.6     9504.0      6561.3   169     6    0.335    0.591</p>
+<p>jstat -gcoldcapacity pid:old 对象的信息及其占用量。</p>
+<p><strong>[root@localhost bin]/# jstat -gcoldcapacity 25917</strong></p>
+<p>OGCMN      OGCMX        OGC         OC       YGC   FGC    FGCT     GCT</p>
+<p>1408.0     60544.0      9504.0      9504.0   169     6    0.335    0.591</p>
+<p>jstat -gcpermcapacity pid: perm 对象的信息及其占用量。</p>
+<p>[root@localhost bin]/# jstat -gcpermcapacity 25917</p>
+<p>PGCMN      PGCMX       PGC         PC      YGC   FGC    FGCT     GCT</p>
+<p>8192.0    65536.0    12800.0    12800.0   169     6    0.335    0.591</p>
+<p>jstat -printcompilation pid: 当前 VM 执行的信息。</p>
+<p><strong>[root@localhost bin]/# jstat -printcompilation -h3  25917 1000 5</strong></p>
+<p>每 1000 毫秒打印一次，一共打印 5 次，还可以加上 -h3 每三行显示一下标题。</p>
+<p>Compiled  Size  Type Method</p>
+<pre><code> 788     73    1 java/io/File &lt;init&gt;
+
+ 788     73    1 java/io/File &lt;init&gt;
+
+ 788     73    1 java/io/File &lt;init&gt;
+</code></pre><p>Compiled  Size  Type Method</p>
+<pre><code> 788     73    1 java/io/File &lt;init&gt;
+
+ 788     73    1 java/io/File &lt;init&gt;
+</code></pre><h1 id="-u-jmap-"><a href=""></a>u               jmap 的用法</h1>
+<p>打印出某个 java 进程（使用 pid ）内存内的，所有 ‘ 对象 ’ 的情况（如：产生那些对象，及其数量）。</p>
+<p>可以输出所有内存中对象的工具，甚至可以将 VM 中的 heap ，以二进制输出成文本。使用方法 jmap -histo pid 。如果连用 SHELL jmap -histo pid&gt;a.log 可以将其保存到文本中去，在一段时间后，使用文本对比工具，可以对比出 GC 回收了哪些对象。 jmap -dump:format=b,file=String 3024 可以将 3024 进程的内存 heap 输出出来到 String 文件里。</p>
+<p><strong>[root@localhost bin]/# jmap -histo  25917</strong></p>
+<p>Attaching to process ID 26221, please wait...</p>
+<p>Debugger attached successfully.</p>
+<p>Client compiler detected.</p>
+<p>JVM version is 1.5.0_08-b03</p>
+<p>Iterating over heap. This may take a while...</p>
+<p>Unknown oop at 0xaa6e42d0</p>
+<p>Oop&#39;s klass is null</p>
+<p>Object Histogram:</p>
+<p>Size    Count   Class description</p>
+<hr>
+<p>3722768 30467    /* ConstMethodKlass</p>
+<p>1976480 25334   char[]</p>
+<p>1907880 46994   /* SymbolKlass</p>
+<p>1762088 2947    byte[]</p>
+<p>1709536 30467   /* MethodKlass</p>
+<p>1487816 2600    /* ConstantPoolKlass</p>
+<p>1009576 2600    /* InstanceKlassKlass</p>
+<p>904880  2199    /* ConstantPoolCacheKlass</p>
+<p>741432  30893   java.lang.String</p>
+<p>653576  4785    int[]</p>
+<p>351760  4397    java.lang.reflect.Method</p>
+<p>277824  2894    java.lang.Class</p>
+<p>248704  3401    short[]</p>
+<p>200888  4411    java.lang.Object[]</p>
+<p>193656  4045    java.lang.Object[]</p>
+<p>179744  5617    java.util.TreeMap$Entry</p>
+<p>175688  1800    java.util.HashMap$Entry[]</p>
+<p>165288  6887    java.util.HashMap$Entry</p>
+<p>104736  3273    java.lang.ref.SoftReference</p>
+<p>104136  4339    java.lang.ref.WeakReference</p>
+<p>96096   3521    java.lang.String[]</p>
+<p>86160   3590    java.util.Hashtable$Entry</p>
+<p>85584   3566    java.util.ArrayList</p>
+<p>83472   1206    java.util.Hashtable$Entry[]</p>
+<p>82944   1728    java.beans.MethodDescriptor</p>
+<p>80560   265     /* ObjArrayKlassKlass</p>
+<p>69120   1728    java.util.HashMap</p>
+<p>52464   3055    java.lang.Class[]</p>
+<p>43040   1076    java.util.Hashtable</p>
+<p>42496   664     org.apache.commons.modeler.AttributeInfo</p>
+<p>37880   947     java.util.TreeMap</p>
+<p>33896   557     javax.management.modelmbean.ModelMBeanAttributeInfo[]</p>
+<p>33152   518     java.beans.PropertyDescriptor</p>
+<p>616     11      org.springframework.aop.framework.ProxyFactory</p>
+<p>608     19      java.util.PropertyPermission</p>
+<p>608     38      org.springframework.beans.MutablePropertyValues</p>
+<p>608     38      org.springframework.beans.factory.support.MethodOverrides</p>
+<p>608     2       /* ArrayKlassKlass</p>
+<p>608     38      org.springframework.beans.factory.config.ConstructorArgumentValues</p>
+<p>608     4       org.apache.xerces.impl.XMLDTDScannerImpl</p>
+<p>576     24      java.util.Stack</p>
+<p>576     36      java.util.regex.Pattern$Category</p>
+<p>576     24      org.apache.naming.NamingEntry</p>
+<p>560     7       java.net.URL[]</p>
+<p>552     23      sun.management.MappedMXBeanType$BasicMXBeanType</p>
+<p>552     1       java.util.Locale[]</p>
+<p>552     22      java.io.ObjectStreamField[]</p>
+<p>544     17      java.util.Collections$SynchronizedMap</p>
+<p>176     11      java.util.regex.Pattern$Ctype</p>
+<p>8        1       sun.reflect.GeneratedMethodAccessor49</p>
+<p>8       1       sun.reflect.GeneratedMethodAccessor6</p>
+<p>8       1       sun.reflect.GeneratedConstructorAccessor10</p>
+<p>Heap traversal took 12.003 seconds.</p>
+<h1 id="-u-jinfo-"><a href=""></a>u               jinfo 的用法</h1>
+<p>可以输出并修改运行时的 java 进程的 opts 。用处比较简单，就是能输出并修改运行时的 java 进程的运行参数。用法是jinfo -opt  pid 如：查看 2788 的 MaxPerm 大小可以用   jinfo -flag MaxPermSize 2788 。</p>
+<h1 id="-u-jconsole-"><a href=""></a>u               jconsole 的用法</h1>
+<p>jconsole: 一个 java GUI 监视工具，可以以图表化的形式显示各种数据。并可通过远程连接监视远程的服务器 VM 。</p>
+<p>用 java 写的 GUI 程序，用来监控 VM ，并可监控远程的 VM ，非常易用，而且功能非常强。命令行里打 jconsole ，选则进程就可以了</p>
+<p>不过我没有运行起来，老是报下面的错。会的朋友，帮忙看看。</p>
+<p><strong>  [root@localhost bin]/# jconsole</strong></p>
+<p>Exception in thread &quot;AWT-EventQueue-0&quot; java.awt.HeadlessException:</p>
+<p>No X11 DISPLAY variable was set, but this program performed an operation which requires it.        at java.awt.GraphicsEnvironment.checkHeadless(GraphicsEnvironment.java:159)</p>
+<pre><code>    at java.awt.Window.&lt;init&gt;(Window.java:317)
+
+    at java.awt.Frame.&lt;init&gt;(Frame.java:419)
+
+    at javax.swing.JFrame.&lt;init&gt;(JFrame.java:194)
+
+    at sun.tools.jconsole.JConsole.&lt;init&gt;(JConsole.java:65)
+
+    at sun.tools.jconsole.JConsole$4.run(JConsole.java:666)
+
+    at java.awt.event.InvocationEvent.dispatch(InvocationEvent.java:209)
+
+    at java.awt.EventQueue.dispatchEvent(EventQueue.java:461)
+
+    at java.awt.EventDispatchThread.pumpOneEventForHierarchy(EventDispatchThread.java:242)
+
+    at java.awt.EventDispatchThread.pumpEventsForHierarchy(EventDispatchThread.java:163)
+
+    at java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:157)
+
+    at java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:149)
+
+    at java.awt.EventDispatchThread.run(EventDispatchThread.java:110)
+</code></pre><h1 id="-u-jdb-"><a href=""></a>u               jdb 的用法</h1>
+<p>用来对 core 文件和正在运行的 Java 进程进行实时地调试，里面包含了丰富的命令帮助您进行调试，它的功能和 Sun studio 里面所带的 dbx 非常相似，但 jdb 是专门用来针对 Java 应用程序的。</p>
+<h1 id="-u-jmap-"><a href=""></a>u               jmap 的用法</h1>
+<p>打印出某个 java 进程（使用 pid ）内存内的，所有 ‘ 对象 ’ 的情况（如：产生那些对象，及其数量）。</p>
+<p>可以输出所有内存中对象的工具，甚至可以将 VM 中的 heap ，以二进制输出成文本。使用方法 jmap -histo pid 。如果连用 SHELL jmap -histo pid&gt;a.log 可以将其保存到文本中去，在一段时间后，使用文本对比工具，可以对比出 GC 回收了哪些对象。 jmap -dump:format=b,file=String 3024 可以将 3024 进程的内存 heap 输出出来到 String 文件里。</p>
+<p><strong>[root@localhost bin]/# jmap -histo  25917</strong></p>
+<p>Attaching to process ID 26221, please wait...</p>
+<p>Debugger attached successfully.</p>
+<p>Client compiler detected.</p>
+<p>JVM version is 1.5.0_08-b03</p>
+<p>Iterating over heap. This may take a while...</p>
+<p>Unknown oop at 0xaa6e42d0</p>
+<p>Oop&#39;s klass is null</p>
+<p>Object Histogram:</p>
+<p>Size    Count   Class description</p>
+<hr>
+<p>3722768 30467    /* ConstMethodKlass</p>
+<p>1976480 25334   char[]</p>
+<p>1907880 46994   /* SymbolKlass</p>
+<p>1762088 2947    byte[]</p>
+<p>1709536 30467   /* MethodKlass</p>
+<p>1487816 2600    /* ConstantPoolKlass</p>
+<p>1009576 2600    /* InstanceKlassKlass</p>
+<p>904880  2199    /* ConstantPoolCacheKlass</p>
+<p>741432  30893   java.lang.String</p>
+<p>653576  4785    int[]</p>
+<p>351760  4397    java.lang.reflect.Method</p>
+<p>277824  2894    java.lang.Class</p>
+<p>248704  3401    short[]</p>
+<p>200888  4411    java.lang.Object[]</p>
+<p>193656  4045    java.lang.Object[]</p>
+<p>179744  5617    java.util.TreeMap$Entry</p>
+<p>175688  1800    java.util.HashMap$Entry[]</p>
+<p>165288  6887    java.util.HashMap$Entry</p>
+<p>104736  3273    java.lang.ref.SoftReference</p>
+<p>104136  4339    java.lang.ref.WeakReference</p>
+<p>96096   3521    java.lang.String[]</p>
+<p>86160   3590    java.util.Hashtable$Entry</p>
+<p>85584   3566    java.util.ArrayList</p>
+<p>83472   1206    java.util.Hashtable$Entry[]</p>
+<p>82944   1728    java.beans.MethodDescriptor</p>
+<p>80560   265     /* ObjArrayKlassKlass</p>
+<p>69120   1728    java.util.HashMap</p>
+<p>52464   3055    java.lang.Class[]</p>
+<p>43040   1076    java.util.Hashtable</p>
+<p>42496   664     org.apache.commons.modeler.AttributeInfo</p>
+<p>37880   947     java.util.TreeMap</p>
+<p>33896   557     javax.management.modelmbean.ModelMBeanAttributeInfo[]</p>
+<p>33152   518     java.beans.PropertyDescriptor</p>
+<p>616     11      org.springframework.aop.framework.ProxyFactory</p>
+<p>608     19      java.util.PropertyPermission</p>
+<p>608     38      org.springframework.beans.MutablePropertyValues</p>
+<p>608     38      org.springframework.beans.factory.support.MethodOverrides</p>
+<p>608     2       /* ArrayKlassKlass</p>
+<p>608     38      org.springframework.beans.factory.config.ConstructorArgumentValues</p>
+<p>608     4       org.apache.xerces.impl.XMLDTDScannerImpl</p>
+<p>576     24      java.util.Stack</p>
+<p>576     36      java.util.regex.Pattern$Category</p>
+<p>576     24      org.apache.naming.NamingEntry</p>
+<p>560     7       java.net.URL[]</p>
+<p>552     23      sun.management.MappedMXBeanType$BasicMXBeanType</p>
+<p>552     1       java.util.Locale[]</p>
+<p>552     22      java.io.ObjectStreamField[]</p>
+<p>544     17      java.util.Collections$SynchronizedMap</p>
+<p>176     11      java.util.regex.Pattern$Ctype</p>
+<p>8        1       sun.reflect.GeneratedMethodAccessor49</p>
+<p>8       1       sun.reflect.GeneratedMethodAccessor6</p>
+<p>8       1       sun.reflect.GeneratedConstructorAccessor10</p>
+<p>Heap traversal took 12.003 seconds.</p>
+<h1 id="-u-jinfo-"><a href=""></a>u               jinfo 的用法</h1>
+<p>可以输出并修改运行时的 java 进程的 opts 。用处比较简单，就是能输出并修改运行时的 java 进程的运行参数。用法是jinfo -opt  pid 如：查看 2788 的 MaxPerm 大小可以用   jinfo -flag MaxPermSize 2788 。</p>
+<h1 id="-u-jconsole-"><a href=""></a>u               jconsole 的用法</h1>
+<p>jconsole: 一个 java GUI 监视工具，可以以图表化的形式显示各种数据。并可通过远程连接监视远程的服务器 VM 。</p>
+<p>用 java 写的 GUI 程序，用来监控 VM ，并可监控远程的 VM ，非常易用，而且功能非常强。命令行里打 jconsole ，选则进程就可以了</p>
+<p>不过我没有运行起来，老是报下面的错。会的朋友，帮忙看看。</p>
+<p><strong>  [root@localhost bin]/# jconsole</strong></p>
+<p>Exception in thread &quot;AWT-EventQueue-0&quot; java.awt.HeadlessException:</p>
+<p>No X11 DISPLAY variable was set, but this program performed an operation which requires it.        at java.awt.GraphicsEnvironment.checkHeadless(GraphicsEnvironment.java:159)</p>
+<pre><code>    at java.awt.Window.&lt;init&gt;(Window.java:317)
+
+    at java.awt.Frame.&lt;init&gt;(Frame.java:419)
+
+    at javax.swing.JFrame.&lt;init&gt;(JFrame.java:194)
+
+    at sun.tools.jconsole.JConsole.&lt;init&gt;(JConsole.java:65)
+
+    at sun.tools.jconsole.JConsole$4.run(JConsole.java:666)
+
+    at java.awt.event.InvocationEvent.dispatch(InvocationEvent.java:209)
+
+    at java.awt.EventQueue.dispatchEvent(EventQueue.java:461)
+
+    at java.awt.EventDispatchThread.pumpOneEventForHierarchy(EventDispatchThread.java:242)
+
+    at java.awt.EventDispatchThread.pumpEventsForHierarchy(EventDispatchThread.java:163)
+
+    at java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:157)
+
+    at java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:149)
+
+    at java.awt.EventDispatchThread.run(EventDispatchThread.java:110)
+</code></pre><h1 id="-u-jdb-"><a href=""></a>u               jdb 的用法</h1>
+<p>用来对 core 文件和正在运行的 Java 进程进行实时地调试，里面包含了丰富的命令帮助您进行调试，它的功能和 Sun studio 里面所带的 dbx 非常相似，但 jdb 是专门用来针对 Java 应用程序的。</p>
+<p>来源： <a href="[http://blog.csdn.net/jacky0922/article/details/6201878](http://blog.csdn.net/jacky0922/article/details/6201878)">[http://blog.csdn.net/jacky0922/article/details/6201878](http://blog.csdn.net/jacky0922/article/details/6201878)</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--Java内存泄露监控工具-JVM监控工具介绍jstack-jconsole-jinfo-/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--Java内存泄露监控工具-JVM监控工具介绍jstack-jconsole-jinfo-" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识/">深入浅出 Java Concurrency (1) </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-java-concurrency-1-j-u-c-">深入浅出 Java Concurrency (1) : J.U.C的整体认识</h1>
+<p>最近一直用的比较多的就是java.util.concurrent(J.U.C)，实际上这块一直也没有完全深入研究，这次准备花点时间研究下Java里面整个并发体系。初步的设想包括比较大的方便（包括硬件、软件、思想以及误区等等），因此可能会持续较长的时间。这块内容也是Java在多线程方面引以为豪的一部分，深入这一部分不仅对整个Java体系有更深的了解，也对工作、学习的态度有多帮助。</p>
+<p>从深入浅出入手，大体内容包括一下几个方面：</p>
+<p>（1）J.U.C的API：包括完整的类库结构和样例分析。</p>
+<p>（2）J.U.C的硬件原理以及软件思想：这部分也就将自己个人对硬件与程序语言的一些认识与大家分享，主要以总结前人的经验和所谓的理论来进行一些描述。</p>
+<p>（3）J.U.C的误区和常见陷阱：包括对J.U.C的一些设计思想和使用上的原则进行说明，同时对可能犯的错误进行一些总结。</p>
+<p>下面的图是J.U.C完整的API。<a href="http://www.blogjava.net/images/blogjava_net/xylz/WindowsLiveWriter/JavaConcurrent_FB25/J.U.C_2.png" target="_blank">完整的图片地址在这里</a>。</p>
+<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-Java-Concurrency-1--J.U.C_9314/J.U.C_2.png" target="_blank"><img src="&quot;J.U.C&quot;" alt="J.U.C"></a></p>
+<p>完整的MindManger图形可以从下面的地址得到（注意，我是用MindManger 8写的，低版本没有测试是否能正常显示）。</p>
+<p> <a href="http://www.blogjava.net/Files/xylz/J.U.C.zip" title="J.U.C完整的MindManger图形" target="_blank">J.U.C完整的MindManger图形</a></p>
+<p>在接下来的系列文章中，我们将根据这张API的图形进行完整的分析和研究。
+来源： <a href="[http://www.blogjava.net/xylz/archive/2010/06/30/324915.html](http://www.blogjava.net/xylz/archive/2010/06/30/324915.html)">[http://www.blogjava.net/xylz/archive/2010/06/30/324915.html](http://www.blogjava.net/xylz/archive/2010/06/30/324915.html)</a> </p>
 
       
     </div>
@@ -404,7 +733,7 @@ public final boolean compareAndSet(int expect, int update) {<br>    return unsaf
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_多线程/">Java_多线程</a></li><li><a href="/categories/Java&J2EE/Java_多线程/并发/">并发</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_多线程/" class="label label-success">Java_多线程</a><a href="/tags/并发/" class="label label-info">并发</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency2-原子操作/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency2-原子操作" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -952,512 +1281,6 @@ Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代�
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_多线程/">Java_多线程</a></li><li><a href="/categories/Java&J2EE/Java_多线程/并发/">并发</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_多线程/" class="label label-success">Java_多线程</a><a href="/tags/并发/" class="label label-info">并发</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
 <a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--java多线程学习-javautilconcurrent详解/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_多线程-并发--java多线程学习-javautilconcurrent详解" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识/">深入浅出 Java Concurrency (1) </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-java-concurrency-1-j-u-c-">深入浅出 Java Concurrency (1) : J.U.C的整体认识</h1>
-<p>最近一直用的比较多的就是java.util.concurrent(J.U.C)，实际上这块一直也没有完全深入研究，这次准备花点时间研究下Java里面整个并发体系。初步的设想包括比较大的方便（包括硬件、软件、思想以及误区等等），因此可能会持续较长的时间。这块内容也是Java在多线程方面引以为豪的一部分，深入这一部分不仅对整个Java体系有更深的了解，也对工作、学习的态度有多帮助。</p>
-<p>从深入浅出入手，大体内容包括一下几个方面：</p>
-<p>（1）J.U.C的API：包括完整的类库结构和样例分析。</p>
-<p>（2）J.U.C的硬件原理以及软件思想：这部分也就将自己个人对硬件与程序语言的一些认识与大家分享，主要以总结前人的经验和所谓的理论来进行一些描述。</p>
-<p>（3）J.U.C的误区和常见陷阱：包括对J.U.C的一些设计思想和使用上的原则进行说明，同时对可能犯的错误进行一些总结。</p>
-<p>下面的图是J.U.C完整的API。<a href="http://www.blogjava.net/images/blogjava_net/xylz/WindowsLiveWriter/JavaConcurrent_FB25/J.U.C_2.png" target="_blank">完整的图片地址在这里</a>。</p>
-<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-Java-Concurrency-1--J.U.C_9314/J.U.C_2.png" target="_blank"><img src="&quot;J.U.C&quot;" alt="J.U.C"></a></p>
-<p>完整的MindManger图形可以从下面的地址得到（注意，我是用MindManger 8写的，低版本没有测试是否能正常显示）。</p>
-<p> <a href="http://www.blogjava.net/Files/xylz/J.U.C.zip" title="J.U.C完整的MindManger图形" target="_blank">J.U.C完整的MindManger图形</a></p>
-<p>在接下来的系列文章中，我们将根据这张API的图形进行完整的分析和研究。
-来源： <a href="[http://www.blogjava.net/xylz/archive/2010/06/30/324915.html](http://www.blogjava.net/xylz/archive/2010/06/30/324915.html)">[http://www.blogjava.net/xylz/archive/2010/06/30/324915.html](http://www.blogjava.net/xylz/archive/2010/06/30/324915.html)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_多线程/">Java_多线程</a></li><li><a href="/categories/Java&J2EE/Java_多线程/并发/">并发</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_多线程/" class="label label-success">Java_多线程</a><a href="/tags/并发/" class="label label-info">并发</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--Java内存泄露监控工具-JVM监控工具介绍jstack-jconsole-jinfo-/">Java 内存泄露监控工具</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--Java内存泄露监控工具-JVM监控工具介绍jstack-jconsole-jinfo-/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-jvm-jstack-jconsole-jinfo-jmap-jdb-jstat">Java 内存泄露监控工具-- JVM监控工具介绍jstack, jconsole, jinfo, jmap, jdb, jstat</h1>
-<hr>
-<p><strong>jstack </strong>-- 如果java程序崩溃生成core文件，jstack工具可以用来获得core文件的java stack和native stack的信息，从而可以轻松地知道java程序是如何崩溃和在程序何处发生问题。另外，jstack工具还可以附属到正在运行的java程序中，看到 当时运行的java程序的java stack和native stack的信息, 如果现在运行的java程序呈现hung的状态，jstack是非常有用的。目前只有在Solaris和Linux的JDK版本里面才有。</p>
-<p><strong>jconsole </strong>– jconsole是基于<a href="http://java.chinaitlab.com/" target="_blank">Java </a>Management Extensions (JMX)的实时图形化监测工具，这个工具利用了内建到JVM里面的JMX指令来提供实时的性能和资源的监控，包括了<a href="http://java.chinaitlab.com/" target="_blank">Java </a>程序的内存使用，Heap size, 线程的状态，类的分配状态和空间使用等等。</p>
-<p><strong>jinfo </strong>– jinfo可以从core文件里面知道崩溃的Java应用程序的配置信息，目前只有在Solaris和Linux的JDK版本里面才有。</p>
-<p><strong>jmap </strong>– jmap 可以从core文件或进程中获得内存的具体匹配情况，包括Heap size, Perm size等等，目前只有在Solaris和Linux的JDK版本里面才有。</p>
-<p><strong>jdb </strong>– jdb 用来对core文件和正在运行的Java进程进行实时地调试，里面包含了丰富的命令帮助您进行调试，它的功能和Sun studio里面所带的dbx非常相似，但 jdb是专门用来针对Java应用程序的。</p>
-<p><strong>jstat </strong>– jstat利用了JVM内建的指令对Java应用程序的资源和性能进行实时的命令行的监控，包括了对Heap size和垃圾回收状况的监控等等。</p>
-<p><strong>jps </strong>– jps是用来查看JVM里面所有进程的具体状态, 包括进程ID，进程启动的路径等等。 </p>
-<p><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jstatd.html" target="_blank"><strong>jstatd</strong> </a>
-启动jvm监控服务。它是一个基于rmi的应用，向远程机器提供本机jvm应用程序的信息。默认端口1099。
-实例：jstatd -J-Djava.security.policy=my.policy
-my.policy文件需要自己建立，内如如下：
-grant codebase &quot;file:$JAVA_HOME/lib/tools.jar&quot; {
-permission java.security.AllPermission;
-};
-这是安全策略文件，因为jdk对jvm做了jaas的安全检测，所以我们必须设置一些策略，使得jstatd被允许作网络操作</p>
-<p>上面的操作没有通过，出现：</p>
-<p>Could not create remote object
-access denied (java.util.PropertyPermission java.rmi.server.ignoreSubClasses write)
-java.security.AccessControlException: access denied (java.util.PropertyPermission java.rmi.server.ignoreSubClasses write)
-at java.security.AccessControlContext.checkPermission(AccessControlContext.java:323)
-at java.security.AccessController.checkPermission(AccessController.java:546)
-at java.lang.SecurityManager.checkPermission(SecurityManager.java:532)
-at java.lang.System.setProperty(System.java:727)
-at sun.tools.jstatd.Jstatd.main(Jstatd.java:122)</p>
-<p>create in your usr/java/bin the jstatd.all.policy file, with the content must be</p>
-<ol>
-<li>grant codebase &quot;file:${java.home}/../lib/tools.jar&quot; {  </li>
-<li>permission java.security.AllPermission;  </li>
-<li>}; </li>
-</ol>
-<p><strong><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jps.html" target="_blank">jps </a></strong>
-列出所有的jvm实例
-实例：
-jps
-列出本机所有的jvm实例
-jps 192.168.0.77
-列出远程服务器192.168.0.77机器所有的jvm实例，采用rmi协议，默认连接端口为1099
-（前提是远程服务器提供jstatd服务）
-输出内容如下：
-jones@jones:~/data/ebook/java/j2se/jdk_gc$ jps
-6286 Jps
-6174  Jstat
-<strong>jconsole </strong>
-一个图形化界面，可以观察到java进程的gc，class，内存等信息。虽然比较直观，但是个人还是比较倾向于使用jstat命令（在最后一部分会对jstat作详细的介绍）。
-<strong><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jinfo.html" target="_blank">jinfo </a></strong>（linux下特有）
-观察运行中的java程序的运行环境参数：参数包括Java System属性和JVM命令行参数
-实例：jinfo 2083
-其中2083就是java进程id号，可以用jps得到这个id号。
-输出内容太多了，不在这里一一列举，大家可以自己尝试这个命令。
-<strong><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jstack.html" target="_blank">jstack </a></strong>（linux下特有）
-可以观察到jvm中当前所有线程的运行情况和线程当前状态
-jstack 2083
-输出内容如下：
-<img src="" alt=""> 
-<strong><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jmap.html" target="_blank">jmap </a></strong>（linux下特有，也是很常用的一个命令）
-观察运行中的jvm物理内存的占用情况。
-参数如下：<strong>-heap</strong> ：打印jvm heap的情况
-<strong>-histo：</strong> 打印jvm heap的直方图。其输出信息包括类名，对象数量，对象占用大小。
-<strong>-histo：live ：</strong> 同上，但是只答应存活对象的情况
-<strong>-permstat：</strong> 打印permanent generation heap情况
-命令使用：
-jmap -heap 2083
-可以观察到New Generation（Eden Space，From Space，To Space）,tenured generation,Perm Generation的内存使用情况
-输出内容：
-<img src="" alt=""> 
-jmap -histo 2083 ｜ jmap -histo:live 2083
-可以观察heap中所有对象的情况（heap中所有生存的对象的情况）。包括对象数量和所占空间大小。
-输出内容：
-<img src="" alt=""> 
-写个脚本，可以很快把占用heap最大的对象找出来，对付内存泄漏特别有效。
-<strong><a href="http://java.sun.com/j2se/1.5.0/docs/tooldocs/share/jstat.html" target="_blank">jstat </a>
-</strong>最后要重点介绍下这个命令。
-这是jdk命令中比较重要，也是相当实用的一个命令，可以观察到classloader，compiler，gc相关信息
-具体参数如下：
--class：统计class loader行为信息
--compile：统计编译行为信息
--gc：统计jdk gc时heap信息
--gccapacity：统计不同的generations（不知道怎么翻译好，包括新生区，老年区，permanent区）相应的heap容量情况
--gccause：统计gc的情况，（同-gcutil）和引起gc的事件
--gcnew：统计gc时，新生代的情况
--gcnewcapacity：统计gc时，新生代heap容量
--gcold：统计gc时，老年区的情况
--gcoldcapacity：统计gc时，老年区heap容量
--gcpermcapacity：统计gc时，permanent区heap容量
--gcutil：统计gc时，heap情况
--printcompilation：不知道干什么的，一直没用过。
-一般比较常用的几个参数是：
-jstat -class 2083 1000 10 （每隔1秒监控一次，一共做10次）
-输出内容含义如下：</p>
-<p>Loaded Number of classes loaded. Bytes Number of Kbytes loaded. Unloaded Number of classes unloaded. Bytes Number of Kbytes unloaded. Time Time spent performing class load and unload operations.
-jstat -gc 2083 2000 20（每隔2秒监控一次，共做10）
-输出内容含义如下：
-S0C Current survivor space 0 capacity (KB). EC Current eden space capacity (KB). EU Eden space utilization (KB). OC Current old space capacity (KB). OU Old space utilization (KB). PC Current permanent space capacity (KB). PU Permanent space utilization (KB). YGC Number of young generation GC Events. YGCT Young generation garbage collection time. FGC Number of full GC events. FGCT Full garbage collection time. GCT Total garbage collection time.
-输出内容：
-<img src="" alt="">
-如果能熟练运用这些命令，尤其是在linux下，那么完全可以代替jprofile等监控工具了，谁让它收费呢。呵呵。
-用命令的好处就是速度快，并且辅助于其他命令，比如grep gawk sed等，可以组装多种符合自己需求的工具。</p>
-<h1 id="-u-jps-"><a href=""></a>u               jps 的用法</h1>
-<p>用来查看 JVM 里面所有进程的具体状态 , 包括进程 ID ，进程启动的路径等等。 与 unix 上的 ps 类似，用来显示本地的java 进程，可以查看本地运行着几个 java 程序，并显示他们的进程号。</p>
-<p><strong>[root@localhost ~]/# jps</strong></p>
-<p>25517 Jps</p>
-<p>25444 Bootstrap</p>
-<h1 id="-u-jstack-"><a href=""></a>u               jstack 的用法</h1>
-<p>如果 java 程序崩溃生成 core 文件， jstack 工具可以用来获得 core 文件的 java stack 和 native stack 的信息，从而可以轻松地知道 java 程序是如何崩溃和在程序何处发生问题。另外， jstack 工具还可以附属到正在运行的 java 程序中，看到当时运行的 java 程序的 java stack 和 native stack 的信息 , 如果现在运行的 java 程序呈现 hung 的状态， jstack 是非常有用的。目前只有在 Solaris 和 Linux 的 JDK 版本里面才有。</p>
-<p><strong>[root@localhost bin]/# jstack **</strong>25444**</p>
-<p>Attaching to process ID 25917, please wait...</p>
-<p>Debugger attached successfully.</p>
-<p>Client compiler detected.</p>
-<p>JVM version is 1.5.0_08-b03</p>
-<p>Thread 25964: (state = BLOCKED)</p>
-<p>Error occurred during stack walking:</p>
-<p>sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerException: get_thread_regs failed for a lwp</p>
-<pre><code>    at sun.jvm.hotspot.debugger.linux.LinuxDebuggerLocal$LinuxDebuggerLocalWorkerThread.execute(LinuxDebuggerLocal.java:134)
-
-    at sun.jvm.hotspot.debugger.linux.LinuxDebuggerLocal.getThreadIntegerRegisterSet(LinuxDebuggerLocal.java:437)
-
-    at sun.jvm.hotspot.debugger.linux.LinuxThread.getContext(LinuxThread.java:48)
-
-    at
-</code></pre><h1 id="-u-jstat-"><a href=""></a>u               jstat 的用法</h1>
-<p>用以判断JVM 是否存在内存问题呢？如何判断JVM 垃圾回收是否正常？一般的top 指令基本上满足不了这样的需求，因为它主要监控的是总体的系统资源，很难定位到java 应用程序。</p>
-<p>Jstat 是JDK 自带的一个轻量级小工具。全称“Java Virtual Machine statistics monitoring tool” ，它位于java 的bin 目录下，主要利用JVM 内建的指令对Java 应用程序的资源和性能进行实时的命令行的监控，包括了对Heap size 和垃圾回收状况的监控。可见，Jstat 是轻量级的、专门针对JVM 的工具，非常适用。由于JVM 内存设置较大，图中百分比变化不太明显</p>
-<p>一个极强的监视 VM 内存工具。可以用来监视 VM 内存内的各种堆和非堆的大小及其内存使用量。</p>
-<p>jstat 工具特别强大，有众多的可选项，详细查看堆内各个部分的使用量，以及加载类的数量。使用时，需加上查看进程的进程 id ，和所选参数。</p>
-<p>语法结构：</p>
-<p>Usage: jstat -help|-options</p>
-<pre><code>   jstat -&lt;option&gt; [-t] [-h&lt;lines&gt;] &lt;vmid&gt; [&lt;interval&gt; [&lt;count&gt;]]
-</code></pre><p>参数解释：</p>
-<p>Options — 选项，我们一般使用 -gcutil 查看gc 情况</p>
-<p>vmid    — VM 的进程号，即当前运行的java 进程号</p>
-<p>interval– 间隔时间，单位为秒或者毫秒</p>
-<p>count   — 打印次数，如果缺省则打印无数次</p>
-<p>S0  — Heap 上的 Survivor space 0 区已使用空间的百分比 
-S1  — Heap 上的 Survivor space 1 区已使用空间的百分比 
-E   — Heap 上的 Eden space 区已使用空间的百分比 
-O   — Heap 上的 Old space 区已使用空间的百分比 
-P   — Perm space 区已使用空间的百分比 
-YGC — 从应用程序启动到采样时发生 Young GC 的次数 
-YGCT– 从应用程序启动到采样时 Young GC 所用的时间( 单位秒 )
-FGC — 从应用程序启动到采样时发生 Full GC 的次数 
-FGCT– 从应用程序启动到采样时 Full GC 所用的时间( 单位秒 )
-GCT — 从应用程序启动到采样时用于垃圾回收的总时间( 单位秒)</p>
-<p>实例使用1 ：</p>
-<p><strong>[root@localhost bin]/# jstat -gcutil 25444</strong></p>
-<p>  S0      S1     E      O      P     YGC     YGCT    FGC    FGCT     GCT</p>
-<p>  11.63   0.00    56.46  66.92  98.49 162    0.248    6       0.331    0.579</p>
-<p>实例使用 2 ：</p>
-<p><strong>[root@localhost bin]/# jstat -gcutil 25444 1000 5</strong></p>
-<p>  S0     S1     E      O      P     YGC     YGCT    FGC    FGCT     GCT</p>
-<p>  73.54   0.00  99.04  67.52  98.49    166    0.252     6    0.331    0.583</p>
-<p>  73.54   0.00  99.04  67.52  98.49    166    0.252     6    0.331    0.583</p>
-<p>  73.54   0.00  99.04  67.52  98.49    166    0.252     6    0.331    0.583</p>
-<p>  73.54   0.00  99.04  67.52  98.49    166    0.252     6    0.331    0.583</p>
-<p>  73.54   0.00  99.04  67.52  98.49    166    0.252     6    0.331    0.583</p>
-<p>我们可以看到，5 次young gc 之后，垃圾内存被从Eden space 区(E) 放入了Old space 区(O) ，并引起了百分比的变化，导致Survivor space 使用的百分比从73.54%(S0) 降到0%(S1) 。有效释放了内存空间。绿框中，我们可以看到，一次full gc 之后，Old space 区(O) 的内存被回收，从99.05% 降到67.52% 。</p>
-<p>图中同时打印了young gc 和full gc 的总次数、总耗时。而，每次young gc 消耗的时间，可以用相间隔的两行YGCT 相减得到。每次full gc 消耗的时间，可以用相隔的两行FGCT 相减得到。例如红框中表示的第一行、第二行之间发生了1次young gc ，消耗的时间为0.252-0.252 ＝0.0 秒。</p>
-<p>常驻内存区(P) 的使用率，始终停留在98.49% 左右，说明常驻内存没有突变，比较正常。</p>
-<p>如果young gc 和full gc 能够正常发生，而且都能有效回收内存，常驻内存区变化不明显，则说明java 内存释放情况正常，垃圾回收及时，java 内存泄露的几率就会大大降低。但也不能说明一定没有内存泄露。</p>
-<p>GCT 是YGCT 和FGCT 的时间总和。</p>
-<p>以上，介绍了Jstat 按百分比查看gc 情况的功能。其实，它还有功能，例如加载类信息统计功能、内存池信息统计功能等，那些是以绝对值的形式打印出来的，比较少用，在此就不做介绍。</p>
-<p><strong>[root@localhost bin]/# ps -ef | grep java</strong></p>
-<p>root     25917     1  2 23:23 pts /2    00:00:05 /usr/local/jdk1.5/bin/java -Djava.endorsed.dirs=/usr/local/jakarta-tomcat-5.0.30/common/endorsed -classpath /usr/local/jdk1.5/lib/tools.jar:/usr/local/jakarta-tomcat-5.0.30/bin/bootstrap.jar:/usr/local/jakarta-tomcat-5.0.30/bin/commons-logging-api.jar -Dcatalina.base=/usr/local/jakarta-tomcat-5.0.30 -Dcatalina.home=/usr/local/jakarta-tomcat-5.0.30 -Djava.io.tmpdir=/usr/local/jakarta-tomcat-5.0.30/temp org.apache.catalina.startup.Bootstrap start</p>
-<p>jstat -class pid: 显示加载 class 的数量，及所占空间等信息。</p>
-<p>实例使用3 ：</p>
-<p><strong>[root@localhost bin]/# jstat -class 25917</strong></p>
-<p>Loaded  Bytes  Unloaded  Bytes     Time</p>
-<p>2629     2916.8       29   24.6     0.90</p>
-<p>jstat -compiler pid: 显示 VM 实时编译的数量等信息。</p>
-<p>实例使用 4 ：</p>
-<p><strong>[root@localhost bin]/# jstat -compiler 25917</strong></p>
-<p>Compiled Failed Invalid   Time   FailedType FailedMethod</p>
-<pre><code> 768      0       0   0.70             0
-</code></pre><p>jstat –gccapacity : 可以显示， VM 内存中三代（ young,old,perm ）对象的使用和占用大小，如： PGCMN 显示的是最小 perm 的内存使用量， PGCMX 显示的是 perm 的内存最大使用量， PGC 是当前新生成的 perm 内存占用量， PC 是但前 perm 内存占用量。其他的可以根据这个类推， OC 是 old 内纯的占用量。</p>
-<p><strong>[root@localhost bin]/# jstat -gccapacity 25917</strong></p>
-<p>NGCMN       640.0</p>
-<p>NGCMX       4992.0</p>
-<p>NGC         832.0</p>
-<p>S0C         64.0</p>
-<p>S1C         64.0</p>
-<p>EC          704.0</p>
-<p>OGCMN       1408.0</p>
-<p>OGCMX       60544.0</p>
-<p>OGC         9504.0</p>
-<p>OC          9504.0                  OC 是 old 内纯的占用量</p>
-<p>PGCMN       8192.0                  PGCMN 显示的是最小 perm 的内存使用量</p>
-<p>PGCMX       65536.0                 PGCMX 显示的是 perm 的内存最大使用量</p>
-<p>PGC         12800.0                 PGC 是当前新生成的 perm 内存占用量</p>
-<p>PC          12800.0                 PC 是但前 perm 内存占用量</p>
-<p>YGC         164</p>
-<p>FGC         6</p>
-<p>jstat -gcnew pid: new 对象的信息</p>
-<p><strong>[root@localhost bin]/# jstat -gcnew 25917</strong></p>
-<p>  S0C    S1C    S0U    S1U   TT MTT  DSS      EC       EU     YGC     YGCT</p>
-<p>  64.0   64.0   47.4   0.0    2  15   32.0    704.0    145.7    168    0.254</p>
-<p>jstat -gcnewcapacity pid: new 对象的信息及其占用量</p>
-<p><strong>[root@localhost bin]/# jstat -gcnewcapacity 25917</strong></p>
-<p>  NGCMN   NGCMX    NGC    S0CMX  S0C    S1CMX   S1C   ECMX    EC      YGC   FGC</p>
-<p>640.0   4992.0   832.0 64.0     448.0 448.0   64.0   4096.0   704.0  168     6</p>
-<p>jstat -gcold pid: old 对象的信息。</p>
-<p><strong>[root@localhost bin]/# jstat -gcold 25917</strong></p>
-<p>   PC       PU        OC          OU       YGC    FGC    FGCT     GCT</p>
-<p>  12800.0  12617.6     9504.0      6561.3   169     6    0.335    0.591</p>
-<p>jstat -gcoldcapacity pid:old 对象的信息及其占用量。</p>
-<p><strong>[root@localhost bin]/# jstat -gcoldcapacity 25917</strong></p>
-<p>OGCMN      OGCMX        OGC         OC       YGC   FGC    FGCT     GCT</p>
-<p>1408.0     60544.0      9504.0      9504.0   169     6    0.335    0.591</p>
-<p>jstat -gcpermcapacity pid: perm 对象的信息及其占用量。</p>
-<p>[root@localhost bin]/# jstat -gcpermcapacity 25917</p>
-<p>PGCMN      PGCMX       PGC         PC      YGC   FGC    FGCT     GCT</p>
-<p>8192.0    65536.0    12800.0    12800.0   169     6    0.335    0.591</p>
-<p>jstat -printcompilation pid: 当前 VM 执行的信息。</p>
-<p><strong>[root@localhost bin]/# jstat -printcompilation -h3  25917 1000 5</strong></p>
-<p>每 1000 毫秒打印一次，一共打印 5 次，还可以加上 -h3 每三行显示一下标题。</p>
-<p>Compiled  Size  Type Method</p>
-<pre><code> 788     73    1 java/io/File &lt;init&gt;
-
- 788     73    1 java/io/File &lt;init&gt;
-
- 788     73    1 java/io/File &lt;init&gt;
-</code></pre><p>Compiled  Size  Type Method</p>
-<pre><code> 788     73    1 java/io/File &lt;init&gt;
-
- 788     73    1 java/io/File &lt;init&gt;
-</code></pre><h1 id="-u-jmap-"><a href=""></a>u               jmap 的用法</h1>
-<p>打印出某个 java 进程（使用 pid ）内存内的，所有 ‘ 对象 ’ 的情况（如：产生那些对象，及其数量）。</p>
-<p>可以输出所有内存中对象的工具，甚至可以将 VM 中的 heap ，以二进制输出成文本。使用方法 jmap -histo pid 。如果连用 SHELL jmap -histo pid&gt;a.log 可以将其保存到文本中去，在一段时间后，使用文本对比工具，可以对比出 GC 回收了哪些对象。 jmap -dump:format=b,file=String 3024 可以将 3024 进程的内存 heap 输出出来到 String 文件里。</p>
-<p><strong>[root@localhost bin]/# jmap -histo  25917</strong></p>
-<p>Attaching to process ID 26221, please wait...</p>
-<p>Debugger attached successfully.</p>
-<p>Client compiler detected.</p>
-<p>JVM version is 1.5.0_08-b03</p>
-<p>Iterating over heap. This may take a while...</p>
-<p>Unknown oop at 0xaa6e42d0</p>
-<p>Oop&#39;s klass is null</p>
-<p>Object Histogram:</p>
-<p>Size    Count   Class description</p>
-<hr>
-<p>3722768 30467    /* ConstMethodKlass</p>
-<p>1976480 25334   char[]</p>
-<p>1907880 46994   /* SymbolKlass</p>
-<p>1762088 2947    byte[]</p>
-<p>1709536 30467   /* MethodKlass</p>
-<p>1487816 2600    /* ConstantPoolKlass</p>
-<p>1009576 2600    /* InstanceKlassKlass</p>
-<p>904880  2199    /* ConstantPoolCacheKlass</p>
-<p>741432  30893   java.lang.String</p>
-<p>653576  4785    int[]</p>
-<p>351760  4397    java.lang.reflect.Method</p>
-<p>277824  2894    java.lang.Class</p>
-<p>248704  3401    short[]</p>
-<p>200888  4411    java.lang.Object[]</p>
-<p>193656  4045    java.lang.Object[]</p>
-<p>179744  5617    java.util.TreeMap$Entry</p>
-<p>175688  1800    java.util.HashMap$Entry[]</p>
-<p>165288  6887    java.util.HashMap$Entry</p>
-<p>104736  3273    java.lang.ref.SoftReference</p>
-<p>104136  4339    java.lang.ref.WeakReference</p>
-<p>96096   3521    java.lang.String[]</p>
-<p>86160   3590    java.util.Hashtable$Entry</p>
-<p>85584   3566    java.util.ArrayList</p>
-<p>83472   1206    java.util.Hashtable$Entry[]</p>
-<p>82944   1728    java.beans.MethodDescriptor</p>
-<p>80560   265     /* ObjArrayKlassKlass</p>
-<p>69120   1728    java.util.HashMap</p>
-<p>52464   3055    java.lang.Class[]</p>
-<p>43040   1076    java.util.Hashtable</p>
-<p>42496   664     org.apache.commons.modeler.AttributeInfo</p>
-<p>37880   947     java.util.TreeMap</p>
-<p>33896   557     javax.management.modelmbean.ModelMBeanAttributeInfo[]</p>
-<p>33152   518     java.beans.PropertyDescriptor</p>
-<p>616     11      org.springframework.aop.framework.ProxyFactory</p>
-<p>608     19      java.util.PropertyPermission</p>
-<p>608     38      org.springframework.beans.MutablePropertyValues</p>
-<p>608     38      org.springframework.beans.factory.support.MethodOverrides</p>
-<p>608     2       /* ArrayKlassKlass</p>
-<p>608     38      org.springframework.beans.factory.config.ConstructorArgumentValues</p>
-<p>608     4       org.apache.xerces.impl.XMLDTDScannerImpl</p>
-<p>576     24      java.util.Stack</p>
-<p>576     36      java.util.regex.Pattern$Category</p>
-<p>576     24      org.apache.naming.NamingEntry</p>
-<p>560     7       java.net.URL[]</p>
-<p>552     23      sun.management.MappedMXBeanType$BasicMXBeanType</p>
-<p>552     1       java.util.Locale[]</p>
-<p>552     22      java.io.ObjectStreamField[]</p>
-<p>544     17      java.util.Collections$SynchronizedMap</p>
-<p>176     11      java.util.regex.Pattern$Ctype</p>
-<p>8        1       sun.reflect.GeneratedMethodAccessor49</p>
-<p>8       1       sun.reflect.GeneratedMethodAccessor6</p>
-<p>8       1       sun.reflect.GeneratedConstructorAccessor10</p>
-<p>Heap traversal took 12.003 seconds.</p>
-<h1 id="-u-jinfo-"><a href=""></a>u               jinfo 的用法</h1>
-<p>可以输出并修改运行时的 java 进程的 opts 。用处比较简单，就是能输出并修改运行时的 java 进程的运行参数。用法是jinfo -opt  pid 如：查看 2788 的 MaxPerm 大小可以用   jinfo -flag MaxPermSize 2788 。</p>
-<h1 id="-u-jconsole-"><a href=""></a>u               jconsole 的用法</h1>
-<p>jconsole: 一个 java GUI 监视工具，可以以图表化的形式显示各种数据。并可通过远程连接监视远程的服务器 VM 。</p>
-<p>用 java 写的 GUI 程序，用来监控 VM ，并可监控远程的 VM ，非常易用，而且功能非常强。命令行里打 jconsole ，选则进程就可以了</p>
-<p>不过我没有运行起来，老是报下面的错。会的朋友，帮忙看看。</p>
-<p><strong>  [root@localhost bin]/# jconsole</strong></p>
-<p>Exception in thread &quot;AWT-EventQueue-0&quot; java.awt.HeadlessException:</p>
-<p>No X11 DISPLAY variable was set, but this program performed an operation which requires it.        at java.awt.GraphicsEnvironment.checkHeadless(GraphicsEnvironment.java:159)</p>
-<pre><code>    at java.awt.Window.&lt;init&gt;(Window.java:317)
-
-    at java.awt.Frame.&lt;init&gt;(Frame.java:419)
-
-    at javax.swing.JFrame.&lt;init&gt;(JFrame.java:194)
-
-    at sun.tools.jconsole.JConsole.&lt;init&gt;(JConsole.java:65)
-
-    at sun.tools.jconsole.JConsole$4.run(JConsole.java:666)
-
-    at java.awt.event.InvocationEvent.dispatch(InvocationEvent.java:209)
-
-    at java.awt.EventQueue.dispatchEvent(EventQueue.java:461)
-
-    at java.awt.EventDispatchThread.pumpOneEventForHierarchy(EventDispatchThread.java:242)
-
-    at java.awt.EventDispatchThread.pumpEventsForHierarchy(EventDispatchThread.java:163)
-
-    at java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:157)
-
-    at java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:149)
-
-    at java.awt.EventDispatchThread.run(EventDispatchThread.java:110)
-</code></pre><h1 id="-u-jdb-"><a href=""></a>u               jdb 的用法</h1>
-<p>用来对 core 文件和正在运行的 Java 进程进行实时地调试，里面包含了丰富的命令帮助您进行调试，它的功能和 Sun studio 里面所带的 dbx 非常相似，但 jdb 是专门用来针对 Java 应用程序的。</p>
-<h1 id="-u-jmap-"><a href=""></a>u               jmap 的用法</h1>
-<p>打印出某个 java 进程（使用 pid ）内存内的，所有 ‘ 对象 ’ 的情况（如：产生那些对象，及其数量）。</p>
-<p>可以输出所有内存中对象的工具，甚至可以将 VM 中的 heap ，以二进制输出成文本。使用方法 jmap -histo pid 。如果连用 SHELL jmap -histo pid&gt;a.log 可以将其保存到文本中去，在一段时间后，使用文本对比工具，可以对比出 GC 回收了哪些对象。 jmap -dump:format=b,file=String 3024 可以将 3024 进程的内存 heap 输出出来到 String 文件里。</p>
-<p><strong>[root@localhost bin]/# jmap -histo  25917</strong></p>
-<p>Attaching to process ID 26221, please wait...</p>
-<p>Debugger attached successfully.</p>
-<p>Client compiler detected.</p>
-<p>JVM version is 1.5.0_08-b03</p>
-<p>Iterating over heap. This may take a while...</p>
-<p>Unknown oop at 0xaa6e42d0</p>
-<p>Oop&#39;s klass is null</p>
-<p>Object Histogram:</p>
-<p>Size    Count   Class description</p>
-<hr>
-<p>3722768 30467    /* ConstMethodKlass</p>
-<p>1976480 25334   char[]</p>
-<p>1907880 46994   /* SymbolKlass</p>
-<p>1762088 2947    byte[]</p>
-<p>1709536 30467   /* MethodKlass</p>
-<p>1487816 2600    /* ConstantPoolKlass</p>
-<p>1009576 2600    /* InstanceKlassKlass</p>
-<p>904880  2199    /* ConstantPoolCacheKlass</p>
-<p>741432  30893   java.lang.String</p>
-<p>653576  4785    int[]</p>
-<p>351760  4397    java.lang.reflect.Method</p>
-<p>277824  2894    java.lang.Class</p>
-<p>248704  3401    short[]</p>
-<p>200888  4411    java.lang.Object[]</p>
-<p>193656  4045    java.lang.Object[]</p>
-<p>179744  5617    java.util.TreeMap$Entry</p>
-<p>175688  1800    java.util.HashMap$Entry[]</p>
-<p>165288  6887    java.util.HashMap$Entry</p>
-<p>104736  3273    java.lang.ref.SoftReference</p>
-<p>104136  4339    java.lang.ref.WeakReference</p>
-<p>96096   3521    java.lang.String[]</p>
-<p>86160   3590    java.util.Hashtable$Entry</p>
-<p>85584   3566    java.util.ArrayList</p>
-<p>83472   1206    java.util.Hashtable$Entry[]</p>
-<p>82944   1728    java.beans.MethodDescriptor</p>
-<p>80560   265     /* ObjArrayKlassKlass</p>
-<p>69120   1728    java.util.HashMap</p>
-<p>52464   3055    java.lang.Class[]</p>
-<p>43040   1076    java.util.Hashtable</p>
-<p>42496   664     org.apache.commons.modeler.AttributeInfo</p>
-<p>37880   947     java.util.TreeMap</p>
-<p>33896   557     javax.management.modelmbean.ModelMBeanAttributeInfo[]</p>
-<p>33152   518     java.beans.PropertyDescriptor</p>
-<p>616     11      org.springframework.aop.framework.ProxyFactory</p>
-<p>608     19      java.util.PropertyPermission</p>
-<p>608     38      org.springframework.beans.MutablePropertyValues</p>
-<p>608     38      org.springframework.beans.factory.support.MethodOverrides</p>
-<p>608     2       /* ArrayKlassKlass</p>
-<p>608     38      org.springframework.beans.factory.config.ConstructorArgumentValues</p>
-<p>608     4       org.apache.xerces.impl.XMLDTDScannerImpl</p>
-<p>576     24      java.util.Stack</p>
-<p>576     36      java.util.regex.Pattern$Category</p>
-<p>576     24      org.apache.naming.NamingEntry</p>
-<p>560     7       java.net.URL[]</p>
-<p>552     23      sun.management.MappedMXBeanType$BasicMXBeanType</p>
-<p>552     1       java.util.Locale[]</p>
-<p>552     22      java.io.ObjectStreamField[]</p>
-<p>544     17      java.util.Collections$SynchronizedMap</p>
-<p>176     11      java.util.regex.Pattern$Ctype</p>
-<p>8        1       sun.reflect.GeneratedMethodAccessor49</p>
-<p>8       1       sun.reflect.GeneratedMethodAccessor6</p>
-<p>8       1       sun.reflect.GeneratedConstructorAccessor10</p>
-<p>Heap traversal took 12.003 seconds.</p>
-<h1 id="-u-jinfo-"><a href=""></a>u               jinfo 的用法</h1>
-<p>可以输出并修改运行时的 java 进程的 opts 。用处比较简单，就是能输出并修改运行时的 java 进程的运行参数。用法是jinfo -opt  pid 如：查看 2788 的 MaxPerm 大小可以用   jinfo -flag MaxPermSize 2788 。</p>
-<h1 id="-u-jconsole-"><a href=""></a>u               jconsole 的用法</h1>
-<p>jconsole: 一个 java GUI 监视工具，可以以图表化的形式显示各种数据。并可通过远程连接监视远程的服务器 VM 。</p>
-<p>用 java 写的 GUI 程序，用来监控 VM ，并可监控远程的 VM ，非常易用，而且功能非常强。命令行里打 jconsole ，选则进程就可以了</p>
-<p>不过我没有运行起来，老是报下面的错。会的朋友，帮忙看看。</p>
-<p><strong>  [root@localhost bin]/# jconsole</strong></p>
-<p>Exception in thread &quot;AWT-EventQueue-0&quot; java.awt.HeadlessException:</p>
-<p>No X11 DISPLAY variable was set, but this program performed an operation which requires it.        at java.awt.GraphicsEnvironment.checkHeadless(GraphicsEnvironment.java:159)</p>
-<pre><code>    at java.awt.Window.&lt;init&gt;(Window.java:317)
-
-    at java.awt.Frame.&lt;init&gt;(Frame.java:419)
-
-    at javax.swing.JFrame.&lt;init&gt;(JFrame.java:194)
-
-    at sun.tools.jconsole.JConsole.&lt;init&gt;(JConsole.java:65)
-
-    at sun.tools.jconsole.JConsole$4.run(JConsole.java:666)
-
-    at java.awt.event.InvocationEvent.dispatch(InvocationEvent.java:209)
-
-    at java.awt.EventQueue.dispatchEvent(EventQueue.java:461)
-
-    at java.awt.EventDispatchThread.pumpOneEventForHierarchy(EventDispatchThread.java:242)
-
-    at java.awt.EventDispatchThread.pumpEventsForHierarchy(EventDispatchThread.java:163)
-
-    at java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:157)
-
-    at java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:149)
-
-    at java.awt.EventDispatchThread.run(EventDispatchThread.java:110)
-</code></pre><h1 id="-u-jdb-"><a href=""></a>u               jdb 的用法</h1>
-<p>用来对 core 文件和正在运行的 Java 进程进行实时地调试，里面包含了丰富的命令帮助您进行调试，它的功能和 Sun studio 里面所带的 dbx 非常相似，但 jdb 是专门用来针对 Java 应用程序的。</p>
-<p>来源： <a href="[http://blog.csdn.net/jacky0922/article/details/6201878](http://blog.csdn.net/jacky0922/article/details/6201878)">[http://blog.csdn.net/jacky0922/article/details/6201878](http://blog.csdn.net/jacky0922/article/details/6201878)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--Java内存泄露监控工具-JVM监控工具介绍jstack-jconsole-jinfo-/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--Java内存泄露监控工具-JVM监控工具介绍jstack-jconsole-jinfo-" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -2033,7 +1856,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:28:49</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:47:11</em></span></div>
 </div>
 <div class="clearfix"></div>
 
