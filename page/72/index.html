@@ -110,609 +110,18 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--Java工具（jmap-jstack）在linux上的源码分析/">Java 工具（jmap</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--常见的数字证书格式-关注信息安全PKI、密码学/">常见的数字证书格式 </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--Java工具（jmap-jstack）在linux上的源码分析/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--常见的数字证书格式-关注信息安全PKI、密码学/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="java-jmap-jstack-linux-">Java 工具（jmap,jstack）在linux上的源码分析</h1>
-<p><a href="http://blog.csdn.net/raintungli/article/details/7023092" target="_blank">Java 工具（jmap,jstack）在linux上的源码分析（一）</a></p>
-<p>在我们常用的Jstack, Jmap 用于分析java虚拟机的状态的工具，通过起另一个虚拟机通过运行sun.tools包下的java文件，去跟踪另一个虚拟机的状态。</p>
-<p>如果让你设计一个跟踪另一个进程的方法，你也通常会考虑这几种常用的方式。</p>
-<p>第一种，就是通知被跟踪的进程，让进程执行相应的消息，同时对该消息做出反应。</p>
-<p>第二种，就是通过内核的调用，直接能够访问进程的内存，堆栈情况，通过分析被跟踪的进程的内存结构，从而知道当前被跟踪的进程的状态。</p>
-<p>第一种方式</p>
-<p>优势：</p>
-<p>对调用者和被调用者只要达成简单的通讯协议，调用者无需知道被调用者的逻辑，结构，只需要简单的发送命令的方式，被调用者能够接受到命令，并且对该命令进行回应就可以。</p>
-<p>缺点：</p>
-<p>如果被调用者当时的状态本来就不正常，或者繁忙，没办法对该命令做出响应，那这个跟踪进程往往是在规定的等待时间里，无法返回正确的需要的信息。其次被调用者在分析的过程中，有可能需要暂停进程中的其他的线程，而对被跟踪的进程有一定的影响。</p>
-<p>第二种方式</p>
-<p>优势：</p>
-<p>通过内核的支持，访问被跟踪的内存，并作出快照，后台分析，很少影响被跟踪的进程。</p>
-<p>缺点：</p>
-<p>这种方式需要对被跟踪程的内存分配和使用非常的了解，无法解耦，而本身系统内核调用也会出问题。</p>
-<p>Java工具类中也是大致实现了这2中方式，工具中会先选择第一种方式，如果发现第一种方式不能成功，将会建议使用-F参数，也就是第二种方式。</p>
-<p>我们先讲第一种方式。</p>
-<p>既然是需要向被跟踪进程发出命令，在linux中可以选择多种方式进行进程中通讯 共享内存，文件之类，其中创建socket的文件实现通讯是比较简单的方法。</p>
-<p>下面是整个的流程图：</p>
-<p><img src="" alt="">
-来源： <a href="[http://blog.csdn.net/raintungli/article/details/7023092](http://blog.csdn.net/raintungli/article/details/7023092)">[http://blog.csdn.net/raintungli/article/details/7023092](http://blog.csdn.net/raintungli/article/details/7023092)</a> <a href="http://blog.csdn.net/raintungli/article/details/7034005" target="_blank">Java 工具（jmap,jstack）在linux上的源码分析（二）信号处理</a></p>
-<p>当java虚拟机启动的时候，会启动很多内部的线程，这些线程主要在thread.cpp里的create_vm方法体里实现</p>
-<p>而在thread.cpp里主要起了2个线程来处理信号相关的
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7034005#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7034005#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>JvmtiExport::enter_live_phase();  </li>
-<li></li>
-<li>// Signal Dispatcher needs to be started before VMInit event is posted  </li>
-<li>os::signal_init();  </li>
-<li></li>
-<li>// Start Attach Listener if +StartAttachListener or it can&#39;t be started lazily  </li>
-<li>if (!DisableAttachMechanism) {  </li>
-<li>if (StartAttachListener || AttachListener::init_at_startup()) {  </li>
-<li>AttachListener::init();  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<h3 id="-1-signal-dispatcher-"><a href=""></a>1. Signal Dispatcher 线程</h3>
-<p>在os.cpp中的signal_init()函数中，启动了signal dispatcher 线程，对signal dispather 线程主要是用于处理信号，等待信号并且分发处理，可以详细看signal_thread_entry的方法
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7034005#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7034005#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>static void signal_thread_entry(JavaThread/* thread, TRAPS) {  </li>
-<li>os::set_priority(thread, NearMaxPriority);  </li>
-<li>while (true) {  </li>
-<li>int sig;  </li>
-<li>{  </li>
-<li>// FIXME : Currently we have not decieded what should be the status  </li>
-<li>//         for this java thread blocked here. Once we decide about  </li>
-<li>//         that we should fix this.  </li>
-<li>sig = os::signal_wait();  </li>
-<li>}  </li>
-<li>if (sig == os::sigexitnum_pd()) {  </li>
-<li>// Terminate the signal thread  </li>
-<li>return;  </li>
-<li>}  </li>
-<li></li>
-<li>switch (sig) {  </li>
-<li>case SIGBREAK: {  </li>
-<li>// Check if the signal is a trigger to start the Attach Listener - in that  </li>
-<li>// case don&#39;t print stack traces.  </li>
-<li>if (!DisableAttachMechanism &amp;&amp; AttachListener::is_init_trigger()) {  </li>
-<li>continue;  </li>
-<li>}  </li>
-<li>// Print stack traces  </li>
-<li>// Any SIGBREAK operations added here should make sure to flush  </li>
-<li>// the output stream (e.g. tty-&gt;flush()) after output.  See 4803766.  </li>
-<li>// Each module also prints an extra carriage return after its output.  </li>
-<li>VM_PrintThreads op;  </li>
-<li>VMThread::execute(&amp;op);  </li>
-<li>VM_PrintJNI jni_op;  </li>
-<li>VMThread::execute(&amp;jni_op);  </li>
-<li>VM_FindDeadlocks op1(tty);  </li>
-<li>VMThread::execute(&amp;op1);  </li>
-<li>Universe::print_heap_at_SIGBREAK();  </li>
-<li>if (PrintClassHistogram) {  </li>
-<li>VM_GC_HeapInspection op1(gclog_or_tty, true //<em> force full GC before heap inspection /</em>/,  </li>
-<li>true //<em> need_prologue /</em>/);  </li>
-<li>VMThread::execute(&amp;op1);  </li>
-<li>}  </li>
-<li>if (JvmtiExport::should_post_data_dump()) {  </li>
-<li>JvmtiExport::post_data_dump();  </li>
-<li>}  </li>
-<li>break;  </li>
-<li>}  </li>
-<li>default: {  </li>
-<li>// Dispatch the signal to java  </li>
-<li>HandleMark hm(THREAD);  </li>
-<li>klassOop k = SystemDictionary::resolve_or_null(vmSymbolHandles::sun_misc_Signal(), THREAD);  </li>
-<li>KlassHandle klass (THREAD, k);  </li>
-<li>if (klass.not_null()) {  </li>
-<li>JavaValue result(T_VOID);  </li>
-<li>JavaCallArguments args;  </li>
-<li>args.push_int(sig);  </li>
-<li>JavaCalls::call_static(  </li>
-<li>&amp;result,  </li>
-<li>klass,  </li>
-<li>vmSymbolHandles::dispatch_name(),  </li>
-<li>vmSymbolHandles::int_void_signature(),  </li>
-<li>&amp;args,  </li>
-<li>THREAD  </li>
-<li>);  </li>
-<li>}  </li>
-<li>if (HAS_PENDING_EXCEPTION) {  </li>
-<li>// tty is initialized early so we don&#39;t expect it to be null, but  </li>
-<li>// if it is we can&#39;t risk doing an initialization that might  </li>
-<li>// trigger additional out-of-memory conditions  </li>
-<li>if (tty != NULL) {  </li>
-<li>char klass_name[256];  </li>
-<li>char tmp_sig_name[16];  </li>
-<li>const char/* sig_name = &quot;UNKNOWN&quot;;  </li>
-<li>instanceKlass::cast(PENDING_EXCEPTION-&gt;klass())-&gt;  </li>
-<li>name()-&gt;as_klass_external_name(klass_name, 256);  </li>
-<li>if (os::exception_name(sig, tmp_sig_name, 16) != NULL)  </li>
-<li>sig_name = tmp_sig_name;  </li>
-<li>warning(&quot;Exception %s occurred dispatching signal %s to handler&quot;  </li>
-<li>&quot;- the VM may need to be forcibly terminated&quot;,  </li>
-<li>klass_name, sig_name );  </li>
-<li>}  </li>
-<li>CLEAR_PENDING_EXCEPTION;  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>可以看到通过os::signal_wait();等待信号，而在linux里是通过sem_wait()来实现，接受到SIGBREAK(linux 中的QUIT)信号的时候（关于信号处理请参考笔者的另一篇博客<a href="http://blog.csdn.net/raintungli/article/details/7178472" target="_blank">:java 中关于信号的处理在linux下的实现</a>），第一次通过调用 AttachListener::is_init_trigger（）初始化attach listener线程，详细见2.Attach Listener 线程。</p>
-<ol>
-<li>第一次收到信号，会开始初始化，当初始化成功，将会直接返回，而且不返回任何线程stack的信息（通过socket file的操作返回），并且第二次将不在需要初始化。如果初始化不成功，将直接在控制台的outputstream中打印线程栈信息。</li>
-<li>第二次收到信号，如果已经初始化过，将直接在控制台中打印线程的栈信息。如果没有初始化，继续初始化，走和第一次相同的流程。</li>
-</ol>
-<h3 id="-2-attach-listener-"><a href=""></a>2. Attach Listener 线程</h3>
-<p>Attach Listener 线程是负责接收到外部的命令，而对该命令进行执行的并且吧结果返回给发送者。在jvm启动的时候，如果没有指定+StartAttachListener，该线程是不会启动的，刚才我们讨论到了在接受到quit信号之后，会调用 AttachListener::is_init_trigger（）通过调用用AttachListener::init（）启动了Attach Listener 线程，同时在不同的操作系统下初始化，在linux中 是在attachListener_Linux.cpp文件中实现的。</p>
-<p>在linux中如果发现文件.attach_pid/#pid存在，才会启动attach listener线程，同时初始化了socket 文件，也就是通常jmap,jstack tool干的事情，先创立attach_pid/#pid文件，然后发quit信号,通过这种方式暗式的启动了Attach Listener线程（见博客：<a href="http://blog.csdn.net/raintungli/article/details/7023092" target="_blank"><a href="http://blog.csdn.net/raintungli/article/details/7023092">http://blog.csdn.net/raintungli/article/details/7023092</a></a>）。</p>
-<p>线程的实现在 attach_listener_thread_entry 方法体中实现
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7034005#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7034005#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>static void attach_listener_thread_entry(JavaThread/* thread, TRAPS) {  </li>
-<li>os::set_priority(thread, NearMaxPriority);  </li>
-<li></li>
-<li>if (AttachListener::pd_init() != 0) {  </li>
-<li>return;  </li>
-<li>}  </li>
-<li>AttachListener::set_initialized();  </li>
-<li></li>
-<li>for (;;) {  </li>
-<li>AttachOperation/* op = AttachListener::dequeue();    </li>
-<li>if (op == NULL) {  </li>
-<li>return;   // dequeue failed or shutdown  </li>
-<li>}  </li>
-<li></li>
-<li>ResourceMark rm;  </li>
-<li>bufferedStream st;  </li>
-<li>jint res = JNI_OK;  </li>
-<li></li>
-<li>// handle special detachall operation  </li>
-<li>if (strcmp(op-&gt;name(), AttachOperation::detachall_operation_name()) == 0) {  </li>
-<li>AttachListener::detachall();  </li>
-<li>} else {  </li>
-<li>// find the function to dispatch too  </li>
-<li>AttachOperationFunctionInfo/* info = NULL;  </li>
-<li>for (int i=0; funcs[i].name != NULL; i++) {  </li>
-<li>const char/* name = funcs[i].name;  </li>
-<li>assert(strlen(name) &lt;= AttachOperation::name_length_max, &quot;operation &lt;= name_length_max&quot;);  </li>
-<li>if (strcmp(op-&gt;name(), name) == 0) {  </li>
-<li>info = &amp;(funcs[i]);  </li>
-<li>break;  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>// check for platform dependent attach operation  </li>
-<li>if (info == NULL) {  </li>
-<li>info = AttachListener::pd_find_operation(op-&gt;name());  </li>
-<li>}  </li>
-<li></li>
-<li>if (info != NULL) {  </li>
-<li>// dispatch to the function that implements this operation  </li>
-<li>res = (info-&gt;func)(op, &amp;st);  </li>
-<li>} else {  </li>
-<li>st.print(&quot;Operation %s not recognized!&quot;, op-&gt;name());  </li>
-<li>res = JNI_ERR;  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>// operation complete - send result and output to client  </li>
-<li>op-&gt;complete(res, &amp;st);  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>在AttachListener::dequeue(); 在liunx里的实现就是监听刚才创建的socket的文件，如果有请求进来，找到请求对应的操作，调用操作得到结果并把结果写到这个socket的文件，如果你把socket的文件删除，jstack/jmap会出现错误信息 unable to open socket file:........</p>
-<p>我们经常使用 kill -3 pid的操作打印出线程栈信息，我们可以看到具体的实现是在Signal Dispatcher 线程中完成的，因为kill -3 pid 并不会创建.attach_pid/#pid文件，所以一直初始化不成功，从而线程的栈信息被打印到控制台中。
-来源： <a href="[http://blog.csdn.net/raintungli/article/details/7034005](http://blog.csdn.net/raintungli/article/details/7034005)">[http://blog.csdn.net/raintungli/article/details/7034005](http://blog.csdn.net/raintungli/article/details/7034005)</a></p>
-<h3 id="-java-jmap-jstack-linux-vm-thread-http-blog-csdn-net-raintungli-article-details-7045024-"><a href="http://blog.csdn.net/raintungli/article/details/7045024" target="_blank">Java 工具（jmap,jstack）在linux上的源码分析（三）执行的线程vm thread</a></h3>
-<h3 id="-"> </h3>
-<p>在前面的博客中（<a href="http://blog.csdn.net/raintungli/article/details/7034005" target="_blank"><a href="http://blog.csdn.net/raintungli/article/details/7034005">http://blog.csdn.net/raintungli/article/details/7034005</a></a>）所提到的信号转发线程，Attach Listener 线程都只是操作socket文件，并没有去执行比如stack 分析，或者heap的分析，真正的工作线程其实是vm thread.</p>
-<p>（一）启动vm thread
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>jint Threads::create_vm(JavaVMInitArgs/<em> args, bool/</em> canTryAgain) {  </li>
-<li>...  </li>
-<li>// Create the VMThread  </li>
-<li>{ TraceTime timer(&quot;Start VMThread&quot;, TraceStartupTime);  </li>
-<li>VMThread::create();  </li>
-<li>Thread/* vmthread = VMThread::vm_thread();  </li>
-<li></li>
-<li>if (!os::create_thread(vmthread, os::vm_thread))  </li>
-<li>vm_exit_during_initialization(&quot;Cannot create VM thread. Out of system resources.&quot;);  </li>
-<li></li>
-<li>// Wait for the VM thread to become ready, and VMThread::run to initialize  </li>
-<li>// Monitors can have spurious returns, must always check another state flag  </li>
-<li>{  </li>
-<li>MutexLocker ml(Notify_lock);  </li>
-<li>os::start_thread(vmthread);  </li>
-<li>while (vmthread-&gt;active_handles() == NULL) {  </li>
-<li>Notify_lock-&gt;wait();  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-<li>...  </li>
-<li></li>
-<li></li>
-<li>}  </li>
-</ol>
-<p>我们可以看到，在thread.cpp里启动了线程vm thread，在这里我们同时也稍微的略带的讲一下jvm在linux里如何启动线程的。</p>
-<p>通常在linux中启动线程，是调用
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>int pthread_create((pthread_t /<em><strong>thread, </strong>const pthread_attr_t /</em><strong>attr,void /<em>(/</em></strong>start_routine) (void /<em>), void /</em>__arg));  </li>
-</ol>
-<p>而在java里却增加了os:create_thread --初始化线程 和os:start_thread--启动线程</p>
-<p>我们去看一下jvm里面是如何在linux里做到的</p>
-<p>在os_linux.cpp中来看create_thread的方法
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>bool os::create_thread(Thread/* thread, ThreadType thr_type, size_t stack_size) {  </li>
-<li>....  </li>
-<li>int ret = pthread_create(&amp;tid, &amp;attr, (void/<em> (/</em>)(void/*)) java_start, thread);  </li>
-<li>....  </li>
-<li>}  </li>
-</ol>
-<p>继续看java_start方法</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>static void /<em>java_start(Thread /</em>thread) {  </li>
-<li>....  </li>
-<li>// handshaking with parent thread  </li>
-<li>{  </li>
-<li>MutexLockerEx ml(sync, Mutex::_no_safepoint_check_flag);  </li>
-<li></li>
-<li>// notify parent thread  </li>
-<li>osthread-&gt;set_state(INITIALIZED);  </li>
-<li>sync-&gt;notify_all();  </li>
-<li></li>
-<li>// wait until os::start_thread()  </li>
-<li>while (osthread-&gt;get_state() == INITIALIZED) {  </li>
-<li>sync-&gt;wait(Mutex::_no_safepoint_check_flag);  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>// call one more level start routine  </li>
-<li>thread-&gt;run();  </li>
-<li></li>
-<li>return 0;  </li>
-<li>}  </li>
-</ol>
-<p>首先jvm先设置了当前线程的状态是Initialized, 然后notify所有的线程，</p>
-<p> while (osthread-&gt;get_state() == INITIALIZED) {
-      sync-&gt;wait(Mutex::_no_safepoint_check_flag);
-    }</p>
-<p>不停的查看线程的当前状态是不是Initialized, 如果是的话，调用了sync-&gt;wait()的方法等待。</p>
-<p>来看os:start_thread的方法 os.cpp
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>void os::start_thread(Thread/* thread) {  </li>
-<li>// guard suspend/resume  </li>
-<li>MutexLockerEx ml(thread-&gt;SR_lock(), Mutex::_no_safepoint_check_flag);  </li>
-<li>OSThread/* osthread = thread-&gt;osthread();  </li>
-<li>osthread-&gt;set_state(RUNNABLE);  </li>
-<li>pd_start_thread(thread);  </li>
-<li>}  </li>
-</ol>
-<p>这时候设置了线程的状态为runnable,但没有notify线程</p>
-<p>在 pd_start_thread(thread)中, os_linux.cpp中
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>void os::pd_start_thread(Thread/* thread) {  </li>
-<li>OSThread /* osthread = thread-&gt;osthread();  </li>
-<li>assert(osthread-&gt;get_state() != INITIALIZED, &quot;just checking&quot;);  </li>
-<li>Monitor/* sync_with_child = osthread-&gt;startThread_lock();  </li>
-<li>MutexLockerEx ml(sync_with_child, Mutex::_no_safepoint_check_flag);  </li>
-<li>sync_with_child-&gt;notify();  </li>
-<li>}  </li>
-</ol>
-<p>这时候我们看到了notify 线程的操作</p>
-<p>也就是这时候notify了线程，因为这时候的线程的状态是RUNNABLE, 方法java_start继续往下执行，于是调用了thread-&gt;run()的方法</p>
-<p>对于线程vm Thread 也就是调用了vmthread::run方法</p>
-<p>vmThread.cpp
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>void VMThread::run() {  </li>
-<li>...  </li>
-<li>this-&gt;loop();  </li>
-<li>...  </li>
-<li>}  </li>
-</ol>
-<p>调用了loop函数，处理了VM_Operation 的queue 关于queue的级别和优先级处理算法：可以参考 另一篇博客：<a href="http://blog.csdn.net/raintungli/article/details/6553337" target="_blank"><a href="http://blog.csdn.net/raintungli/article/details/6553337">http://blog.csdn.net/raintungli/article/details/6553337</a></a></p>
-<p>（二）Jstack 运行在vm thread里的VM_Operation</p>
-<p>jstack 处理也就是在前面博客所提到的attach Listener 线程所做的 operation
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>static jint thread_dump(AttachOperation/<em> op, outputStream/</em> out) {  </li>
-<li>bool print_concurrent_locks = false;  </li>
-<li>if (op-&gt;arg(0) != NULL &amp;&amp; strcmp(op-&gt;arg(0), &quot;-l&quot;) == 0) {  </li>
-<li>print_concurrent_locks = true;  </li>
-<li>}  </li>
-<li></li>
-<li>// thread stacks  </li>
-<li>VM_PrintThreads op1(out, print_concurrent_locks);  </li>
-<li>VMThread::execute(&amp;op1);  </li>
-<li></li>
-<li>// JNI global handles  </li>
-<li>VM_PrintJNI op2(out);  </li>
-<li>VMThread::execute(&amp;op2);  </li>
-<li></li>
-<li>// Deadlock detection  </li>
-<li>VM_FindDeadlocks op3(out);  </li>
-<li>VMThread::execute(&amp;op3);  </li>
-<li></li>
-<li>return JNI_OK;  </li>
-<li>}  </li>
-</ol>
-<p>简单看一下类VM_PrintThreads 它 继承了VM_Operation</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7045024#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>class VM_PrintThreads: public VM_Operation {  </li>
-<li>private:  </li>
-<li>outputStream/* _out;  </li>
-<li>bool _print_concurrent_locks;  </li>
-<li>public:  </li>
-<li>VM_PrintThreads()                                                { _out = tty; _print_concurrent_locks = PrintConcurrentLocks; }  </li>
-<li>VM_PrintThreads(outputStream/* out, bool print_concurrent_locks)  { _out = out; _print_concurrent_locks = print_concurrent_locks; }  </li>
-<li>VMOp_Type type() const                                           {  return VMOp_PrintThreads; }  </li>
-<li>void doit();  </li>
-<li>bool doit_prologue();  </li>
-<li>void doit_epilogue();  </li>
-<li>};  </li>
-</ol>
-<p>当调用VMThread::execute()也就是将VM_PrintThreads 放入了_vm_queue中，交给vm thread 处理，对vm thread来说取出queue里的VM_Operation,并且调用doit方法。</p>
-<p>在jstack里，attach listener 的线程产生了VM_PrintThreads，VM_PrintJNI，VM_FindDeadlocks 3个operations，交给了vm thread  的线程处理。
-来源： <a href="[http://blog.csdn.net/raintungli/article/details/7045024](http://blog.csdn.net/raintungli/article/details/7045024)">[http://blog.csdn.net/raintungli/article/details/7045024](http://blog.csdn.net/raintungli/article/details/7045024)</a> <a href="http://blog.csdn.net/raintungli/article/details/7162468" target="_blank">Java 工具（jmap,jstack）在linux上的源码分析（四）safe point</a></p>
-<p>safe point 顾明思意，就是安全点，当需要jvm做一些操作的时候，需要把当前正在运行的线程进入一个安全点的状态（也可以说停止状态），这样才能做一些安全的操作，比如线程的dump，堆栈的信息。</p>
-<p>在jvm里面通常vm_thread（我们一直在谈论的做一些属于vm 份内事情的线程） 和cms_thread（内存回收的线程）做的操作，是需要将其他的线程通过调用SafepointSynchronize::begin 和 SafepointSynchronize:end来实现让其他的线程进入或者退出safe point 的状态。</p>
-<h2 id="-safepoint-"><a href=""></a>通常safepoint 的有三种状态</h2>
-<p>_not_synchronized 说明没有任何打断现在所有线程运行的操作，也就是vm thread, cms thread 没有接到操作的指令 _synchronizing vm thread,cms thread 接到操作指令，正在等待所有线程进入safe point _synchronized 所有线程进入safe point, vm thread, cms thread 可以开始指令操作</p>
-<h2 id="-java-"><a href=""></a>Java线程的状态</h2>
-<p>通常在java 进程中的Java 的线程有几个不同的状态，如何让这些线程进入safepoint 的状态中，jvm是采用不同的方式</p>
-<h3 id="-a-"><a href=""></a>a. 正在解释执行</h3>
-<p>由于java是解释性语言，而线程在解释java 字节码的时候，需要dispatch table,记录方法地址进行跳转的，那么这样让线程进入停止状态就比较容易了，只要替换掉dispatch table 就可以了，让线程知道当前进入softpoint 状态。</p>
-<p>java里会设置3个DispatchTable，  _active_table，  _normal_table， _safept_table</p>
-<p>_active_table 正在解释运行的线程使用的dispatch table</p>
-<p>_normal_table 就是正常运行的初始化的dispatch table</p>
-<p>_safept_table safe point需要的dispatch table</p>
-<p>解释运行的线程一直都在使用_active_table,关键处就是在进入saftpoint 的时候，用_safept_table替换_active_table, 在退出saftpoint 的时候，使用_normal_table来替换_active_table</p>
-<p>具体实现可以查看源码
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>void TemplateInterpreter::notice_safepoints() {  </li>
-<li>if (!_notice_safepoints) {  </li>
-<li>// switch to safepoint dispatch table  </li>
-<li>_notice_safepoints = true;  </li>
-<li>copy_table((address/<em>)&amp;_safept_table, (address/</em>)&amp;_active_table, sizeof(_active_table) / sizeof(address));  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>// switch from the dispatch table which notices safepoints back to the  </li>
-<li>// normal dispatch table.  So that we can notice single stepping points,  </li>
-<li>// keep the safepoint dispatch table if we are single stepping in JVMTI.  </li>
-<li>// Note that the should_post_single_step test is exactly as fast as the  </li>
-<li>// JvmtiExport::_enabled test and covers both cases.  </li>
-<li>void TemplateInterpreter::ignore_safepoints() {  </li>
-<li>if (_notice_safepoints) {  </li>
-<li>if (!JvmtiExport::should_post_single_step()) {  </li>
-<li>// switch to normal dispatch table  </li>
-<li>_notice_safepoints = false;  </li>
-<li>copy_table((address/<em>)&amp;_normal_table, (address/</em>)&amp;_active_table, sizeof(_active_table) / sizeof(address));  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<h3 id="-"><a href=""></a></h3>
-<p>b. 运行在native code</p>
-<p>如果线程运行在native code的时候，vm thread 是不需要等待线程执行完的，只需要在从native code 返回的时候去判断一下 _state 的状态就可以了。</p>
-<p>在方法体里就是前面博客也出现过的 SafepointSynchronize::do_call_back()
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>inline static bool do_call_back() {  </li>
-<li>return (_state != _not_synchronized);  </li>
-<li>}  </li>
-</ol>
-<p>判断了_state 不是_not_synchronized状态</p>
-<p>为了能让线程从native code 回到java 的时候为了能读到/设置正确线程的状态，通常的解决方法使用memory barrier，java 使用OrderAccess::fence(); 在汇编里使用<strong>asm</strong> volatile (&quot;lock; addl $0,0(%%rsp)&quot; : : : &quot;cc&quot;, &quot;memory&quot;); 保证从内存里读到正确的值，但是这种方法严重影响系统的性能，于是java使用了每个线程都有独立的内存页来设置状态。通过使用使用参数-XX:+UseMembar  参数使用memory barrier，默认是不打开的，也就是使用独立的内存页来设置状态。</p>
-<h3 id="-c-"><a href=""></a> c. 运行编译的代码</h3>
-<h3 id="-1-poling-page-"><a href=""></a>1. Poling page 页面</h3>
-<p>Poling page是在jvm初始化启动的时候会初始化的一个单独的内存页面，这个页面是让运行的编译过的代码的线程进入停止状态的关键。</p>
-<p>在linux里面使用了mmap初始化，源码如下
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>address polling_page = (address) ::mmap(NULL, Linux::page_size(), PROT_READ, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);  </li>
-</ol>
-<h3 id="-"><a href=""></a></h3>
-<ol>
-<li>编译</li>
-</ol>
-<p>java 的JIT 会直接编译一些热门的源码到机器码，直接执行而不需要在解释执行从而提高效率，在编译的代码中，当函数或者方法块返回的时候会去访问一个内存poling页面.</p>
-<p>x86架构下
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>void LIR_Assembler::return_op(LIR_Opr result) {  </li>
-<li>assert(result-&gt;is_illegal() || !result-&gt;is_single_cpu() || result-&gt;as_register() == rax, &quot;word returns are in rax,&quot;);  </li>
-<li>if (!result-&gt;is_illegal() &amp;&amp; result-&gt;is_float_kind() &amp;&amp; !result-&gt;is_xmm_register()) {  </li>
-<li>assert(result-&gt;fpu() == 0, &quot;result must already be on TOS&quot;);  </li>
-<li>}  </li>
-<li></li>
-<li>// Pop the stack before the safepoint code  </li>
-<li>__ remove_frame(initial_frame_size_in_bytes());  </li>
-<li></li>
-<li>bool result_is_oop = result-&gt;is_valid() ? result-&gt;is_oop() : false;  </li>
-<li></li>
-<li>// Note: we do not need to round double result; float result has the right precision  </li>
-<li>// the poll sets the condition code, but no data registers  </li>
-<li>AddressLiteral polling_page(os::get_polling_page() + (SafepointPollOffset % os::vm_page_size()),  </li>
-<li>relocInfo::poll_return_type);  </li>
-<li></li>
-<li>// NOTE: the requires that the polling page be reachable else the reloc  </li>
-<li>// goes to the movq that loads the address and not the faulting instruction  </li>
-<li>// which breaks the signal handler code  </li>
-<li></li>
-<li>__ test32(rax, polling_page);  </li>
-<li></li>
-<li>__ ret(0);  </li>
-<li>}  </li>
-</ol>
-<p>在前面提到的SafepointSynchronize::begin 函数源码中</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>if (UseCompilerSafepoints &amp;&amp; DeferPollingPageLoopCount &lt; 0) {  </li>
-<li>// Make polling safepoint aware  </li>
-<li>guarantee (PageArmed == 0, &quot;invariant&quot;) ;  </li>
-<li>PageArmed = 1 ;  </li>
-<li>os::make_polling_page_unreadable();  </li>
-<li>}  </li>
-</ol>
-<p>这里提到了2个参数 UseCompilerSafepoints 和 DeferPollingPageLoopCount ，在默认的情况下这2个参数是true和-1</p>
-<p>函数体将会调用os:make_polling_page_unreadable();在linux os 下具体实现是调用了mprotect(bottom,size,prot) 使polling 内存页变成不可读。</p>
-<h3 id="-3-"><a href=""></a>3. 信号</h3>
-<p>到当编译好的程序尝试在去访问这个不可读的polling页面的时候，在系统级别会产生一个错误信号SIGSEGV, 可以参考笔者的一篇博客中曾经讲过<a href="http://blog.csdn.net/raintungli/article/details/7178472" target="_blank">java 的信号处理</a>，可以知道信号SIGSEGV的处理函数在x86体系下见下源码：
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7162468#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>JVM_handle_linux_signal(int sig,  </li>
-<li>siginfo_t/* info,  </li>
-<li>void/* ucVoid,  </li>
-<li>int abort_if_unrecognized){  </li>
-<li>....  </li>
-<li>if (sig == SIGSEGV &amp;&amp; os::is_poll_address((address)info-&gt;si_addr)) {  </li>
-<li>stub = SharedRuntime::get_poll_stub(pc);  </li>
-<li>}   </li>
-<li>....  </li>
-<li>}  </li>
-</ol>
-<p>在linux x86,64 bit的体系中，poll stub 的地址 就是 SafepointSynchronize::handle_polling_page_exception 详细程序可见shareRuntime_x86_64.cpp</p>
-<p>回到safepoint.cpp中，SafepointSynchronize::handle_polling_page_exception通过取出线程的safepoint_stat,调用函数void ThreadSafepointState::handle_polling_page_exception，最后通过调用SafepointSynchronize::block(thread()); 来block当前线程。</p>
-<h3 id="-d-block-"><a href=""></a>d. block 状态</h3>
-<p>当线程进入block状态的时候，继续保持block状态。
-来源： <a href="[http://blog.csdn.net/raintungli/article/details/7162468](http://blog.csdn.net/raintungli/article/details/7162468)">[http://blog.csdn.net/raintungli/article/details/7162468](http://blog.csdn.net/raintungli/article/details/7162468)</a><a href="http://blog.csdn.net/raintungli/article/details/7245709" target="_blank">Java 工具（jmap,jstack）在linux上的源码分析(五) -F 参数的bug</a></p>
-<p>当使用jmap,jstack是用-F参数的时候，是通过调用系统调用ptrace来取的寄存器的信息，关于linux下的ptrace实现可以参考我的博客（<a href="http://blog.csdn.net/raintungli/article/details/6563867" target="_blank"><a href="http://blog.csdn.net/raintungli/article/details/6563867">http://blog.csdn.net/raintungli/article/details/6563867</a></a>）</p>
-<p>在jdk6u23版本之前你会发现，当你使用jstack -F的时候 经常在logger 里面 看到错误信息，直接抛出异常，根本无法看到堆栈信息。</p>
-<p>Thread 26724: (state = BLOCKED)
-Error occurred during stack walking:
-sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerException: get_thread_regs failed for a lwp
-        at sun.jvm.hotspot.debugger.linux.LinuxDebuggerLocal$LinuxDebuggerLocalWorkerThread.execute(LinuxDebuggerLocal.java:152)
-        at sun.jvm.hotspot.debugger.....</p>
-<p>通过查看源码，最后调用的函数是process_get_lwp_regs /ps_proc.c</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7245709#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7245709#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>static bool process_get_lwp_regs(struct ps_prochandle/<em> ph, pid_t pid, struct user_regs_struct /</em>user) {  </li>
-<li>// we have already attached to all thread &#39;pid&#39;s, just use ptrace call  </li>
-<li>// to get regset now. Note that we don&#39;t cache regset upfront for processes.  </li>
-<li>// Linux on x86 and sparc are different.  On x86 ptrace(PTRACE_GETREGS, ...)  </li>
-<li>// uses pointer from 4th argument and ignores 3rd argument.  On sparc it uses  </li>
-<li>// pointer from 3rd argument and ignores 4th argument  </li>
-<li>/#if defined(sparc) || defined(sparcv9)  </li>
-<li>/#define ptrace_getregs(request, pid, addr, data) ptrace(request, pid, addr, data)  </li>
-<li>/#else  </li>
-<li>/#define ptrace_getregs(request, pid, addr, data) ptrace(request, pid, data, addr)  </li>
-<li>/#endif  </li>
-<li></li>
-<li>/#ifdef _LP64  </li>
-<li>/#ifdef PTRACE_GETREGS64  </li>
-<li>/#define PTRACE_GETREGS_REQ PTRACE_GETREGS64  </li>
-<li>/#endif  </li>
-<li>/#else  </li>
-<li>/#if defined(PTRACE_GETREGS) || defined(PT_GETREGS)  </li>
-<li>/#define PTRACE_GETREGS_REQ PTRACE_GETREGS  </li>
-<li>/#endif  </li>
-<li>/#endif //<em> _LP64 /</em>/  </li>
-<li></li>
-<li>/#ifdef PTRACE_GETREGS_REQ  </li>
-<li>if (ptrace_getregs(PTRACE_GETREGS_REQ, pid, user, NULL) &lt; 0) {  </li>
-<li>print_debug(&quot;ptrace(PTRACE_GETREGS, ...) failed for lwp %d\n&quot;, pid);  </li>
-<li>return false;  </li>
-<li>}  </li>
-<li>return true;  </li>
-<li>/#else  </li>
-<li>print_debug(&quot;ptrace(PTRACE_GETREGS, ...) not supported\n&quot;);  </li>
-<li>return false;  </li>
-<li>/#endif  </li>
-<li></li>
-<li>}  </li>
-</ol>
-<p>无法判断究竟是否是因为没有定义参数PTRACE_GETREGS_REQ，还是因为ptrace的调用参数错误所导致的，这样就必须打开print_debug，查看打印的信息。</p>
-<p>通过源码，可以查到print_debug函数是通过环境变量LIBSAPROC_DEBUG来控制</p>
-<p>设置 </p>
-<p>export LIBSAPROC_DEBUG=1</p>
-<p>运行</p>
-<p>jstack -F processid</p>
-<p>我们能看到错误中多了一行</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7245709#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7245709#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>Thread 26724: (state = BLOCKED)  </li>
-<li>libsaproc DEBUG: ptrace(PTRACE_GETREGS, ...) not supported  </li>
-</ol>
-<p>产生的原因就非常清楚了，bug主要是因为宏定义PTRACE_GETREGS_REQ缺失，查看源码</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7245709#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7245709#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>/#ifdef _LP64  </li>
-<li>/#ifdef PTRACE_GETREGS64  </li>
-<li>/#define PTRACE_GETREGS_REQ PTRACE_GETREGS64  </li>
-<li>/#endif  </li>
-<li>/#else  </li>
-<li>/#if defined(PTRACE_GETREGS) || defined(PT_GETREGS)  </li>
-<li>/#define PTRACE_GETREGS_REQ PTRACE_GETREGS  </li>
-<li>/#endif  </li>
-<li>/#endif //<em> _LP64 /</em>/  </li>
-</ol>
-<p>_LP64 是64位机器的宏定义，而对ptrace的参数PTRACE_GETREGS64，显然Linux kernel 2.6.35里面并没有支持，导致了没有宏定义PTRACE_GETREGS_REQ，这里明显是jvm没有考虑到的情况。</p>
-<p>解决办法</p>
-<p>a. 因为这是jvm 编译级别的bug，除非你重现修改编译libsaproc.so，覆盖目录/jdk1.6.0_23/jre/lib/amd64</p>
-<p>笔者自己编译了这个lib,可以在csdn上下载（<a href="http://download.csdn.net/detail/raintungli/4065304" target="_blank"><a href="http://download.csdn.net/detail/raintungli/4065304">http://download.csdn.net/detail/raintungli/4065304</a></a>），笔者编译的jdk版本是1.6.23 build(19.0)</p>
-<p>b. 建议升级jvm到1.6.30版本，该版本已经测试过，已经修复该bug.</p>
-<p>后话：</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7245709#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7245709#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>if (ptrace_getregs(PTRACE_GETREGS_REQ, pid, user, NULL) &lt; 0) {  </li>
-<li>print_debug(&quot;ptrace(PTRACE_GETREGS, ...) failed for lwp %d\n&quot;, pid);  </li>
-<li>return false;  </li>
-<li>}  </li>
-</ol>
-<p>jvm可以在此处更清楚点，不是简单的判断&lt;0，而是在判断&lt;0的时候把errno打印出来，能更容易的判断出是什么原因无法ptrace 上。</p>
-<p>来源： <a href="[http://blog.csdn.net/raintungli/article/details/7245709](http://blog.csdn.net/raintungli/article/details/7245709)">[http://blog.csdn.net/raintungli/article/details/7245709](http://blog.csdn.net/raintungli/article/details/7245709)</a><a href="http://blog.csdn.net/raintungli/article/details/7289639" target="_blank">Java 工具（jmap,jstack）在linux上的源码分析(六) -F 参数 读取动态链接共享库文件中的符号表</a></p>
-<p>通常我们使用jmap,jstack 去检查堆栈信息的时候，是不会使用-f参数的，但有的时候系统在无法打印出堆栈信息的时候，会建议你使用参数-F。</p>
-<p>关于-F参数与非-F参数的区别笔者已经在前面的博客中讲述（<a href="http://blog.csdn.net/raintungli/article/details/7023092" target="_blank"><a href="http://blog.csdn.net/raintungli/article/details/7023092">http://blog.csdn.net/raintungli/article/details/7023092</a></a>），简单的说也就是一种是让jvm进程自己打印出堆栈信息，另有一种是直接访问jvm的堆栈区通过固定的结构找出我们需要的信息。</p>
-<h1 id="-1-linux-f-"><a href=""></a>1. Linux-F参数的实现</h1>
-<p>在linux中可以使用ptrace的系统调用去访问运行中的进程的内存信息，具体如何实现可以参考笔者的博客（<a href="http://blog.csdn.net/raintungli/article/details/6563867" target="_blank"><a href="http://blog.csdn.net/raintungli/article/details/6563867">http://blog.csdn.net/raintungli/article/details/6563867</a></a>）</p>
-<p>在java中使用动态加载的方式加载jvm自己的链接共享库，jvm的核心链接共享库是libjvm.so，linux中如何动态加载可以参考（<a href="http://www.ibm.com/developerworks/cn/linux/l-dynamic-libraries/#dynamiclinking" target="_blank"><a href="http://www.ibm.com/developerworks/cn/linux/l-dynamic-libraries//#dynamiclinking">http://www.ibm.com/developerworks/cn/linux/l-dynamic-libraries//#dynamiclinking</a></a>）</p>
-<p>因为是动态共享库，当想查找具体的参数的值，内存的信息的时候，就需要计算出正确的参数或者函数的地址。</p>
-<h1 id="-2-"><a href=""></a>2. 共享库中的符号相对地址偏移</h1>
-<p>可运行程序，共享库使用ELF格式，当运行一个程序的时候，内核会把ELF加载到用户空间，里面记录了程序的函数和数据的地址和内容，elf文件格式就不具体描述了。</p>
-<p>在linux 中可以使用结构体ELF_EHDR，ELF_PHDR，ELF_SHDR读出elf 的program header, section header, section data.</p>
-<p>在jvm中源码具体实现请参考 /hotspot/agent/os/linux/salibelf.c </p>
-<p>在linux中本身就自带一个读取elf格式的工具，readelf 你可以使用不同的参数读取不同的内容。</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7289639#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7289639#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>readelf -s libjvm.so  </li>
-</ol>
-<p>显示共享库中的方法参数的虚拟地址，类型，名字</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7289639#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7289639#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>readelf -l libjvm.so  </li>
-</ol>
-<p>读取program headers，其中出现2个LOAD的类型，第一个是程序的指令虚拟的起始地址，另一个是程序数据的起始地址</p>
-<p>通过2个地址我们就能找到共享库中的参数，函数的相对地址的偏移</p>
-<h1 id="-3-"><a href=""></a>3. 进程中的符号地址</h1>
-<p>在第二章节中，得到的只是相对的地址偏移，并不是真实运行中的进程的符号地址，如何得到真实的地址在linux中就相对比较简单。</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7289639#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7289639#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li><p>cat /proc/$processid/maps<br>在maps里详细记录了进程的堆栈分配的地址，包括共享库的地址，那么起始地址就是这个库分配的最小地址
-<strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7289639#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7289639#" title="copy" target="_blank">copy</a></p>
-</li>
-<li><p>进程中共享库分配的最小地址+相对地址的偏移 =真实的进程中该函数或变量的真实地址  </p>
-</li>
-</ol>
-<h1 id="-4-java-tool-"><a href=""></a>4. Java tool 保存的符号表</h1>
-<p>在jmap/jstack 中，为了提高读取符号地址的性能，避免每一次要找符号的地址从elf文件中查找，只是在初始话的时候将符号表保存成哈希表，其中key是符号的名字，内容是符号的地址，长度。</p>
-<p>具体实现可以参考  /hotspot/src/os/linux/symtab.c build_symtab_internal 函数</p>
-<p>来源： <a href="[http://blog.csdn.net/raintungli/article/details/7289639](http://blog.csdn.net/raintungli/article/details/7289639)">[http://blog.csdn.net/raintungli/article/details/7289639](http://blog.csdn.net/raintungli/article/details/7289639)</a></p>
+        <h1 id="-pki-">常见的数字证书格式 - 关注信息安全(PKI、密码学)</h1>
+<p><img src="" alt=""> Saving Data...
+正在保存数据...
+正在儲存資料...</p>
 
       
     </div>
@@ -722,8 +131,8 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--Java工具（jmap-jstack）在linux上的源码分析/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--Java工具（jmap-jstack）在linux上的源码分析" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/域/">域</a></li></span></span> | <span class="tags">Tagged <a href="/tags/域/" class="label label-primary">域</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-域--常见的数字证书格式-关注信息安全PKI、密码学/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--常见的数字证书格式-关注信息安全PKI、密码学" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -738,30 +147,255 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">一次Java内存溢出异常的分析过程</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--批量地向AD域中添加用户帐户/">批量地向AD域中添加用户帐户</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--批量地向AD域中添加用户帐户/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-java-">一次Java内存溢出异常的分析过程</h1>
-<p>前些天，<a href="http://server.chinabyte.com/" target="_blank">服务器</a>上一个服务跑了一个多月突然当掉了。看了下日志，程序抛出了java.lang.OutOfMemoryError，之前也出现过同样的错误，服务跑了三个月内存溢出。出现这个异常，初步判断是程序有内存泄漏，接下来需要利用一些工具来分析具体原因。</p>
-<p>首先使用jdk自带的工具jmap转储(dump)java内存堆数据到本地文件中。jmap转储(dump)命令格式如下：</p>
-<p>jmap -dump:</p>
-<p>表示dump选项，表示需要dump的java应用程序的进程ID</p>
-<p>dump-options可以有以下三种参数，参数之间用逗号隔开：</p>
-<p>live，只dump活动的object，如果没有指定，表示dump所有object</p>
-<p>format=b，字节流格式</p>
-<p>file=，是转储文件的保存路径</p>
-<p>下面是dump命令的一个例子:</p>
-<p>jmap -dump:format=b,file=heap.bin 8023</p>
-<p>dump完成后，用Eclipse Memory Analyzer打开转储文件进行分析。Eclipse Memory Analyzer是一个java内存堆转储文件分析工具，可以生成内存分析报告(包括内存泄露Leak Suspects )。下面是分析完成后查看Top Consumers所看到的图表:</p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p>看到这两张图表，问题就比较明朗了。berkeley db中的数据结点com.sleepycat.je.tree.BIN占用了大量内存，导致内存溢出了。为了提高访问效率，berkeley db会缓存大量的结点，缓存大小限制可以在EnvironmentConfig设置，默认为jvm内存大小限制的60%。而这个应用程序中使用了5个EnvironmentImpl，并且都未单独设置缓存大小，总的缓存限制为jvm内存限制的300%(图表中BIN结点已经占用了94.55%的内存)，远远超出java的内存限制。随着服务的运行，缓存数据越来越多，最后导致内存溢出错误。因此，为每个EnvironmentImpl设置合适的缓存大小限制，就可以避免再次发生内存溢出。
-来源： <a href="[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)">[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)</a> </p>
+        <h1 id="-ad-">批量地向AD域中添加用户帐户</h1>
+<p>批量地向AD域中添加用户帐户(上)</p>
+<p>作为网管，有时我们需要批量地向AD域中添加用户帐户，这些用户帐户既有一些相同的属性，又有一些不同属性。如果逐个添加、设置的话，十分地麻烦。一般来说，如果不超 过10个，我们可利用AD用户帐户复制来实现。如果再多的话，我们就应该考虑使用csvde.exe或ldifde.exe来减轻我们的工作量了。　　
+一、 AD用户帐户复制
+1、在“AD域和计算机”中建一个作为样板的用户，如S1。
+2、设置相关需要的选项，如所属的用户组、登录时间、用户下次登录时需更改密码等。
+3、在S1上/右键/复制，输入名字和口令。
+说明：
+1、 只有AD域用户帐户才可以复制，对于本地用户帐户无此功能。
+2、 帐户复制可将在样板用户帐户设置的大多数属性带过来。具体如下：
+选项卡 复制到新用户帐号的属性
+常规 无。
+地址 除了“街道”之外所有
+帐户 除了“用户登录名”之外所有
+配置文件
+除“配置文件路径”和“主文件夹”。欲复制它们，应该使用
+%username%变量，如：<a href="">file://server/share/%username</a>
+电话 无
+单位 除了“职务”之外所有。
+隶属于 全部
+拨入 无，将默认值应用于新帐户。
+环境 无，将默认值应用于新帐户。
+会话 无，将默认值应用于新帐户。
+远程控制 无，将默认值应用于新帐户。
+终端服务配置文件
+无，将默认值应用于新帐户。
+二、比较csvde与ldifde <br>csvde逗号分隔符目录交换
+ldifde轻型目录访问协议
+互换格式目录交换
+功能
+只能用来添加对象，不能用于删除/修改
+可用于添加/删除/修改对象
+格式
+字段名1,字段名2,字段名3,……
+记录1此值,记录1此值,记录1此值,……
+字段名1: 记录1此值
+字段名2: 记录1此值
+字段名3: 记录1此值
+……
+举例
+Dn,objectclass,samaccountname,
+userprincipalname,useraccountcontrol
+“cn=s1,ou=test,dc=mcse,dc=com”
+,user,s1,s1@mcse.com,512
+Dn: cn=s1,ou=test,dc=mcse,dc=com
+Objectclass:user
+Samaccountname:s1
+Userprincipalname:s1@mcse.com
+useraccountcontrol:512
+共同点
+用于导入的文本文件必须包含：
+/<em> 用户帐号的OU，对象的类型以及用户登录名的路径，用户主名
+/</em> 默认（即不指定时）：用户帐户为禁用。启用：512，禁用：514
+/<em> 可包含个人信息，但不可包含密码，只能用默认的空口令。
+/</em> 或通过设pwdLastSet字段值为0，使“用户下次登录时须更改密码”
+（不设这个字段，默认也是如此）。
+/* 通过设userAccountControl字段值为66048，可使“密码永不过期”。
+三、以csvde.exe为例说明：域用户帐户的导出/导入
+操作步骤如下：
+1、 在“AD域和计算机”中建一个用户，如S1。
+2、 设置相关需要的选项，如所属的用户组、登录时间、用户下次登录时需更改密码等。
+3、 在DC上，开始/运行：cmd
+4、 键入：csvde –f demo.csv
+说明：（1）不要试图将这个文件导回，来验证是否好使。因为这个文件中的好多字段在导入时是不允许用的，如：ObjectGUID、objectSID、pwdLastSet 和 samAccountType 等属性。我们导出这个文件目的只是为了查看相应的字段名是什么，其值应该怎么写，出错信息如下：
+objectGUID:写
+UNPRINTABLEBINARY(16)
+&quot;由于安全原因不允许修改。&quot;
+objectSid:写
+UNPRINTABLEBINARY(28)
+&quot;由于该属性处于“安全帐户管理器”
+(SAM)，不允许访问该属性。&quot;
+（2）可通过-d –r参数指定导出范围和对象类型。例如：
+-d “ou=test,dc=mcse,dc=com” 或 -d “cn=users,dc=mcse,dc=com”
+-r “&lt; Objectclass=user&gt;”
+5、 以上面的文件为参考基础，创建自己的my.csv，并利用复制、粘贴、修改得到多条记录。例如：
+dn,objectClass,sAMAccountName,userAccountControl,userPrincipalName
+&quot;CN=s1,OU=test,DC=mcse,DC=com&quot;,user,S1,512,S1@mcse.com
+&quot;CN=s2,OU=test,DC=mcse,DC=com&quot;,user,S2,512,S2@mcse.com
+………………
+其它可用字段，我试了一下，见下表（不全）：
+用户帐户属性　
+字符名“常规”标签
+说明
+姓 Sn
+名 Givename
+英文缩写 Initials
+显示名称 displayName
+描述 Description
+办公室 physicalDeliveryOfficeName
+电话号码 telephoneNumber
+电话号码：其它 otherTelephone 多个以英文分号分隔
+电子邮件 Mail
+网页 wWWHomePage
+网页：其它 url 多个以英文分号分隔
+“地址”标签
+国家/地区 C 如：中国CN，英国GB
+省/自治区 St
+市/县 L
+街道 streetAddress
+邮政信箱 postOfficeBox
+邮政编码 postalCode
+“帐户”标签
+用户登录名 userPrincipalName 形如：<a href="mailto:S1@mcse.com">S1@mcse.com</a>
+用户登录名（以前版本） sAMAccountName 形如：S1
+登录时间 logonHours
+登录到 userWorkstations 多个以英文逗号分隔
+用户帐户控制 userAccountControl (启用：512，禁用：514， 密码永不过期：66048)
+帐户过期 accountExpires
+“配置文件”标签
+配置文件路径 profilePath
+登录脚本 scriptPath
+主文件夹：本地路径 homeDirectory
+连接 homeDrive
+到 homeDirectory
+“电话”标签
+家庭电话 homePhone (若是其它，在前面加other。)
+寻呼机 Pager 如：otherhomePhone。
+移动电话 mobile 若多个以英文分号分隔。
+传真 FacsimileTelephoneNumber
+IP电话 ipPhone
+注释 Info</p>
+<p>“单位”标签
+职务 Title
+部门 Department
+公司 Company</p>
+<p>“隶属于”标签
+隶属于　 memberOf　 用户组的DN不需使用引号， 多个用分号分隔　
+“拨入”标签 远程访问权限（拨入或VPN） msNPAllowDialin
+允许访问 值：TRUE
+拒绝访问 值：FALSE
+回拨选项 msRADIUSServiceType
+由呼叫方设置或回拨到 值：4
+总是回拨到 msRADIUSCallbackNumber　
+“环境”、“会话”、“远程控制”、“终端服务配置文件”、“COM+”标签
+说明：这些标签，平常极少用到，我也没试。如果需要可以自己导出来看一下，像一些复杂的字段，如：userParameters，还是用粘贴吧
+6、导入到AD，键入 csvde –i –f my.csv –j c:\
+说明：-j用于设置日志文件位置，默认为当前路径。此选项可帮助用户在导入不成功时排错。
+有一点大家必须明确的是：我们在这里做AD域用户帐户复制、做AD域用户帐户的导出/导入，并不能代替“AD备份和恢复”。我们只是在批量创建用户帐号，帐号的SID都是重新生成的，权利权限都得重新设才行。（当然我们可以把导入的用户，通过memberof字段设到一些用户组中去，使它有权利权限。但这与利用“AD备份和恢复”到原状，完全是两回事）。 作为网管，有时我们需要批量地向AD域中添加用户帐户，这些用户帐户既有一些相同的属性，又有一些不同属性。如果逐个添加、设置的话，十分地麻烦。一般来说，如果不超 过10个，我们可利用AD用户帐户复制来实现。如果再多的话，我们就应该考虑使用csvde.exe或ldifde.exe来减轻我们的工作量了。</p>
+<p>一、 AD用户帐户复制
+1、在“AD域和计算机”中建一个作为样板的用户，如S1。
+2、设置相关需要的选项，如所属的用户组、登录时间、用户下次登录时需更改密码等。
+3、在S1上/右键/复制，输入名字和口令。
+说明：
+1、 只有AD域用户帐户才可以复制，对于本地用户帐户无此功能。
+2、 帐户复制可将在样板用户帐户设置的大多数属性带过来。具体如下：
+选项卡
+复制到新用户帐号的属性
+常规 无。
+地址 除了“街道”之外所有
+帐户 除了“用户登录名”之外所有 配置文件
+除“配置文件路径”和“主文件夹”。欲复制它们，应该使用
+%username%变量，如：<a href="">file://server/share/%username</a>
+电话 无
+单位 除了“职务”之外所有。
+隶属于 全部
+拨入 无，将默认值应用于新帐户。
+环境 无，将默认值应用于新帐户。
+会话 无，将默认值应用于新帐户。
+远程控制 无，将默认值应用于新帐户。
+终端服务配置文件 无，将默认值应用于新帐户。
+二、比较csvde与ldifde
+csvde逗号分隔符目录交换
+三、以csvde.exe为例说明：域用户帐户的导出/导入
+操作步骤如下：
+1、 在“AD域和计算机”中建一个用户，如S1。
+2、 设置相关需要的选项，如所属的用户组、登录时间、用户下次登录时需更改密码等。
+3、 在DC上，开始/运行：cmd
+4、 键入：csvde –f demo.csv
+说明：（1）不要试图将这个文件导回，来验证是否好使。因为这个文件中的好多字段在导入时是不允许用的，如：ObjectGUID、objectSID、pwdLastSet 和 samAccountType 等属性。我们导出这个文件目的只是为了查看相应的字段名是什么，其值应该怎么写，出错信息如下：
+objectGUID:写
+UNPRINTABLEBINARY(16)
+&quot;由于安全原因不允许修改。&quot;
+objectSid:写
+UNPRINTABLEBINARY(28)
+&quot;由于该属性处于“安全帐户管理器”
+(SAM)，不允许访问该属性。&quot;
+（2）可通过-d –r参数指定导出范围和对象类型。例如：
+-d “ou=test,dc=mcse,dc=com” 或 -d “cn=users,dc=mcse,dc=com”
+-r “&lt; Objectclass=user&gt;”
+5、 以上面的文件为参考基础，创建自己的my.csv，并利用复制、粘贴、修改得到多条记录。例如：
+dn,objectClass,sAMAccountName,userAccountControl,userPrincipalName
+&quot;CN=s1,OU=test,DC=mcse,DC=com&quot;,user,S1,512,S1@mcse.com
+&quot;CN=s2,OU=test,DC=mcse,DC=com&quot;,user,S2,512,S2@mcse.com
+………………
+其它可用字段，我试了一下，见下表（不全）： 用户帐户属性
+字符名
+说明
+“常规”标签
+姓 Sn
+名 Givename
+英文缩写 Initials
+显示名称 displayName
+描述 Description
+办公室 physicalDeliveryOfficeName
+电话号码 telephoneNumber
+电话号码：其它 otherTelephone 多个以英文分号分隔
+电子邮件 Mail
+网页 wWWHomePage
+网页：其它 url 多个以英文分号分隔
+“地址”标签
+国家/地区 C 如：中国CN，英国GB
+省/自治区 St
+市/县 L 　
+街道 streetAddress
+邮政信箱 postOfficeBox
+邮政编码 postalCode
+“帐户”标签
+用户登录名 userPrincipalName 形如：<a href="mailto:S1@mcse.com">S1@mcse.com</a>
+用户登录名（以前版本） sAMAccountName 形如：S1
+登录时间 logonHours 　
+登录到 userWorkstations 多个以英文逗号分隔
+用户帐户控制 userAccountControl ( 启用：512，禁用：514，密码永不过期：66048 )
+帐户过期 accountExpires
+“配置文件”标签
+配置文件路径 profilePath 　　
+登录脚本 scriptPath
+主文件夹：本地路径 homeDirectory
+连接 homeDrive
+到 homeDirectory 　
+“电话”标签
+家庭电话 homePhone 若是其它，在前面加other。
+寻呼机 Pager 如：otherhomePhone。
+移动电话 mobile 若多个以英文分号分隔。
+传真 FacsimileTelephoneNumber
+IP电话 ipPhone
+注释 Info “单位”标签
+职务 Title
+部门 Department
+公司 Company “隶属于”标签
+隶属于　 memberOf　 (用户组的DN不需使用引号，多个用分号分隔　 )
+“拨入”标签
+远程访问权限（拨入或VPN） msNPAllowDialin
+允许访问 值：TRUE 　
+拒绝访问 值：FALSE
+回拨选项 msRADIUSServiceType
+由呼叫方设置或回拨到 值：4
+总是回拨到 msRADIUSCallbackNumber
+“环境”、“会话”、“远程控制”、“终端服务配置文件”、“COM+”标签
+说明：这些标签，平常极少用到，我也没试。如果需要可以自己导出来看一下，像一些复杂的字段，如：userParameters，还是用粘贴吧
+6、导入到AD，键入 csvde –i –f my.csv –j c:\
+说明：-j用于设置日志文件位置，默认为当前路径。此选项可帮助用户在导入不成功时排错。</p>
 
       
     </div>
@@ -771,8 +405,8 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/域/">域</a></li></span></span> | <span class="tags">Tagged <a href="/tags/域/" class="label label-primary">域</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-域--批量地向AD域中添加用户帐户/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--批量地向AD域中添加用户帐户" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -787,348 +421,88 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">jvm crash 的崩溃日志详细分析及注意点</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--最新分享_分享_百度空间/">最新分享_分享_百度空间</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--最新分享_分享_百度空间/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jvm-crash-">jvm crash 的崩溃日志详细分析及注意点</h1>
-<h2 id="-">生成</h2>
-<ol>
-<li><p>生成error 文件的路径：你可以通过参数设置-XX:ErrorFile=/path/hs_error%p.log, 默认是在java运行的当前目录 [default: ./hs_err_pid%p.log]</p>
-</li>
-<li><p>参数-XX:OnError  可以在crash退出的时候执行命令，格式是-XX:OnError=“string”,  <string> 可以是命令的集合，用分号做分隔符, 可以用&quot;%p&quot;来取到当前进程的ID.
-例如：</p>
-</li>
-</ol>
-<p>// -XX:OnError=&quot;pmap %p&quot;                // show memory map</p>
-<p>// -XX:OnError=&quot;gcore %p; dbx - %p&quot;     // dump core and launch debugger</p>
-<p>在linux中系统会fork出一个子进程去执行shell的命令，因为是用fork可能会内存不够的情况，注意修改你的 /proc/sys/vm/overcommit_memory 参数,不清楚为什么这里不使用vfork</p>
-<ol>
-<li>-XX:+ShowMessageBoxOnError 参数，当jvm crash的时候在linux里会启动gdb 去分析和调式，适合在测试环境中使用。</li>
-</ol>
-<h2 id="-error-"><a href=""></a>什么情况下不会生成error文件</h2>
-<p>linux 内核在发生OOM的时候会强制kill一些进程, 可以在/var/logs/messages中查找</p>
-<h2 id="-error-crash-"><a href=""></a>Error crash 文件的几个重要部分</h2>
-<p><strong>a.  错误信息概要</strong></p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>/# A fatal error has been detected by the Java Runtime Environment:  </li>
-<li>/#  </li>
-<li>/#  SIGSEGV (0xb) at pc=0x0000000000043566, pid=32046, tid=1121192256  </li>
-<li>/#  </li>
-<li>/# JRE version: 6.0_17-b04  </li>
-<li>/# Java VM: Java HotSpot(TM) 64-Bit Server VM (14.3-b01 mixed mode linux-amd64 )  </li>
-<li>/# Problematic frame:  </li>
-<li>/# C  0x0000000000043566  </li>
-<li>/#  </li>
-<li>/# If you would like to submit a bug report, please visit:  </li>
-<li>/#   <a href="http://java.sun.com/webapps/bugreport/crash.jsp" target="_blank">http://java.sun.com/webapps/bugreport/crash.jsp</a>  </li>
-<li>/# The crash happened outside the Java Virtual Machine in native code.  </li>
-<li>/# See problematic frame for where to report the bug.<br>SIGSEGV 错误的信号类型 </li>
-</ol>
-<p>pc 就是IP/PC寄存器值也就是执行指令的代码地址</p>
-<p>pid 就是进程id</p>
-<p>/# Problematic frame:</p>
-<p>/# V  [libjvm.so+0x593045]</p>
-<p>就是导致问题的动态链接库函数的地址</p>
-<p>pc 和 +0x593045 指的是同一个地址，只是一个是动态的偏移地址，一个是运行的虚拟地址</p>
-<p><strong>b.信号信息</strong></p>
-<p>Java中在linux 中注册的信号处理函数，中间有2个参数info, ucvoid</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>static void crash_handler(int sig, siginfo_t/<em> info, void/</em> ucVoid) {  </li>
-<li>// unmask current signal  </li>
-<li>sigset_t newset;  </li>
-<li>sigemptyset(&amp;newset);  </li>
-<li>sigaddset(&amp;newset, sig);  </li>
-<li>sigprocmask(SIG_UNBLOCK, &amp;newset, NULL);  </li>
-<li></li>
-<li>VMError err(NULL, sig, NULL, info, ucVoid);  </li>
-<li>err.report_and_die();  </li>
-<li>}<br>在crash report中的信号错误提示</li>
-</ol>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>siginfo:si_signo=SIGSEGV: si_errno=0, si_code=1 (SEGV_MAPERR), si_addr=0x0000000000043566<br>信号的详细信息和si_addr 出错误的内存，都保存在siginfo_t的结构体中，也就是信号注册函数crash_handler里的参数info,内核会保存导致错误的内存地址在用户空间的信号结构体中siginfo_t，这样在进程在注册的信号处理函数中可以取得导致错误的地址。</li>
-</ol>
-<p><strong>c.寄存器信息</strong></p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>Registers:  </li>
-<li>RAX=0x00002aacb5ae5de2, RBX=0x00002aaaaf46aa48, RCX=0x0000000000000219, RDX=0x00002aaaaf46b920  </li>
-<li>RSP=0x0000000042d3f968, RBP=0x0000000042d3f9c8, RSI=0x0000000042d3f9e8, RDI=0x0000000045aef9b8  </li>
-<li>R8 =0x0000000000000f80, R9 =0x00002aaab3d30ce8, R10=0x00002aaaab138ea1, R11=0x00002b017ae65110  </li>
-<li>R12=0x0000000042d3f6f0, R13=0x00002aaaaf46aa48, R14=0x0000000042d3f9e8, R15=0x0000000045aef800  </li>
-<li>RIP=0x0000000000043566, EFL=0x0000000000010202, CSGSFS=0x0000000000000033, ERR=0x0000000000000014  </li>
-<li>TRAPNO=0x000000000000000e<br>寄存器的信息就保存在b部分的信号处理函数参数 (ucontext_t/*)usVoid中</li>
-</ol>
-<p>在X86架构下：</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>void os::print_context(outputStream /<em>st, void /</em>context) {  </li>
-<li>if (context == NULL) return;  </li>
-<li></li>
-<li>ucontext_t /<em>uc = (ucontext_t/</em>)context;  </li>
-<li>st-&gt;print_cr(&quot;Registers:&quot;);  </li>
-<li>/#ifdef AMD64  </li>
-<li>st-&gt;print(  &quot;RAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RAX]);  </li>
-<li>st-&gt;print(&quot;, RBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBX]);  </li>
-<li>st-&gt;print(&quot;, RCX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RCX]);  </li>
-<li>st-&gt;print(&quot;, RDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDX]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;RSP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSP]);  </li>
-<li>st-&gt;print(&quot;, RBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBP]);  </li>
-<li>st-&gt;print(&quot;, RSI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSI]);  </li>
-<li>st-&gt;print(&quot;, RDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDI]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;R8 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R8]);  </li>
-<li>st-&gt;print(&quot;, R9 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R9]);  </li>
-<li>st-&gt;print(&quot;, R10=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R10]);  </li>
-<li>st-&gt;print(&quot;, R11=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R11]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;R12=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R12]);  </li>
-<li>st-&gt;print(&quot;, R13=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R13]);  </li>
-<li>st-&gt;print(&quot;, R14=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R14]);  </li>
-<li>st-&gt;print(&quot;, R15=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R15]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;RIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RIP]);  </li>
-<li>st-&gt;print(&quot;, EFL=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
-<li>st-&gt;print(&quot;, CSGSFS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_CSGSFS]);  </li>
-<li>st-&gt;print(&quot;, ERR=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ERR]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(&quot;  TRAPNO=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_TRAPNO]);  </li>
-<li>/#else  </li>
-<li>st-&gt;print(  &quot;EAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EAX]);  </li>
-<li>st-&gt;print(&quot;, EBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBX]);  </li>
-<li>st-&gt;print(&quot;, ECX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ECX]);  </li>
-<li>st-&gt;print(&quot;, EDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDX]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;ESP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_UESP]);  </li>
-<li>st-&gt;print(&quot;, EBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBP]);  </li>
-<li>st-&gt;print(&quot;, ESI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ESI]);  </li>
-<li>st-&gt;print(&quot;, EDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDI]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;EIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EIP]);  </li>
-<li>st-&gt;print(&quot;, CR2=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.cr2);  </li>
-<li>st-&gt;print(&quot;, EFLAGS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
-<li>/#endif // AMD64  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;cr();  </li>
-<li></li>
-<li>intptr_t /<em>sp = (intptr_t /</em>)os::Linux::ucontext_get_sp(uc);  </li>
-<li>st-&gt;print_cr(&quot;Top of Stack: (sp=&quot; PTR_FORMAT &quot;)&quot;, sp);  </li>
-<li>print_hex_dump(st, (address)sp, (address)(sp + 8/*sizeof(intptr_t)), sizeof(intptr_t));  </li>
-<li>st-&gt;cr();  </li>
-<li></li>
-<li>// Note: it may be unsafe to inspect memory near pc. For example, pc may  </li>
-<li>// point to garbage if entry point in an nmethod is corrupted. Leave  </li>
-<li>// this at the end, and hope for the best.  </li>
-<li>address pc = os::Linux::ucontext_get_pc(uc);  </li>
-<li>st-&gt;print_cr(&quot;Instructions: (pc=&quot; PTR_FORMAT &quot;)&quot;, pc);  </li>
-<li>print_hex_dump(st, pc - 16, pc + 16, sizeof(char));  </li>
-<li>}<br>寄存器的信息在分析出错的时候是非常重要的
-打印出执行附近的部分机器码</li>
-</ol>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>Instructions: (pc=0x00007f48f14ef51a)  </li>
-<li>0x00007f48f14ef4fa:   90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd  </li>
-<li>0x00007f48f14ef50a:   f8 5f ff ff 48 89 b5 f0 5f ff ff b8 00 00 00 00  </li>
-<li>0x00007f48f14ef51a:   c7 00 01 00 00 00 c6 85 00 60 ff ff ff c9 c3 90  </li>
-<li>0x00007f48f14ef52a:   90 90 90 90 90 90 55 48 89 e5 53 48 8d 1d 94 00<br>在instruction 部分中会打印出部分的机器码</li>
-</ol>
-<p>格式是</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>地址：机器码<br>第一种使用udis库里带的udcli工具来反汇编</li>
-</ol>
-<p>命令：</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>echo &#39;90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd&#39; | udcli -intel -x -64 -o 0x00007f48f14ef4fa<br>显示出对应的汇编</li>
-</ol>
-<p>第二种可以用</p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>objectdump -d -C libjvm.so &gt;&gt; jvmsodisass.dump   </li>
-</ol>
-<p>查找偏移地址  0x593045， 就是当时的执行的汇编，然后结合上下文，源码推测出问题的语句。</p>
-<p><strong>d.寄存器对应的内存的值</strong></p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>RAX=0x0000000000000000 is an unknown value  </li>
-<li>RBX=0x000000041a07d1e8 is an oop  </li>
-<li>{method}  </li>
-<li><ul>
-<li>klass: {other class}  </li>
-</ul>
-</li>
-<li>RCX=0x0000000000000000 is an unknown value  </li>
-<li>RDX=0x0000000040111800 is a thread  </li>
-<li>RSP=0x0000000041261b88 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RBP=0x000000004126bb20 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RSI=0x000000004126bb80 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RDI=0x00000000401119d0 is an unknown value  </li>
-<li>R8 =0x0000000040111c40 is an unknown value  </li>
-<li>R9 =0x00007f48fcc8b550: <offset 0xa85550> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
-<li>R10=0x00007f48f8ca7d41 is an Interpreter codelet  </li>
-<li>method entry point (kind = native)  [0x00007f48f8ca7ae0, 0x00007f48f8ca8320]  2112 bytes  </li>
-<li>R11=0x00007f48fc98f270: <offset 0x789270> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
-<li>R12=0x0000000000000000 is an unknown value  </li>
-<li>R13=0x000000041a07d1e8 is an oop  </li>
-<li>{method}  </li>
-<li><ul>
-<li>klass: {other class}  </li>
-</ul>
-</li>
-<li>R14=0x000000004126bb88 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>R15=0x0000000040111800 is a thread<br>jvm 会通过寄存器的值对找对应的对象，也是一个比较好的参考</li>
-</ol>
-<p><strong>e. 其他的信息</strong></p>
-<p>error 里面还有一些线程信息，还有当时内存映像信息，这些都可以作为分析的部分参考</p>
-<p>crash 报告可以大概的反应出一个当时的情况，特别是在没有core dump的时候，是比较有助于帮助分析的，但如果有core dump的话，最终还是core dump能快速准确的发现问题原因。
-来源： <a href="[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)">[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE--Java使用”指针”快速比较字节/">Java使用”指针”快速比较字节</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE--Java使用”指针”快速比较字节/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-">Java使用”指针”快速比较字节</h1>
-<p>如何才能快速比较两个字节数组呢?我将问题描述成下面的接口：</p>
-<p>public int compareTo(byte[] b1, int s1, int l1, byte[] b2, int s2,int l2);</p>
-<p>最直观的做法是同时遍历两个数组，两两比较。</p>
-<p>public int compareTo(byte[] buffer1, int offset1, int length1,
-        byte[] buffer2, int offset2, int length2) {</p>
-<pre><code>// Short circuit equal case
-if (buffer1 == buffer2 &amp;&amp; offset1 == offset2
-
-    &amp;&amp; length1 == length2) {
-    return 0;
-
-}
-// Bring WritableComparator code local
-
-int end1 = offset1 + length1;
-int end2 = offset2 + length2;
-
-for (int i = offset1, j = offset2; i &lt; end1 &amp;&amp; j &lt; end2; i++, j++) {
-    int a = (buffer1[i] &amp; 0xff);
-
-    int b = (buffer2[j] &amp; 0xff);
-    if (a != b) {
-</code></pre><p>return a - b;
-        }</p>
-<pre><code>}
-return length1 - length2;
-</code></pre><p>}</p>
-<p>如果事情这么简单就结束了，就没有意思了。</p>
-<p>如果要提升性能，可以做循环展开等等优化，但这些优化应该依赖JVM来做，新的JVM可以做的很好。那还有什么办法可以提高性能呢？
-可以将<strong>字节数组合并</strong>!!上面的例子中，每个byte被迫转型成了int，再比较。其实我们可以将8个byte转换成一个long，在比较long，这样效果会不会好些？用什么方法转换才是最优的？</p>
-<p>long sun.misc.Unsafe.getLong(Object o,int offset)</p>
-<p>Java提供了一个本地方法，可以最快最好转换byte与long。该函数是直接访问一个对象的内存，内存地址是对象指针加偏移量，返回该地址指向的值。有人说Java很安全，不可以操作指针，所以有的时候性能也不高。其实不对，有了这个Unsafe类，Java一样也不安全。所以Unsafe类中的方法都不是public的，不过没关系，我们有反射。言归正传，下面是使用这种技术手段的实现代码。</p>
-<p>public int compareTo(byte[] buffer1, int offset1, int length1,
-        byte[] buffer2, int offset2, int length2) {</p>
-<pre><code>// Short circuit equal case
-if (buffer1 == buffer2 &amp;&amp; offset1 == offset2
-
-        &amp;&amp; length1 == length2) {
-    return 0;
-
-}
-int minLength = Math.min(length1, length2);
-
-int minWords = minLength / Longs.BYTES;
-int offset1Adj = offset1 + BYTE_ARRAY_BASE_OFFSET;
-
-int offset2Adj = offset2 + BYTE_ARRAY_BASE_OFFSET;
-
-
-//*
- /* Compare 8 bytes at a time. Benchmarking shows comparing 8
-
- /* bytes at a time is no slower than comparing 4 bytes at a time
- /* even on 32-bit. On the other hand, it is substantially faster
-
- /* on 64-bit.
- /*/
-
-for (int i = 0; i &lt; minWords /* Longs.BYTES; i += Longs.BYTES) {
-    long lw = theUnsafe.getLong(buffer1, offset1Adj + (long) i);
-
-    long rw = theUnsafe.getLong(buffer2, offset2Adj + (long) i);
-    long diff = lw ^ rw;
-
-
-    if (diff != 0) {
-
-        if (!littleEndian) {
-            return (lw + Long.MIN_VALUE) &lt; (rw + Long.MIN_VALUE) ? -1
-
-                    : 1;
-        }
-
-
-        // Use binary search,一下省略若干代码
-
-        .....
-        return (int) (((lw &gt;&gt;&gt; n) &amp; 0xFFL) - ((rw &gt;&gt;&gt; n) &amp; 0xFFL));
-
-    }
-}
-
-
-// The epilogue to cover the last (minLength % 8) elements.
-
-for (int i = minWords /* Longs.BYTES; i &lt; minLength; i++) {
-    int result = UnsignedBytes.compare(buffer1[offset1 + i],
-
-            buffer2[offset2 + i]);
-    if (result != 0) {
-
-        return result;
-    }
-
-}
-return length1 - length2;
-</code></pre><p>}</p>
-<p>实现比原来复杂了一些。但这次一次可以比较8个字节了。这种getLong函数和系统的字节序是紧紧相关的，如果是小端序操作起来有点麻烦，代码先省略掉。这样操作实际效果如何？我们需要对比测试下。对比两个1M的字节数组，如果使用第一个版本，每次比较平均需要2.5499ms,如果使用第二个版本，需要0.8359ms,提升了3倍。对应这种CPU密集型的操作，这样的提升可是很可观的。</p>
-<p>如果要提升性能，使用Unsafe直接访问内存也是不错的选择。
-Share the post &quot;Java使用&quot;指针&quot;快速比较字节&quot;</p>
+        <h1 id="-_-_-">最新分享<em>分享</em>百度空间</h1>
+<p><a href="http://hi.baidu.com/index.htm" target="_blank"><img src="" alt="logo"></a></p>
 <ul>
-<li><a href="http://service.weibo.com/share/share.php?url=http%3A%2F%2Fwww.yankay.com%2Fjava-fast-byte-comparison%2F" title="Share this article on Weibo" target="_blank">Weibo</a></li>
+<li><p><a href="http://apps.hi.baidu.com/" target="_blank">应用</a>
+<a href="http://hi.baidu.com/reg/new" target="_blank">注册</a> 用户名:   密码:</p>
+</li>
+<li><p><a href="http://apps.hi.baidu.com/hoho" target="_blank">HOHO</a></p>
+</li>
+<li><a href="http://apps.hi.baidu.com/photopk?ref=app" target="_blank">照片PK</a></li>
+<li><a href="http://apps.hi.baidu.com/share" target="_blank">分享</a></li>
+<li><a href="http://apps.hi.baidu.com/vote" target="_blank">投票</a></li>
+<li><a href="http://apps.hi.baidu.com/test" target="_blank">测试</a></li>
+<li><a href="http://apps.hi.baidu.com/gift" target="_blank">礼物</a></li>
 </ul>
+<p><a href="http://apps.hi.baidu.com/share/detail/7143096#" target="_blank">更多</a></p>
+<ul>
+<li><a href="http://youxi.baidu.com/prom.xhtml?code=G-%D7%8E%81%B2%29%FF%8AR%BC%8B%EE%85%1C%E5" target="_blank">网页游戏</a></li>
+</ul>
+<h2 id="-">分享</h2>
+<ul>
+<li><a href="http://apps.hi.baidu.com/share/" target="_blank">热门分享</a></li>
+<li><a href="http://apps.hi.baidu.com/share/latest/?type=video" target="_blank">最新分享</a></li>
+<li><a href="http://apps.hi.baidu.com/share/detail/7143096#" target="_blank">好友的分享</a></li>
+<li><a href="http://apps.hi.baidu.com/share/detail/7143096#" target="_blank">我的分享</a>
+<a href="http://apps.hi.baidu.com/share/detail/7143096#" target="_blank">如何分享?</a> <a href="http://tieba.baidu.com/f?kw=%B0%D9%B6%C8%BF%D5%BC%E4" target="_blank">问题反馈</a></li>
+</ul>
+<p><a href=""></a></p>
+<p><a href="http://hi.baidu.com/sys/checkuser/sxxhw/3" target="_blank"><img src="" alt=""></a></p>
+<p>   <a href="http://apps.hi.baidu.com/share/user/b89e73787868773601" target="_blank">sxxhw的分享</a></p>
+<p>分享
+2003 域 组策略 远程桌面</p>
+<p><strong>转自：</strong><a href="http://blog.163.com/hackergufeng/blog/static/37121905200981045123602/" target="_blank"><strong><a href="http://blog.163.com/hackergufeng/blog/static/37121905200981045123602/">http://blog.163.com/hackergufeng/blog/static/37121905200981045123602/</a></strong></a></p>
+<p><strong>已测试成功！</strong></p>
+<p>近日给一家上市企业提供IT基础架构优化的项目服务，在部署完活动目录后，客户提出为了减轻IT管理员的管理负担，希望能够通过组策略开启所有客户机的远程桌面，然后管理员可以在自己的工作站连接过去进行远程维护（补充一下，他们有三百多台客户机....）。</p>
+<pre><code>    我新建了一个测试用的OU，然后将一台测试用的虚拟机加入到域，并将这个计算机账号移动到这个OU里，然后再创建一个名字叫做“RDP”的组策略，链接到这个OU上。
+   接下来开始修改“RDP”组策略里的设置。先打开“管理工具”的“默认域策略”，依次展开“计算机配置”--&gt;“管理模板”--&gt; “Windows组件”--&gt;“终端服务”，找到“允许用户使用终端服务进行远程连接”项，选择“已启用”。由于这个策略属于计算机配置，因此至少要等待90分钟（正负30分钟）后才能够在所有客户机上应用。为了尽快体现设置效果，我在虚拟机上运行了“gpupdate /force”命令来立即刷新所有组策略设置。可以看到“系统属性”里的“远程”选项里“远程桌面”已经被选中，但我从其他计算机却无法使用“远程桌面连接”来连到这台测试用客户机，明明开启了“远程桌面”功能，为什么无法连过来，一定是有其他东东阻止对这台客户机的远程桌面连接。
+   由于这是一台测试用机器，既然在这台机器上会有这个现象，其他计算机也一定会有，这表明这是一个普遍现象。由于客户端都是XP+SP2，能阻止连接的只有是XP自带的防火墙，检查防火墙设置，发现都开启了防火墙功能，在“例外”里发现没有选中“远程桌面”，这就是问题所在。
+    但这又产生一个新问题，就是虽然知道是XP防火墙阻挡了连接，那如何批量修改几百台计算机的这个设置呢？还是想到了组策略这个工具。再次打开这个 “RDP”组策略，依次展开“计算机配置”--&gt;“管理模板”--&gt;“网络”--&gt;“网络连接”--&gt;“Windows防火墙” --&gt;“域配置文件”，找到“允许远程桌面例外”，选择“已启用”，同时在输入框里输入“/*”（星号，表明允许来自任何IP地址的连接）。
+</code></pre><p>设置完毕后再次在测试用虚拟机上运行“gpupdate /force”命令，再从别的计算机上尝试对这台测试客户机进行远程桌面连接，操作成功。
+       我发表这个案例的目的并不是想说这个案例里所用到的技术有多高深，而是希望通过这个案例让大家意识到组策略的强大功能，利用好组策略，将能够极大减轻IT Pro们的工作量...</p>
+<p>============================================================================</p>
+<p><strong>转自：</strong><a href="http://windows.chinaitlab.com/skill/771850.html" target="_blank"><strong><a href="http://windows.chinaitlab.com/skill/771850.html">http://windows.chinaitlab.com/skill/771850.html</a></strong></a></p>
+<p><strong>尚未测试！</strong></p>
+<p>如何通过组策略自动启用客户端远程桌面功能？</p>
+<pre><code>在企业里进行管理的时候，有时需要利用远程桌面来管理客户端计算机，在一般情况下，往往需要客户端启用此功能，有没有好的办法，让客户端自动启用呢？当然可以，我们可以通过组策略的形式来完成。
+
+具体操作：（域环境）
+1.在DC上创建一个OU，把相应的客户端计算机放到这个OU里。
+2.针对这个OU创建一个组策略，在这个组策略的计算机配置里，在启动脚本里添加一个脚本，内容如下：（命名为RDP.vbs)
+Const ENABLE_CONNECTIONS = 1
+strComputer = &quot;.&quot;
+Set objWMIService = GetObject(&quot;winmgmts:\\&quot; &amp; strComputer &amp; &quot;\root\cimv2&quot;)
+Set colItems = objWMIService.ExecQuery(&quot;Select /* from Win32_TerminalServiceSetting&quot;)
+For Each objItem in colItems
+errResult = objItem.SetAllowTSConnections(ENABLE_CONNECTIONS)
+Next
+set oShell = WScript.CreateObject(&quot;WScript.shell&quot;)
+oShell.run &quot;cmd.exe /c netsh firewall add portopening tcp 3389 RemoteDestop&quot;,0,true
+set oShell=nothing
+3.客户端计算机重新，即可生效。
+
+注：此脚本在所有的客户端是2003的情况下验证通过，并能自动“远程桌面”功能穿过防火墙。
+
+便于管理服务器！
+</code></pre><p>为了您的安全，请只打开来源可靠的网址</p>
+<p><a href="http://hi.baidu.com/scorpio1118/blog/item/716995037f46cf7d3812bbab.html" target="_blank">打开网站</a>    <a href="http://apps.hi.baidu.com/share/detail/7143096#" target="_blank">取消</a></p>
+<p>来自: <a href="http://hi.baidu.com/scorpio1118/blog/item/716995037f46cf7d3812bbab.html" target="_blank"><a href="http://hi.baidu.com/scorpio1118/blog/item/716995037f46cf7d3812bbab.html">http://hi.baidu.com/scorpio1118/blog/item/716995037f46cf7d3812bbab.html</a></a></p>
+<p><a href=""></a>
+来自: <a href="http://hi.baidu.com/sys/checkuser/sTevenQ/3" target="_blank"><img src="" alt=""></a><a href="http://hi.baidu.com/sys/checkuser/sTevenQ/3" target="_blank">sTevenQ</a> 第一分享: <a href="http://hi.baidu.com/sys/checkuser/sxxhw/3" target="_blank"><img src="" alt=""></a><a href="http://hi.baidu.com/sys/checkuser/sxxhw/3" target="_blank">sxxhw</a>  时间: 2010-06-08 11:45 评论: 0条 投票: 0次 本贴分享: 1 累计分享: 2</p>
+<h3 id="-0-">共有0人发表观点</h3>
+<p>...目前还没有互动观点，输入您的互动观点</p>
+<h3 id="-0-">评论(0)</h3>
+<p><a href="http://help.baidu.com/question?prod_en=space" target="_blank">帮助中心</a> | <a href="http://tieba.baidu.com/f?kw=%B0%D9%B6%C8%BF%D5%BC%E4&amp;fr=wwwt" target="_blank">空间客服</a> | <a href="http://tousu.baidu.com/hi/" target="_blank">投诉中心</a> | <a href="http://www.baidu.com/search/hi_contract.html" target="_blank">空间协议</a> | <a href="http://apps.hi.baidu.com/static/html/contact.html" target="_blank">联系我们</a></p>
+<p>2006-2011 © Baidu  </p>
 
       
     </div>
@@ -1138,8 +512,8 @@ Share the post &quot;Java使用&quot;指针&quot;快速比较字节&quot;</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE--Java使用”指针”快速比较字节/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE--Java使用”指针”快速比较字节" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/域/">域</a></li></span></span> | <span class="tags">Tagged <a href="/tags/域/" class="label label-primary">域</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-域--最新分享_分享_百度空间/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--最新分享_分享_百度空间" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1154,39 +528,26 @@ Share the post &quot;Java使用&quot;指针&quot;快速比较字节&quot;</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/">内存离线分析——jhat命令(Java Heap Analyse Tool)</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--用JAVA通过LDAP修改AD用户密码注意事项/">用JAVA通过LDAP修改AD用户密码注意事项</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--用JAVA通过LDAP修改AD用户密码注意事项/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-jhat-java-heap-analyse-tool-">内存离线分析——jhat命令(Java Heap Analyse Tool)</h1>
-<p><strong>jhat命令 -- Java Head Analyse Tool</strong> 
-用途：是用来分析java堆的命令，可以将堆中的对象以html的形式显示出来，包括对象的数量，大小等等，并支持对象查询语言
-第一步：导出堆
-<img src="" alt=""> 
-第二步：分析堆文件
-<img src="" alt=""> 
-第三步：查看html
-<img src="" alt=""></p>
-<p>有时你dump出来的堆很大，在启动时会报堆空间不足的错误，可以使用如下参数：
-<strong>jhat -J-Xmx512m <heap dump file>
-对于jhat启动后显示的html页面中功能：
-（1）显示出堆中所包含的所有的类
-<img src="" alt="">
-（2）从根集能引用到的对象
-<img src="" alt="">
-（3）显示平台包括的所有类的实例数量
-<img src="" alt="">
-（4）堆实例的分布表
-<img src="" alt=""></strong></p>
-<p><strong>（5）执行对象查询语句
-<img src="" alt=""> 
-更多关于对象查询语言的信息，见这篇文章：
-<a href="http://blog.csdn.net/gtuu0123/archive/2010/11/27/6039592.aspx" target="_blank">http://blog.csdn.net/gtuu0123/archive/2010/11/27/6039592.aspx</a></strong>
-<strong>来源： <a href="[http://blog.csdn.net/gtuu0123/article/details/6039474](http://blog.csdn.net/gtuu0123/article/details/6039474)">[http://blog.csdn.net/gtuu0123/article/details/6039474](http://blog.csdn.net/gtuu0123/article/details/6039474)</a> </strong></p>
+        <h1 id="-java-ldap-ad-">用JAVA通过LDAP修改AD用户密码注意事项</h1>
+<p><a href="http://woaidong.com/;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank"><img src="" alt=""></a><a href="http://woaidong.com/archiver/;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank">我爱动</a> » <a href="http://woaidong.com/archiver/method-blogs.shtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank">日志</a>
+特别提醒： 你现在看到的是帖子的纯文字版, <a href="http://woaidong.com/blog/method-detail-id-2278.shtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank">查看完整版本</a></p>
+<p>2009年1月14日 <strong>用JAVA通过LDAP修改AD用户密码注意事项</strong></p>
+<p>最近要用java来修改windows 2003的Active Directory(简称AD)上的用户，包括新增、修改、删除，普通的操作这里就不说了，网上有一大堆的资料，这里记述一下本人操作过程中遇到的问题及解决方法。
+通过ldap来修改AD的用户信息，除了修改密码外，其他的都可以使用非安全的连接进行操作，也就是可以不走SSL连接来操作，注意AD的普通端口是389，SSL端口是636。
+当使用SSL连接修改密码时，需要在连接端安装证书，怎么获取证书，本人使用网上其他人介绍的证书方法，全是无法成功，都是出现 unable to find valid certification path to requested target 错误，最终经一朋友提示，使用其他方法获取到正确的证书，具体如下：
+1、安装证书服务。最好不要在域控制器上安装证书服务，而是使用另外一台机器加入到域中，且在这台机器上使用域账户来安装证书服务。证书服务的安装没什么特别的注意，请参考其他人的文章。
+2、获取客户端证书。别人都是通过下载证书的方式来获取证书，但是我通过这种方式就是无法成功修改密码，也都是提示 unable to find valid certification path to requested target 这个错误。我的操作方法为，用IE通过SSL直接连接ldap服务器(也就是安装AD的那台机器)，使用636端口，类似于 <a href="https://192.168.0.111:636" target="_blank">https://192.168.0.111:636</a> ，连接的时候会提示安装证书，这时候把这个证书保存下来，即为需要的客户端证书。
+3、连接。得到证书后，我在连接的时候成功了，但在修改AD用户密码的时候还是报错，但这次的错误为 javax.naming.OperationNotSupportedException: [LDAP: error code 53 - 0000052D: SvcErr: DSID-031A0FC0, problem 5003 (WILL_NOT_PERFORM), data 0 ,操作不支持错误，在这个问题了转了好久都没解决，后来无意中看到一篇文章讲到AD中的密码策略问题，才想起来windows2003中AD中的默认密码策略有长度限制和复杂性要求，所以才导致出现OperationNotSupportedException异常，记得在域控制器上查看自己的域策略。
+后记：由于水平原因，就因为证书的问题搞了两天多才搞定，其实通过调整域策略可以使用修改密码不需要走SSL通道的，但这都是旁门左道，希望写下这篇文章对大家有所帮助。
+<a href="http://woaidong.com/include/about/links.jhtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" title="友情链接" target="_blank">友情链接</a><a href="http://woaidong.com/include/about/about_us.jhtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" title="关于我们" target="_blank">关于我爱动</a><a href="http://woaidong.com/include/about/join.jhtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" title="加入我们" target="_blank">加入我爱动</a><a href="http://woaidong.com/include/about/contact.jhtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" title="联系我们" target="_blank">联系我们</a><a href="http://woaidong.com/include/about/mz.jhtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" title="免责声明" target="_blank">免责条款</a>  <a href="http://www.miibeian.gov.cn/" target="_blank">浙ICP备08105846号</a>Copyright ©  <a href="http://woaidong.com/;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank">我爱动</a>,2008-2009. All Rights Reserved <a href="http://woaidong.com/archiver/;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank">archiver</a></p>
 
       
     </div>
@@ -1196,8 +557,347 @@ Share the post &quot;Java使用&quot;指针&quot;快速比较字节&quot;</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/域/">域</a></li></span></span> | <span class="tags">Tagged <a href="/tags/域/" class="label label-primary">域</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-域--用JAVA通过LDAP修改AD用户密码注意事项/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--用JAVA通过LDAP修改AD用户密码注意事项" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--组策略及组策略编辑器基础知识-51CTO_COM/">组策略及组策略编辑器基础知识 </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--组策略及组策略编辑器基础知识-51CTO_COM/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-51cto_com">组策略及组策略编辑器基础知识 - 51CTO_COM</h1>
+<p><a href="http://www.51cto.com/" target="_blank">首页</a><img src="" alt=""><a href="http://www.51cto.com/col/35/" target="_blank">技术频道<img src="" alt=""></a><img src="" alt=""><a href="http://www.51cto.com/" target="_blank">51CTO旗下网站<img src="" alt=""></a><img src="" alt=""><a href="http://www.51cto.com/about/map.htm" target="_blank">地图</a></p>
+<p><img src="" alt="">社区：<a href="http://bbs.51cto.com/" target="_blank">论坛</a><a href="http://blog.51cto.com/" target="_blank">博客</a><a href="http://down.51cto.com/" target="_blank">下载</a><a href="http://book.51cto.com/" target="_blank">读书</a><a href="">更多<img src="" alt=""></a></p>
+<ul>
+<li><a href="http://network.51cto.com/" target="_blank">组网</a></li>
+<li><a href="http://netsecurity.51cto.com/" target="_blank">安全</a></li>
+<li><a href="http://developer.51cto.com/" target="_blank">开发</a></li>
+<li><a href="http://database.51cto.com/" target="_blank">数据库</a></li>
+<li><a href="http://server.51cto.com/" target="_blank">服务器</a></li>
+<li><a href="http://os.51cto.com/" target="_blank">系统</a></li>
+<li><a href="http://virtual.51cto.com/" target="_blank">虚拟化</a></li>
+<li><a href="http://cloud.51cto.com/" target="_blank">云计算</a></li>
+<li><a href="http://developer.51cto.com/embed/" target="_blank">嵌入式</a></li>
+<li><a href="http://mobile.51cto.com/" target="_blank">移动开发</a></li>
+<li><a href="http://www.51cto.com/" title="中国领先的IT技术网站" target="_blank">51CTO.COM</a></li>
+<li><a href="http://www.cioage.com/" title="中国首个专门服务于CIO的专业网站" target="_blank">CIOage.com</a></li>
+<li><a href="http://www.watchstor.com/" title="领先的中文存储网络媒体" target="_blank">WatchStor.com</a></li>
+<li><a href="http://www.hc3i.cn/" title="中国首家专注于数字医疗及医疗信息化的专业网站" target="_blank">HC3i.cn</a></li>
+<li><a href="http://www.linkphone.cn/" title="移动互联网生活门户" target="_blank">灵客风LinkPhone</a></li>
+</ul>
+<p><em>
+</em>
+<em>
+</em>
+<a href="http://os.51cto.com/" target="_blank"><img src="" alt=""></a></p>
+<p><a href="http://os.51cto.com/col/543/" target="_blank">新闻</a> | <a href="http://os.51cto.com/linux/" target="_blank">Linux</a> | <a href="http://os.51cto.com/windows/" target="_blank">Windows</a> | <a href="http://os.51cto.com/col/975/" target="_blank">浏览器</a> | <a href="http://os.51cto.com/col/610/" target="_blank">开源</a> | <a href="http://os.51cto.com/col/545/" target="_blank">运维</a> | <a href="http://publish.51cto.com/list/519/" target="_blank">全部</a> | <a href="http://os.51cto.com/art/201106/266501.htm" target="_blank">投稿指南</a> | <a href="http://os.51cto.com/art/201109/292676.htm" target="_blank"><img src="" alt="RSS"> RSS订阅</a>
+<a href=""></a></p>
+<p>您所在的位置：<a href="http://os.51cto.com/" target="_blank">操作系统</a> &gt; <a href="http://os.51cto.com/col/520/" target="_blank">Windows</a> &gt; <a href="http://os.51cto.com/col/1362/" target="_blank">Windows Server配置与维护</a> &gt; <a href="http://os.51cto.com/col/38/" target="_blank">Windows组策略</a> &gt; <strong>组策略及组策略编辑器基础知识</strong></p>
+<h1 id="-">组策略及组策略编辑器基础知识</h1>
+<p>2011-07-28 13:56 佚名 博客转载 <a href="http://os.51cto.com/art/201107/279433.htm#commment" target="_blank">我要评论(0)</a> 字号：<a href="">T</a> | <a href="">T</a></p>
+<p><a href="&quot;一键收藏，随时查看，分享好友！&quot;"><img src="" alt="一键收藏，随时查看，分享好友！"></a></p>
+<p>本文介绍了什么是组策略以及如何启用组策略编辑器和如何使用组策略编辑器的内容。</p>
+<p>AD：</p>
+<p><strong>组策略</strong>是什么？有什么作用？如何启用和使用<strong>组策略编辑器</strong>呢？下文一一给出了详细的解答。</p>
+<p><strong>使用组策略</strong></p>
+<p>在Microsoft<a href="http://os.51cto.com/windows/" target="_blank">Windows</a>XP中，可以使用组策略为用户和计算机组定义用户和计算机配置。通过使用组策略MicrosoftManagementConsole(MMC)管理单元，您可以为特定的用户和计算机组创建特定的桌面配置。您创建的组策略设置包含在组策略对象中，后者进而与选定的ActiveDirectory容器（如站点、域或组织单位(OU)）关联。使用组策略管理单元，您可以为以下各项指定策略设置：</p>
+<p>?基于注册表的策略。</p>
+<p>包括针对WindowsXP操作系统及其组件以及针对所有程序的组策略。为管理这些设置，请使用组策略管理单元的“管理模板”节点。</p>
+<p>?安全选项。</p>
+<p>包括本地计算机、域和网络安全设置的选项。</p>
+<p>?软件安装和维护选项。</p>
+<p>用来集中管理程序的安装、更新和删除。</p>
+<p>?脚本选项。</p>
+<p>包括用于计算机启动和关闭以及用户登录和注销的脚本。</p>
+<p>?文件夹重定向选项。</p>
+<p>这些选项允许管理员将用户的特殊文件夹重定向到网络上。</p>
+<p>使用组策略，您可以一次性地定义用户工作环境的状态，以后就可以靠系统来实施您定义的策略。</p>
+<p><strong>如何启动组策略编辑器</strong></p>
+<p>若要启动组策略编辑器，请按照下列步骤操作。</p>
+<p>备注:为了使用组策略编辑器，您必须使用一个有管理员权限的帐户登录到计算机。1.单击开始，然后单击运行。</p>
+<p>2.在打开框中，键入mmc，然后单击确定。</p>
+<p>3.在文件菜单上，单击添加/删除管理单元。</p>
+<p>4.单击添加。</p>
+<p>5.在AvailableStand-aloneSnap-ins（可用的独立管理单元）菜单上，单击组策略，然后单击添加。</p>
+<p>6.如果您不希望编辑“本地计算机”策略，请单击浏览以找到您希望的组策略。如果提示您输入用户名和密码，请输入，然后在返回“选择组策略对象”对话框后单击完成。</p>
+<p>备注：您可以使用浏览按钮来找到链接到站点、域、组织单位(OU)或计算机的组策略对象。使用默认的组策略对象(GPO)（本地计算机）编辑本地计算机的设置。</p>
+<p>7.单击关闭，然后在添加/删除管理单元对话框中，单击确定。</p>
+<p>选定的GPO即显示在控制台根节点下。</p>
+<p><strong>如何使用组策略编辑器</strong></p>
+<p>组策略管理单元包含以下主要分支：?计算机配置</p>
+<p>管理员可以使用“计算机配置”来设置应用到计算机的策略，而不管谁登录到了计算机。“计算机配置”通常包含软件设置、Windows设置以及管理模板的子项。</p>
+<p>?用户配置</p>
+<p>管理员可以使用“用户配置”来设置应用到用户的策略，而不管他们登录到哪台计算机。“用户配置”通常包含软件设置、Windows设置以及管理模板的子项。</p>
+<p>若要使用组策略编辑器，请按照下列步骤操作：1.展开所需的GPO。例如，本地计算机策略。</p>
+<p>2.展开所需的配置项。例如，计算机配置。</p>
+<p>3.展开所需的子项。例如，Windows设置。</p>
+<p>4.导航到包含您希望的策略设置的文件夹。策略项显示在“组策略编辑器”管理单元的右窗格中。</p>
+<p>备注：如果选定的项未定义策略，请右键单击您希望的文件夹，在出现的快捷菜单中，指向所有任务，然后单击所需的命令。在所有任务子菜单中出现的命令是上下文相关的。只有那些适用于所选策略文件夹的命令才出现在菜单中。</p>
+<p>5.在设置列表中，双击您希望的策略项。</p>
+<p>备注：当您在管理模板文件夹中处理策略项时，如果您希望查看有关选定策略项的更多信息，请在MMC的右窗格中单击扩展选项卡。</p>
+<p>6.编辑出现的对话框中的设置，然后单击确定。</p>
+<p>7.完成之后，退出MMC。</p>
+<p><strong>示例</strong></p>
+<p>下面的示例演示了如何使用“组策略编辑器”自定义WindowsXP用户界面。在此示例中，我们将使用“组策略编辑器”来暂时从开始菜单中删除关闭计算机按钮。为此，请按照下列步骤操作：1.通过使用本文如何启动组策略编辑器一节中提供的步骤启动“组策略编辑器”并打开“本地计算机”策略。</p>
+<p>备注：可以从命令行启动“组策略编辑器”管理单元。这将自动加载本地计算机GPO。为此，请按照下列步骤操作：a.单击开始，然后单击运行。</p>
+<p>b.在打开框中，键入Gpedit.msc，然后单击确定。</p>
+<p>2.展开用户配置（如果它尚未展开）。</p>
+<p>3.在用户配置下，展开管理模板。</p>
+<p>4.单击“开始菜单和任务栏”。</p>
+<p>5.在右窗格中，双击“删除和禁用“关闭计算机”按钮”。</p>
+<p>6.单击启用，然后单击应用。</p>
+<p>7.单击开始。</p>
+<p>您会注意到关闭计算机按钮已不再显示。</p>
+<p>8.选择“删除和禁用“关闭计算机”按钮”对话框。</p>
+<p>9.单击未配置，然后单击应用，然后单击确定。</p>
+<p>10.单击开始。</p>
+<p>您会注意到关闭计算机按钮又显示在开始中。</p>
+<p>11.退出“组策略编辑器”管理单元。</p>
+<p>希望通过本文对组策略和组策略编辑器的介绍，读者能有一个更深入的了解。希望本文能够对读者有所帮助，更多<a href="http://os.51cto.com/art/201011/233805.htm" target="_blank">有关组策略的知识</a>还有待于读者去探索和学习。</p>
+<p>【编辑推荐】</p>
+<ol>
+<li><a href="http://os.51cto.com/art/201107/279423.htm" target="_blank">如何进入组策略？</a></li>
+<li><a href="http://os.51cto.com/art/201107/279431.htm" target="_blank">组策略无法进入怎么办？</a></li>
+<li><a href="http://os.51cto.com/art/201107/279406.htm" target="_blank">妙用Windows组策略进行注册表解锁</a></li>
+<li><a href="http://os.51cto.com/art/201107/278956.htm" target="_blank">如何恢复WindowsXP Home版操作系统组策略？</a></li>
+<li><a href="http://os.51cto.com/art/201107/278964.htm" target="_blank">利用组策略如何修改活动目录域缓存登录次数？</a>
+【责任编辑：<a href="mailto:hanys@51cto.com">韩亚珊</a> TEL：（010）68476606】</li>
+</ol>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">给力</a>
+(0票)</p>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">动心</a>
+(0票)</p>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">废话</a>
+(0票)</p>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">专业</a>
+(0票)</p>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">标题党</a>
+(0票)</p>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">路过</a>
+(0票)</p>
+<p>原文：<a href="http://os.51cto.com/art/201107/279433.htm" target="_blank"><strong>组策略及组策略编辑器基础知识</strong></a> <a href="http://os.51cto.com/" target="_blank">返回操作系统首页</a></p>
+<p>分享到： <img src="" alt=""> <a href="&quot;QQ微博&quot;">QQ微博</a><img src="" alt=""><a href="http://sns.qzone.qq.com/cgi-bin/qzshare/cgi_qzshare_onekey?url=http://os.51cto.com/art/201107/279433.htm" title="分享到QQ空间" target="_blank">QQ空间</a><img src="" alt=""><a href="http://www.kaixin001.com/repaste/share.php?rurl=http://os.51cto.com/art/201107/279433.htm&amp;rtitle=组策略及组策略编辑器基础知识" target="_blank">开心</a><img src="" alt=""><a href="http://share.renren.com/share/buttonshare.do?link=http://os.51cto.com/art/201107/279433.htm&amp;title=组策略及组策略编辑器基础知识" title="分享到人人网" target="_blank">人人网</a><img src="" alt=""> <a href="&quot;豆瓣&quot;">豆瓣</a> <img src="" alt=""><a href="http://v.t.sina.com.cn/share/share.php?appkey=2378297317&amp;url=http://os.51cto.com/art/201107/279433.htm&amp;title=组策略及组策略编辑器基础知识" title="分享到新浪微博" target="_blank">新浪微博</a></p>
+<p><a href="">收藏</a>|<a href="">打印</a>|<a href="&quot;分享本资源给好友&quot;">复制</a></p>
+<p>关于<a href="http://www.51cto.com/php/search.php?keyword=%D7%E9%B2%DF%C2%D4" target="_blank">组策略</a>  <a href="http://www.51cto.com/php/search.php?keyword=%D7%E9%B2%DF%C2%D4%B1%E0%BC%AD%C6%F7" target="_blank">组策略编辑器</a>的更多文章</p>
+<ul>
+<li><a href="http://os.51cto.com/art/201107/279441.htm" title="组策略如何进行设置？" target="_blank">组策略如何进行设置？</a></li>
+<li><a href="http://os.51cto.com/art/201107/279431.htm" title="组策略无法进入怎么办？" target="_blank">组策略无法进入怎么办？</a></li>
+<li><a href="http://os.51cto.com/art/201107/279406.htm" title="妙用Windows组策略进行注册表解锁" target="_blank">妙用Windows组策略进行注册表解锁</a></li>
+<li><a href="http://os.51cto.com/art/201107/279039.htm" title="组策略排错知识概述二" target="_blank">组策略排错知识概述二</a></li>
+<li><a href="http://os.51cto.com/art/201107/279037.htm" title="组策略排错知识简析一" target="_blank">组策略排错知识简析一</a>
+<a href="http://os.51cto.com/art/201011/233805.htm" title="Windows组策略 系统管理员手中的管理利器" target="_blank"><strong>Windows组策略 系统管理员手中的管理利器</strong></a><a href="http://os.51cto.com/art/201011/233805.htm" title="Windows组策略 系统管理员手中的管理利器" target="_blank"><img src="" alt="Windows组策略 系统管理员手中的管理利器"></a></li>
+</ul>
+<p>组策略是管理员为用户和计算机定义并控制程序、网络资源及操作系<a href="http://os.51cto.com/art/201011/233805.htm" title="Windows组策略 系统管理员手中的管理利器" target="_blank">[详细]</a></p>
+<h3 id="-top5-">网友评论<em>TOP5</em></h3>
+<p><a href="http://www.51cto.com/php/feedbackt.php?id=279433" target="_blank">查看所有评论（）</a></p>
+<p><a href=""></a> 提交评论</p>
+<h3 id="-">栏目热门</h3>
+<p><a href="http://os.51cto.com/click/38" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li><a href="http://os.51cto.com/art/201107/274342.htm" title="Windows Server安全策略与组策略之间的关系" target="_blank">Windows Server安全策略与组策略之间的关系</a></li>
+<li><a href="http://os.51cto.com/art/201107/273515.htm" title="Windows XP组策略技巧之限制访问电脑磁盘" target="_blank">Windows XP组策略技巧之限制访问电脑磁盘</a></li>
+<li><a href="http://os.51cto.com/art/201107/275480.htm" title="域控制器中如何用组策略禁止USB" target="_blank">域控制器中如何用组策略禁止USB</a></li>
+<li><a href="http://os.51cto.com/art/201107/277958.htm" title="网吧系统组策略简介" target="_blank">网吧系统组策略简介</a></li>
+<li><a href="http://os.51cto.com/art/201107/277610.htm" title="利用Windows组策略管理网络共享的技巧" target="_blank">利用Windows组策略管理网络共享的技巧</a></li>
+</ul>
+<h3 id="-">同期最新</h3>
+<p><a href="http://os.51cto.com/col/38" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li><a href="http://os.51cto.com/art/201107/279431.htm" title="组策略无法进入怎么办？" target="_blank">组策略无法进入怎么办？</a></li>
+<li><a href="http://os.51cto.com/art/201107/279423.htm" title="如何进入组策略？" target="_blank">如何进入组策略？</a></li>
+<li><a href="http://os.51cto.com/art/201107/279406.htm" title="妙用Windows组策略进行注册表解锁" target="_blank">妙用Windows组策略进行注册表解锁</a></li>
+<li><a href="http://os.51cto.com/art/201107/279039.htm" title="组策略排错知识概述二" target="_blank">组策略排错知识概述二</a></li>
+<li><a href="http://os.51cto.com/art/201107/279037.htm" title="组策略排错知识简析一" target="_blank">组策略排错知识简析一</a></li>
+</ul>
+<h3 id="-http-os-51cto-com-"><a href="http://os.51cto.com/" target="_blank">操作系统</a></h3>
+<p>频道导航</p>
+<ul>
+<li>生产环境</li>
+</ul>
+<p><a href="http://os.51cto.com/linux/" target="_blank">Linux</a> |<a href="http://os.51cto.com/windows/" target="_blank">Windows</a> |<a href="http://os.51cto.com/col/522/" target="_blank">Unix</a> |<a href="http://os.51cto.com/col/545/" target="_blank">运维教程</a> |<a href="http://os.51cto.com/art/201011/233915.htm" target="_blank">Linux运维趋势</a></p>
+<ul>
+<li>OS前沿</li>
+</ul>
+<p><a href="http://os.51cto.com/col/975/" target="_blank">浏览器</a> |<a href="http://os.51cto.com/col/610/" target="_blank">开源技术</a> |<a href="http://os.51cto.com/windows7/" target="_blank">Windows 7</a> |<a href="http://os.51cto.com/windows2008/" target="_blank">Server 08</a> |<a href="http://os.51cto.com/col/1417/" target="_blank">移动OS</a></p>
+<h3 id="-">热点推荐</h3>
+<ul>
+<li><a href="http://mobile.51cto.com/mobile-182392.htm" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://mobile.51cto.com/mobile-182392.htm" target="_blank">Android开发应用详解</a></p>
+<ul>
+<li><a href="http://developer.51cto.com/art/201106/266369.htm" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://developer.51cto.com/art/201106/266369.htm" target="_blank">那些性感的让人尖叫的程序员</a></p>
+<ul>
+<li><a href="http://developer.51cto.com/art/200907/133407.htm" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://developer.51cto.com/art/200907/133407.htm" target="_blank">HTML5 下一代Web开发标准详解</a></p>
+<ul>
+<li><a href="http://developer.51cto.com/art/201104/257581.htm" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://developer.51cto.com/art/201104/257581.htm" target="_blank">高性能WEB开发应用指南</a></p>
+<ul>
+<li><a href="http://os.51cto.com/art/200706/49181.htm" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://os.51cto.com/art/200706/49181.htm" target="_blank">Ubuntu开源技术交流频道</a></p>
+<p><strong>热门标签：</strong> <a href="http://os.51cto.com/windows/" target="_blank">windows频道</a><a href="http://mobile.51cto.com/" target="_blank">移动开发</a><a href="http://cloud.51cto.com/" target="_blank">云计算</a><a href="http://mobile.51cto.com/android-227548.htm" target="_blank">eclipse android</a><a href="http://network.51cto.com/art/200909/151122.htm" target="_blank">tp-link路由器设置图解</a><a href="http://developer.51cto.com/art/200907/133407.htm" target="_blank">html5</a></p>
+<ul>
+<li><em>外电</em> <a href="http://os.51cto.com/art/201110/298945.htm" target="_blank">运维的咆哮:从Linux到Windows</a></li>
+<li><a href="http://os.51cto.com/art/201110/298945.htm" target="_blank"><img src="" alt=""></a> 一位咆哮的运维，他受够了Linux，最后他停止了咆哮重拾Windows。</li>
+</ul>
+<ol>
+<li><a href="http://os.51cto.com/art/201110/297139.htm" target="_blank">《Linux运维趋势》第13期发布</a></li>
+<li><a href="http://os.51cto.com/art/201110/295713.htm" target="_blank">生产服务器LNMP全自动安装脚本</a></li>
+</ol>
+<h3 id="-">文章排行</h3>
+<p><a href="">本月</a><a href="">本周</a><a href="">24小时</a></p>
+<ul>
+<li><a href="http://os.51cto.com/art/201110/299384.htm" title="回应咆哮：做一个有尊严的运维" target="_blank">回应咆哮：做一个有尊严的运维</a></li>
+<li><a href="http://os.51cto.com/art/201110/298945.htm" title="一个运维的咆哮：我受够了Linux服务器 重拾Windows" target="_blank">一个运维的咆哮：我受够了Linux服务器 重拾Windows</a></li>
+<li><a href="http://os.51cto.com/art/201110/299747.htm" title="Windows XP虽伟大,但十年是否太久了" target="_blank">Windows XP虽伟大,但十年是否太久了</a></li>
+<li><a href="http://os.51cto.com/art/201110/298199.htm" title="Ubuntu 11.10 系统设置指导" target="_blank">Ubuntu 11.10 系统设置指导</a></li>
+<li><a href="http://os.51cto.com/art/201110/295548.htm" title="Ubuntu 11.10 安装后要做的11件事" target="_blank">Ubuntu 11.10 安装后要做的11件事</a></li>
+<li><a href="http://os.51cto.com/art/201110/296916.htm" title="Ubuntu 11.10 安装后要做的12件事情" target="_blank">Ubuntu 11.10 安装后要做的12件事情</a></li>
+<li><a href="http://os.51cto.com/art/201110/299304.htm" title="后PC时代的一点点事实（图表）" target="_blank">后PC时代的一点点事实（图表）</a></li>
+<li><a href="http://os.51cto.com/art/201009/227620.htm" title="Windows 7+VirtualBox安装Mac OS X虚拟机全教程" target="_blank">Windows 7+VirtualBox安装Mac OS X虚拟机全教程</a></li>
+<li><a href="http://os.51cto.com/art/201110/298889.htm" title="Windows Server 8 AD功能预览" target="_blank">Windows Server 8 AD功能预览</a></li>
+<li><a href="http://os.51cto.com/art/201110/297139.htm" title="《Linux运维趋势》第13期：服务器优化" target="_blank">《Linux运维趋势》第13期：服务器优化</a></li>
+<li><a href="http://os.51cto.com/art/201110/298945.htm" title="一个运维的咆哮：我受够了Linux服务器 重拾Windows" target="_blank">一个运维的咆哮：我受够了Linux服务器 重拾Windows</a></li>
+<li><a href="http://os.51cto.com/art/201110/299384.htm" title="回应咆哮：做一个有尊严的运维" target="_blank">回应咆哮：做一个有尊严的运维</a></li>
+<li><a href="http://os.51cto.com/art/201110/299051.htm" title="想知道如何将你的Linux服务器清空空吗？" target="_blank">想知道如何将你的Linux服务器清空空吗？</a></li>
+<li><a href="http://os.51cto.com/art/201110/299072.htm" title="红帽的大数据：Gluster全方位解读" target="_blank">红帽的大数据：Gluster全方位解读</a></li>
+<li><a href="http://os.51cto.com/art/201110/299304.htm" title="后PC时代的一点点事实（图表）" target="_blank">后PC时代的一点点事实（图表）</a></li>
+<li><a href="http://os.51cto.com/art/201110/299235.htm" title="活动目录在云环境中扮演什么样的角色" target="_blank">活动目录在云环境中扮演什么样的角色</a></li>
+<li><a href="http://os.51cto.com/art/201110/299158.htm" title="Office 2007 SP3正式发布（附简体中文版下载）" target="_blank">Office 2007 SP3正式发布（附简体中文版下载）</a></li>
+<li><a href="http://os.51cto.com/art/201110/299065.htm" title="微软发布Windows管理员新工具" target="_blank">微软发布Windows管理员新工具</a></li>
+<li><a href="http://os.51cto.com/art/201110/299480.htm" title="金山将推 WPS for Linux" target="_blank">金山将推 WPS for Linux</a></li>
+<li><p><a href="http://os.51cto.com/art/201110/299481.htm" title="QQ 2011正式版(Q+)新版发布" target="_blank">QQ 2011正式版(Q+)新版发布</a></p>
+</li>
+<li><p><a href="http://os.51cto.com/art/201110/295548.htm" title="Ubuntu 11.10 安装后要做的11件事" target="_blank">Ubuntu 11.10 安装后要做的11件事</a></p>
+</li>
+<li><a href="http://os.51cto.com/art/201110/296916.htm" title="Ubuntu 11.10 安装后要做的12件事情" target="_blank">Ubuntu 11.10 安装后要做的12件事情</a></li>
+<li><a href="http://os.51cto.com/art/201110/297004.htm" title="Ubuntu 11.10正式发布(附下载)" target="_blank">Ubuntu 11.10正式发布(附下载)</a></li>
+<li><a href="http://os.51cto.com/art/201110/298945.htm" title="一个运维的咆哮：我受够了Linux服务器 重拾Windows" target="_blank">一个运维的咆哮：我受够了Linux服务器 重拾Windows</a></li>
+<li><a href="http://os.51cto.com/art/201110/296975.htm" title="Ubuntu 11.10发布，新特性面面观" target="_blank">Ubuntu 11.10发布，新特性面面观</a></li>
+<li><a href="http://os.51cto.com/art/201110/298199.htm" title="Ubuntu 11.10 系统设置指导" target="_blank">Ubuntu 11.10 系统设置指导</a></li>
+<li><a href="http://os.51cto.com/art/201110/297139.htm" title="《Linux运维趋势》第13期：服务器优化" target="_blank">《Linux运维趋势》第13期：服务器优化</a></li>
+<li><a href="http://os.51cto.com/art/201110/296219.htm" title="WebQQ变身Q+ Web入口争夺战升级" target="_blank">WebQQ变身Q+ Web入口争夺战升级</a></li>
+<li><a href="http://os.51cto.com/art/201110/298204.htm" title="大话IT第十七期：体验Ubuntu 11.10" target="_blank">大话IT第十七期：体验Ubuntu 11.10</a></li>
+<li><a href="http://os.51cto.com/art/201110/299384.htm" title="回应咆哮：做一个有尊严的运维" target="_blank">回应咆哮：做一个有尊严的运维</a></li>
+</ul>
+<h3 id="-">热点专题</h3>
+<p><a href="http://os.51cto.com/speclist/38" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li><a href="http://os.51cto.com/art/201011/235037.htm" title="感恩节专题：系统管理员们应该感谢的那些软件" target="_blank"><img src="" alt="感恩节专题：系统管理员们应该感谢的那些软件"></a></li>
+</ul>
+<h3 id="-http-os-51cto-com-art-201011-235037-htm-"><a href="http://os.51cto.com/art/201011/235037.htm" title="感恩节专题：系统管理员们应该感谢的那些软件" target="_blank">感恩节专题：系统管理</a></h3>
+<p>11月最后一个星期四，是西方的感恩节。身为各种IT技术</p>
+<ul>
+<li><a href="http://os.51cto.com/art/201011/234526.htm" title="Novell易主：22亿美元背后的故事" target="_blank"><img src="" alt="Novell易主：22亿美元背后的故事"></a></li>
+</ul>
+<h3 id="-novell-22-http-os-51cto-com-art-201011-234526-htm-novell-22-"><a href="http://os.51cto.com/art/201011/234526.htm" title="Novell易主：22亿美元背后的故事" target="_blank">Novell易主：22亿美元</a></h3>
+<p>2010年11月22日，IDG传出消息，Novell已经在周一同意</p>
+<ul>
+<li><a href="http://os.51cto.com/art/201011/233945.htm" title="Linux计划任务——cron服务入门与应用教程" target="_blank"><img src="" alt="Linux计划任务——cron服务入门与应用教程"></a></li>
+</ul>
+<h3 id="-linux-cro-http-os-51cto-com-art-201011-233945-htm-linux-cron-"><a href="http://os.51cto.com/art/201011/233945.htm" title="Linux计划任务——cron服务入门与应用教程" target="_blank">Linux计划任务——cro</a></h3>
+<p>计划任务，是系统自动完成工作的一种实现方式，通过sh</p>
+<h3 id="-">热点标签</h3>
+<p><a href="http://os.51cto.com/art/201104/256478.htm" title="IIS服务" target="_blank">IIS服务</a> <a href="http://os.51cto.com/art/201104/256380.htm" title="Windows 8" target="_blank">Windows 8</a> <a href="http://os.51cto.com/art/201103/250662.htm" title="浏览器战报" target="_blank">浏览器战报</a> <a href="http://os.51cto.com/art/201101/244030.htm" title="Ubuntu 11.04" target="_blank">Ubuntu 11.04</a> <a href="http://os.51cto.com/art/201101/244021.htm" title="运维秘诀" target="_blank">运维秘诀</a> <a href="http://os.51cto.com/art/201012/236185.htm" title="活动目录" target="_blank">活动目录</a> <a href="http://os.51cto.com/art/201104/253193.htm" title="Linux管理员" target="_blank">Linux管理员</a> <a href="http://os.51cto.com/art/201103/246763.htm" title="Fedora 15" target="_blank">Fedora 15</a> <a href="http://os.51cto.com/art/201011/233915.htm" title="Linux运维趋势" target="_blank">Linux运维趋势</a> <a href="http://os.51cto.com/art/201010/230570.htm" title="开源社区" target="_blank">开源社区</a></p>
+<ul>
+<li><a href="http://news.51cto.com/col/1323/" target="_blank"><strong>点击这里查看样刊</strong></a></li>
+<li><p><a href="http://home.51cto.com/index.php?s=/Subscribe" target="_blank"><img src="" alt=""></a></p>
+<h3 id="-">全站热点</h3>
+</li>
+<li><p><a href="http://os.51cto.com/art/201107/274870.htm" title="CentOS 6.0正式发布(附下载）" target="_blank"><img src="" alt=""></a></p>
+</li>
+</ul>
+<p><a href="http://os.51cto.com/art/201107/274870.htm" title="CentOS 6.0正式发布(附下载）" target="_blank">CentOS 6.0正式发布(附下载）</a></p>
+<ul>
+<li><a href="http://network.51cto.com/art/201107/274080.htm" title="小区宽带的N种骗局 独享成陷阱" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://network.51cto.com/art/201107/274080.htm" title="小区宽带的N种骗局 独享成陷阱" target="_blank">小区宽带的N种骗局 独享成陷阱</a></p>
+<ul>
+<li><a href="http://server.51cto.com/Visits-251814.htm" title="戴尔高效企业战略解读" target="_blank">戴尔高效企业战略解读</a></li>
+<li><a href="http://os.51cto.com/art/201103/251768.htm" title="Linux系统中的日志管理" target="_blank">Linux系统中的日志管理</a></li>
+<li><a href="http://book.51cto.com/art/201103/251751.htm" title="会当凌绝顶：Java开发修行实录" target="_blank">会当凌绝顶：Java开发修行实录</a></li>
+<li><a href="http://book.51cto.com/art/201103/251720.htm" title="云计算解码：技术架构和产业运营" target="_blank">云计算解码：技术架构和产业运营</a></li>
+<li><a href="http://book.51cto.com/art/201103/251640.htm" title="B2B2C网上商城开发指南——基于SaaS和淘宝API开放平台" target="_blank">B2B2C网上商城开发指南——基于SaaS</a></li>
+</ul>
+<h3 id="-">读书</h3>
+<p><a href="http://book.51cto.com/art/200801/63455.htm" title="C#高级编程(第4版)" target="_blank"><img src="" alt=""></a></p>
+<h3 id="-c-4-http-book-51cto-com-art-200801-63455-htm-"><a href="http://book.51cto.com/art/200801/63455.htm" target="_blank">C/#高级编程(第4版)</a></h3>
+<p>C＃经典名著！2006年最受读者喜爱的十大技术开发类图书！也是Wrox红皮书中最畅销的品种之一，从第一版开始就名满天下；其第3版被</p>
+<ul>
+<li><a href="http://book.51cto.com/art/200704/46276.htm" title="网络工程师必读——网络工程基础" target="_blank">网络工程师必读——网络工程基础</a></li>
+<li><a href="http://book.51cto.com/art/200706/49300.htm" title="计算机网络技术" target="_blank">计算机网络技术</a></li>
+<li><a href="http://book.51cto.com/art/200706/49497.htm" title="Java EE 5 开发指南" target="_blank">Java EE 5 开发指南</a></li>
+<li><a href="http://book.51cto.com/art/200706/49518.htm" title="Ubuntu Linux入门到精通" target="_blank">Ubuntu Linux入门到精通</a></li>
+</ul>
+<h3 id="-">博文推荐</h3>
+<p><a href="http://blog.51cto.com/" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li><a href="http://redking.blog.51cto.com/27212/141522/" title="RHCE课程-RH253Linux服务器架设笔记四-DHCP服务器配置" target="_blank">RHCE课程-RH253Linux服务器架设笔记</a></li>
+<li><a href="http://hysister.blog.51cto.com/653261/141521/" title="软件测试专家于涌谈行业前景与测试人员成长" target="_blank">软件测试专家于涌谈行业前景与测试人</a></li>
+<li><a href="http://hong7.blog.51cto.com/390883/141519/" title="如何做一个云时代的程序员" target="_blank">如何做一个云时代的程序员</a></li>
+<li><a href="http://newyorker11432.blog.51cto.com/602290/141510/" title="生命中的不可或缺。。。" target="_blank">生命中的不可或缺。。。</a></li>
+</ul>
+<h3 id="-">最新热帖</h3>
+<p><a href="http://bbs.51cto.com/hotthreads.php" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li><a href="http://bbs.51cto.com/thread-126847-1.html" title="Linux操作系统中的七件超厉害的武器" target="_blank">Linux操作系统中的七件超厉害的武器</a></li>
+<li><a href="http://bbs.51cto.com/thread-77330-1.html" title="C++最新精华帖（继续更新中。。。）" target="_blank">C++最新精华帖（继续更新中。。。）</a></li>
+<li><a href="http://bbs.51cto.com/thread-33597-1.html" title="成功做好网络管理员 IIS使用十大原则" target="_blank">成功做好网络管理员 IIS使用十大原则</a></li>
+<li><a href="http://bbs.51cto.com/thread-32563-1.html" title="菜鸟级SQL21天自学通" target="_blank">菜鸟级SQL21天自学通</a></li>
+<li><a href="http://bbs.51cto.com/thread-24068-1.html" title="Oracle经验集锦" target="_blank">Oracle经验集锦</a><h3 id="51cto-">51CTO旗下网站</h3>
+</li>
+</ul>
+<p><a href="http://www.51cto.com/" target="_blank">领先的IT技术网站 51CTO</a> <a href="http://www.watchstor.com/" target="_blank">领先的中文存储媒体 WatchStor</a> <a href="http://www.cioage.com/" target="_blank">中国首个CIO网站 CIOage</a> <a href="http://www.hc3i.cn/" target="_blank">中国首家数字医疗网站 HC3i</a> <a href="http://www.linkphone.cn/" target="_blank">移动互联网生活门户 灵客风LinkPhone</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/域/">域</a></li></span></span> | <span class="tags">Tagged <a href="/tags/域/" class="label label-primary">域</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-域--组策略及组策略编辑器基础知识-51CTO_COM/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--组策略及组策略编辑器基础知识-51CTO_COM" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1277,7 +977,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:01:37</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:33:42</em></span></div>
 </div>
 <div class="clearfix"></div>
 

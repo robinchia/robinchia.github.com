@@ -110,60 +110,349 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2/">JVM调优总结（六）</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--java线程安全总结-高级语言虚拟机/">java线程安全总结 </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--java线程安全总结-高级语言虚拟机/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jvm-2">JVM调优总结（六）-分代垃圾回收详述2</h1>
-<h2 id="-">分代垃圾回收流程示意</h2>
+        <h1 id="java-">java线程安全总结 - 高级语言虚拟机</h1>
+<p><a href="http://hllvm.group.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://hllvm.group.iteye.com/login" target="_blank">登录</a> <a href="http://hllvm.group.iteye.com/signup" target="_blank">注册</a></p>
+<p><a href="http://www.iteye.com/" target="_blank"><img src="&quot;ITeye-最棒的软件开发交流社区&quot;" alt="ITeye3.0"></a></p>
+<p><a href=""></a></p>
+<p><a href="http://www.iteye.com/groups" target="_blank">群组首页</a> → <a href="http://hllvm.group.iteye.com/groups/category/language" target="_blank">编程语言</a> → <a href="http://hllvm.group.iteye.com/" target="_blank">高级语言虚拟机</a> → <a href="http://hllvm.group.iteye.com/group/wiki" target="_blank">知识库</a> → <a href="http://hllvm.group.iteye.com/group/wiki?category_id=304" target="_blank">线程安全</a> → <a href="">java线程安全总结</a>
+原创作者: <a href="http://www.javaeye.com/topic/806968" target="_blank">jameswxx</a>   阅读:9396次   评论:28条   更新时间:2011-05-26    </p>
+<pre><code>  最近想将java基础的一些东西都整理整理，写下来，这是对知识的总结，也是一种乐趣。已经拟好了提纲，大概分为这几个主题： java线程安全，java垃圾收集，java并发包详细介绍，java profile和jvm性能调优 。慢慢写吧。本人jameswxx原创文章，转载请注明出处，我费了很多心血，多谢了。关于java线程安全，网上有很多资料，我只想从自己的角度总结对这方面的考虑，有时候写东西是很痛苦的，知道一些东西，但想用文字说清楚，却不是那么容易。我认为要认识java线程安全，必须了解两个主要的点：java的内存模型，java的线程同步机制。特别是内存模型，java的线程同步机制很大程度上都是基于内存模型而设定的。后面我还会写java并发包的文章，详细总结如何利用java并发包编写高效安全的多线程并发程序。暂时写得比较仓促，后面会慢慢补充完善。
+</code></pre><p><strong>浅谈java内存模型</strong>
+       不同的平台，内存模型是不一样的，但是jvm的内存模型规范是统一的。其实java的多线程并发问题最终都会反映在java的内存模型上，所谓线程安全无非是要控制多个线程对某个资源的有序访问或修改。总结java的内存模型，要解决两个主要的问题：可见性和有序性。我们都知道计算机有高速缓存的存在，处理器并不是每次处理数据都是取内存的。JVM定义了自己的内存模型，屏蔽了底层平台内存管理细节，对于java开发人员，要清楚在jvm内存模型的基础上，如果解决多线程的可见性和有序性。
+       那么，何谓可见性？ 多个线程之间是不能互相传递数据通信的，它们之间的沟通只能通过共享变量来进行。Java内存模型（JMM）规定了jvm有主内存，主内存是多个线程共享的。当new一个对象的时候，也是被分配在主内存中，每个线程都有自己的工作内存，工作内存存储了主存的某些对象的副本，当然线程的工作内存大小是有限制的。当线程操作某个对象时，执行顺序如下：
+ (1) 从主存复制变量到当前工作内存 (read and load)
+ (2) 执行代码，改变共享变量值 (use and assign)
+ (3) 用工作内存数据刷新主存相关内容 (store and write)</p>
+<p>JVM规范定义了线程对主存的操作指令：read，load，use，assign，store，write。当一个共享变量在多个线程的工作内存中都有副本时，如果一个线程修改了这个共享变量，那么其他线程应该能够看到这个被修改后的值，这就是多线程的可见性问题。
+        那么，什么是有序性呢 ？线程在引用变量时不能直接从主内存中引用,如果线程工作内存中没有该变量,则会从主内存中拷贝一个副本到工作内存中,这个过程为read-load,完成后线程会引用该副本。当同一线程再度引用该字段时,有可能重新从主存中获取变量副本(read-load-use),也有可能直接引用原来的副本(use),也就是说 read,load,use顺序可以由JVM实现系统决定。
+        线程不能直接为主存中中字段赋值，它会将值指定给工作内存中的变量副本(assign),完成后这个变量副本会同步到主存储区(store-write)，至于何时同步过去，根据JVM实现系统决定.有该字段,则会从主内存中将该字段赋值到工作内存中,这个过程为read-load,完成后线程会引用该变量副本，当同一线程多次重复对字段赋值时,比如：
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>for(int i=0;i&lt;10;i++)  </li>
+<li>a++;<br>for(int i=0;i&lt;10;i++) a++;</li>
+</ol>
+<p>线程有可能只对工作内存中的副本进行赋值,只到最后一次赋值后才同步到主存储区，所以assign,store,weite顺序可以由JVM实现系统决定。假设有一个共享变量x，线程a执行x=x+1。从上面的描述中可以知道x=x+1并不是一个原子操作，它的执行过程如下：
+1 从主存中读取变量x副本到工作内存
+2 给x加1
+3 将x加1后的值写回主 存
+如果另外一个线程b执行x=x-1，执行过程如下：
+1 从主存中读取变量x副本到工作内存
+2 给x减1
+3 将x减1后的值写回主存
+那么显然，最终的x的值是不可靠的。假设x现在为10，线程a加1，线程b减1，从表面上看，似乎最终x还是为10，但是多线程情况下会有这种情况发生：
+1：线程a从主存读取x副本到工作内存，工作内存中x值为10
+2：线程b从主存读取x副本到工作内存，工作内存中x值为10
+3：线程a将工作内存中x加1，工作内存中x值为11
+4：线程a将x提交主存中，主存中x为11
+5：线程b将工作内存中x值减1，工作内存中x值为9
+6：线程b将x提交到中主存中，主存中x为9
+同样，x有可能为11，如果x是一个银行账户，线程a存款，线程b扣款，显然这样是有严重问题的，要解决这个问题，必须保证线程a和线程b是有序执行的，并且每个线程执行的加1或减1是一个原子操作。看看下面代码：
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class Account {  </li>
+<li></li>
+<li>private int balance;  </li>
+<li></li>
+<li>public Account(int balance) {  </li>
+<li>this.balance = balance;  </li>
+<li>}  </li>
+<li></li>
+<li>public int getBalance() {  </li>
+<li>return balance;  </li>
+<li>}  </li>
+<li></li>
+<li>public void add(int num) {  </li>
+<li>balance = balance + num;  </li>
+<li>}  </li>
+<li></li>
+<li>public void withdraw(int num) {  </li>
+<li>balance = balance - num;  </li>
+<li>}  </li>
+<li></li>
+<li>public static void main(String[] args) throws InterruptedException {  </li>
+<li>Account account = new Account(1000);  </li>
+<li>Thread a = new Thread(new AddThread(account, 20), &quot;add&quot;);  </li>
+<li>Thread b = new Thread(new WithdrawThread(account, 20), &quot;withdraw&quot;);  </li>
+<li>a.start();  </li>
+<li>b.start();  </li>
+<li>a.join();  </li>
+<li>b.join();  </li>
+<li>System.out.println(account.getBalance());  </li>
+<li>}  </li>
+<li></li>
+<li>static class AddThread implements Runnable {  </li>
+<li>Account account;  </li>
+<li>int     amount;  </li>
+<li></li>
+<li>public AddThread(Account account, int amount) {  </li>
+<li>this.account = account;  </li>
+<li>this.amount = amount;  </li>
+<li>}  </li>
+<li></li>
+<li>public void run() {  </li>
+<li>for (int i = 0; i &lt; 200000; i++) {  </li>
+<li>account.add(amount);  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>static class WithdrawThread implements Runnable {  </li>
+<li>Account account;  </li>
+<li>int     amount;  </li>
+<li></li>
+<li>public WithdrawThread(Account account, int amount) {  </li>
+<li>this.account = account;  </li>
+<li>this.amount = amount;  </li>
+<li>}  </li>
+<li></li>
+<li>public void run() {  </li>
+<li>for (int i = 0; i &lt; 100000; i++) {  </li>
+<li>account.withdraw(amount);  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}<br>public class Account { private int balance; public Account(int balance) { this.balance = balance; } public int getBalance() { return balance; } public void add(int num) { balance = balance + num; } public void withdraw(int num) { balance = balance - num; } public static void main(String[] args) throws InterruptedException { Account account = new Account(1000); Thread a = new Thread(new AddThread(account, 20), &quot;add&quot;); Thread b = new Thread(new WithdrawThread(account, 20), &quot;withdraw&quot;); a.start(); b.start(); a.join(); b.join(); System.out.println(account.getBalance()); } static class AddThread implements Runnable { Account account; int amount; public AddThread(Account account, int amount) { this.account = account; this.amount = amount; } public void run() { for (int i = 0; i &lt; 200000; i++) { account.add(amount); } } } static class WithdrawThread implements Runnable { Account account; int amount; public WithdrawThread(Account account, int amount) { this.account = account; this.amount = amount; } public void run() { for (int i = 0; i &lt; 100000; i++) { account.withdraw(amount); } } } }</li>
+</ol>
+<p>第一次执行结果为10200，第二次执行结果为1060，每次执行的结果都是不确定的，因为线程的执行顺序是不可预见的。这是java同步产生的根源，synchronized关键字保证了多个线程对于同步块是互斥的，synchronized作为一种同步手段，解决java多线程的执行有序性和内存可见性，而volatile关键字之解决多线程的内存可见性问题。后面将会详细介绍。</p>
+<p><strong>synchronized关键字</strong>
+        上面说了，java用synchronized关键字做为多线程并发环境的执行有序性的保证手段之一。当一段代码会修改共享变量，这一段代码成为互斥区或临界区，为了保证共享变量的正确性，synchronized标示了临界区。典型的用法如下：
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>synchronized(锁){  </li>
+<li>临界区代码  </li>
+<li>}<br>synchronized(锁){ 临界区代码 }</li>
+</ol>
+<p>为了保证银行账户的安全，可以操作账户的方法如下：
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public synchronized void add(int num) {  </li>
+<li>balance = balance + num;  </li>
+<li>}  </li>
+<li>public synchronized void withdraw(int num) {  </li>
+<li>balance = balance - num;  </li>
+<li>}<br>public synchronized void add(int num) { balance = balance + num; } public synchronized void withdraw(int num) { balance = balance - num; }</li>
+</ol>
+<p>刚才不是说了synchronized的用法是这样的吗：
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>synchronized(锁){  </li>
+<li>临界区代码  </li>
+<li>}<br>synchronized(锁){ 临界区代码 }</li>
+</ol>
+<p>那么对于public synchronized void add(int num)这种情况，意味着什么呢？其实这种情况，锁就是这个方法所在的对象。同理，如果方法是public  static synchronized void add(int num)，那么锁就是这个方法所在的class。
+        理论上，每个对象都可以做为锁，但一个对象做为锁时，应该被多个线程共享，这样才显得有意义，在并发环境下，一个没有共享的对象作为锁是没有意义的。假如有这样的代码：
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class ThreadTest{  </li>
+<li>public void test(){  </li>
+<li>Object lock=new Object();  </li>
+<li>synchronized (lock){  </li>
+<li>//do something  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}<br>public class ThreadTest{ public void test(){ Object lock=new Object(); synchronized (lock){ //do something } } }</li>
+</ol>
+<p>lock变量作为一个锁存在根本没有意义，因为它根本不是共享对象，每个线程进来都会执行Object lock=new Object();每个线程都有自己的lock，根本不存在锁竞争。
+        每个锁对象都有两个队列，一个是就绪队列，一个是阻塞队列，就绪队列存储了将要获得锁的线程，阻塞队列存储了被阻塞的线程，当一个被线程被唤醒(notify)后，才会进入到就绪队列，等待cpu的调度。当一开始线程a第一次执行account.add方法时，jvm会检查锁对象account的就绪队列是否已经有线程在等待，如果有则表明account的锁已经被占用了，由于是第一次运行，account的就绪队列为空，所以线程a获得了锁，执行account.add方法。如果恰好在这个时候，线程b要执行account.withdraw方法，因为线程a已经获得了锁还没有释放，所以线程b要进入account的就绪队列，等到得到锁后才可以执行。
+一个线程执行临界区代码过程如下：
+1 获得同步锁
+2 清空工作内存
+3 从主存拷贝变量副本到工作内存
+4 对这些变量计算
+5 将变量从工作内存写回到主存
+6 释放锁
+可见，synchronized既保证了多线程的并发有序性，又保证了多线程的内存可见性。
+<strong>生产者/消费者模式</strong>
+        生产者/消费者模式其实是一种很经典的线程同步模型，很多时候，并不是光保证多个线程对某共享资源操作的互斥性就够了，往往多个线程之间都是有协作的。
+        假设有这样一种情况，有一个桌子，桌子上面有一个盘子，盘子里只能放一颗鸡蛋，A专门往盘子里放鸡蛋，如果盘子里有鸡蛋，则一直等到盘子里没鸡蛋，B专门从盘子里拿鸡蛋，如果盘子里没鸡蛋，则等待直到盘子里有鸡蛋。其实盘子就是一个互斥区，每次往盘子放鸡蛋应该都是互斥的，A的等待其实就是主动放弃锁，B等待时还要提醒A放鸡蛋。
+如何让线程主动释放锁
+很简单，调用锁的wait()方法就好。wait方法是从Object来的，所以任意对象都有这个方法。看这个代码片段：
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>Object lock=new Object();//声明了一个对象作为锁  </li>
+<li>synchronized (lock) {  </li>
+<li>balance = balance - num;  </li>
+<li>//这里放弃了同步锁，好不容易得到，又放弃了  </li>
+<li>lock.wait();  </li>
+<li>}<br>Object lock=new Object();//声明了一个对象作为锁 synchronized (lock) { balance = balance - num; //这里放弃了同步锁，好不容易得到，又放弃了 lock.wait(); }</li>
+</ol>
+<p>如果一个线程获得了锁lock，进入了同步块，执行lock.wait()，那么这个线程会进入到lock的阻塞队列。如果调用lock.notify()则会通知阻塞队列的某个线程进入就绪队列。
+声明一个盘子，只能放一个鸡蛋
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>package com.jameswxx.synctest;  </li>
+<li>public class Plate{  </li>
+<li>List<Object> eggs=new ArrayList<Object>();  </li>
+<li>public synchronized  Object getEgg(){  </li>
+<li>if(eggs.size()==0){  </li>
+<li>try{  </li>
+<li>wait();  </li>
+<li>}catch(InterruptedException e){  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>Object egg=eggs.get(0);  </li>
+<li>eggs.clear();//清空盘子  </li>
+<li>notify();//唤醒阻塞队列的某线程到就绪队列  </li>
+<li>return egg;  </li>
+<li>}  </li>
+<li></li>
+<li>public synchronized  void putEgg(Object egg){  </li>
+<li>If(eggs.size()&gt;0){  </li>
+<li>try{  </li>
+<li>wait();  </li>
+<li>}catch(InterruptedException e){  </li>
+<li>}  </li>
+<li>}  </li>
+<li>eggs.add(egg);//往盘子里放鸡蛋  </li>
+<li>notify();//唤醒阻塞队列的某线程到就绪队列  </li>
+<li>}  </li>
+<li>}<br>package com.jameswxx.synctest; public class Plate{ List<Object> eggs=new ArrayList<Object>(); public synchronized Object getEgg(){ if(eggs.size()==0){ try{ wait(); }catch(InterruptedException e){ } } Object egg=eggs.get(0); eggs.clear();//清空盘子 notify();//唤醒阻塞队列的某线程到就绪队列 return egg; } public synchronized void putEgg(Object egg){ If(eggs.size()&gt;0){ try{ wait(); }catch(InterruptedException e){ } } eggs.add(egg);//往盘子里放鸡蛋 notify();//唤醒阻塞队列的某线程到就绪队列 } }</li>
+</ol>
+<p>声明一个Plate对象为plate，被线程A和线程B共享，A专门放鸡蛋，B专门拿鸡蛋。假设
+1 开始，A调用plate.putEgg方法，此时eggs.size()为0，因此顺利将鸡蛋放到盘子，还执行了notify()方法，唤醒锁的阻塞队列的线程，此时阻塞队列还没有线程。
+2 又有一个A线程对象调用plate.putEgg方法，此时eggs.size()不为0，调用wait()方法，自己进入了锁对象的阻塞队列。
+3 此时，来了一个B线程对象，调用plate.getEgg方法，eggs.size()不为0，顺利的拿到了一个鸡蛋，还执行了notify()方法，唤醒锁的阻塞队列的线程，此时阻塞队列有一个A线程对象，唤醒后，它进入到就绪队列，就绪队列也就它一个，因此马上得到锁，开始往盘子里放鸡蛋，此时盘子是空的，因此放鸡蛋成功。
+4 假设接着来了线程A，就重复2；假设来料线程B，就重复3。
+整个过程都保证了放鸡蛋，拿鸡蛋，放鸡蛋，拿鸡蛋。</p>
+<p><strong>volatile关键字</strong>
+       volatile是java提供的一种同步手段，只不过它是轻量级的同步，为什么这么说，因为volatile只能保证多线程的内存可见性，不能保证多线程的执行有序性。而最彻底的同步要保证有序性和可见性，例如synchronized。任何被volatile修饰的变量，都不拷贝副本到工作内存，任何修改都及时写在主存。因此对于Valatile修饰的变量的修改，所有线程马上就能看到，但是volatile不能保证对变量的修改是有序的。什么意思呢？假如有这样的代码：
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class VolatileTest{  </li>
+<li>public volatile int a;  </li>
+<li>public void add(int count){  </li>
+<li>a=a+count;  </li>
+<li>}  </li>
+<li>}<br>public class VolatileTest{ public volatile int a; public void add(int count){ a=a+count; } }</li>
+</ol>
+<pre><code>    当一个VolatileTest对象被多个线程共享，a的值不一定是正确的，因为a=a+count包含了好几步操作，而此时多个线程的执行是无序的，因为没有任何机制来保证多个线程的执行有序性和原子性。volatile存在的意义是，任何线程对a的修改，都会马上被其他线程读取到，因为直接操作主存，没有线程对工作内存和主存的同步。所以，volatile的使用场景是有限的，在有限的一些情形下可以使用 volatile 变量替代锁。要使 volatile 变量提供理想的线程安全,必须同时满足下面两个条件:
+</code></pre><p>1)对变量的写操作不依赖于当前值。
+2)该变量没有包含在具有其他变量的不变式中
+volatile只保证了可见性，所以Volatile适合直接赋值的场景，如
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class VolatileTest{  </li>
+<li>public volatile int a;  </li>
+<li>public void setA(int a){  </li>
+<li>this.a=a;  </li>
+<li>}  </li>
+<li>}<br>public class VolatileTest{ public volatile int a; public void setA(int a){ this.a=a; } }</li>
+</ol>
+<p>在没有volatile声明时，多线程环境下，a的最终值不一定是正确的，因为this.a=a;涉及到给a赋值和将a同步回主存的步骤，这个顺序可能被打乱。如果用volatile声明了，读取主存副本到工作内存和同步a到主存的步骤，相当于是一个原子操作。所以简单来说，volatile适合这种场景：一个变量被多个线程共享，线程直接给这个变量赋值。这是一种很简单的同步场景，这时候使用volatile的开销将会非常小。</p>
+<p>评论 共 28 条 请<a href="http://hllvm.group.iteye.com/login" target="_blank">登录</a>后发表评论 <a href=""></a></p>
+<h3 id="28-geyingchen-http-geyingchen-iteye-com-geyingchen-2012-11-16-13-48">28 楼 <a href="http://geyingchen.iteye.com/" title="geyingchen" target="_blank">geyingchen</a> 2012-11-16 13:48</h3>
+<p>这样行么，如果多次调用getegg ,然后putegg,唤醒  getegg ，getegg在唤醒getegg，这样就会报错额，你notify 唤醒的又不一定是另外一个方法的线程，</p>
+<h3 id="27-hqf2009-http-hqf2009-iteye-com-hqf2009-2012-09-19-15-07">27 楼 <a href="http://hqf2009.iteye.com/" title="hqf2009" target="_blank">hqf2009</a> 2012-09-19 15:07</h3>
+<p>受教颇多……对线程同步了解更进一步了。</p>
+<h3 id="26-lijun880312-http-lijun880312-iteye-com-lijun880312-2012-09-03-14-59">26 楼 <a href="http://lijun880312.iteye.com/" title="lijun880312" target="_blank">lijun880312</a> 2012-09-03 14:59</h3>
+<p>楼主诸葛之思，神来之笔啊！<img src="" alt=""></p>
+<h3 id="25-zhuangyuann-http-zhuangyuann-iteye-com-zhuangyuann-2012-07-26-19-23">25 楼 <a href="http://zhuangyuann.iteye.com/" title="zhuangyuann" target="_blank">zhuangyuann</a> 2012-07-26 19:23</h3>
+<p>收益良多，谢谢分享</p>
+<h3 id="24-bbym010-http-bbym010-iteye-com-bbym010-2012-07-08-11-27">24 楼 <a href="http://bbym010.iteye.com/" title="bbym010" target="_blank">bbym010</a> 2012-07-08 11:27</h3>
+<p>还厉害，博主，线程相关其他文章在哪</p>
+<h3 id="23-yangcheng1230-http-yangcheng1230-iteye-com-yangcheng1230-2012-06-26-14-41">23 楼 <a href="http://yangcheng1230.iteye.com/" title="yangcheng1230" target="_blank">yangcheng1230</a> 2012-06-26 14:41</h3>
+<p>楼主大才，谢谢分享。</p>
+<h3 id="22-http-13966692733-163-com-iteye-com-2012-06-21-14-41">22 楼 <a href="http://13966692733-163-com.iteye.com/" title="爱上边城" target="_blank">爱上边城</a> 2012-06-21 14:41</h3>
+<p><img src="" alt=""> 线程说的真好。感谢您的慷慨奉献</p>
+<h3 id="21-tiandizhiguai-http-tiandizhiguai-iteye-com-tiandizhiguai-2012-06-21-10-28">21 楼 <a href="http://tiandizhiguai.iteye.com/" title="tiandizhiguai" target="_blank">tiandizhiguai</a> 2012-06-21 10:28</h3>
+<p>写的妙<img src="" alt=""></p>
+<h3 id="20-xieyaxiong-http-xieyaxiong-iteye-com-xieyaxiong-2012-06-18-17-52">20 楼 <a href="http://xieyaxiong.iteye.com/" title="xieyaxiong" target="_blank">xieyaxiong</a> 2012-06-18 17:52</h3>
+<p><img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""></p>
+<h3 id="19-358397023-http-358397023-iteye-com-358397023-2012-03-30-21-28">19 楼 <a href="http://358397023.iteye.com/" title="358397023" target="_blank">358397023</a> 2012-03-30 21:28</h3>
+<p>LZ写得好啊！学习了</p>
+<h3 id="18-stanly_xia-http-stanly-xia-iteye-com-stanly_xia-2012-03-22-15-59">18 楼 <a href="http://stanly-xia.iteye.com/" title="Stanly_xia" target="_blank">Stanly_xia</a> 2012-03-22 15:59</h3>
+<p>写的不错，受益匪浅。谢谢……<img src="" alt=""></p>
+<h3 id="17-fs216-http-fs216-iteye-com-fs216-2012-02-10-10-53">17 楼 <a href="http://fs216.iteye.com/" title="fs216" target="_blank">fs216</a> 2012-02-10 10:53</h3>
 <p><img src="" alt=""></p>
+<h3 id="16-wyn4595735-http-wyn4595735-iteye-com-wyn4595735-2012-02-06-17-03">16 楼 <a href="http://wyn4595735.iteye.com/" title="wyn4595735" target="_blank">wyn4595735</a> 2012-02-06 17:03</h3>
+<p>写的真不错啊，赞</p>
+<h3 id="15-hemijing-http-hemijing-iteye-com-hemijing-2011-10-22-15-33">15 楼 <a href="http://hemijing.iteye.com/" title="hemijing" target="_blank">hemijing</a> 2011-10-22 15:33</h3>
+<p>灰常之好呀</p>
+<h3 id="14-yacht-http-noam-iteye-com-yacht-2011-10-12-15-54">14 楼 <a href="http://noam.iteye.com/" title="yacht" target="_blank">yacht</a> 2011-10-12 15:54</h3>
+<p>这个文写的太好了！<img src="" alt=""></p>
+<h3 id="13-qpshenggui-http-qpshenggui-iteye-com-qpshenggui-2011-08-29-13-39">13 楼 <a href="http://qpshenggui.iteye.com/" title="qpshenggui" target="_blank">qpshenggui</a> 2011-08-29 13:39</h3>
 <p><img src="" alt=""></p>
+<h3 id="12-wubo-wb-http-tiangu-iteye-com-wubo-wb-2011-08-22-13-48">12 楼 <a href="http://tiangu.iteye.com/" title="wubo.wb" target="_blank">wubo.wb</a> 2011-08-22 13:48</h3>
+<p>很通俗易懂，让我知道还有这样一个拷贝过程，谢谢<img src="" alt=""> <img src="" alt=""></p>
+<h3 id="11-txin0814-http-txin0814-iteye-com-txin0814-2011-06-23-12-41">11 楼 <a href="http://txin0814.iteye.com/" title="txin0814" target="_blank">txin0814</a> 2011-06-23 12:41</h3>
 <p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<h2 id="-">选择合适的垃圾收集算法</h2>
-<p><strong>串行收集器</strong></p>
-<p><img src="" alt=""></p>
-<p>用单线程处理所有垃圾回收工作，因为无需多线程交互，所以效率比较高。但是，也无法使用多处理器的优势，所以此收集器适合单处理器机器。当然，此收集器也可以用在小数据量（100M左右）情况下的多处理器机器上。可以使用-XX:+UseSerialGC打开。</p>
-<p><strong>并行收集器</strong></p>
-<p><img src="" alt=""></p>
-<p>对年轻代进行并行垃圾回收，因此可以减少垃圾回收时间。一般在多线程多处理器机器上使用。使用-XX:+UseParallelGC.打开。并行收集器在J2SE5.0第六6更新上引入，在Java SE6.0中进行了增强--可以对年老代进行并行收集。如果年老代不使用并发收集的话，默认是使用单线程进行垃圾回收，因此会制约扩展能力。使用-XX:+UseParallelOldGC打开。</p>
-<p>使用-XX:ParallelGCThreads=<N>设置并行垃圾回收的线程数。此值可以设置与机器处理器数量相等。</p>
-<p>此收集器可以进行如下配置：
-<strong>最大垃圾回收暂停:</strong>指定垃圾回收时的最长暂停时间，通过-XX:MaxGCPauseMillis=<N>指定。<N>为毫秒.如果指定了此值的话，堆大小和垃圾回收相关参数会进行调整以达到指定值。设定此值可能会减少应用的吞吐量。</p>
-<p><strong>吞吐量:</strong>吞吐量为垃圾回收时间与非垃圾回收时间的比值，通过-XX:GCTimeRatio=<N>来设定，公式为1/（1+N）。例如，-XX:GCTimeRatio=19时，表示5%的时间用于垃圾回收。默认情况为99，即1%的时间用于垃圾回收。</p>
-<p><strong>并发收集器</strong></p>
-<p>可以保证大部分工作都并发进行（应用不停止），垃圾回收只暂停很少的时间，此收集器适合对响应时间要求比较高的中、大规模应用。使用-XX:+UseConcMarkSweepGC打开。</p>
-<p><img src="" alt=""></p>
-<pre><code>并发收集器主要减少年老代的暂停时间，他在应用不停止的情况下使用独立的垃圾回收线程，跟踪可达对象。在每个年老代垃圾回收周期中，在收集初期并发收集器 会对整个应用进行简短的暂停，在收集中还会再暂停一次。第二次暂停会比第一次稍长，在此过程中多个线程同时进行垃圾回收工作。
-
-并发收集器使用处理器换来短暂的停顿时间。在一个N个处理器的系统上，并发收集部分使用K/N个可用处理器进行回收，一般情况下1&lt;=K&lt;=N/4。
-
-在只有一个处理器的主机上使用并发收集器，设置为incremental mode模式也可获得较短的停顿时间。
-
-
-
-**浮动垃圾：**由于在应用运行的同时进行垃圾回收，所以有些垃圾可能在垃圾回收进行完成时产生，这样就造成了“Floating Garbage”，这些垃圾需要在下次垃圾回收周期时才能回收掉。所以，并发收集器一般需要20%的预留空间用于这些浮动垃圾。
-
-
-
-**Concurrent Mode Failure：**并发收集器在应用运行时进行收集，所以需要保证堆在垃圾回收的这段时间有足够的空间供程序使用，否则，垃圾回收还未完成，堆空间先满了。这种情况下将会发生“并发模式失败”，此时整个应用将会暂停，进行垃圾回收。
-
-
-
-**启动并发收集器：**因为并发收集在应用运行时进行收集，所以必须保证收集完成之前有足够的内存空间供程序使用，否则会出现“Concurrent Mode Failure”。通过设置-XX:CMSInitiatingOccupancyFraction=&lt;N&gt;指定还有多少剩余堆时开始执行并发收集
-</code></pre><h2 id="-">小结</h2>
-<p><strong>串行处理器：</strong></p>
-<p>--适用情况：数据量比较小（100M左右）；单处理器下并且对响应时间无要求的应用。
---缺点：只能用于小型应用</p>
-<p><strong>并行处理器：</strong></p>
-<p>--适用情况：“对吞吐量有高要求”，多CPU、对应用响应时间无要求的中、大型应用。举例：后台处理、科学计算。
---缺点：垃圾收集过程中应用响应时间可能加长</p>
-<p><strong>并发处理器：</strong></p>
-<p>--适用情况：“对响应时间有高要求”，多CPU、对应用响应时间有较高要求的中、大型应用。举例：Web服务器/应用服务器、电信交换、集成开发环境。</p>
+<h3 id="10-blueheart2008-http-blueheart2008-iteye-com-blueheart2008-2011-06-04-22-53">10 楼 <a href="http://blueheart2008.iteye.com/" title="blueheart2008" target="_blank">blueheart2008</a> 2011-06-04 22:53</h3>
+<p><img src="" alt="">
+太牛了。</p>
+<h3 id="9-yangke5105-http-yangke5105-iteye-com-yangke5105-2011-06-01-11-24">9 楼 <a href="http://yangke5105.iteye.com/" title="yangke5105" target="_blank">yangke5105</a> 2011-06-01 11:24</h3>
+<p>已收藏，3ks……</p>
+<h3 id="8-sd6733531-http-sd6733531-iteye-com-sd6733531-2011-05-19-10-57">8 楼 <a href="http://sd6733531.iteye.com/" title="sd6733531" target="_blank">sd6733531</a> 2011-05-19 10:57</h3>
+<p>的确是好文。但是本人目前还是不能完全理解和消化,楼主有没有好书推荐下</p>
+<h3 id="7-http-lovegrass91-yahoo-com-iteye-com-2011-04-18-11-49">7 楼 <a href="http://lovegrass91-yahoo-com.iteye.com/" title="艾青草" target="_blank">艾青草</a> 2011-04-18 11:49</h3>
+<p>拜你为师吧！</p>
+<h3 id="6-jyb2218-http-jyb2218-iteye-com-jyb2218-2011-04-08-14-23">6 楼 <a href="http://jyb2218.iteye.com/" title="jyb2218" target="_blank">jyb2218</a> 2011-04-08 14:23</h3>
+<p>写的好啊。。。。</p>
+<h3 id="5-xbcxs-http-xbcxs-iteye-com-xbcxs-2011-04-02-11-29">5 楼 <a href="http://xbcxs.iteye.com/" title="xbcxs" target="_blank">xbcxs</a> 2011-04-02 11:29</h3>
+<p>好文章~~~</p>
+<h3 id="4-zhao0p-http-zhao0p-iteye-com-zhao0p-2011-03-15-16-23">4 楼 <a href="http://zhao0p.iteye.com/" title="zhao0p" target="_blank">zhao0p</a> 2011-03-15 16:23</h3>
+<p>通俗易懂~</p>
+<h3 id="3-xiaoying_honey-http-xiaoying-honey-iteye-com-xiaoying_honey-2011-03-15-10-59">3 楼 <a href="http://xiaoying-honey.iteye.com/" title="xiaoying_honey" target="_blank">xiaoying_honey</a> 2011-03-15 10:59</h3>
+<p><img src="" alt=""> 谢谢，受益匪浅。</p>
+<h3 id="2-lj-http-ljstring19851014-126-com-iteye-com-lj-2011-01-19-16-56">2 楼 <a href="http://ljstring19851014-126-com.iteye.com/" title="lj杰" target="_blank">lj杰</a> 2011-01-19 16:56</h3>
+<p>很厉害，很受益额，谢谢了</p>
+<h3 id="1-star65225692-http-star65225692-iteye-com-star65225692-2010-11-22-12-00">1 楼 <a href="http://star65225692.iteye.com/" title="star65225692" target="_blank">star65225692</a> 2010-11-22 12:00</h3>
+<p>好文<del>~</del><del>~</del><a href="http://www.itstrike.cn/Code/095c4615-263b-45b5-a778-67ebf1aec426" target="_blank">Java读出excel文件的类</a></p>
+<h3 id="-">发表评论</h3>
+<p><a href="http://hllvm.group.iteye.com/login" target="_blank"><img src="" alt=""> 您还没有登录,请您登录后再发表评论</a></p>
+<p><a href="http://hllvm.group.iteye.com/group/wiki/new" target="_blank"><img src="" alt="New-page"></a></p>
+<h3 id="-">文章信息</h3>
+<p><a href="http://hllvm.group.iteye.com/group/wiki/" target="_blank">知识库: 高级语言虚拟机</a></p>
+<ul>
+<li>由<a href="http://kiral.iteye.com/" title="fantasy" target="_blank">fantasy</a>在2010-11-12创建</li>
+<li><p>由<a href="http://kiral.iteye.com/" title="fantasy" target="_blank">fantasy</a>在2011-05-26更新</p>
+<h3 id="-">相关新闻</h3>
+</li>
+<li><p><a href="http://hllvm.group.iteye.com/news/4307-scalaris-as-web-2-0-services-trade-data" target="_blank">Scalaris，为Web 2.0交易服务存储数据</a></p>
+</li>
+<li><a href="http://hllvm.group.iteye.com/news/1731" target="_blank">基于Spindle的增强HTTP Spider</a></li>
+<li><a href="http://hllvm.group.iteye.com/news/2823" target="_blank">推荐风轻扬：Java 6中的性能优化</a></li>
+</ul>
+<h3 id="-">相关讨论</h3>
+<ul>
+<li><a href="http://hllvm.group.iteye.com/topic/806990" target="_blank">java线程安全总结</a></li>
+<li><a href="http://hllvm.group.iteye.com/topic/164905" target="_blank">线程同步</a></li>
+<li><a href="http://hllvm.group.iteye.com/topic/109150" target="_blank">多核线程笔记-volatile原理与技巧</a></li>
+<li><a href="http://hllvm.group.iteye.com/topic/1068877" target="_blank">自己实现的java lock</a></li>
+<li><p><a href="http://hllvm.group.iteye.com/topic/770080" target="_blank">最简单高效的tryLock</a></p>
+<h3 id="-">相关博客</h3>
+</li>
+<li><p><a href="http://jiangtie.iteye.com/blog/1112625" target="_blank">java线程安全总结</a></p>
+</li>
+<li><a href="http://handawei.iteye.com/blog/808485" target="_blank">jvm内存模型</a></li>
+<li><a href="http://republicw.iteye.com/blog/1218723" target="_blank">java线程同步</a></li>
+<li><a href="http://qpshenggui.iteye.com/blog/1160343" target="_blank">java线程同步</a></li>
+<li><a href="http://soboer.iteye.com/blog/1312934" target="_blank">java线程安全总结</a></li>
+<li><a href="http://www.iteye.com/" target="_blank">首页</a></li>
+<li><a href="http://www.iteye.com/news" target="_blank">资讯</a></li>
+<li><a href="http://www.iteye.com/magazines" target="_blank">精华</a></li>
+<li><a href="http://www.iteye.com/forums" target="_blank">论坛</a></li>
+<li><a href="http://www.iteye.com/ask" target="_blank">问答</a></li>
+<li><a href="http://www.iteye.com/blogs" target="_blank">博客</a></li>
+<li><a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a></li>
+<li><a href="http://www.iteye.com/groups" target="_blank">群组</a></li>
+<li><a href="http://job.iteye.com/iteye" target="_blank">招聘</a></li>
+<li><a href="http://www.iteye.com/search" target="_blank">搜索</a></li>
+<li><a href="http://hllvm.group.iteye.com/index/service" target="_blank">广告服务</a></li>
+<li><a href="http://webmaster.iteye.com/" target="_blank">ITeye黑板报</a></li>
+<li><a href="http://hllvm.group.iteye.com/index/contactus" target="_blank">联系我们</a></li>
+<li><a href="http://hllvm.group.iteye.com/index/friend_links" target="_blank">友情链接</a></li>
+</ul>
+<p>© 2003-2012 ITeye.com. [ <a href="http://www.miibeian.gov.cn/" target="_blank">京ICP证110151号</a> 京公网安备110105010620 ]
+百联优力(北京)投资有限公司 版权所有 <img src="http://stat.iteye.com/?url=http%3A%2F%2Fhllvm.group.iteye.com%2Fgroup%2Fwiki%2F2877-synchronized-volatile&amp;referrer=&amp;user_id=" alt=""></p>
 
       
     </div>
@@ -174,7 +463,7 @@ var _js2load = [];
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--java线程安全总结-高级语言虚拟机/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--java线程安全总结-高级语言虚拟机" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -189,65 +478,309 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（八）-典型配置举例2/">JVM调优总结（八）</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--一个面试官对面试问题的分析JVM/">一个面试官对面试问题的分析(JVM)</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（八）-典型配置举例2/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--一个面试官对面试问题的分析JVM/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jvm-2">JVM调优总结（八）-典型配置举例2</h1>
-<h2 id="-">常见配置汇总</h2>
-<p><strong>堆设置</strong></p>
-<p>  <strong>-Xms:</strong>初始堆大小</p>
-<p>  <strong>-Xmx:</strong>最大堆大小</p>
-<p>  <strong>-XX:NewSize=n:</strong>设置年轻代大小</p>
-<p>  <strong>-XX:NewRatio=n:</strong>设置年轻代和年老代的比值。如:为3，表示年轻代与年老代比值为1：3，年轻代占整个年轻代年老代和的1/4</p>
-<p>  <strong>-XX:SurvivorRatio=n:</strong>年轻代中Eden区与两个Survivor区的比值。注意Survivor区有两个。如：3，表示Eden：Survivor=3：2，一个Survivor区占整个年轻代的1/5</p>
-<p>  <strong>-XX:MaxPermSize=n:</strong>设置持久代大小</p>
-<p><strong>收集器设置</strong></p>
-<p>  <strong>-XX:+UseSerialGC:</strong>设置串行收集器</p>
-<p>  <strong>-XX:+UseParallelGC:</strong>设置并行收集器</p>
-<p>  <strong>-XX:+UseParalledlOldGC:</strong>设置并行年老代收集器</p>
-<p>  <strong>-XX:+UseConcMarkSweepGC:</strong>设置并发收集器</p>
-<p><strong>垃圾回收统计信息</strong></p>
-<p>  <strong>-XX:+PrintGC</strong></p>
-<p><strong>  -XX:+PrintGCDetails</strong></p>
-<p><strong>  -XX:+PrintGCTimeStamps</strong></p>
-<p><strong>  -Xloggc:filename</strong></p>
-<p><strong>并行收集器设置</strong></p>
-<p>  <strong>-XX:ParallelGCThreads=n</strong>:设置并行收集器收集时使用的CPU数。并行收集线程数。</p>
-<p>  <strong>-XX:MaxGCPauseMillis=n</strong>:设置并行收集最大暂停时间</p>
-<p>  <strong>-XX:GCTimeRatio=n</strong>:设置垃圾回收时间占程序运行时间的百分比。公式为1/(1+n)</p>
-<p><strong>并发收集器设置</strong></p>
-<p>  <strong>-XX:+CMSIncrementalMode:</strong>设置为增量模式。适用于单CPU情况。</p>
-<p>  <strong>-XX:ParallelGCThreads=n:</strong>设置并发收集器年轻代收集方式为并行收集时，使用的CPU数。并行收集线程数。</p>
-<h2 id="-">调优总结</h2>
-<p><strong>年轻代大小选择</strong></p>
-<p><strong>响应时间优先的应用：</strong>尽可能设大，直到接近系统的最低响应时间限制（根据实际情况选择）。在此种情况下，年轻代收集发生的频率也是最小的。同时，减少到达年老代的对象。</p>
-<p><strong>吞吐量优先的应用：</strong>尽可能的设置大，可能到达Gbit的程度。因为对响应时间没有要求，垃圾收集可以并行进行，一般适合8CPU以上的应用。</p>
-<p><strong>年老代大小选择</strong></p>
-<p><strong>响应时间优先的应用：</strong>年老代使用并发收集器，所以其大小需要小心设置，一般要考虑<strong>并发会话率</strong>和<strong>会话持续时间</strong>等一些参数。如果堆设置小了，可以会造成内存碎片、高回收频率以及应用暂停而使用传统的标记清除方式；如果堆大了，则需要较长的收集时间。最优化的方案，一般需要参考以下数据获得：</p>
+        <h1 id="-jvm-">一个面试官对面试问题的分析(JVM)</h1>
+<p><a href="">&lt;</a> <a href="">&gt;</a>  猎头职位: <a href="http://www.iteye.com/jobs/1848" target="_blank">北京:  ITeye网站诚聘社区编辑</a></p>
+<p>相关文章: <a href="&quot;关闭&quot;"> </a></p>
+<ul>
+<li><a href="http://www.iteye.com/topic/715256" title="大家都来说说自己最讨厌的面试题目吧。" target="_blank">大家都来说说自己最讨厌的面试题目吧。</a></li>
+<li><a href="http://www.iteye.com/topic/1117953" title="今天下午接到阿里的电话面试" target="_blank">今天下午接到阿里的电话面试</a></li>
+<li><a href="http://www.iteye.com/topic/1018932" title="虚拟机中的锁优化简介（适应性自旋/锁粗化/锁削除/轻量级锁/偏向锁）" target="_blank">虚拟机中的锁优化简介（适应性自旋/锁粗化/锁削除/轻量级锁/偏向锁）</a>
+推荐群组: <a href="http://hllvm.group.iteye.com/" target="_blank">高级语言虚拟机</a>
+<a href="http://www.iteye.com/wiki/topic/715304" target="_blank">更多相关推荐</a>
+<a href="http://www.iteye.com/forums/tag/%E6%B1%82%E8%81%8C%E7%BB%8F%E9%AA%8C" target="_blank">求职经验</a> <em>这个帖子的背景是今晚看到je上这张贴：<a href="http://www.iteye.com/topic/715256，心血来潮写下的文字，如果能抛砖引玉，能有其他面试官分析一下自己面试时问的问题，那或许是件很有意义的事情。" target="_blank">http://www.iteye.com/topic/715256，心血来潮写下的文字，如果能抛砖引玉，能有其他面试官分析一下自己面试时问的问题，那或许是件很有意义的事情。</a></em>
+  在公司当技术面试官几年间，从应届生到工作十几年的应聘者都遇到过。先表达一下我自己对面试的观点：
+  1.笔试、面试去评价一个人肯定是不够准确的，了解一个人最准确的方式就是“路遥知马力，日久见人心”。通过一、二个小时内的做题、交流，只是没有其他办法下进行的无奈之举，所以通过了面试不代表有多成功，没通过也不代表有多失败。
+  2.好的面试官本身交谈的时候就不应当把自己一个居高临下的角色上，应当把自己和应聘者当做两个做技术的人平等的交流，把自己当作权威往往就会受到观点的角度、语言表达、工作领域的惯性的制约。
+  3.好的考察题目则是大家能经常接触，不同层次的人能有不同层次的答案，能从问题引申出后面继续讨论的话题。
+  举个例子抛砖引玉，下面这个问题是我以前常问的，从应届生到工作十几年的人都问过：
+引用</li>
+</ul>
+<p>“地球人都知道，Java有个东西叫垃圾收集器，它让创建的对象不需要像c/cpp那样delete、free掉，你能不能谈谈，GC是在什么时候，对什么东西，做了什么事情？”
+我自己分析一下这个问题，首先是“什么时候”，不同层次的回答从低到高排列：
+    1.系统空闲的时候。
+    分析：这种回答大约占30%，遇到的话一般我就会准备转向别的话题，譬如算法、譬如SSH看看能否发掘一些他擅长的其他方面。
+    2.系统自身决定，不可预测的时间/调用System.gc()的时候。
+    分析：这种回答大约占55%，大部分应届生都能回答到这个答案，起码不能算错误是吧，后续应当细分一下到底是语言表述导致答案太笼统，还是本身就只有这样一个模糊的认识。
+    3.能说出新生代、老年代结构，能提出minor gc/full gc
+    分析：到了这个层次，基本上能说对GC运作有概念上的了解，譬如看过《深入JVM虚拟机》之类的。这部分不足10%。
+    4.能说明minor gc/full gc的触发条件、OOM的触发条件，降低GC的调优的策略。
+    分析：列举一些我期望的回答：eden满了minor gc，升到老年代的对象大于老年代剩余空间full gc，或者小于时被HandlePromotionFailure参数强制full gc；gc与非gc时间耗时超过了GCTimeRatio的限制引发OOM，调优诸如通过NewRatio控制新生代老年代比例，通过MaxTenuringThreshold控制进入老年前生存次数等……能回答道这个阶段就会给我带来比较高的期望了，当然面试的时候正常人都不会记得每个参数的拼写，我自己写这段话的时候也是翻过手册的。回答道这部分的小于2%。
+PS：加起来不到100%，是因为有确实少数直接说不知道，或者直接拒绝回答的= =/#
+    分析第二个问题：“对什么东西”：
+    1.不使用的对象。
+    分析：相当于没有回答，问题就是在问什么对象才是“不使用的对象”。大约占30%。
+    2.超出作用域的对象/引用计数为空的对象。
+    分析：这2个回答站了60%，相当高的比例，估计学校教java的时候老师就是这样教的。第一个回答没有解决我的疑问，gc到底怎么判断哪些对象在不在作用域的？至于引用计数来判断对象是否可收集的，我可以会补充一个下面这个例子让面试者分析一下obj1、obj2是否会被GC掉？
+    class C{
+         public Object x;
+    }
+    C obj1、obj2 = new C();
+    obj1.x = obj2;
+    obj2.x = obj1;
+    obj1、obj2 = null;
+    3.从gc root开始搜索，搜索不到的对象。
+    分析：根对象查找、标记已经算是不错了，小于5%的人可以回答道这步，估计是引用计数的方式太“深入民心”了。基本可以得到这个问题全部分数。
+    PS：有面试者在这个问补充强引用、弱引用、软引用、幻影引用区别等，不是我想问的答案，但可以加分。
+    4.从root搜索不到，而且经过第一次标记、清理后，仍然没有复活的对象。
+    分析：我期待的答案。但是的确很少面试者会回答到这一点，所以在我心中回答道第3点我就给全部分数。
+    最后由一个问题：“做什么事情”，这个问发挥的空间就太大了，不同年代、不同收集器的动作非常多。
+    1.删除不使用的对象，腾出内存空间。
+    分析：同问题2第一点。40%。
+    2.补充一些诸如停止其他线程执行、运行finalize等的说明。
+    分析：起码把问题具体化了一些，如果像答案1那样我很难在回答中找到话题继续展开，大约占40%的人。
+    补充一点题外话，面试时我最怕遇到的回答就是“这个问题我说不上来，但是遇到的时候我上网搜一下能做出来”。做程序开发确实不是去锻炼茴香豆的“茴”有几种写法，不死记硬背我同意，我不会纠语法、单词，但是多少你说个思路呀，要直接回答一个上网搜，我完全没办法从中获取可以评价应聘者的信息，也很难从回答中继续发掘话题展开讨论。建议大家尽量回答引向自己熟悉的，可讨论的领域，展现给面试官最擅长的一面。
+    3.能说出诸如新生代做的是复制清理、from survivor、to survivor是干啥用的、老年代做的是标记清理、标记清理后碎片要不要整理、复制清理和标记清理有有什么优劣势等。
+    分析：也是看过《深入JVM虚拟机》的基本都能回答道这个程度，其实到这个程度我已经比较期待了。同样小于10%。
+    4.除了3外，还能讲清楚串行、并行（整理/不整理碎片）、CMS等搜集器可作用的年代、特点、优劣势，并且能说明控制/调整收集器选择的方式。
+    分析：同上面2个问题的第四点。
+    最后介绍一下自己的背景，在一间不大不小的上市软件公司担任平台架构师，有3年左右的面试官经验，工作主要方向是大规模企业级应用，参与过若干个亿元级的项目的底层架构工作。</p>
+<p>ps一下：上面这个问题，倒是遇到过应届生给我相当超出预期的答案，工作经验好量化，天分与兴趣不好考察，但往往日后的骨干就要从这种有天分的苗子开始培养起。
+这种题目拿来考应届生，如果来来回回回答的都是深入JVM之类的书本上的，那么也就是靠背出来的，应试能力强而已
+对于应届生，我更关心1。理解能力，2.服从性，3。伪代码能力，其他的么，不能算加分，包括学历
+考5年以内也不合适，一般5年内的同学的工作层次达不到需要研究JVM和底层一些机制的地步，绝大部分的工作能力和长处并不在此，拿这种东西否定一个人，不过是刁难人罢了
+研究JVM和底层的目的是什么，绝不是背几个段子秀一下，其实就一般的工作范围而言，主要是为了调优，考架构师这个层次，这个题目还差不多，但是到这个层次，只是一些书本上的标准回答，又不能满足我了，需要设计一些具体场景，才能看出一个人的能力</p>
+<p>在java的实际开发中针对垃圾回收到底要注意什么，垃圾回收都是自动化，到底还需要我们做哪些工作来针对垃圾回收呢，，不明白，望赐教。
+主贴内容不错，学习了。
+但抱怨的兄弟好像是说你招一程序员，根本用不着问JVM的东西。
+我也有一个疑问：是不是招一程序员就得考虑这人是不是将来能成为更高级的人才？有没有评价好的程序员的标准？</p>
+<p>fairplay 写道</p>
+<p>这种题目拿来考应届生，如果来来回回回答的都是深入JVM之类的书本上的，那么也就是靠背出来的，应试能力强而已
+对于应届生，我更关心1。理解能力，2.服从性，3。伪代码能力，其他的么，不能算加分，包括学历
+考5年以内也不合适，一般5年内的同学的工作层次达不到需要研究JVM和底层一些机制的地步，绝大部分的工作能力和长处并不在此，拿这种东西否定一个人，不过是刁难人罢了
+研究JVM和底层的目的是什么，绝不是背几个段子秀一下，其实就一般的工作范围而言，主要是为了调优，考架构师这个层次，这个题目还差不多，但是到这个层次，只是一些书本上的标准回答，又不能满足我了，需要设计一些具体场景，才能看出一个人的能力
+98%以上的应届生的回答不会和JVM有关系，大多停留在第2点答案的水平，这些答案都符合我对应届生的期望呀。
+但是如果应届生能回答道第3、4点，哪怕是真的看过教程，或者《深入jvm》之类的书跟我复述出来，无论最后是否愿意入职，我都会很乐意和他保持长期联系。
+我面试还经常问一个开放性的问题：“请跟我介绍一下你最近看的一本技术书籍”，很多应届生、应聘者在这个问题上都没有给我留下印象，现在的应届生能看一本书，还把书看成几页纸再用自己的话说出来，说实话已经是一件不太容易的事情。
+对于工作经验实在是没有办法之中去量化能力的一个指标，就在今年上半年，我面过10年经验要价3.5K（是K不是W，是自己开价）的，真的被吓到了。另外我自己的工作年限也还不到5年，没有资格要求别人更多。
+王者之剑 写道</p>
+<p>主贴内容不错，学习了。
+但抱怨的兄弟好像是说你招一程序员，根本用不着问JVM的东西。
+我也有一个疑问：是不是招一程序员就得考虑这人是不是将来能成为更高级的人才？有没有评价好的程序员的标准
+我问这个问题没有要求一定要回答道JVM的东西，否则面应届生我就完全不问了，虽然现在也问的比较少了@_@
+考察一个人不是考试改卷，没有说一题非对既错，非会既不会。不了解JVM的东西也可以做很多工作，但是我要知道你是否了解，兴趣在哪里。有的应聘者适合招进来就拉去做事，有的应聘者适合用心培养。面试官问的问题都不是去刁难、打击，而是希望能看清楚潜力和兴趣。</p>
+<p>smallboby 写道</p>
+<p>在java的实际开发中针对垃圾回收到底要注意什么，垃圾回收都是自动化，到底还需要我们做哪些工作来针对垃圾回收呢，，不明白，望赐教。
+自动化的东西容易靠不住呀，遇到泄漏，OOM，或者频繁GC对性能产生和大影响时，我们都要通过dump data、gc trace这些与内存、gc打交道。
+学习了，虽然看过虚拟机的内容~~但回答的时候，可能也不会深入到新生代、老年代的层次。
+最近看过的《分布式Java应用：基础与实践》里面对JVM也有详细的介绍。
+对应届生，一般有问JAVA是如何管理内存之类的问题。</p>
+<p>也不知道你们公司是干嘛的</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--一个面试官对面试问题的分析JVM/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--一个面试官对面试问题的分析JVM" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--两个OOMCases排查过程的分享/">两个OOM Cases排查过程的分享</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--两个OOMCases排查过程的分享/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-oom-cases-">两个OOM Cases排查过程的分享</h1>
+<h1 id="-bluedavy-blog-https-blog-bluedavy-com-"><a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a></h1>
+<p>{互联网，OSGi，Java, High Scalability, High Performance,HA}</p>
+<ul>
+<li><a href="https://blog.bluedavy.com/" target="_blank">Home</a></li>
+<li><a href="https://blog.bluedavy.com/?page_id=2" target="_blank">About</a></li>
+<li><a href="https://blog.bluedavy.com/?page_id=81" target="_blank">Photos</a></li>
+</ul>
+<h2 id="-oom-cases-https-blog-bluedavy-com-p-205-oom-cases-"><a href="https://blog.bluedavy.com/?p=205" title="两个OOM Cases排查过程的分享" target="_blank">两个OOM Cases排查过程的分享</a></h2>
+<p>Jan 13</p>
+<p><a href="http://bluedavy.com/" title="Visit bluedavy’s website" target="_blank">bluedavy</a><a href="https://blog.bluedavy.com/?cat=13" title="View all posts in jvm" target="_blank">jvm</a> <a href="&quot;Comment on 两个OOM Cases排查过程的分享&quot;">5 Comments</a>
+分享一下两个OOM Cases的查找过程，一个应用是Native OOM；另外一个应用其实没有OOM，只是每隔一段时间就会出现频繁FGC的现象，OOM的查找已经具备了不错的工具，但有些时候还是会出现很难查的现象，希望这两个排查过程的分享能给需要的同学带来一些帮助。</p>
+<p><strong>Native OOM的排查Case</strong>
+之前的几个PPT里我都说到了，目前查找Native OOM最好的方法就是用google perftools了，于是挂上google perftools，等待应用再次native oom，很幸运，两天后，应用就再次native oom了，于是分析crash之前那段时间谁在不断的分配堆外的内存，pprof看到的结果主要是java.util.Inflater造成的，由于之前已经碰到过类似的case，知道如果使用了Inflater，但不显式的调用Inflater.end的话，确实会造成这个现象。
+于是剩下的问题就是找出代码里什么地方调用了Inflater，这种时候btrace这个神器就可以发挥作用了，一个简单的btrace脚本：
+<a href="">?</a>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13import</p>
+<p>static</p>
+<p>com.sun.btrace.BTraceUtils./*;</p>
+<p>import</p>
+<p>com.sun.btrace.annotations./*;</p>
+<p>@BTrace</p>
+<p>public</p>
+<p>class</p>
+<p>Trace{</p>
+<p>@OnMethod</p>
+<p>(</p>
+<p>clazz=</p>
+<p>&quot;java.util.zip.Inflater&quot;</p>
+<p>,</p>
+<p>method=</p>
+<p>&quot;/./*/&quot;</p>
+<p>)</p>
+<p>public</p>
+<p>static</p>
+<p>void</p>
+<p>traceExecute(</p>
+<p>@ProbeMethodName</p>
+<p>String methodName){</p>
+<p>println(concat(</p>
+<p>&quot;who call Inflater.&quot;</p>
+<p>,methodName));</p>
+<p>jstack();</p>
+<p>}
+}</p>
+<p>执行后很快就找到了代码什么地方调用了Inflater，于是加上了显式的调用Inflater.end，搞定收工。</p>
+<p><strong>偶尔频繁FGC的排查Case</strong>
+这个Case就没上面的那个那么顺利了，查了有接近一个月才查出最终的原因。
+当这个应用出现频繁FGC时，dump了内存，用MAT分析后，看到内存被消耗完的原因是由于几个线程内的ThreadLocalMap中有大量的数据，ThreadLocal中消耗最多内存的主要是一个HashMap，这里面有大量的数据。
+于是当时想到的第一个方法就是查查应用里面什么地方往ThreadLocal里放了HashMap，杯具的是，当查找代码后发现应用本身的代码并没有往ThreadLocal里放HashMap，那就只能是应用依赖的其他jar包做了这样的事了，但不可能去抓出这个应用依赖的所有的jar的源码来扫描，于是继续借助BTrace，写了个脚本来跟踪这类型的线程中谁调用了ThreadLocal.set，并且放的是HashMap，btrace脚本如下：
+<a href="">?</a>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13</p>
+<p>14
+15</p>
+<p>16
+import</p>
+<p>static</p>
+<p>com.sun.btrace.BTraceUtils./*;</p>
+<p>import</p>
+<p>com.sun.btrace.annotations./*;</p>
+<p>@BTrace</p>
+<p>public</p>
+<p>class</p>
+<p>Trace{</p>
+<p>@OnMethod</p>
+<p>(</p>
+<p>clazz=</p>
+<p>&quot;java.lang.ThreadLocal&quot;</p>
+<p>,</p>
+<p>method=</p>
+<p>&quot;set&quot;</p>
+<p>)</p>
+<p>public</p>
+<p>static</p>
+<p>void</p>
+<p>traceExecute(Object value){</p>
+<p>if</p>
+<p>(startsWith(name(currentThread()),</p>
+<p>&quot;xxx&quot;</p>
+<p>) &amp;&amp; startsWith(</p>
+<p>&quot;java.util.HashMap&quot;</p>
+<p>,name(classOf(value))) ){</p>
+<p>println(</p>
+<p>&quot;-------------------------&quot;</p>
+<p>);</p>
+<p>jstack();</p>
+<p>println();</p>
+<p>}</p>
+<p>}</p>
+<p>}</p>
+<p>OK，开始运行上面的脚本，发现竟然一直都没打印出什么内容，只能一直等了，杯具的是一直到了一周后再次出现频繁FGC时，这个脚本都没输出任何的东西，于是只好转换思路。</p>
+<p>既然是HashMap里put了大量的某种类型的数据，那干脆用btrace来看看是谁在往HashMap里put这些数据，于是又写了一个btrace脚本，执行后，很快就看到了是代码中什么地方在put这些数据，但是从抓到的调用者来看，不仅仅是目前有大量数据的这类型的线程会调，其他类型的线程也会调用，如果这个地方有问题的话，应该就全部有问题了，于是跳过这里。</p>
+<p>回到MAT看到的现象，会不会是因为代码什么地方用ThreadLocal的方式不对，又或是什么地方往ThreadLocal里放了东西，又忘了清除呢，因此要做的就是找出这个应用中所有属性为ThreadLocal的地方，来人肉分析了，于是写了一个jsp，扫描所有的classloader中的所有class，找出属性类型为ThreadLocal的，扫描后找到了一些，还真发现有一个和现在HashMap中放的数据一样的private ThreadLocal，这种用法在线程复用的情况下，如果是每次new ThreadLocal的话，会导致ThreadLocal放的东西一直不释放，兴奋的以为已经发现原因了，可惜和业务方一确认，这个类借助Spring保证了singleton的，因此不会有问题。
+好吧，到这一步，只能猜想是由于某种参数请求的时候造成业务上会获得大量的数据了，于是想着要找业务方来分析代码了，这个非常麻烦，于是到此就几乎停滞不前了。</p>
+<p>今天静下心来，重新仔细的看了下MAT分析的结果，决定仍然用btrace跟踪下之前往HashMap中put数据的那个业务代码，突然发现，在web类型的处理线程中它借助的是filter去clear数据的，而杯具的是出问题的这种类型线程的处理机制是没有filter机制的，因此猜测问题估计出在这里了，继续btrace，看看这种类型的线程中是不是只有人调put，没人调clear，btrace脚本运行，很快就验证了这个猜测，于是相应的解决掉了这个case，搞定收工。</p>
+<p>在这第二个case中，可见在频繁FGC或者OOM时，很有可能MAT只能告诉你初步的原因，但要对应到代码上到底是什么地方造成的，还得花很大精力分析了，这个时候BTrace通常能帮上很大的忙。</p>
+<p><a href="https://blog.bluedavy.com/?p=200" target="_blank">Sun JDK 1.6内存管理</a> <a href="https://blog.bluedavy.com/?p=210" target="_blank">服务框架演变过程</a></p>
+<h3 id="5-comments-add-yours-">5 Comments <em>(<a href="">+add yours?</a>)</em></h3>
 <ol>
-<li><p>并发垃圾收集信息</p>
-</li>
-<li><p>持久代并发收集次数</p>
-</li>
-<li><p>传统GC信息</p>
-</li>
-<li><p>花在年轻代和年老代回收上的时间比例</p>
+<li><img src="https://secure.gravatar.com/avatar/8a0a3550a77608414631e27fbda32c48?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> Jimmy
+<strong>Jan 18, 2011</strong> @ 15:40:15
+google perftools这个怎么用呢？能不能讲讲？</li>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Jan 18, 2011</strong> @ 21:04:09
+perftools装上后，只用设置上export LD_PRELOAD=[libtcmalloc所在的目录]/libtcmalloc.so，然后env HEAPPROFILE=dump的内存信息的文件名 java …，启动后就会每隔一段时间自动生成一些dump文件，最后通过perftools里面的pprof对dump文件进行分析就可以看到结果了。</li>
+<li><img src="https://secure.gravatar.com/avatar/ee65a80dc2effc685329d0630603a118?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://www.sandzhang.com/" target="_blank">sand</a>
+<strong>May 21, 2011</strong> @ 23:05:26
+要是能有人多分享一下这种实际案例就好了<h3 id="leave-a-reply">Leave a Reply</h3>
 </li>
 </ol>
-<p>减少年轻代和年老代花费的时间，一般会提高应用的效率</p>
-<p><strong>吞吐量优先的应用</strong></p>
-<p>一般吞吐量优先的应用都有一个很大的年轻代和一个较小的年老代。原因是，这样可以尽可能回收掉大部分短期对象，减少中期的对象，而年老代尽存放长期存活对象。</p>
-<p><strong>较小堆引起的碎片问题</strong></p>
-<p>因为年老代的并发收集器使用标记、清除算法，所以不会对堆进行压缩。当收集器回收时，他会把相邻的空间进行合并，这样可以分配给较大的对象。但是，当堆空间较小时，运行一段时间以后，就会出现“碎片”，如果并发收集器找不到足够的空间，那么并发收集器将会停止，然后使用传统的标记、清除方式进行回收。如果出现“碎片”，可能需要进行如下配置：</p>
-<pre><code>1. **-XX:+UseCMSCompactAtFullCollection：**使用并发收集器时，开启对年老代的压缩。
+<p><a href="">Cancel</a></p>
+<p>Name (required)</p>
+<p>Mail (required)</p>
+<p>Website</p>
+<p><img src="&quot;CAPTCHA Image&quot;" alt="CAPTCHA Image"></p>
+<p><a href="&quot;Refresh Image&quot;"><img src="" alt="Refresh Image"></a></p>
+<p>CAPTCHA Code /*</p>
+<p><style type='text/css'>/#submit {display:none;}</style><br /> <input name="submit" type="submit" id="submit-alt" tabindex="6" value="Submit Comment" /></p>
+<p>July 2013 M T W T F S S <a href="https://blog.bluedavy.com/?m=201303" title="View posts for March 2013" target="_blank">« Mar</a>     1234567 891011121314 15161718192021 22232425262728 293031  </p>
+<h3 id="categories">Categories</h3>
+<ul>
+<li><a href="https://blog.bluedavy.com/?cat=63" title="View all posts filed under Java" target="_blank">Java</a> (10)</li>
+<li><a href="https://blog.bluedavy.com/?cat=13" title="View all posts filed under jvm" target="_blank">jvm</a> (19)</li>
+<li><a href="https://blog.bluedavy.com/?cat=56" title="View all posts filed under NoSQL" target="_blank">NoSQL</a> (7)</li>
+<li><a href="https://blog.bluedavy.com/?cat=4" title="View all posts filed under SOA" target="_blank">SOA</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=11" title="关于《分布式Java应用：基础与实践》书部分章节的公开、书内容的纠错以及补充完善。" target="_blank">书:分布式Java应用</a> (5)</li>
+<li><a href="https://blog.bluedavy.com/?cat=6" title="View all posts filed under 互联网" target="_blank">互联网</a> (5)</li>
+<li><a href="https://blog.bluedavy.com/?cat=46" title="View all posts filed under 产品总结" target="_blank">产品总结</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=18" title="View all posts filed under 优化案例" target="_blank">优化案例</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=12" title="View all posts filed under 圆桌交流" target="_blank">圆桌交流</a> (2)</li>
+<li><a href="https://blog.bluedavy.com/?cat=8" title="View all posts filed under 容量规划" target="_blank">容量规划</a> (2)</li>
+<li><a href="https://blog.bluedavy.com/?cat=97" title="View all posts filed under 迁户口" target="_blank">迁户口</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=52" title="View all posts filed under 高可用" target="_blank">高可用</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=3" title="View all posts filed under 高并发" target="_blank">高并发</a> (3)</li>
+<li><p><a href="https://blog.bluedavy.com/?cat=1" title="关于性能优化方面的一些东西。" target="_blank">高性能</a> (2)</p>
+<h3 id="recent-comments">Recent Comments</h3>
+</li>
+<li><p><a href="http://code1.riaos.com/?p=5030138" target="_blank">JVM调优 | code1（code1.riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16520" target="_blank">说说MaxTenuringThreshold这个参数</a></p>
+</li>
+<li><a href="http://architecture1.riaos.com/?p=3063358" target="_blank">JVM调优 | architecture（riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16519" target="_blank">说说MaxTenuringThreshold这个参数</a></li>
+<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16462" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+<li>xiaobo on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16460" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16459" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+</ul>
+<h3 id="tags">Tags</h3>
+<p><a href="https://blog.bluedavy.com/?tag=btrace" title="2 topics" target="_blank">btrace</a> <a href="https://blog.bluedavy.com/?tag=c1" title="1 topic" target="_blank">c1</a> <a href="https://blog.bluedavy.com/?tag=c2" title="1 topic" target="_blank">c2</a> <a href="https://blog.bluedavy.com/?tag=deflater" title="1 topic" target="_blank">Deflater</a> <a href="https://blog.bluedavy.com/?tag=facebook" title="2 topics" target="_blank">facebook</a> <a href="https://blog.bluedavy.com/?tag=gc" title="4 topics" target="_blank">gc</a> <a href="https://blog.bluedavy.com/?tag=gc-tuning" title="2 topics" target="_blank">gc tuning</a> <a href="https://blog.bluedavy.com/?tag=grizzly" title="2 topics" target="_blank">Grizzly</a> <a href="https://blog.bluedavy.com/?tag=hbase" title="6 topics" target="_blank">HBase</a> <a href="https://blog.bluedavy.com/?tag=hotspot" title="1 topic" target="_blank">hotspot</a> <a href="https://blog.bluedavy.com/?tag=inflater" title="1 topic" target="_blank">Inflater</a> <a href="https://blog.bluedavy.com/?tag=interpreter" title="1 topic" target="_blank">interpreter</a> <a href="https://blog.bluedavy.com/?tag=javac" title="1 topic" target="_blank">javac</a> <a href="https://blog.bluedavy.com/?tag=java-code-generation" title="1 topic" target="_blank">java code generation</a> <a href="https://blog.bluedavy.com/?tag=javaone" title="4 topics" target="_blank">JavaOne</a> <a href="https://blog.bluedavy.com/?tag=javaone-general-technical-session" title="1 topic" target="_blank">javaone general technical session</a> <a href="https://blog.bluedavy.com/?tag=java%e4%bb%a3%e7%a0%81%e6%89%a7%e8%a1%8c" title="1 topic" target="_blank">java代码执行</a> <a href="https://blog.bluedavy.com/?tag=java-%e5%b9%b6%e5%8f%91" title="1 topic" target="_blank">Java 并发</a> <a href="https://blog.bluedavy.com/?tag=jit" title="1 topic" target="_blank">jit</a> <a href="https://blog.bluedavy.com/?tag=jvm" title="12 topics" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=memory-management" title="1 topic" target="_blank">memory management</a> <a href="https://blog.bluedavy.com/?tag=native-memory-leak" title="1 topic" target="_blank">Native Memory Leak</a> <a href="https://blog.bluedavy.com/?tag=nosql" title="2 topics" target="_blank">NoSQL</a> <a href="https://blog.bluedavy.com/?tag=oom" title="1 topic" target="_blank">oom</a> <a href="https://blog.bluedavy.com/?tag=oracle-keynote" title="1 topic" target="_blank">oracle keynote</a> <a href="https://blog.bluedavy.com/?tag=pessimism-policy" title="1 topic" target="_blank">pessimism policy</a> <a href="https://blog.bluedavy.com/?tag=references" title="1 topic" target="_blank">references</a> <a href="https://blog.bluedavy.com/?tag=rpc" title="2 topics" target="_blank">RPC</a> <a href="https://blog.bluedavy.com/?tag=serial-gc" title="1 topic" target="_blank">serial gc</a> <a href="https://blog.bluedavy.com/?tag=soa" title="2 topics" target="_blank">SOA</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk" title="1 topic" target="_blank">sun jdk</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk-oom" title="1 topic" target="_blank">sun jdk oom</a> <a href="https://blog.bluedavy.com/?tag=web%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92%e7%9a%84%e8%89%ba%e6%9c%af" title="1 topic" target="_blank">Web容量规划的艺术</a> <a href="https://blog.bluedavy.com/?tag=yuanzhuo" title="1 topic" target="_blank">yuanzhuo</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6" title="1 topic" target="_blank">书:分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6%e8%af%84" title="1 topic" target="_blank">书评</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%92%e8%81%94%e7%bd%91%e6%8a%80%e6%9c%af" title="1 topic" target="_blank">互联网技术</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86" title="1 topic" target="_blank">内存管理</a> <a href="https://blog.bluedavy.com/?tag=%e5%88%86%e5%b8%83%e5%bc%8fjava%e5%ba%94%e7%94%a8" title="2 topics" target="_blank">分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e5%9c%86%e6%a1%8c%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">圆桌交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92" title="2 topics" target="_blank">容量规划</a> <a href="https://blog.bluedavy.com/?tag=%e6%82%b2%e8%a7%82%e7%ad%96%e7%95%a5" title="3 topics" target="_blank">悲观策略</a> <a href="https://blog.bluedavy.com/?tag=%e6%9c%8d%e5%8a%a1%e6%a1%86%e6%9e%b6" title="1 topic" target="_blank">服务框架</a> <a href="https://blog.bluedavy.com/?tag=%e7%a1%85%e8%b0%b7%e5%85%ac%e5%8f%b8" title="1 topic" target="_blank">硅谷公司</a></p>
+<h3 id="-">订阅</h3>
+<h3 id="-">推荐书籍</h3>
+<h3 id="my-book">My Book</h3>
+<p><a href="http://book.douban.com/subject/4848587/" title="分布式Java应用：基础与实践" target="_blank"><img src="" alt=""></a> <a href="http://book.douban.com/subject/3843896/" title="OSGi原理与最佳实践" target="_blank"><img src="" alt=""></a>
+© <a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a> 2013</p>
+<p><a href="http://icondock.com/" target="_blank">Icons</a> &amp; <a href="http://www.ndesign-studio.com/wp-themes" target="_blank">Wordpress Theme</a> by <a href="http://www.ndesign-studio.com/" target="_blank">N.Design</a></p>
 
-2. **-XX:CMSFullGCsBeforeCompaction=0：**上面配置开启的情况下，这里设置多少次Full GC后，对年老代进行压缩
-</code></pre>
       
     </div>
     
@@ -257,7 +790,7 @@ var _js2load = [];
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（八）-典型配置举例2/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（八）-典型配置举例2" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--两个OOMCases排查过程的分享/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--两个OOMCases排查过程的分享" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -272,45 +805,87 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/">JVM调优总结（五）</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出/">perftools查看堆外内存并解决hbase内存溢出</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jvm-1">JVM调优总结（五）-分代垃圾回收详述1</h1>
-<h2 id="-">为什么要分代</h2>
-<pre><code>分代的垃圾回收策略，是基于这样一个事实：**不同的对象的生命周期是不一样的**。因此，不同生命周期的对象可以采取不同的收集方式，以便提高回收效率。
+        <h1 id="perftools-hbase-">perftools查看堆外内存并解决hbase内存溢出</h1>
+<pre><code>最近线上运行的hbase发现分配了16g内存，但是实际使用了22g，堆外内存达到6g。感觉非常诡异。堆外内存用一般的工具很难查看，可以通过google-perftools来跟踪：
+</code></pre><p><a href="http://code.google.com/p/google-perftools/downloads/list" target="_blank"><a href="http://code.google.com/p/google-perftools/downloads/list">http://code.google.com/p/google-perftools/downloads/list</a></a>
+    它的原理是在java应用程序运行时，当调用malloc时换用它的libtcmalloc.so，这样就能做一些统计了</p>
+<ul>
+<li>下载<a href="http://download.savannah.gnu.org/releases/libunwind/libunwind-0.99-beta.tar.gz" target="_blank"><a href="http://download.savannah.gnu.org/releases/libunwind/libunwind-0.99-beta.tar.gz">http://download.savannah.gnu.org/releases/libunwind/libunwind-0.99-beta.tar.gz</a></a>，configure;make;sudo make install</li>
+<li>下载<a href="http://google-perftools.googlecode.com/files/google-perftools-1.8.1.tar.gz" target="_blank"><a href="http://google-perftools.googlecode.com/files/google-perftools-1.8.1.tar.gz">http://google-perftools.googlecode.com/files/google-perftools-1.8.1.tar.gz</a></a>, configure --prefix=/home/user/perftools;make;sudo make install</li>
+<li>在应用程序启动前加入：export LD_PRELOAD=/home/hadoop/perftools/lib/libtcmalloc.so以及export HEAPPROFILE=/home/user/perftools/test</li>
+<li>修改lc_config:sudo vi /etc/ld.so.conf.d/usr_local_lib.conf，加入/usr/local/lib(libunwind的lib所在目录)</li>
+<li>执行sudo /sbin/ldconfig，使libunwind生效</li>
+<li>启动应用程序，此时会在/home/user/perftools/下看到诸如test_pid.xxxx.heap的heap文件，可使用bin/pprof --text $JAVA_HOME/bin/java test_pid.xxxx.heap来查看
+  通过perftools查看到以下内容：
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></li>
+</ul>
+<ol>
+<li>Total: 3263.2 MB  </li>
+<li>3145.2  96.4%  96.4%   3145.2  96.4% zcalloc  </li>
+<li>83.8   2.6%  99.0%     83.8   2.6% os::malloc  </li>
+<li>30.0   0.9%  99.9%     30.0   0.9% init  </li>
+<li>2.2   0.1%  99.9%      2.2   0.1% ObjectSynchronizer::omAlloc  </li>
+<li>1.0   0.0% 100.0%   3144.1  96.4% Java_java_util_zip_Deflater_init  </li>
+<li>0.6   0.0% 100.0%      0.7   0.0% readCEN  </li>
+</ol>
+<p>Total: 3263.2 MB</p>
+<p>  3145.2  96.4%  96.4%   3145.2  96.4% zcalloc
+    83.8   2.6%  99.0%     83.8   2.6% os::malloc</p>
+<pre><code>30.0   0.9%  99.9%     30.0   0.9% init
+ 2.2   0.1%  99.9%      2.2   0.1% ObjectSynchronizer::omAlloc
 
-
-
-在Java程序运行的过程中，会产生大量的对象，其中有些对象是与业务信息相关，比如Http请求中的Session对象、线程、Socket连接，这类对象跟业务直接挂钩，因此生命周期比较长。但是还有一些对象，主要是程序运行过程中生成的临时变量，这些对象生命周期会比较短，比如：String对象，由于其不变类的特性，系统会产生大量的这些对象，有些对象甚至只用一次即可回收。
-
-
-
-试想，在不进行对象存活时间区分的情况下，每次垃圾回收都是对整个堆空间进行回收，花费时间相对会长，同时，因为每次回收都需要遍历所有存活对象，但实际上，对于生命周期长的对象而言，这种遍历是没有效果的，因为可能进行了很多次遍历，但是他们依旧存在。因此，分代垃圾回收采用分治的思想，进行代的划分，把不同生命周期的对象放在不同代上，不同代上采用最适合它的垃圾回收方式进行回收。
-</code></pre><h2 id="-">如何分代</h2>
-<p><img src="" alt=""></p>
-<p>如图所示：</p>
-<pre><code>虚拟机中的共划分为三个代：**年轻代（Young Generation）、年老点（Old Generation）和持久代（Permanent Generation）**。其中持久代主要存放的是Java类的类信息，与垃圾收集要收集的Java对象关系不大。年轻代和年老代的划分是对垃圾收集影响比较大的。
-</code></pre><p><strong>年轻代:</strong></p>
-<pre><code>所有新生成的对象首先都是放在年轻代的。年轻代的目标就是尽可能快速的收集掉那些生命周期短的对象。年轻代分三个区。一个Eden区，两个Survivor区(一般而言)。大部分对象在Eden区中生成。当Eden区满时，还存活的对象将被复制到Survivor区（两个中的一个），当这个Survivor区满时，此区的存活对象将被复制到另外一个Survivor区，当这个Survivor去也满了的时候，从第一个Survivor区复制过来的并且此时还存活的对象，将被复制“年老区(Tenured)”。需要注意，Survivor的两个区是对称的，没先后关系，所以同一个区中可能同时存在从Eden复制过来 对象，和从前一个Survivor复制过来的对象，而复制到年老区的只有从第一个Survivor去过来的对象。而且，Survivor区总有一个是空的。同时，根据程序需要，Survivor区是可以配置为多个的（多于两个），这样可以增加对象在年轻代中的存在时间，减少被放到年老代的可能。
-</code></pre><p><strong>年老代:</strong></p>
-<pre><code>在年轻代中经历了N次垃圾回收后仍然存活的对象，就会被放到年老代中。因此，可以认为年老代中存放的都是一些生命周期较长的对象。
-</code></pre><p><strong>持久代:</strong></p>
-<pre><code>用于存放静态文件，如今Java类、方法等。持久代对垃圾回收没有显著影响，但是有些应用可能动态生成或者调用一些class，例如Hibernate等，在这种时候需要设置一个比较大的持久代空间来存放这些运行过程中新增的类。持久代大小通过-XX:MaxPermSize=&lt;N&gt;进行设置。
-</code></pre><h2 id="-">什么情况下触发垃圾回收</h2>
-<pre><code>由于对象进行了分代处理，因此垃圾回收区域、时间也不一样。GC有两种类型：**Scavenge GC**和**Full GC**。
-</code></pre><p><strong>Scavenge GC</strong></p>
-<pre><code>一般情况下，当新对象生成，并且在Eden申请空间失败时，就会触发Scavenge GC，对Eden区域进行GC，清除非存活对象，并且把尚且存活的对象移动到Survivor区。然后整理Survivor的两个区。这种方式的GC是对年轻代的Eden区进行，不会影响到年老代。因为大部分对象都是从Eden区开始的，同时Eden区不会分配的很大，所以Eden区的GC会频繁进行。因而，一般在这里需要使用速度快、效率高的算法，使Eden去能尽快空闲出来。
-</code></pre><p><strong>Full GC</strong></p>
-<pre><code>对整个堆进行整理，包括Young、Tenured和Perm。Full GC因为需要对整个对进行回收，所以比Scavenge GC要慢，因此应该尽可能减少Full GC的次数。在对JVM调优的过程中，很大一部分工作就是对于FullGC的调节。有如下原因可能导致Full GC：
-</code></pre><p>· 年老代（Tenured）被写满</p>
-<p>· 持久代（Perm）被写满 </p>
-<p>· System.gc()被显示调用 </p>
-<p>·上一次GC之后Heap的各域分配策略动态变化</p>
+ 1.0   0.0% 100.0%   3144.1  96.4% Java_java_util_zip_Deflater_init
+ 0.6   0.0% 100.0%      0.7   0.0% readCEN
+可见调用了java.util.zip.Deflater占用绝大多数。了解到这个deflater存在无法释放内存的bug，于是编写btrace查看是否进入了这个函数：
+</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>import static com.sun.btrace.BTraceUtils./*;  </li>
+<li>import com.sun.btrace.annotations./*;  </li>
+<li></li>
+<li>import java.nio.ByteBuffer;  </li>
+<li>import java.lang.Thread;  </li>
+<li></li>
+<li>@BTrace public class TestRegion1{  </li>
+<li>@OnMethod(  </li>
+<li>clazz=&quot;java.util.zip.Deflater&quot;,  </li>
+<li>method=&quot;deflate&quot;  </li>
+<li>)  </li>
+<li>public static void traceCacheBlock(){  </li>
+<li>println(&quot;deflate?&quot;);  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>import static com.sun.btrace.BTraceUtils./*;</p>
+<p>import com.sun.btrace.annotations./*;</p>
+<p>import java.nio.ByteBuffer;
+import java.lang.Thread;</p>
+<p>@BTrace public class TestRegion1{</p>
+<p>   @OnMethod(
+      clazz=&quot;java.util.zip.Deflater&quot;,</p>
+<pre><code>  method=&quot;deflate&quot;
+</code></pre><p>   )</p>
+<p>   public static void traceCacheBlock(){
+println(&quot;deflate?&quot;);</p>
+<p>   }
+}
+    发现果然在不停调用这行代码。应该如何办呢？
+由于deflater是gzip需要使用的代码，查看用户创建的表，发现COMPRESSOR设置的是GZ，尝试调整为LZO，结果发现btrace无法进入上述代码，再通过perftools查看时，堆内存不再申请，完全不再申请...
+小插曲，perftools的作者是个老实人，提供了zip版下载，但是不提供安装文件，原因？在README中有以下一段话：
+Html代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>I don&#39;t know very much about how to install DLLs on Windows, so you&#39;ll  </li>
+<li>have to figure out that part for yourself.  </li>
+</ol>
+<p>I don&#39;t know very much about how to install DLLs on Windows, so you&#39;ll</p>
+<p>have to figure out that part for yourself.</p>
 
       
     </div>
@@ -321,7 +896,7 @@ var _js2load = [];
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -336,87 +911,768 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（七）-典型配置举例1/">JVM调优总结（七）</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--借HSDB来探索HotSpotVM的运行时数据/">借HSDB来探索HotSpot VM的运行时数据</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（七）-典型配置举例1/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--借HSDB来探索HotSpotVM的运行时数据/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jvm-1">JVM调优总结（七）-典型配置举例1</h1>
-<p>以下配置主要针对分代垃圾回收算法而言。</p>
-<h2 id="-">堆大小设置</h2>
-<p>年轻代的设置很关键</p>
-<p>JVM中最大堆大小有三方面限制：相关操作系统的数据模型（32-bt还是64-bit）限制；系统的可用虚拟内存限制；系统的可用物理内存限制。32位系统下，一般限制在1.5G~2G；64为操作系统对内存无限制。在Windows Server 2003 系统，3.5G物理内存，JDK5.0下测试，最大可设置为1478m。</p>
-<p><strong>典型设置：</strong>
-java <strong>-Xmx3550m -Xms3550m -Xmn2g</strong> –Xss128k</p>
-<p><strong>-Xmx3550m：</strong>设置JVM最大可用内存为3550M。</p>
-<p><strong>-Xms3550m：</strong>设置JVM促使内存为3550m。此值可以设置与-Xmx相同，以避免每次垃圾回收完成后JVM重新分配内存。</p>
-<p><strong>-Xmn2g：</strong>设置年轻代大小为2G。整个堆大小=年轻代大小 + 年老代大小 + 持久代大小。持久代一般固定大小为64m，所以增大年轻代后，将会减小年老代大小。此值对系统性能影响较大，Sun官方推荐配置为整个堆的3/8。</p>
-<p><strong>-Xss128k：</strong>设置每个线程的堆栈大小。JDK5.0以后每个线程堆栈大小为1M，以前每个线程堆栈大小为256K。更具应用的线程所需内存大小进行调整。在相同物理内存下，减小这个值能生成更多的线程。但是操作系统对一个进程内的线程数还是有限制的，不能无限生成，经验值在3000~5000左右。</p>
-<p>java -Xmx3550m -Xms3550m -Xss128k <strong>-XX:NewRatio=4 -XX:SurvivorRatio=4 -XX:MaxPermSize=16m -XX:MaxTenuringThreshold=0</strong></p>
-<p><strong>-XX:NewRatio=4</strong>:设置年轻代（包括Eden和两个Survivor区）与年老代的比值（除去持久代）。设置为4，则年轻代与年老代所占比值为1：4，年轻代占整个堆栈的1/5</p>
-<p><strong>-XX:SurvivorRatio=4</strong>：设置年轻代中Eden区与Survivor区的大小比值。设置为4，则两个Survivor区与一个Eden区的比值为2:4，一个Survivor区占整个年轻代的1/6</p>
-<p><strong>-XX:MaxPermSize=16m:</strong>设置持久代大小为16m。</p>
-<p><strong>-XX:MaxTenuringThreshold=0：</strong>设置垃圾最大年龄。如果设置为0的话，则年轻代对象不经过Survivor区，直接进入年老代。对于年老代比较多的应用，可以提高效率。如果将此值设置为一个较大值，则年轻代对象会在Survivor区进行多次复制，这样可以增加对象再年轻代的存活时间，增加在年轻代即被回收的概论。</p>
-<h2 id="-">回收器选择</h2>
-<p>JVM给了三种选择：<strong>串行收集器、并行收集器、并发收集器</strong>，但是串行收集器只适用于小数据量的情况，所以这里的选择主要针对并行收集器和并发收集器。默认情况下，JDK5.0以前都是使用串行收集器，如果想使用其他收集器需要在启动时加入相应参数。JDK5.0以后，JVM会根据当前<a href="http://java.sun.com/j2se/1.5.0/docs/guide/vm/server-class.html" target="_blank">系统配置</a>进行判断。</p>
-<p><strong>吞吐量优先的并行收集器</strong></p>
-<p>如上文所述，并行收集器主要以到达一定的吞吐量为目标，适用于科学技术和后台处理等。</p>
-<p><strong>典型配置：</strong>
-java -Xmx3800m -Xms3800m -Xmn2g -Xss128k <strong>-XX:+UseParallelGC -XX:ParallelGCThreads=20</strong></p>
-<p><strong>-XX:+UseParallelGC：</strong>选择垃圾收集器为并行收集器。<strong>此配置仅对年轻代有效。即上述配置下，年轻代使用并发收集，而年老代仍旧使用串行收集。</strong></p>
-<p><strong>-XX:ParallelGCThreads=20：</strong>配置并行收集器的线程数，即：同时多少个线程一起进行垃圾回收。此值最好配置与处理器数目相等。</p>
-<p>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseParallelGC -XX:ParallelGCThreads=20 <strong>-XX:+UseParallelOldGC</strong></p>
-<p><strong>-XX:+UseParallelOldGC：</strong>配置年老代垃圾收集方式为并行收集。JDK6.0支持对年老代并行收集。</p>
-<p>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseParallelGC  <strong>-XX:MaxGCPauseMillis=100</strong></p>
-<p><strong>-XX:MaxGCPauseMillis=100</strong>:设置每次年轻代垃圾回收的最长时间，如果无法满足此时间，JVM会自动调整年轻代大小，以满足此值。</p>
-<p>n java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseParallelGC  -XX:MaxGCPauseMillis=100 <strong>-XX:+UseAdaptiveSizePolicy</strong></p>
-<p><strong>-XX:+UseAdaptiveSizePolicy</strong>：设置此选项后，并行收集器会自动选择年轻代区大小和相应的Survivor区比例，以达到目标系统规定的最低相应时间或者收集频率等，此值建议使用并行收集器时，一直打开。</p>
-<p><strong>响应时间优先的并发收集器</strong></p>
-<p>如上文所述，并发收集器主要是保证系统的响应时间，减少垃圾收集时的停顿时间。适用于应用服务器、电信领域等。</p>
-<p><strong>典型配置：</strong>
-java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:ParallelGCThreads=20 <strong>-XX:+UseConcMarkSweepGC -XX:+UseParNewGC</strong></p>
-<p><strong>-XX:+UseConcMarkSweepGC：</strong>设置年老代为并发收集。测试中配置这个以后，-XX:NewRatio=4的配置失效了，原因不明。所以，此时年轻代大小最好用-Xmn设置。</p>
-<p><strong>-XX:+UseParNewGC:</strong> 设置年轻代为并行收集。可与CMS收集同时使用。JDK5.0以上，JVM会根据系统配置自行设置，所以无需再设置此值。</p>
-<p>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseConcMarkSweepGC <strong>-XX:CMSFullGCsBeforeCompaction=5 -XX:+UseCMSCompactAtFullCollection</strong></p>
-<p><strong>-XX:CMSFullGCsBeforeCompaction：</strong>由于并发收集器不对内存空间进行压缩、整理，所以运行一段时间以后会产生“碎片”，使得运行效率降低。此值设置运行多少次GC以后对内存空间进行压缩、整理。</p>
-<p><strong>-XX:+UseCMSCompactAtFullCollection：</strong>打开对年老代的压缩。可能会影响性能，但是可以消除碎片</p>
-<h2 id="-">辅助信息</h2>
-<p>JVM提供了大量命令行参数，打印信息，供调试使用。主要有以下一些：</p>
-<p><strong>-XX:+PrintGC：</strong>输出形式：[GC 118250K-&gt;113543K(130112K), 0.0094143 secs] [Full GC 121376K-&gt;10414K(130112K), 0.0650971 secs]</p>
-<p><strong>-XX:+PrintGCDetails：</strong>输出形式：[GC [DefNew: 8614K-&gt;781K(9088K), 0.0123035 secs] 118250K-&gt;113543K(130112K), 0.0124633 secs] [GC [DefNew: 8614K-&gt;8614K(9088K), 0.0000665 secs][Tenured: 112761K-&gt;10414K(121024K), 0.0433488 secs] 121376K-&gt;10414K(130112K), 0.0436268 secs]</p>
-<p><strong>-XX:+PrintGCTimeStamps</strong>-XX:+PrintGC：PrintGCTimeStamps可与上面两个混合使用
-输出形式：11.851: [GC 98328K-&gt;93620K(130112K), 0.0082960 secs]</p>
-<p><strong>-XX:+PrintGCApplicationConcurrentTime：</strong>打印每次垃圾回收前，程序未中断的执行时间。可与上面混合使用。输出形式：Application time: 0.5291524 seconds</p>
-<p><strong>-XX:+PrintGCApplicationStoppedTime：</strong>打印垃圾回收期间程序暂停的时间。可与上面混合使用。输出形式：Total time for which application threads were stopped: 0.0468229 seconds</p>
-<p><strong>-XX:PrintHeapAtGC:</strong>打印GC前后的详细堆栈信息。输出形式：</p>
-<p>34.702: [GC {Heap before gc invocations=7:</p>
-<p>def new generation   total 55296K, used 52568K [0x1ebd0000, 0x227d0000, 0x227d0000)</p>
-<p>eden space 49152K,  99% used [0x1ebd0000, 0x21bce430, 0x21bd0000)</p>
-<p>from space 6144K,  55% used [0x221d0000, 0x22527e10, 0x227d0000)</p>
-<p>to   space 6144K,   0% used [0x21bd0000, 0x21bd0000, 0x221d0000)</p>
-<p>tenured generation   total 69632K, used 2696K [0x227d0000, 0x26bd0000, 0x26bd0000)</p>
-<p>the space 69632K,   3% used [0x227d0000, 0x22a720f8, 0x22a72200, 0x26bd0000)</p>
-<p>compacting perm gen  total 8192K, used 2898K [0x26bd0000, 0x273d0000, 0x2abd0000)</p>
-<p>   the space 8192K,  35% used [0x26bd0000, 0x26ea4ba8, 0x26ea4c00, 0x273d0000)</p>
-<p>ro space 8192K,  66% used [0x2abd0000, 0x2b12bcc0, 0x2b12be00, 0x2b3d0000)</p>
-<p>rw space 12288K,  46% used [0x2b3d0000, 0x2b972060, 0x2b972200, 0x2bfd0000)</p>
-<p>34.735: [DefNew: 52568K-&gt;3433K(55296K), 0.0072126 secs] 55264K-&gt;6615K(124928K)Heap after gc invocations=8:</p>
-<p>def new generation   total 55296K, used 3433K [0x1ebd0000, 0x227d0000, 0x227d0000)</p>
-<p>eden space 49152K,   0% used [0x1ebd0000, 0x1ebd0000, 0x21bd0000)</p>
-<p>  from space 6144K,  55% used [0x21bd0000, 0x21f2a5e8, 0x221d0000)</p>
-<p>  to   space 6144K,   0% used [0x221d0000, 0x221d0000, 0x227d0000)</p>
-<p>tenured generation   total 69632K, used 3182K [0x227d0000, 0x26bd0000, 0x26bd0000)</p>
-<p>the space 69632K,   4% used [0x227d0000, 0x22aeb958, 0x22aeba00, 0x26bd0000)</p>
-<p>compacting perm gen  total 8192K, used 2898K [0x26bd0000, 0x273d0000, 0x2abd0000)</p>
-<p>   the space 8192K,  35% used [0x26bd0000, 0x26ea4ba8, 0x26ea4c00, 0x273d0000)</p>
-<p>   ro space 8192K,  66% used [0x2abd0000, 0x2b12bcc0, 0x2b12be00, 0x2b3d0000)</p>
-<p>   rw space 12288K,  46% used [0x2b3d0000, 0x2b972060, 0x2b972200, 0x2bfd0000)</p>
-<p>}</p>
-<p>, 0.0757599 secs]</p>
-<p><strong>-Xloggc:filename:</strong>与上面几个配合使用，把相关日志信息记录到文件以便分析。</p>
+        <h1 id="-hsdb-hotspot-vm-">借HSDB来探索HotSpot VM的运行时数据</h1>
+<p>（未经许可请勿转载。希望转载请与我联系。）
+（如果打开此页面时浏览器有点卡住的话请耐心等待片刻。大概是ItEye的代码高亮太耗时了…）
+几天前在<a href="http://hllvm.group.iteye.com/" target="_blank">HLLVM群组</a>有人<a href="http://hllvm.group.iteye.com/group/topic/37542" target="_blank">问了个小问题</a>，说
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class Test {  </li>
+<li>static Test2 t1 = new Test2();  </li>
+<li>Test2 t2 = new Test2();  </li>
+<li>public void fn() {  </li>
+<li>Test2 t3 = new Test2();       </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>class Test2 {  </li>
+<li></li>
+<li>}  </li>
+</ol>
+<p>public class Test {</p>
+<pre><code>static Test2 t1 = new Test2();
+       Test2 t2 = new Test2();
+
+public void fn() {
+    Test2 t3 = new Test2();    
+
+}
+</code></pre><p>}</p>
+<p>class Test2 {</p>
+<p>}
+这个程序的t1、t2、t3三个变量本身（而不是这三个变量所指向的对象）到底在哪里。
+TL;DR版回答是：</p>
+<ul>
+<li>t1在存Java静态变量的地方，概念上在JVM的方法区（method area）里</li>
+<li>t2在Java堆里，作为Test的一个实例的字段存在</li>
+<li>t3在Java线程的调用栈里，作为Test.fn()的一个局部变量存在
+不过就这么简单的回答大家都会，满足不了对JVM的实现感兴趣的同学们的好奇心。说到底，这“方法区”到底是啥？Java堆在哪里？Java线程的调用栈又是啥样的？
+那就让我们跑点例子，借助调试器来看看在一个实际运行中的JVM里是啥状况。<h1 id="-https-gist-github-com-rednaxelafx-5392451-https-gist-github-com-rednaxelafx-5392451-">（下文中代码也传了一份到<a href="https://gist.github.com/rednaxelafx/5392451" target="_blank"><a href="https://gist.github.com/rednaxelafx/5392451">https://gist.github.com/rednaxelafx/5392451</a></a>）</h1>
+写个启动类来跑上面问题中的代码：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></li>
+</ul>
+<ol>
+<li>public class Main {  </li>
+<li>public static void main(String[] args) {  </li>
+<li>Test test = new Test();  </li>
+<li>test.fn();  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>public class Main {</p>
+<pre><code>public static void main(String[] args) {
+    Test test = new Test();
+
+    test.fn();
+}
+</code></pre><p>}
+（编译这个Main.java和上面的Test.java时最好加上-g参数生成LocalVariableTable等调试信息，以便后面某些情况下可以用到）
+接下来如无特别说明本文将使用Windows 7 64-bit, Oracle JDK 1.7.0_09 Server VM, Serial GC的环境中运行所有例子。
+之前在GreenTeaJUG在杭州的活动<a href="http://rednaxelafx.iteye.com/blog/1814180" target="_blank">演示Serviceability Agent</a>的时候也讲到过这是个非常便于探索HotSpot VM内部实现的API，而HSDB则是在SA基础上包装起来的一个调试器。这次我们就用HSDB来做实验。
+SA的一个限制是它只实现了调试snapshot的功能：要么要让被调试的目标进程完全暂停，要么就调试core dump。所以我们在用HSDB做实验前，得先让我们的Java程序运行到我们关注的点上才行。
+理想情况下我们会希望让这Java程序停在Test.java的第6行，也就是Test.fn()中t3局部变量已经进入作用域，而该方法又尚未返回的地方。怎样才能停在这里呢？
+其实用个Java层的调试器即可。大家平时可能习惯了在Eclipse、IntelliJ IDEA、NetBeans等Java IDE里使用Java层调试器，但为了减少对外部工具的依赖，本文将使用Oracle JDK自带的jdb工具来完成此任务。
+<a href="http://docs.oracle.com/javase/7/docs/technotes/tools/windows/jdb.html" target="_blank">jdb</a>跟上面列举的IDE里包含的调试器底下依赖着同一套调试API，也就是<a href="http://docs.oracle.com/javase/7/docs/technotes/guides/jpda/index.html" target="_blank">Java Platform Debugger Architecture (JPDA)</a>。功能也类似，只是界面是命令行的，表明上看起来不太一样而已。
+为了方便后续步骤，启动jdb的时候可以设定让目标Java程序使用serial GC和10MB的Java heap。
+启动jdb之后可以用stop in命令在指定的Java方法入口处设置断点，
+然后用run命令指定主类名称来启动Java程序，
+等跑到断点看看位置是否已经到满足需求，还没到的话可以用step、next之类的命令来向前进。
+对jdb命令不熟悉的同学可以在启动jdb之后使用help命令来查看命令列表和说明。
+具体步骤如下：
+Command prompt代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>D:\test&gt;jdb -XX:+UseSerialGC -Xmx10m  </li>
+<li>Initializing jdb ...  </li>
+<li><blockquote>
+<p>stop in Test.fn  </p>
+</blockquote>
+</li>
+<li>Deferring breakpoint Test.fn.  </li>
+<li>It will be set after the class is loaded.  </li>
+<li><blockquote>
+<p>run Main  </p>
+</blockquote>
+</li>
+<li>run  Main  </li>
+<li>Set uncaught java.lang.Throwable  </li>
+<li>Set deferred uncaught java.lang.Throwable  </li>
+<li><blockquote>
+</blockquote>
+</li>
+<li>VM Started: Set deferred breakpoint Test.fn  </li>
+<li></li>
+<li>Breakpoint hit: &quot;thread=main&quot;, Test.fn(), line=5 bci=0  </li>
+<li>5            Test2 t3 = new Test2();  </li>
+<li></li>
+<li>main[1] next  </li>
+<li></li>
+<li>Step completed: &gt; &quot;thread=main&quot;, Test.fn(), line=6 bci=8  </li>
+<li>6        }  </li>
+<li></li>
+<li>main[1]   </li>
+</ol>
+<p>D:\test&gt;jdb -XX:+UseSerialGC -Xmx10m</p>
+<p>Initializing jdb ...</p>
+<blockquote>
+<p>stop in Test.fn</p>
+</blockquote>
+<p>Deferring breakpoint Test.fn.
+It will be set after the class is loaded.</p>
+<blockquote>
+<p>run Main
+run  Main</p>
+</blockquote>
+<p>Set uncaught java.lang.Throwable
+Set deferred uncaught java.lang.Throwable</p>
+<p>&gt;
+VM Started: Set deferred breakpoint Test.fn</p>
+<p>Breakpoint hit: &quot;thread=main&quot;, Test.fn(), line=5 bci=0</p>
+<p>5            Test2 t3 = new Test2();</p>
+<p>main[1] next</p>
+<p>Step completed: &gt; &quot;thread=main&quot;, Test.fn(), line=6 bci=8
+6        }</p>
+<p>main[1]
+按照上述步骤执行完最后一个next命令之后，我们就来到了最初想要的Test.java的第6行，也就是Test.fn()返回前的位置。
+接下来把这个jdb窗口放一边，另开一个命令行窗口用<a href="http://docs.oracle.com/javase/7/docs/technotes/tools/share/jps.html" target="_blank">jps</a>命令看看我们要调试的Java进程的pid是多少：
+Command prompt代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>D:\test&gt;jps  </li>
+<li>4328 Main  </li>
+<li>9064 Jps  </li>
+<li>7716 TTY  </li>
+</ol>
+<p>D:\test&gt;jps</p>
+<p>4328 Main
+9064 Jps</p>
+<p>7716 TTY
+可以看到是4328。把这个pid记下来待会儿用。
+然后启动HSDB：
+Command prompt代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>D:\test&gt;java -cp .;%JAVA_HOME%/lib/sa-jdi.jar sun.jvm.hotspot.HSDB  </li>
+</ol>
+<p>D:\test&gt;java -cp .;%JAVA_HOME%/lib/sa-jdi.jar sun.jvm.hotspot.HSDB
+（要留意Linux和Solaris在Oracle/Sun JDK6就可以使用HSDB了，但Windows上要到Oracle JDK7才可以用HSDB）
+启动HSDB之后，把它连接到目标进程上。从菜单里选择File -&gt; Attach to HotSpot process：
+<img src="&quot;点击查看原始大小图片&quot;" alt="">
+在弹出的对话框里输入刚才记下的pid然后按OK：
+<img src="&quot;点击查看原始大小图片&quot;" alt="">
+这会儿就连接到目标进程了：
+<img src="&quot;点击查看原始大小图片&quot;" alt="">
+刚开始打开的窗口是Java Threads，里面有个线程列表。双击代表线程的行会打开一个Oop Inspector窗口显示HotSpot VM里记录线程的一些基本信息的C++对象的内容。
+不过这里我们更可能会关心的是线程栈的内存数据。先选择main线程，然后点击Java Threads窗口里的工具栏按钮从左数第2个可以打开Stack Memory窗口来显示main线程的栈：
+<img src="&quot;点击查看原始大小图片&quot;" alt="">
+Stack Memory窗口的内容有三栏：
+左起第1栏是内存地址，请让我提醒一下本文里提到“内存地址”的地方都是指虚拟内存意义上的地址，<strong>不是</strong>“物理内存地址”，请不要弄混了这俩概念；
+第2栏是该地址上存的数据，以字宽为单位，本文例子中我是在Windows 7 64-bit上跑64位的JDK7的HotSpot VM，字宽是64位（8字节）；
+第3栏是对数据的注释，竖线表示范围，横线或斜线连接范围与注释文字。
+现在看不懂这个窗口里的数据没关系，先放一边，后面再回过头来看。
+现在让我们打开HSDB里的控制台，以便用命令来了解更多信息。
+在菜单里选择Windows -&gt; Console：
+<img src="" alt="">
+然后会得到一个空白的Command Line窗口。在里面敲一下回车就会出现hsdb&gt;提示符。
+（用过CLHSDB的同学可能会发现这就是把CLHSDB嵌入在了HSDB的图形界面里）
+不知道有什么命令可用的同学可以先用help命令看看命令列表。
+可以用universe命令来查看GC堆的地址范围和使用情况：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; universe  </li>
+<li>Heap Parameters:  </li>
+<li>Gen 0:   eden [0x00000000fa400000,0x00000000fa4aad68,0x00000000fa6b0000) space capacity = 2818048, 24.831088753633722 used  </li>
+<li>from [0x00000000fa6b0000,0x00000000fa6b0000,0x00000000fa700000) space capacity = 327680, 0.0 used  </li>
+<li>to   [0x00000000fa700000,0x00000000fa700000,0x00000000fa750000) space capacity = 327680, 0.0 usedInvocations: 0  </li>
+<li></li>
+<li>Gen 1:   old  [0x00000000fa750000,0x00000000fa750000,0x00000000fae00000) space capacity = 7012352, 0.0 usedInvocations: 0  </li>
+<li></li>
+<li>perm [0x00000000fae00000,0x00000000fb078898,0x00000000fc2c0000) space capacity = 21757952, 11.90770160721009 usedInvocations: 0  </li>
+</ol>
+<p>hsdb&gt; universe</p>
+<p>Heap Parameters:
+Gen 0:   eden [0x00000000fa400000,0x00000000fa4aad68,0x00000000fa6b0000) space capacity = 2818048, 24.831088753633722 used</p>
+<p>  from [0x00000000fa6b0000,0x00000000fa6b0000,0x00000000fa700000) space capacity = 327680, 0.0 used
+  to   [0x00000000fa700000,0x00000000fa700000,0x00000000fa750000) space capacity = 327680, 0.0 usedInvocations: 0</p>
+<p>Gen 1:   old  [0x00000000fa750000,0x00000000fa750000,0x00000000fae00000) space capacity = 7012352, 0.0 usedInvocations: 0</p>
+<p>  perm <a href="&quot;复制代码&quot;">0x00000000fae00000,0x00000000fb078898,0x00000000fc2c0000) space capacity = 21757952, 11.90770160721009 usedInvocations: 0
+这里用的是HotSpot VM的serial GC。GC堆由young gen = DefNewGeneration（包括eden和两个survivor space）、old gen = TenuredGeneration和perm gen = PermGen构成。
+其中young gen和old gen构成了这种配置下HotSpot VM里的Java堆（Java heap），而perm gen不属于Java heap的一部分，它存储的主要是元数据或者叫反射信息，主要用于实现JVM规范里的“方法区”概念。
+在我们的Java代码里，执行到Test.fn()末尾为止应该创建了3个Test2的实例。它们必然在GC堆里，但都在哪里呢？用scanoops命令来看：
+Hsdb代码 [<img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; scanoops 0x00000000fa400000 0x00000000fc2c0000 Test2  </li>
+<li>0x00000000fa49a710 Test2  </li>
+<li>0x00000000fa49a730 Test2  </li>
+<li>0x00000000fa49a740 Test2  </li>
+</ol>
+<p>hsdb&gt; scanoops 0x00000000fa400000 0x00000000fc2c0000 Test2</p>
+<p>0x00000000fa49a710 Test2
+0x00000000fa49a730 Test2</p>
+<p>0x00000000fa49a740 Test2
+scanoops接受两个必选参数和一个可选参数：必选参数是要扫描的地址范围，一个是起始地址一个是结束地址；可选参数用于指定要扫描什么类型的对象实例。实际扫描的时候会扫出指定的类型及其派生类的实例。
+这里可以看到确实扫出了3个Test2的实例。内容有两列：左边是对象的起始地址，右边是对象的实际类型。
+从它们所在的地址，对照前面universe命令看到的GC堆的地址范围，可以知道它们都在eden里。
+通过whatis命令可以进一步知道它们都在eden之中分配给main线程的thread-local allocation buffer (TLAB)中：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; whatis 0x00000000fa49a710  </li>
+<li>Address 0x00000000fa49a710: In thread-local allocation buffer for thread &quot;main&quot; (1)  [0x00000000fa48f490,0x00000000fa49a750,0x00000000fa49d118)  </li>
+<li></li>
+<li>hsdb&gt; whatis 0x00000000fa49a730  </li>
+<li>Address 0x00000000fa49a730: In thread-local allocation buffer for thread &quot;main&quot; (1)  [0x00000000fa48f490,0x00000000fa49a750,0x00000000fa49d118)  </li>
+<li></li>
+<li>hsdb&gt; whatis 0x00000000fa49a740  </li>
+<li>Address 0x00000000fa49a740: In thread-local allocation buffer for thread &quot;main&quot; (1)  [0x00000000fa48f490,0x00000000fa49a750,0x00000000fa49d118)  </li>
+<li></li>
+<li>hsdb&gt;   </li>
+</ol>
+<p>hsdb&gt; whatis 0x00000000fa49a710</p>
+<p>Address 0x00000000fa49a710: In thread-local allocation buffer for thread &quot;main&quot; (1)  [0x00000000fa48f490,0x00000000fa49a750,0x00000000fa49d118)</p>
+<p>hsdb&gt; whatis 0x00000000fa49a730
+Address 0x00000000fa49a730: In thread-local allocation buffer for thread &quot;main&quot; (1)  [0x00000000fa48f490,0x00000000fa49a750,0x00000000fa49d118)</p>
+<p>hsdb&gt; whatis 0x00000000fa49a740</p>
+<p>Address 0x00000000fa49a740: In thread-local allocation buffer for thread &quot;main&quot; (1)  [0x00000000fa48f490,0x00000000fa49a750,0x00000000fa49d118)</p>
+<p>hsdb&gt;
+还可以用inspect命令来查看对象的内容：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; inspect 0x00000000fa49a710  </li>
+<li>instance of Oop for Test2 @ 0x00000000fa49a710 @ 0x00000000fa49a710 (size = 16)  </li>
+<li>_mark: 1  </li>
+</ol>
+<p>hsdb&gt; inspect 0x00000000fa49a710</p>
+<p>instance of Oop for Test2 @ 0x00000000fa49a710 @ 0x00000000fa49a710 (size = 16)
+_mark: 1
+可见一个Test2的实例要16字节。因为Test2类没有任何Java层的实例字段，这里就没有任何Java实例字段可显示。不过本来这里还应该显示一行：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>_metadata._compressed_klass: InstanceKlass for Test2 @ 0x00000000fb078608  </li>
+</ol>
+<p>_metadata._compressed_klass: InstanceKlass for Test2 @ 0x00000000fb078608
+不幸因为这个版本的HotSpot VM里带的SA有bug所以没显示出来。此bug在新版里已修。
+还想看到更裸的数据的同学可以用mem命令来看实际内存里的数据长啥样：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; mem 0x00000000fa49a710 2  </li>
+<li>0x00000000fa49a710: 0x0000000000000001   </li>
+<li>0x00000000fa49a718: 0x00000000fb078608   </li>
+</ol>
+<p>hsdb&gt; mem 0x00000000fa49a710 2</p>
+<p>0x00000000fa49a710: 0x0000000000000001
+0x00000000fa49a718: 0x00000000fb078608
+mem命令接受的两个参数都必选，一个是起始地址，另一个是以字宽为单位的“长度”。我们知道一个Test2实例有16字节，所以给定长度为2来看。
+上面的数字都是啥来的呢？
+Memory代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>0x00000000fa49a710:  _mark:                        0x0000000000000001   </li>
+<li>0x00000000fa49a718:  _metadata._compressed_klass:  0xfb078608  </li>
+<li>0x00000000fa49a71c:  (padding):                    0x00000000  </li>
+</ol>
+<p>0x00000000fa49a710:  _mark:                        0x0000000000000001</p>
+<p>0x00000000fa49a718:  _metadata._compressed_klass:  0xfb078608
+0x00000000fa49a71c:  (padding):                    0x00000000
+一个Test2的实例包含2个给VM用的隐含字段作为对象头，和0个Java字段。
+对象头的第一个字段是mark word，记录该对象的GC状态、同步状态、identity hash code之类的多种信息。
+对象头的第二个字段是个类型信息指针，klass pointer。这里因为默认开启了压缩指针，所以本来应该是64位的指针存在了32位字段里。
+最后还有4个字节是为了满足对齐需求而做的填充（padding）。
+以前在另一帖里也介绍过这部分内容，可以参考：<a href="http://rednaxelafx.iteye.com/blog/730461" target="_blank">借助HotSpot SA来一窥PermGen上的对象</a>
+顺带发张Inspector的截图来展示HotSpot VM里描述Test2类的VM对象长啥样吧。
+在菜单里选Tools -&gt; Inspector，在地址里输入前面看到的klass地址：
+<img src="&quot;点击查看原始大小图片&quot;" alt="">
+InstanceKlass存着Java类型的名字、继承关系、实现接口关系，字段信息，方法信息，运行时常量池的指针，还有内嵌的虚方法表（vtable）、接口方法表（itable）和记录对象里什么位置上有GC会关心的指针（oop map）等等。
+留意到这个InstanceKlass是给VM内部用的，并不直接暴露给Java层；InstanceKlass不是java.lang.Class的实例。
+在HotSpot VM里，java.lang.Class的实例被称为“Java mirror”，意思是它是VM内部用的klass对象的“镜像”，把klass对象包装了一层来暴露给Java层使用。
+在InstanceKlass里有个_java_mirror字段引用着它对应的Java mirror，而mirror里也有个隐藏字段指向其对应的InstanceKlass。
+所以当我们写obj.getClass()，在HotSpot VM里实际上经过了两层间接引用才能找到最终的Class对象：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>obj-&gt;_klass-&gt;_java_mirror  </li>
+</ol>
+<p>obj-&gt;_klass-&gt;_java_mirror
+在Oracle JDK7之前，Oracle/Sun JDK的HotSpot VM把Java类的静态变量存在InstanceKlass结构的末尾；从Oracle JDK7开始，为了配合PermGen移除的工作，Java类的静态变量被挪到Java mirror（Class对象）的末尾了。</p>
+<h1 id="-jdk7-java-mirror-permgen-jdk7-java-mirror-java-eden-permgen-jdk8-permgen-klass-gc-java-mirror-jdk7-">还有就是，在JDK7之前Java mirror存放在PermGen里，而从JDK7开始Java mirror默认也跟普通Java对象一样先从eden开始分配而不放在PermGen里。到JDK8则进一步彻底移除了PermGen，把诸如klass之类的元数据都挪到GC堆之外管理，而Java mirror的处理则跟JDK7一样。</h1>
+<p>前面对HSDB的操作和HotSpot VM里的一些内部数据结构有了一定的了解，现在让我们回到主题：找指针！
+HotSpot VM内部使用直接指针来实现Java引用。在64位环境中有可能启用“压缩指针”的功能把64位指针压缩到只用32位来存。压缩指针与非压缩指针直接有非常简单的1对1对应关系，前者可以看作后者的特例。
+于是我们要找t1、t2、t3这三个变量，等同于找出存有指向上述3个Test2实例的地址的存储位置。
+不嫌麻烦的话手工扫描内存去找也能找到，不过幸好HSDB内建了revptrs命令，可以找出“反向指针”——如果a变量引用着b对象，那么对b对象来说a就是一个“反向指针”。
+先拿第一个Test2的实例试试看：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; revptrs 0x00000000fa49a710  </li>
+<li>Computing reverse pointers...  </li>
+<li>Done.  </li>
+<li>null  </li>
+<li>Oop for java/lang/Class @ 0x00000000fa499b00  </li>
+</ol>
+<p>hsdb&gt; revptrs 0x00000000fa49a710</p>
+<p>Computing reverse pointers...
+Done.</p>
+<p>null
+Oop for java/lang/Class @ 0x00000000fa499b00
+还真的找到了一个包含指向Test2实例的指针，在一个java.lang.Class的实例里。
+用whatis命令来看看这个Class对象在哪里：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; whatis 0x00000000fa499b00  </li>
+<li>Address 0x00000000fa499b00: In thread-local allocation buffer for thread &quot;main&quot; (1)  [0x00000000fa48f490,0x00000000fa49a750,0x00000000fa49d118)  </li>
+<li></li>
+</ol>
+<p>hsdb&gt; whatis 0x00000000fa499b00</p>
+<p>Address 0x00000000fa499b00: In thread-local allocation buffer for thread &quot;main&quot; (1)  [0x00000000fa48f490,0x00000000fa49a750,0x00000000fa49d118)</p>
+<p>可以看到这个Class对象也在eden里，具体来说在main线程的TLAB里。
+这个Class对象是如何引用到Test2的实例的呢？再用inspect命令：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; inspect 0x00000000fa499b00  </li>
+<li>instance of Oop for java/lang/Class @ 0x00000000fa499b00 @ 0x00000000fa499b00 (size = 120)  </li>
+<li>&lt;<Reverse pointers>&gt;:   </li>
+<li>t1: Oop for Test2 @ 0x00000000fa49a710 Oop for Test2 @ 0x00000000fa49a710  </li>
+</ol>
+<p>hsdb&gt; inspect 0x00000000fa499b00</p>
+<p>instance of Oop for java/lang/Class @ 0x00000000fa499b00 @ 0x00000000fa499b00 (size = 120)
+&lt;<Reverse pointers>&gt;:</p>
+<p>t1: Oop for Test2 @ 0x00000000fa49a710 Oop for Test2 @ 0x00000000fa49a710
+可以看到，这个Class对象里存着Test类的静态变量t1，指向着第一个Test2实例。
+<strong>成功找到t1了！这个有点特别，本来JVM规范里也没明确规定静态变量要存在哪里，通常认为它应该在概念中的“方法区”里；但现在在JDK7的HotSpot VM里它实质上也被放在Java heap里了。可以把这种特例看作是HotSpot VM把方法区的一部分数据也放在Java heap里了。
+前面也已经提过，在JDK7之前的Oracle/Sun JDK里的HotSpot VM把静态变量存在InstanceKlass末尾，存在PermGen里。那个时候的PermGen更接近于完整的方法区一些。</strong>
+关于PermGen移除计划的一些零星笔记可以参考<a href="http://rednaxelafx.iteye.com/blog/905273" target="_blank">我以前一老帖</a>。
+再接再厉，用revptrs看看第二个Test2实例有谁引用：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; revptrs 0x00000000fa49a730  </li>
+<li>Oop for Test @ 0x00000000fa49a720  </li>
+</ol>
+<p>hsdb&gt; revptrs 0x00000000fa49a730</p>
+<p>Oop for Test @ 0x00000000fa49a720
+找到了一个Test实例。同样用whatis来看看它在哪儿：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; whatis 0x00000000fa49a720  </li>
+<li>Address 0x00000000fa49a720: In thread-local allocation buffer for thread &quot;main&quot; (1)  [0x00000000fa48f490,0x00000000fa49a750,0x00000000fa49d118)  </li>
+<li></li>
+</ol>
+<p>hsdb&gt; whatis 0x00000000fa49a720</p>
+<p>Address 0x00000000fa49a720: In thread-local allocation buffer for thread &quot;main&quot; (1)  [0x00000000fa48f490,0x00000000fa49a750,0x00000000fa49d118)</p>
+<p>果然也在main线程的TLAB里。
+然后看这个Test实例的内容：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; inspect 0x00000000fa49a720  </li>
+<li>instance of Oop for Test @ 0x00000000fa49a720 @ 0x00000000fa49a720 (size = 16)  </li>
+<li>&lt;<Reverse pointers>&gt;:   </li>
+<li>_mark: 1  </li>
+<li>t2: Oop for Test2 @ 0x00000000fa49a730 Oop for Test2 @ 0x00000000fa49a730  </li>
+</ol>
+<p>hsdb&gt; inspect 0x00000000fa49a720</p>
+<p>instance of Oop for Test @ 0x00000000fa49a720 @ 0x00000000fa49a720 (size = 16)
+&lt;<Reverse pointers>&gt;:</p>
+<p>_mark: 1
+t2: Oop for Test2 @ 0x00000000fa49a730 Oop for Test2 @ 0x00000000fa49a730
+可以看到这个Test实例里有个成员字段t2，指向了第二个Test2实例。
+<strong>于是t2也找到了！在Java堆里，作为Test的实例的成员字段存在。</strong>
+那么赶紧试试用revptrs命令看第三个Test2实例：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>hsdb&gt; revptrs 0x00000000fa49a740  </li>
+<li>null  </li>
+</ol>
+<p>hsdb&gt; revptrs 0x00000000fa49a740</p>
+<p>null
+啥？没找到？！SA这也太弱小了吧。明明就在那里…
+回头我会做个补丁让新版HotSpot VM的SA能处理这种情况。
+这个时候的HSDB界面全貌：
+<img src="&quot;点击查看原始大小图片&quot;" alt="">
+0x00000000fa49a740看起来有没有点眼熟？
+回到前面打开的Stack Memory窗口看，仔细看会发现那个窗口里正好就有0x00000000fa49a740这数字，位于0x000000000287f858地址上。
+实际情况是，下面这张图里红色框住的部分就是main线程上Test.fn()的调用对应的栈帧：
+<img src="&quot;点击查看原始大小图片&quot;" alt="">
+如果图里看得不清楚的话，我再用文字重新写一遍（两道横线之间的是Test.fn()的栈帧内容，前后的则是别的东西）：
+Memory代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>0x000000000287f7f0: 0x0000000002886298   </li>
+<li>0x000000000287f7f8: 0x0000000002893ca5   </li>
+<li>0x000000000287f800: 0x0000000002893ca5   </li>
+<li><hr>
+</li>
+<li>Stack frame for Test.fn() @bci=8, line=6, pc=0x0000000002893ca5, methodOop=0x00000000fb077f78 (Interpreted frame)  </li>
+<li>0x000000000287f808: 0x000000000287f808 expression stack bottom          &lt;- rsp  </li>
+<li>0x000000000287f810: 0x00000000fb077f58 bytecode pointer    = 0x00000000fb077f50 (base) + 8 (bytecode index) in PermGen  </li>
+<li>0x000000000287f818: 0x000000000287f860 pointer to locals  </li>
+<li>0x000000000287f820: 0x00000000fb078360 constant pool cache = ConstantPoolCache for Test in PermGen  </li>
+<li>0x000000000287f828: 0x0000000000000000 method data oop     = null  </li>
+<li>0x000000000287f830: 0x00000000fb077f78 method oop          = Method for Test.fn()V in PermGen  </li>
+<li>0x000000000287f838: 0x0000000000000000 last Java stack pointer (not set)  </li>
+<li>0x000000000287f840: 0x000000000287f860 old stack pointer (saved rsp)  </li>
+<li>0x000000000287f848: 0x000000000287f8a8 old frame pointer (saved rbp)    &lt;- rbp  </li>
+<li>0x000000000287f850: 0x0000000002886298 return address      = in interpreter codelet &quot;return entry points&quot; [0x00000000028858b8, 0x00000000028876c0)  7688 bytes  </li>
+<li>0x000000000287f858: 0x00000000fa49a740 local[1] &quot;t3&quot;       = Oop for Test2 in NewGen  </li>
+<li>0x000000000287f860: 0x00000000fa49a720 local[0] &quot;this&quot;     = Oop for Test in NewGen  </li>
+<li><hr>
+</li>
+<li>0x000000000287f868: 0x000000000287f868   </li>
+<li>0x000000000287f870: 0x00000000fb077039   </li>
+<li>0x000000000287f878: 0x000000000287f8c0   </li>
+<li>0x000000000287f880: 0x00000000fb077350   </li>
+<li>0x000000000287f888: 0x0000000000000000   </li>
+<li>0x000000000287f890: 0x00000000fb077060   </li>
+<li>0x000000000287f898: 0x000000000287f860   </li>
+<li>0x000000000287f8a0: 0x000000000287f8c0   </li>
+<li>0x000000000287f8a8: 0x000000000287f9a0   </li>
+<li>0x000000000287f8b0: 0x000000000288062a   </li>
+<li>0x000000000287f8b8: 0x00000000fa49a720   </li>
+<li>0x000000000287f8c0: 0x00000000fa498ea8   </li>
+<li>0x000000000287f8c8: 0x0000000000000000   </li>
+<li>0x000000000287f8d0: 0x0000000000000000   </li>
+<li>0x000000000287f8d8: 0x0000000000000000   </li>
+</ol>
+<p>0x000000000287f7f0: 0x0000000002886298</p>
+<p>0x000000000287f7f8: 0x0000000002893ca5
+0x000000000287f800: 0x0000000002893ca5</p>
+<hr>
+<p>Stack frame for Test.fn() @bci=8, line=6, pc=0x0000000002893ca5, methodOop=0x00000000fb077f78 (Interpreted frame)</p>
+<p>0x000000000287f808: 0x000000000287f808 expression stack bottom          &lt;- rsp
+0x000000000287f810: 0x00000000fb077f58 bytecode pointer    = 0x00000000fb077f50 (base) + 8 (bytecode index) in PermGen</p>
+<p>0x000000000287f818: 0x000000000287f860 pointer to locals
+0x000000000287f820: 0x00000000fb078360 constant pool cache = ConstantPoolCache for Test in PermGen</p>
+<p>0x000000000287f828: 0x0000000000000000 method data oop     = null
+0x000000000287f830: 0x00000000fb077f78 method oop          = Method for Test.fn()V in PermGen</p>
+<p>0x000000000287f838: 0x0000000000000000 last Java stack pointer (not set)
+0x000000000287f840: 0x000000000287f860 old stack pointer (saved rsp)</p>
+<p>0x000000000287f848: 0x000000000287f8a8 old frame pointer (saved rbp)    &lt;- rbp
+0x000000000287f850: 0x0000000002886298 return address      = in interpreter codelet &quot;return entry points&quot; [0x00000000028858b8, 0x00000000028876c0)  7688 bytes</p>
+<p>0x000000000287f858: 0x00000000fa49a740 local[1] &quot;t3&quot;       = Oop for Test2 in NewGen
+0x000000000287f860: 0x00000000fa49a720 local[0] &quot;this&quot;     = Oop for Test in NewGen</p>
+<hr>
+<p>0x000000000287f868: 0x000000000287f868</p>
+<p>0x000000000287f870: 0x00000000fb077039
+0x000000000287f878: 0x000000000287f8c0</p>
+<p>0x000000000287f880: 0x00000000fb077350
+0x000000000287f888: 0x0000000000000000</p>
+<p>0x000000000287f890: 0x00000000fb077060
+0x000000000287f898: 0x000000000287f860</p>
+<p>0x000000000287f8a0: 0x000000000287f8c0
+0x000000000287f8a8: 0x000000000287f9a0</p>
+<p>0x000000000287f8b0: 0x000000000288062a
+0x000000000287f8b8: 0x00000000fa49a720</p>
+<p>0x000000000287f8c0: 0x00000000fa498ea8
+0x000000000287f8c8: 0x0000000000000000</p>
+<p>0x000000000287f8d0: 0x0000000000000000
+0x000000000287f8d8: 0x0000000000000000
+回顾<a href="http://docs.oracle.com/javase/specs/jvms/se7/html/jvms-2.html#jvms-2.6" target="_blank">JVM规范里所描述的Java栈帧结构</a>，包括：
+[ 操作数栈  (operand stack)   ]</p>
+<p>[ 栈帧信息  (dynamic linking) ]
+[ 局部变量区 (local variables) ]
+上张<a href="http://www.valleytalk.org/2011/07/28/java-%E7%A8%8B%E5%BA%8F%E7%9A%84%E7%BC%96%E8%AF%91%EF%BC%8C%E5%8A%A0%E8%BD%BD-%E5%92%8C-%E6%89%A7%E8%A1%8C/" target="_blank">我以前做的投影稿</a>里的图：
+<img src="" alt="">
+再跟HotSpot VM的解释器所使用的栈帧布局对比看看，是不是正好能对应上？局部变量区（locals）有了，VM所需的栈帧信息也有了；执行到这个位置operand stack正好是空的所以看不到它。
+（HotSpot VM里把operand stack叫做expression stack。这是因为operand stack通常只在表达式求值过程中才有内容）
+<strong>从Test.fn()的栈帧中我们可以看到t3变量就在locals[1]的位置上。t3变量也找到了！大功告成！</strong>
+栈帧信息里具体都是些啥，以后有机会再展开讲吧。
+都看到这里了，干脆把main方法的栈帧也如法炮制分析一下。先上图：
+<img src="&quot;点击查看原始大小图片&quot;" alt="">
+然后再用文字写一次：
+Memory代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<ol>
+<li>0x000000000287f7f0: 0x0000000002886298   </li>
+<li>0x000000000287f7f8: 0x0000000002893ca5   </li>
+<li>0x000000000287f800: 0x0000000002893ca5   </li>
+<li>0x000000000287f808: 0x000000000287f808   </li>
+<li>0x000000000287f810: 0x00000000fb077f58   </li>
+<li>0x000000000287f818: 0x000000000287f860   </li>
+<li>0x000000000287f820: 0x00000000fb078360   </li>
+<li>0x000000000287f828: 0x0000000000000000   </li>
+<li>0x000000000287f830: 0x00000000fb077f78   </li>
+<li>0x000000000287f838: 0x0000000000000000   </li>
+<li>0x000000000287f840: 0x000000000287f860   </li>
+<li>0x000000000287f848: 0x000000000287f8a8   </li>
+<li>0x000000000287f850: 0x0000000002886298   </li>
+<li>0x000000000287f858: 0x00000000fa49a740   </li>
+<li><hr>
+</li>
+<li>Stack frame for Main.main(java.lang.String[]) @bci=9, line=4, pc=0x0000000002886298, methodOop=0x00000000fb077060 (Interpreted frame)  </li>
+<li>0x000000000287f860: 0x00000000fa49a720 expression stack[0] = Oop for Test in NewGen  </li>
+<li>0x000000000287f868: 0x000000000287f868 expression stack bottom  </li>
+<li>0x000000000287f870: 0x00000000fb077039 bytecode pointer    = 0x00000000fb077030 (base) + 9 (bytecode index) in PermGen  </li>
+<li>0x000000000287f878: 0x000000000287f8c0 pointer to locals  </li>
+<li>0x000000000287f880: 0x00000000fb077350 constant pool cache = ConstantPoolCache for Main in PermGen  </li>
+<li>0x000000000287f888: 0x0000000000000000 method data oop     = null  </li>
+<li>0x000000000287f890: 0x00000000fb077060 method oop          = Method for Main.main([Ljava/lang/String;)V in PermGen  </li>
+<li>0x000000000287f898: 0x000000000287f860 last Java stack pointer  </li>
+<li>0x000000000287f8a0: 0x000000000287f8c0 old stack pointer  </li>
+<li>0x000000000287f8a8: 0x000000000287f9a0 old frame pointer  </li>
+<li>0x000000000287f8b0: 0x000000000288062a return address      = in StubRoutines  </li>
+<li>0x000000000287f8b8: 0x00000000fa49a720 local[1] &quot;test&quot;     = Oop for Test in NewGen  </li>
+<li>0x000000000287f8c0: 0x00000000fa498ea8 local[0] &quot;args&quot;     = Oop for java.lang.String[] in NewGen  </li>
+<li><hr>
+</li>
+<li>0x000000000287f8c8: 0x0000000000000000   </li>
+<li>0x000000000287f8d0: 0x0000000000000000   </li>
+<li>0x000000000287f8d8: 0x0000000000000000   </li>
+</ol>
+<p>0x000000000287f7f0: 0x0000000002886298</p>
+<p>0x000000000287f7f8: 0x0000000002893ca5
+0x000000000287f800: 0x0000000002893ca5</p>
+<p>0x000000000287f808: 0x000000000287f808
+0x000000000287f810: 0x00000000fb077f58</p>
+<p>0x000000000287f818: 0x000000000287f860
+0x000000000287f820: 0x00000000fb078360</p>
+<p>0x000000000287f828: 0x0000000000000000
+0x000000000287f830: 0x00000000fb077f78</p>
+<p>0x000000000287f838: 0x0000000000000000
+0x000000000287f840: 0x000000000287f860</p>
+<p>0x000000000287f848: 0x000000000287f8a8
+0x000000000287f850: 0x0000000002886298</p>
+<h2 id="0x000000000287f858-0x00000000fa49a740">0x000000000287f858: 0x00000000fa49a740</h2>
+<p>Stack frame for Main.main(java.lang.String[]) @bci=9, line=4, pc=0x0000000002886298, methodOop=0x00000000fb077060 (Interpreted frame)
+0x000000000287f860: 0x00000000fa49a720 expression stack[0] = Oop for Test in NewGen</p>
+<p>0x000000000287f868: 0x000000000287f868 expression stack bottom
+0x000000000287f870: 0x00000000fb077039 bytecode pointer    = 0x00000000fb077030 (base) + 9 (bytecode index) in PermGen</p>
+<p>0x000000000287f878: 0x000000000287f8c0 pointer to locals
+0x000000000287f880: 0x00000000fb077350 constant pool cache = ConstantPoolCache for Main in PermGen</p>
+<p>0x000000000287f888: 0x0000000000000000 method data oop     = null
+0x000000000287f890: 0x00000000fb077060 method oop          = Method for Main.main([Ljava/lang/String;)V in PermGen</p>
+<p>0x000000000287f898: 0x000000000287f860 last Java stack pointer
+0x000000000287f8a0: 0x000000000287f8c0 old stack pointer</p>
+<p>0x000000000287f8a8: 0x000000000287f9a0 old frame pointer
+0x000000000287f8b0: 0x000000000288062a return address      = in StubRoutines</p>
+<p>0x000000000287f8b8: 0x00000000fa49a720 local[1] &quot;test&quot;     = Oop for Test in NewGen
+0x000000000287f8c0: 0x00000000fa498ea8 local[0] &quot;args&quot;     = Oop for java.lang.String[] in NewGen</p>
+<hr>
+<p>0x000000000287f8c8: 0x0000000000000000</p>
+<p>0x000000000287f8d0: 0x0000000000000000
+0x000000000287f8d8: 0x0000000000000000
+main的栈帧的operand stack就不是空的了，有一个元素，用来传递参数给其调用的Test.fn()方法（作为“this”）。
+仔细的同学可能发现了，0x000000000287f860这个地址前面不是说是调用Test.fn()产生的栈帧么？怎么这里又变成调用main()方法的栈帧的一部分了呢？
+其实栈帧直接可以有重叠：（再上一张以前做的投影稿里的图）
+<img src="&quot;点击查看原始大小图片&quot;" alt="">
+这样可以减少传递参数所需的数据拷贝，也节省了空间。
+回到HSDB，我们换个方式来把t3变量找出来。这里就需要编译Test.java时给的-g参数所生成的LocalVariableTable的信息了：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<ol>
+<li>hsdb&gt; jseval &quot;ts = jvm.threads&quot;  </li>
+<li>[Thread (address=0x00000000fa48fb38, name=Service Thread), Thread (address=0x00000000fa48fa18, name=C2 CompilerThread1), Thread (address=0x00000000fa48f8f8, name=C2 CompilerThread0), Thread (address=0x00000000fa49d178, name=JDWP Command Reader), Thread (address=0x00000000fa48f820, name=JDWP Event Helper Thread), Thread (address=0x00000000fa48f6d8, name=JDWP Transport Listener: dt_shmem), Thread (address=0x00000000fa48dc88, name=Attach Listener), Thread (address=0x00000000fa48db68, name=Signal Dispatcher), Thread (address=0x00000000fa405828, name=Finalizer), Thread (address=0x00000000fa4053a0, name=Reference Handler), Thread (address=0x00000000fa404860, name=main)]   </li>
+<li>hsdb&gt; jseval &quot;t = ts[ts.length - 1]&quot;  </li>
+<li>Thread (address=0x00000000fa404860, name=main)   </li>
+<li>hsdb&gt; jseval &quot;fs = t.frames&quot;  </li>
+<li>[Frame (method=Test.fn(), bci=8, line=6), Frame (method=Main.main(java.lang.String[]), bci=9, line=4)]   </li>
+<li>hsdb&gt; jseval &quot;f0 = fs[0]&quot;  </li>
+<li>Frame (method=Test.fn(), bci=8, line=6)   </li>
+<li>hsdb&gt; jseval &quot;f1 = fs[1]&quot;  </li>
+<li>Frame (method=Main.main(java.lang.String[]), bci=9, line=4)   </li>
+<li>hsdb&gt; jseval &quot;f0.locals&quot;  </li>
+<li>{t3=Object 0x00000000fa49a740}   </li>
+<li>hsdb&gt;   </li>
+</ol>
+<p>hsdb&gt; jseval &quot;ts = jvm.threads&quot;</p>
+<p>[Thread (address=0x00000000fa48fb38, name=Service Thread), Thread (address=0x00000000fa48fa18, name=C2 CompilerThread1), Thread (address=0x00000000fa48f8f8, name=C2 CompilerThread0), Thread (address=0x00000000fa49d178, name=JDWP Command Reader), Thread (address=0x00000000fa48f820, name=JDWP Event Helper Thread), Thread (address=0x00000000fa48f6d8, name=JDWP Transport Listener: dt_shmem), Thread (address=0x00000000fa48dc88, name=Attach Listener), Thread (address=0x00000000fa48db68, name=Signal Dispatcher), Thread (address=0x00000000fa405828, name=Finalizer), Thread (address=0x00000000fa4053a0, name=Reference Handler), Thread (address=0x00000000fa404860, name=main)]
+hsdb&gt; jseval &quot;t = ts[ts.length - 1]&quot;</p>
+<p>Thread (address=0x00000000fa404860, name=main)
+hsdb&gt; jseval &quot;fs = t.frames&quot;</p>
+<p>[Frame (method=Test.fn(), bci=8, line=6), Frame (method=Main.main(java.lang.String[]), bci=9, line=4)]
+hsdb&gt; jseval &quot;f0 = fs[0]&quot;</p>
+<p>Frame (method=Test.fn(), bci=8, line=6)
+hsdb&gt; jseval &quot;f1 = fs[1]&quot;</p>
+<p>Frame (method=Main.main(java.lang.String[]), bci=9, line=4)
+hsdb&gt; jseval &quot;f0.locals&quot;</p>
+<p>{t3=Object 0x00000000fa49a740}</p>
+<h1 id="hsdb-">hsdb&gt;</h1>
+<p>上面讲栈帧布局的时候出现了“bytecode pointer”字眼。既然之前被不少好奇的同学问过“JVM里字节码存在哪里”，这里就一并回答掉好了。
+强调一点：“字节码”只是元数据的一部分。它只负责描述运行逻辑，而其它信息像是类型名、成员的个数、类型、名字等等都<strong>不是字节码</strong>。在Class文件里是如此，到运行时在JVM里仍然是如此。
+HotSpot VM里有一套对象专门用来存放元数据，它们包括：</p>
+<ul>
+<li>Klass系对象。元数据的最主要入口。用于描述类型的总体信息</li>
+<li>ConstantPool/ConstantPoolCache对象。每个InstanceKlass关联着一个ConstantPool，作为该类型的运行时常量池。这个常量池的结构跟Class文件里的常量池基本上是对应的。可以参考<a href="http://hllvm.group.iteye.com/group/topic/26412#post-187861" target="_blank">我以前的一个回帖</a>。ConstantPoolCache主要用于存储某些字节码指令所需的解析（resolve）好的常量项，例如给[get|put]static、[get|put]field、invoke[static|special|virtual|interface|dynamic]等指令对应的常量池项用。</li>
+<li>Method对象，用来描述Java方法的总体信息，像是方法入口地址、调用/循环计数器等等</li>
+<li>ConstMethod对象，记录着Java方法的不变的描述信息，包括方法名、方法的访问修饰符、<strong>字节码</strong>、行号表、局部变量表等等。注意了，字节码就嵌在这ConstMethod对象里面。</li>
+<li>Symbol对象，对应Class文件常量池里的JVM_CONSTANT_Utf8类型的常量。有一个VM全局的SymbolTable管理着所有Symbol。Symbol由所有Java类所共享。</li>
+<li>MethodData对象，记录着Java方法执行时的profile信息，例如某方法里的某个字节码之类是否从来没遇到过null，某个条件跳转是否总是走同一个分支，等等。这些信息在解释器（多层编译模式下也在低层的编译生成的代码里）收集，然后供给HotSpot Server Compiler用于做激进优化。
+在PermGen移除前，上述元数据对象都在PermGen里，直接被GC管理着。
+JDK8彻底移除PermGen后，这些对象被挪到GC堆外的一块叫做Metaspace的空间里做特殊管理，仍然间接的受GC管理。
+介绍了背景，让我们回到HSDB里。前面不是说“bytecode pointer (bcp)”嘛，从背景介绍可以知道字节码存在ConstMethod对象里，那就让我们用Test.fn()栈帧里存的bcp来验证一下是否真的如此。
+还是用whatis命令：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></li>
+</ul>
+<ol>
+<li>hsdb&gt; whatis 0x00000000fb077f58  </li>
+<li>Address 0x00000000fb077f58: In perm generation   perm [0x00000000fae00000,0x00000000fb078898,0x00000000fc2c0000) space capacity = 21757952, 11.90770160721009 used   </li>
+</ol>
+<p>hsdb&gt; whatis 0x00000000fb077f58</p>
+<p>Address 0x00000000fb077f58: In perm generation   perm <a href="&quot;复制代码&quot;">0x00000000fae00000,0x00000000fb078898,0x00000000fc2c0000) space capacity = 21757952, 11.90770160721009 used
+这地址确实在PermGen里了。那么inspect一下看看？
+Hsdb代码 [<img src="" alt="复制代码"></a></p>
+<ol>
+<li>hsdb&gt; inspect 0x00000000fb077f58  </li>
+<li>Error: sun.jvm.hotspot.debugger.UnalignedAddressException: 100011  </li>
+</ol>
+<p>hsdb&gt; inspect 0x00000000fb077f58</p>
+<p>Error: sun.jvm.hotspot.debugger.UnalignedAddressException: 100011
+呃，这样不行。inspect命令只能接受对象的起始地址，但字节码是嵌在ConstMethod对象中间的。
+那换条路子。栈帧里还有method oop，指向该栈帧对应的Method对象。先从它入手：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<ol>
+<li>hsdb&gt; inspect 0x00000000fb077f78  </li>
+<li>instance of Method fn()V@0x00000000fb077f78 @ 0x00000000fb077f78 @ 0x00000000fb077f78 (size = 136)  </li>
+<li>_mark: 1  </li>
+<li>_constMethod: ConstMethod fn()V@0x00000000fb077f08 @ 0x00000000fb077f08 Oop @ 0x00000000fb077f08  </li>
+<li>_constants: ConstantPool for Test @ 0x00000000fb077c68 Oop @ 0x00000000fb077c68  </li>
+<li>_method_size: 17  </li>
+<li>_max_stack: 2  </li>
+<li>_max_locals: 2  </li>
+<li>_size_of_parameters: 1  </li>
+<li>_access_flags: 1  </li>
+</ol>
+<p>hsdb&gt; inspect 0x00000000fb077f78</p>
+<p>instance of Method fn()V@0x00000000fb077f78 @ 0x00000000fb077f78 @ 0x00000000fb077f78 (size = 136)
+_mark: 1</p>
+<p>_constMethod: ConstMethod fn()V@0x00000000fb077f08 @ 0x00000000fb077f08 Oop @ 0x00000000fb077f08
+_constants: ConstantPool for Test @ 0x00000000fb077c68 Oop @ 0x00000000fb077c68</p>
+<p>_method_size: 17
+_max_stack: 2</p>
+<p>_max_locals: 2
+_size_of_parameters: 1</p>
+<p>_access_flags: 1
+这样就找到了Test.fn()的Method对象，看到里面的_constMethod字段所指向的ConstMethod对象：
+Hsdb代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<ol>
+<li>hsdb&gt; inspect 0x00000000fb077f08  </li>
+<li>instance of ConstMethod fn()V@0x00000000fb077f08 @ 0x00000000fb077f08 @ 0x00000000fb077f08 (size = 112)  </li>
+<li>_mark: 1  </li>
+<li>_method: Method fn()V@0x00000000fb077f78 @ 0x00000000fb077f78 Oop @ 0x00000000fb077f78  </li>
+<li>_exception_table: [I @ 0x00000000fae01d50 Oop for [I @ 0x00000000fae01d50  </li>
+<li>_constMethod_size: 14  </li>
+<li>_flags: 5  </li>
+<li>_code_size: 9  </li>
+<li>_name_index: 18  </li>
+<li>_signature_index: 12  </li>
+<li>_generic_signature_index: 0  </li>
+<li>_code_size: 9  </li>
+</ol>
+<p>hsdb&gt; inspect 0x00000000fb077f08</p>
+<p>instance of ConstMethod fn()V@0x00000000fb077f08 @ 0x00000000fb077f08 @ 0x00000000fb077f08 (size = 112)
+_mark: 1</p>
+<p>_method: Method fn()V@0x00000000fb077f78 @ 0x00000000fb077f78 Oop @ 0x00000000fb077f78
+_exception_table: [I @ 0x00000000fae01d50 Oop for [I @ 0x00000000fae01d50</p>
+<p>_constMethod_size: 14
+_flags: 5</p>
+<p>_code_size: 9
+_name_index: 18</p>
+<p>_signature_index: 12
+_generic_signature_index: 0</p>
+<p>_code_size: 9
+这个ConstMethod对象从0x00000000fb077f08开始，长度112字节，也就是这个对象的范围是<a href="&quot;复制代码&quot;">0x00000000fb077f08, 0x00000000fb077f78)。bcp指向0x00000000fb077f58，确实在这个ConstMethod范围内。
+通过经验可以知道实际上这里字节码的起始地址是0x00000000fb077f50。通过ConstMethod的_code_size字段可以知道该方法的字节码有9字节。找出来用mem命令看看内存里的数据：
+Hsdb代码 [<img src="" alt="复制代码"></a></p>
+<ol>
+<li>hsdb&gt; mem 0x00000000fb077f50 2  </li>
+<li>0x00000000fb077f50: 0x4c0001b7590200ca   </li>
+<li>0x00000000fb077f58: 0x00000000004105b1   </li>
+</ol>
+<p>hsdb&gt; mem 0x00000000fb077f50 2</p>
+<p>0x00000000fb077f50: 0x4c0001b7590200ca
+0x00000000fb077f58: 0x00000000004105b1
+这串数字是什么东西呢？展开来写清楚一点就是：
+Memory代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<ol>
+<li>0x00000000fb077f50:  bb 00 02  new <cp index /#2> [Class Test2]  </li>
+<li>0x00000000fb077f53:  59        dup  </li>
+<li>0x00000000fb077f54:  b7 01 00  invokespecial <cp cache index /#1> [Method Test2.<init>()V]  </li>
+<li>0x00000000fb077f57:  4c        astore_1  </li>
+<li>0x00000000fb077f58:  b1        return  </li>
+</ol>
+<p>0x00000000fb077f50:  bb 00 02  new <cp index /#2> [Class Test2]</p>
+<p>0x00000000fb077f53:  59        dup
+0x00000000fb077f54:  b7 01 00  invokespecial <cp cache index /#1> [Method Test2.<init>()V]</p>
+<p>0x00000000fb077f57:  4c        astore_1
+0x00000000fb077f58:  b1        return
+眼尖的同学要吐槽了：在0x00000000fb077f50的字节不是0xca么，怎么变成0xbb了？
+其实0xca是JVM规范里有描述的一个可选字节码指令，<a href="http://docs.oracle.com/javase/specs/jvms/se7/html/jvms-6.html#jvms-6.2" target="_blank">breakpoint</a>
+Memory代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<ol>
+<li>0x00000000fb077f50:  ca 00 02  breakpoint // 00 02 not used  </li>
+</ol>
+<p>0x00000000fb077f50:  ca 00 02  breakpoint // 00 02 not used
+还记得本文的实验一开始用了jdb在Test.fn()的入口设置了断点吗？这就是结果——入口处的字节码指令被改写为breakpoint了。当然，原本的字节码指令也还在别的地方存着，等断点解除之后这个位置就会被恢复成原本的0xbb指令。
+把ConstMethod里存的字节码跟Class文件里存的比较一下看看。用<a href="http://docs.oracle.com/javase/7/docs/technotes/tools/windows/javap.html" target="_blank">javap</a>工具来看Class文件的内容：
+Javap代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<ol>
+<li>public void fn();  </li>
+<li>Code:  </li>
+<li>stack=2, locals=2, args_size=1  </li>
+<li>0:  bb 00 02  new           /#2                  // class Test2  </li>
+<li>3:  59        dup  </li>
+<li>4:  b7 00 03  invokespecial /#3                  // Method Test2.&quot;<init>&quot;:()V  </li>
+<li>7:  4c        astore_1  </li>
+<li><p>8:  b1        return  </p>
+<p>public void fn();</p>
+<p>Code:
+stack=2, locals=2, args_size=1</p>
+<p>0:  bb 00 02  new           /#2                  // class Test2
+3:  59        dup</p>
+<p>4:  b7 00 03  invokespecial /#3                  // Method Test2.&quot;<init>&quot;:()V
+7:  4c        astore_1</p>
+<p>8:  b1        return
+几乎一模一样。唯一的不同也是个有趣的小细节：invokespecial的参数的常量池号码不一样了。HotSpot VM执行new指令的时候用的还是Class文件里的常量池号和字节序。而在执行invokespecial时，光是ConstantPool里的的常量项不够地方放解析（resolve）出来的信息，所以把这些信息放在ConstantPoolCache里，然后也把invokespecial指令里的参数改写过来，顺带变成了平台相关的字节序。
+同样也看看Main.main()方法。内存内容：
+Memory代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+</li>
+<li><p>hsdb&gt; mem 0x00000000fb077030 2  </p>
+</li>
+<li>0x00000000fb077030: 0x4c0001b7590200bb   </li>
+<li>0x00000000fb077038: 0x214103b10002b62b   </li>
+</ol>
+<p>hsdb&gt; mem 0x00000000fb077030 2</p>
+<p>0x00000000fb077030: 0x4c0001b7590200bb
+0x00000000fb077038: 0x214103b10002b62b
+展开来注解：
+Memory代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<ol>
+<li>0x00000000fb077030:  bb 00 02  new <cp index /#2> [Class Test]  </li>
+<li>0x00000000fb077033:  59        dup  </li>
+<li>0x00000000fb077034:  b7 01 00  invokespecial <cp cache index /#1> [Method Test.<init>()V]  </li>
+<li>0x00000000fb077037:  4c        astore_1  </li>
+<li>0x00000000fb077038:  2b        aload_1  </li>
+<li>0x00000000fb077039:  b6 02 00  invokevirtual <cp cache index /#2> [Method Test.fn()V]  </li>
+<li>0x00000000fb07703c:  b1        return  </li>
+</ol>
+<p>0x00000000fb077030:  bb 00 02  new <cp index /#2> [Class Test]</p>
+<p>0x00000000fb077033:  59        dup
+0x00000000fb077034:  b7 01 00  invokespecial <cp cache index /#1> [Method Test.<init>()V]</p>
+<p>0x00000000fb077037:  4c        astore_1
+0x00000000fb077038:  2b        aload_1</p>
+<p>0x00000000fb077039:  b6 02 00  invokevirtual <cp cache index /#2> [Method Test.fn()V]
+0x00000000fb07703c:  b1        return
+对应的javap输出：
+Javap代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<ol>
+<li>public static void main(java.lang.String[]);  </li>
+<li>Code:  </li>
+<li>stack=2, locals=2, args_size=1  </li>
+<li>0:  bb 00 02  new           /#2                  // class Test  </li>
+<li>3:  59        dup  </li>
+<li>4:  b7 00 03  invokespecial /#3                  // Method Test.&quot;<init>&quot;:()V  </li>
+<li>7:  4c        astore_1  </li>
+<li>8:  2b        aload_1  </li>
+<li>9:  b6 00 04  invokevirtual /#4                  // Method Test.fn:()V  </li>
+<li><p>12:  b1        return  </p>
+<p>public static void main(java.lang.String[]);</p>
+<p>Code:
+stack=2, locals=2, args_size=1</p>
+<p>0:  bb 00 02  new           /#2                  // class Test
+3:  59        dup</p>
+<p>4:  b7 00 03  invokespecial /#3                  // Method Test.&quot;<init>&quot;:()V
+7:  4c        astore_1</p>
+<p>8:  2b        aload_1
+9:  b6 00 04  invokevirtual /#4                  // Method Test.fn:()V</p>
+<p>12:  b1        return
+好，今天就写到这里吧～</p>
+</li>
+</ol>
 
       
     </div>
@@ -427,86 +1683,7 @@ java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:ParallelGCThreads=20 <strong>-XX:+U
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（七）-典型配置举例1/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（七）-典型配置举例1" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（九）-新一代的垃圾回收算法/">JVM调优总结（九）</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（九）-新一代的垃圾回收算法/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="jvm-">JVM调优总结（九）-新一代的垃圾回收算法</h1>
-<h2 id="-">垃圾回收的瓶颈</h2>
-<pre><code>传统分代垃圾回收方式，已经在一定程度上把垃圾回收给应用带来的负担降到了最小，把应用的吞吐量推到了一个极限。但是他无法解决的一个问题，就是Full GC所带来的应用暂停。在一些对实时性要求很高的应用场景下，GC暂停所带来的请求堆积和请求失败是无法接受的。这类应用可能要求请求的返回时间在几百甚至几十毫秒以内，如果分代垃圾回收方式要达到这个指标，只能把最大堆的设置限制在一个相对较小范围内，但是这样有限制了应用本身的处理能力，同样也是不可接收的。
-
-分代垃圾回收方式确实也考虑了实时性要求而提供了并发回收器，支持最大暂停时间的设置，但是受限于分代垃圾回收的内存划分模型，其效果也不是很理想。
-
-为了达到实时性的要求（其实Java语言最初的设计也是在嵌入式系统上的），一种新垃圾回收方式呼之欲出，它既支持短的暂停时间，又支持大的内存空间分配。可以很好的解决传统分代方式带来的问题。
-</code></pre><h2 id="-">增量收集的演进</h2>
-<pre><code>增量收集的方式在理论上可以解决传统分代方式带来的问题。增量收集把对堆空间划分成一系列内存块，使用时，先使用其中一部分（不会全部用完），垃圾收集时把之前用掉的部分中的存活对象再放到后面没有用的空间中，这样可以实现一直边使用边收集的效果，避免了传统分代方式整个使用完了再暂停的回收的情况。
-
-当然，传统分代收集方式也提供了并发收集，但是他有一个很致命的地方，就是把整个堆做为一个内存块，这样一方面会造成碎片（无法压缩），另一方面他的每次收集都是对整个堆的收集，无法进行选择，在暂停时间的控制上还是很弱。而增量方式，通过内存空间的分块，恰恰可以解决上面问题。
-</code></pre><h2 id="garbage-firest-g1-">Garbage Firest（G1）</h2>
-<p>这部分的内容主要参考<a href="http://www.blogjava.net/BlueDavy/archive/2009/03/11/259230.html" target="_blank">这里</a>，这篇文章算是对G1算法论文的解读。我也没加什么东西了。</p>
-<p><strong>目标</strong></p>
-<p>从设计目标看G1完全是为了大型应用而准备的。
-<strong>支持很大的堆</strong></p>
-<p><strong>高吞吐量</strong></p>
-<p>  --支持多CPU和垃圾回收线程</p>
-<p>  --在主线程暂停的情况下，使用并行收集</p>
-<p>  --在主线程运行的情况下，使用并发收集</p>
-<p><strong>实时目标：</strong>可配置在N毫秒内最多只占用M毫秒的时间进行垃圾回收</p>
-<p>当然G1要达到实时性的要求，相对传统的分代回收算法，在性能上会有一些损失。</p>
-<p><strong>算法详解</strong></p>
-<p><img src="" alt=""></p>
-<pre><code>G1可谓博采众家之长，力求到达一种完美。他吸取了增量收集优点，把整个堆划分为一个一个等大小的区域（region）。内存的回收和划分都以region为单位；同时，他也吸取了CMS的特点，把这个垃圾回收过程分为几个阶段，分散一个垃圾回收过程；而且，G1也认同分代垃圾回收的思想，认为不同对象的生命周期不同，可以采取不同收集方式，因此，它也支持分代的垃圾回收。为了达到对回收时间的可预计性，G1在扫描了region以后，对其中的活跃对象的大小进行排序，首先会收集那些活跃对象小的region，以便快速回收空间（要复制的活跃对象少了），因为活跃对象小，里面可以认为多数都是垃圾，所以这种方式被称为Garbage First（G1）的垃圾回收算法，即：垃圾优先的回收。
-</code></pre><p>回收步骤：</p>
-<p><strong>初始标记（Initial Marking）</strong></p>
-<pre><code>G1对于每个region都保存了两个标识用的bitmap，一个为previous marking bitmap，一个为next marking bitmap，bitmap中包含了一个bit的地址信息来指向对象的起始点。
-
-开始Initial Marking之前，首先并发的清空next marking bitmap，然后停止所有应用线程，并扫描标识出每个region中root可直接访问到的对象，将region中top的值放入next top at mark start（TAMS）中，之后恢复所有应用线程。
-
-触发这个步骤执行的条件为：
-G1定义了一个JVM Heap大小的百分比的阀值，称为h，另外还有一个H，H的值为(1-h)/*Heap Size，目前这个h的值是固定的，后续G1也许会将其改为动态的，根据jvm的运行情况来动态的调整，在分代方式下，G1还定义了一个u以及soft limit，soft limit的值为H-u/*Heap Size，当Heap中使用的内存超过了soft limit值时，就会在一次clean up执行完毕后在应用允许的GC暂停时间范围内尽快的执行此步骤；
-
-在pure方式下，G1将marking与clean up组成一个环，以便clean up能充分的使用marking的信息，当clean up开始回收时，首先回收能够带来最多内存空间的regions，当经过多次的clean up，回收到没多少空间的regions时，G1重新初始化一个新的marking与clean up构成的环。
-</code></pre><p><strong>并发标记（Concurrent Marking）</strong></p>
-<pre><code>按照之前Initial Marking扫描到的对象进行遍历，以识别这些对象的下层对象的活跃状态，对于在此期间应用线程并发修改的对象的以来关系则记录到remembered set logs中，新创建的对象则放入比top值更高的地址区间中，这些新创建的对象默认状态即为活跃的，同时修改top值。
-</code></pre><p><strong>最终标记暂停（Final Marking Pause）</strong></p>
-<pre><code>当应用线程的remembered set logs未满时，是不会放入filled RS buffers中的，在这样的情况下，这些remebered set logs中记录的card的修改就会被更新了，因此需要这一步，这一步要做的就是把应用线程中存在的remembered set logs的内容进行处理，并相应的修改remembered sets，这一步需要暂停应用，并行的运行。
-</code></pre><p><strong>存活对象计算及清除（Live Data Counting and Cleanup）</strong></p>
-<pre><code>值得注意的是，在G1中，并不是说Final Marking Pause执行完了，就肯定执行Cleanup这步的，由于这步需要暂停应用，G1为了能够达到准实时的要求，需要根据用户指定的最大的GC造成的暂停时间来合理的规划什么时候执行Cleanup，另外还有几种情况也是会触发这个步骤的执行的：
-G1采用的是复制方法来进行收集，必须保证每次的”to space”的空间都是够的，因此G1采取的策略是当已经使用的内存空间达到了H时，就执行Cleanup这个步骤；
-
-对于full-young和partially-young的分代模式的G1而言，则还有情况会触发Cleanup的执行，full-young模式下，G1根据应用可接受的暂停时间、回收young regions需要消耗的时间来估算出一个yound regions的数量值，当JVM中分配对象的young regions的数量达到此值时，Cleanup就会执行；partially-young模式下，则会尽量频繁的在应用可接受的暂停时间范围内执行Cleanup，并最大限度的去执行non-young regions的Cleanup。
-</code></pre><h2 id="-">展望</h2>
-<pre><code>以后JVM的调优或许跟多需要针对G1算法进行调优了。
-</code></pre>
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（九）-新一代的垃圾回收算法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（九）-新一代的垃圾回收算法" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--借HSDB来探索HotSpotVM的运行时数据/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--借HSDB来探索HotSpotVM的运行时数据" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -586,7 +1763,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:01:36</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:33:41</em></span></div>
 </div>
 <div class="clearfix"></div>
 
