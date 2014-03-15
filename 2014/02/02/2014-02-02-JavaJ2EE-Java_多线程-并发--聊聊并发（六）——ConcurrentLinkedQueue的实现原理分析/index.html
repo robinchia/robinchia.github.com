@@ -1,0 +1,628 @@
+
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析 | It so life</title>
+<meta name="author" content="RobinChia">
+
+<meta name="description" content="聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析分享到
+
+一键分享
+QQ空间
+新浪微博
+百度搜藏
+人人网
+腾讯微博
+百度相册
+开心网
+腾讯朋友
+百度贴吧
+豆瓣网
+搜狐微博
+百度新首页">
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+<meta property="og:title" content="聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析"/>
+<meta property="og:site_name" content="It so life"/>
+
+<!--[if IE]><style>.testIE.IE{display:inline;}</style><![endif]-->
+<!--[if lte IE 7]><link rel="stylesheet" href="/css/ie7.css" type="text/css"><![endif]-->
+<!--[if (lt IE 9)&(gt IE 7)]><style>.testIE.IE8{display:inline;}</style><![endif]-->
+<!--[if gt IE 8]><style>.testIE.IE9{display:inline;}</style><![endif]-->
+
+<link href="/favicon.png" rel="icon">
+<link rel="alternate" href="/atom.xml" title="It so life Feed" type="application/atom+xml">
+
+<link rel="stylesheet" href="http://cdn.staticfile.org/twitter-bootstrap/3.1.0/css/bootstrap.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/font-awesome/4.0.3/css/font-awesome.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/prettify/r298/prettify.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/fancybox/2.1.5/jquery.fancybox.min.css" type="text/css">
+<link rel="stylesheet" href="/css/style.css" type="text/css">
+<!--[if lt IE 9]>
+   <style>article,aside,dialog,footer,header,section,footer,nav,figure,menu{display:block}</style>
+   <script src="http://cdn.staticfile.org/html5shiv/r29/html5.min.js"></script>
+   <script src="http://cdn.staticfile.org/respond.js/1.4.2/respond.min.js"></script>
+<link href="http://cdn.staticfile.org/respond.js/1.4.2/respond-proxy.html" id="respond-proxy" rel="respond-proxy" />
+<link href="/js/respond.proxy.gif" id="respond-redirect" rel="respond-redirect" />
+<script src="/js/respond.proxy.js"></script>
+   <script src="http://cdn.bootcss.com/selectivizr/1.0.2/selectivizr-min.js"></script>
+<![endif]-->
+<script type="text/javascript">
+function loadjs(c,d){var a=document.createElement("script");a.async=!0;a.type="text/javascript";a.src=c;a.charset=d||"gbk";(document.getElementsByTagName("HEAD")[0]||document.getElementsByTagName("BODY")[0]).appendChild(a)};
+var _protocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+var _js2load = [];
+</script>
+
+</head>
+<body>
+      <header id="header" class="container"><nav id="main-nav" class="navbar navbar-default navbar-fixed-top " role="navigation">
+  <div class="container">
+    <div class="navbar-header">
+    <button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
+      <span class="sr-only">Toggle navigation</span>
+      <span class="icon-bar"></span>
+      <span class="icon-bar"></span>
+      <span class="icon-bar"></span>
+    </button>
+    <a class="navbar-brand" href="/">It so life</a>
+    </div>
+    <div  class="collapse navbar-collapse">
+      <ul  class="nav navbar-nav">
+  
+        <li><a href="/" title="Home">Home</a></li>      
+        <li><a href="/about/" title="About">About</a></li>      
+        <li><a href="/archives/" title="Archives">Archives</a></li>      
+      <li class='dropdown'>
+        <a class='dropdown-toggle' data-toggle='dropdown' href='#'>website<b class='caret'></b></a>
+        <ul class='dropdown-menu pure-menu-selected'>
+    
+          <li><a href="//groups.google.com/forum/#!forum/pongba" title="TopLanguage">TopLanguage</a></li>    
+          <li><a href="//itpub.net/" title="ITPub">ITPub</a></li>    
+          <li><a href="//blog.jobbole.com/" title="Bole">Bole</a></li>    
+          <li><a href="//nosql-database.org/" title="nosql">nosql</a></li>    
+          <li><a href="//gitimmersion.googol.im/" title="Git">Git</a></li>    
+        </ul>
+      </li>
+    
+      </ul>
+      <ul class="nav navbar-nav navbar-right">
+      
+        <li><a href="/atom.xml">RSS</a></li>
+      
+      
+        <li><a href="https://twitter.com/robinchia">twitter</a></li>
+      
+      
+      
+      
+        <li><a href="https://github.com/robinchia">github</a></li>
+      
+      </ul>
+    </div>
+  </div>
+</nav>
+<div class="clearfix"></div>
+</header>
+  <div id='content' class="container">
+     <div class="page-header-wrapper">
+      <!--[if lt IE 9]><div class="alert alert-warning alert-dismissable"><button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button><strong>提示:</strong>您的浏览器版本太低了,建议升级到 <strong><a href="http://windows.microsoft.com/zh-cn/internet-explorer/download-ie" title="IE9">IE9</a></strong> 以上,本站使用<a href="https://www.google.com/intl/zh-CN/chrome/">Chrome浏览器</a>可以获得最好的显示效果.</div><![endif]-->
+      <div class="page-header"><h1 align="center"><big>It so life</big> </h1>
+        <h5 align="center"><big>love as life</big></h5>
+      </div>
+     </div>
+     <div class="row">
+       <div id="main-col" class="alignleft col-sx-12 col-sm-8 col-md-9 col-lg-9">
+      <section id='header_widget'></section>
+          <div id="wrapper"><article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title">聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析</h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    <section id='before_content_widget'></section>
+    <div class="entry">
+      
+        <h1 id="-concurrentlinkedqueue-">聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析</h1>
+<h3 id="-">分享到</h3>
+<ul>
+<li><a href="">一键分享</a></li>
+<li><a href="">QQ空间</a></li>
+<li><a href="">新浪微博</a></li>
+<li><a href="">百度搜藏</a></li>
+<li><a href="">人人网</a></li>
+<li><a href="">腾讯微博</a></li>
+<li><a href="">百度相册</a></li>
+<li><a href="">开心网</a></li>
+<li><a href="">腾讯朋友</a></li>
+<li><a href="">百度贴吧</a></li>
+<li><a href="">豆瓣网</a></li>
+<li><a href="">搜狐微博</a></li>
+<li><a href="">百度新首页</a></li>
+<li><a href="">QQ好友</a></li>
+<li><a href="">和讯微博</a></li>
+<li><a href="">更多...</a></li>
+</ul>
+<p><a href="">百度分享</a></p>
+<ul>
+<li><a href="http://www.infoq.com/cn/aboutus" title="关于我们" target="_blank">关于我们</a></li>
+<li><p><a href="http://www.infoq.com/cn/contribute" title="让大家在InfoQ上听见你的声音" target="_blank">让大家在InfoQ上听见你的声音</a></p>
+</li>
+<li><p>欢迎关注我们的：</p>
+</li>
+<li><a href="http://e.weibo.com/infoqchina" target="_blank"><img src="" alt=""></a></li>
+<li><a href="http://www.infoq.com/cn/news/2013/02/infoq-wechat" target="_blank"><img src="" alt=""></a></li>
+<li><a href="http://www.infoq.com/cn/rss/rss.action?token=J6EBu2hcpyEuMs9msdo8GyNCZTcWG7pm" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<h1 id="-concurrentlinkedqueue-">聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析</h1>
+<p>作者 <a href="http://www.infoq.com/cn/author/%E6%96%B9%E8%85%BE%E9%A3%9E" target="_blank">方腾飞</a> 发布于 一月 09, 2013 <em>|</em> <a href="">5 评论</a></p>
+<h2 id="1-">1. 引言</h2>
+<p>在并发编程中我们有时候需要使用线程安全的队列。如果我们要实现一个线程安全的队列有两种实现方式：一种是使用阻塞算法，另一种是使用非阻塞算法。使用阻塞算法的队列可以用一个锁（入队和出队用同一把锁）或两个锁（入队和出队用不同的锁）等方式来实现，而非阻塞的实现方式则可以使用循环CAS的方式来实现，本文让我们一起来研究下Doug Lea是如何使用非阻塞的方式来实现线程安全队列ConcurrentLinkedQueue的，相信从大师身上我们能学到不少并发编程的技巧。</p>
+<h2 id="2-concurrentlinkedqueue-">2. ConcurrentLinkedQueue的介绍</h2>
+<p>ConcurrentLinkedQueue是一个基于链接节点的无界线程安全队列，它采用先进先出的规则对节点进行排序，当我们添加一个元素的时候，它会添加到队列的尾部，当我们获取一个元素时，它会返回队列头部的元素。它采用了“wait－free”算法来实现，该算法在Michael &amp; Scott算法上进行了一些修改, Michael &amp; Scott算法的详细信息可以参见<a href="http://www.cs.rochester.edu/u/michael/PODC96.html" target="_blank">参考资料一</a>。</p>
+<h2 id="3-concurrentlinkedqueue-">3. ConcurrentLinkedQueue的结构</h2>
+<p>我们通过ConcurrentLinkedQueue的类图来分析一下它的结构。</p>
+<p><img src="" alt=""></p>
+<p>（图1）</p>
+<p>ConcurrentLinkedQueue由head节点和tair节点组成，每个节点（Node）由节点元素（item）和指向下一个节点的引用(next)组成，节点与节点之间就是通过这个next关联起来，从而组成一张链表结构的队列。默认情况下head节点存储的元素为空，tair节点等于head节点。
+private transient volatile Node tail = head;</p>
+<h2 id="4-">4. 入队列</h2>
+<p><strong>入队列就是将入队节点添加到队列的尾部</strong>。为了方便理解入队时队列的变化，以及head节点和tair节点的变化，每添加一个节点我就做了一个队列的快照图。</p>
+<p><img src="" alt=""></p>
+<p>（图二）</p>
+<ul>
+<li>第一步添加元素1。队列更新head节点的next节点为元素1节点。又因为tail节点默认情况下等于head节点，所以它们的next节点都指向元素1节点。</li>
+<li>第二步添加元素2。队列首先设置元素1节点的next节点为元素2节点，然后更新tail节点指向元素2节点。</li>
+<li>第三步添加元素3，设置tail节点的next节点为元素3节点。</li>
+<li>第四步添加元素4，设置元素3的next节点为元素4节点，然后将tail节点指向元素4节点。</li>
+</ul>
+<p>通过debug入队过程并观察head节点和tail节点的变化，发现入队主要做两件事情，第一是将入队节点设置成当前队列尾节点的下一个节点。第二是更新tail节点，如果tail节点的next节点不为空，则将入队节点设置成tail节点，如果tail节点的next节点为空，则将入队节点设置成tail的next节点，所以tail节点不总是尾节点，理解这一点对于我们研究源码会非常有帮助。</p>
+<p>上面的分析让我们从单线程入队的角度来理解入队过程，但是多个线程同时进行入队情况就变得更加复杂，因为可能会出现其他线程插队的情况。如果有一个线程正在入队，那么它必须先获取尾节点，然后设置尾节点的下一个节点为入队节点，但这时可能有另外一个线程插队了，那么队列的尾节点就会发生变化，这时当前线程要暂停入队操作，然后重新获取尾节点。让我们再通过源码来详细分析下它是如何使用CAS算法来入队的。
+public boolean offer(E e) { if (e == null) throw new NullPointerException(); //入队前，创建一个入队节点 Node<E> n = new Node<E>(e); retry: //死循环，入队不成功反复入队。 for (;;) { //创建一个指向tail节点的引用 Node<E> t = tail; //p用来表示队列的尾节点，默认情况下等于tail节点。 Node<E> p = t; for (int hops = 0; ; hops++) { //获得p节点的下一个节点。 Node<E> next = succ(p); //next节点不为空，说明p不是尾节点，需要更新p后在将它指向next节点 if (next != null) { //循环了两次及其以上，并且当前节点还是不等于尾节点 if (hops &gt; HOPS &amp;&amp; t != tail) continue retry; p = next; } //如果p是尾节点，则设置p节点的next节点为入队节点。 else if (p.casNext(null, n)) { //如果tail节点有大于等于1个next节点，则将入队节点设置成tair节点，更新失败了也 没关系，因为失败了表示有其他线程成功更新了tair节点。 if (hops &gt;= HOPS) casTail(t, n); // 更新tail节点，允许失败 return true; } // p有next节点,表示p的next节点是尾节点，则重新设置p节点 else { p = succ(p); } } } }</p>
+<p><strong>从源代码角度来看整个入队过程主要做二件事情</strong>。第一是定位出尾节点，第二是使用CAS算法能将入队节点设置成尾节点的next节点，如不成功则重试。</p>
+<p><strong>第一步定位尾节点</strong>。tail节点并不总是尾节点，所以每次入队都必须先通过tail节点来找到尾节点，尾节点可能就是tail节点，也可能是tail节点的next节点。代码中循环体中的第一个if就是判断tail是否有next节点，有则表示next节点可能是尾节点。获取tail节点的next节点需要注意的是p节点等于p的next节点的情况，只有一种可能就是p节点和p的next节点都等于空，表示这个队列刚初始化，正准备添加第一次节点，所以需要返回head节点。获取p节点的next节点代码如下
+final Node<E> succ(Node<E> p) { Node<E> next = p.getNext(); return (p == next) ? head : next; }</p>
+<p><strong>第二步设置入队节点为尾节点</strong>。p.casNext(null, n)方法用于将入队节点设置为当前队列尾节点的next节点，p如果是null表示p是当前队列的尾节点，如果不为null表示有其他线程更新了尾节点，则需要重新获取当前队列的尾节点。</p>
+<p><strong>hops的设计意图</strong>。上面分析过对于先进先出的队列入队所要做的事情就是将入队节点设置成尾节点，doug lea写的代码和逻辑还是稍微有点复杂。那么我用以下方式来实现行不行？
+public boolean offer(E e) { if (e == null) throw new NullPointerException(); Node<E> n = new Node<E>(e); for (;;) { Node<E> t = tail; if (t.casNext(null, n) &amp;&amp; casTail(t, n)) { return true; } } }</p>
+<p>让tail节点永远作为队列的尾节点，这样实现代码量非常少，而且逻辑非常清楚和易懂。但是这么做有个缺点就是每次都需要使用循环CAS更新tail节点。如果能减少CAS更新tail节点的次数，就能提高入队的效率，所以doug lea使用hops变量来控制并减少tail节点的更新频率，并不是每次节点入队后都将 tail节点更新成尾节点，而是当 tail节点和尾节点的距离大于等于常量HOPS的值（默认等于1）时才更新tail节点，tail和尾节点的距离越长使用CAS更新tail节点的次数就会越少，但是距离越长带来的负面效果就是每次入队时定位尾节点的时间就越长，因为循环体需要多循环一次来定位出尾节点，但是这样仍然能提高入队的效率，因为从本质上来看它通过增加对volatile变量的读操作来减少了对volatile变量的写操作，而对volatile变量的写操作开销要远远大于读操作，所以入队效率会有所提升。</p>
+<p>private static final int HOPS = 1;</p>
+<p>还有一点需要注意的是入队方法永远返回true，所以不要通过返回值判断入队是否成功。</p>
+<h2 id="5-">5. 出队列</h2>
+<p>出队列的就是从队列里返回一个节点元素，并清空该节点对元素的引用。让我们通过每个节点出队的快照来观察下head节点的变化。</p>
+<p><img src="" alt=""></p>
+<p>从上图可知，并不是每次出队时都更新head节点，当head节点里有元素时，直接弹出head节点里的元素，而不会更新head节点。只有当head节点里没有元素时，出队操作才会更新head节点。这种做法也是通过hops变量来减少使用CAS更新head节点的消耗，从而提高出队效率。让我们再通过源码来深入分析下出队过程。
+public E poll() { Node<E> h = head; // p表示头节点，需要出队的节点 Node<E> p = h; for (int hops = 0;; hops++) { // 获取p节点的元素 E item = p.getItem(); // 如果p节点的元素不为空，使用CAS设置p节点引用的元素为null,如果成功则返回p节点的元素。 if (item != null &amp;&amp; p.casItem(item, null)) { if (hops &gt;= HOPS) { //将p节点下一个节点设置成head节点 Node<E> q = p.getNext(); updateHead(h, (q != null) ? q : p); } return item; } // 如果头节点的元素为空或头节点发生了变化，这说明头节点已经被另外一个线程修改了。那么获取p节点的下一个节点 Node&lt;&gt; next = succ(p); // 如果p的下一个节点也为空，说明这个队列已经空了 if (next == null) { // 更新头节点。 updateHead(h, p); break; } // 如果下一个元素不为空，则将头节点的下一个节点设置成头节点 p = next; } return null; }</p>
+<p>首先获取头节点的元素，然后判断头节点元素是否为空，如果为空，表示另外一个线程已经进行了一次出队操作将该节点的元素取走，如果不为空，则使用CAS的方式将头节点的引用设置成null，如果CAS成功，则直接返回头节点的元素，如果不成功，表示另外一个线程已经进行了一次出队操作更新了head节点，导致元素发生了变化，需要重新获取头节点。</p>
+<h2 id="6-">6. 参考资料</h2>
+<ul>
+<li><a href="http://www.cs.rochester.edu/u/scott/papers/1996_PODC_queues.pdf" target="_blank">简单，快速和实用的阻塞和非阻塞并发队列算法</a>。</li>
+<li><a href="http://www.ibm.com/developerworks/cn/java/j-lo-concurrent/index.html" target="_blank">非阻塞算法在容器里的实现</a>。</li>
+<li>JDK1.6中ConcurrentLinkedQueue源码和注释。</li>
+</ul>
+<h1 id="-">#</h1>
+<h2 id="-">作者介绍</h2>
+<p><strong>方腾飞</strong>，花名清英，淘宝资深开发工程师，关注并发编程，目前在广告技术部从事无线广告联盟的开发和设计工作。个人博客：<a href="http://ifeve.com/" target="_blank"><a href="http://ifeve.com">http://ifeve.com</a></a> 微博：<a href="http://weibo.com/kirals" target="_blank"><a href="http://weibo.com/kirals">http://weibo.com/kirals</a></a>欢迎通过我的微博进行技术交流。</p>
+<p>感谢<a href="http://www.infoq.com/cn/bycategory.action?authorName=张龙" target="_blank">张龙</a>对本文的审校。</p>
+<p>给InfoQ中文站投稿或者参与内容翻译工作，请邮件至<a href="mailto:editors@cn.infoq.com">editors@cn.infoq.com</a>。也欢迎大家通过新浪微博（<a href="http://www.weibo.com/infoqchina" target="_blank">@InfoQ</a>）或者腾讯微博（<a href="http://t.qq.com/infoqchina" target="_blank">@InfoQ</a>）关注我们，并与我们的编辑和其他读者朋友交流。</p>
+<ul>
+<li><a href="">Sections</a></li>
+<li><a href="http://www.infoq.com/cn/development" target="_blank"><strong>语言 &amp; 开发</strong></a></li>
+<li><a href="">Topics</a></li>
+<li><a href="http://www.infoq.com/cn/Multi-threading" target="_blank">多线程</a></li>
+<li><a href="http://www.infoq.com/cn/concurrency" target="_blank">并发</a></li>
+<li><a href="http://www.infoq.com/cn/java" target="_blank">Java</a></li>
+</ul>
+<p>相关内容</p>
+<h3 id="-http-www-infoq-com-cn-articles-atomic-operation-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/atomic-operation?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">聊聊并发（五）——原子操作的实现原理</a></h3>
+<h3 id="-concurrenthashmap-http-www-infoq-com-cn-articles-concurrenthashmap-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/ConcurrentHashMap?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">聊聊并发（四）——深入分析ConcurrentHashMap</a></h3>
+<h3 id="-java-http-www-infoq-com-cn-articles-java-threadpool-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-threadPool?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">聊聊并发（三）——JAVA线程池的分析和使用</a></h3>
+<h3 id="-volatile-http-www-infoq-com-cn-articles-ftf-java-volatile-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/ftf-java-volatile?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">聊聊并发（一）——深入分析Volatile的实现原理</a></h3>
+<h3 id="-java-http-www-infoq-com-cn-articles-java-memory-model-7-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-memory-model-7?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型（七）——总结</a></h3>
+<h3 id="-java-http-www-infoq-com-cn-articles-java-memory-model-7-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-memory-model-7?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型（七）——总结</a></h3>
+<h3 id="-java-final-http-www-infoq-com-cn-articles-java-memory-model-6-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-memory-model-6?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型（六）——final</a></h3>
+<h3 id="-java-http-www-infoq-com-cn-articles-java-memory-model-5-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-memory-model-5?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型（五）——锁</a></h3>
+<h3 id="-http-www-infoq-com-cn-articles-atomic-operation-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/atomic-operation?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">聊聊并发（五）——原子操作的实现原理</a></h3>
+<h3 id="-concurrenthashmap-http-www-infoq-com-cn-articles-concurrenthashmap-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/ConcurrentHashMap?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">聊聊并发（四）——深入分析ConcurrentHashMap</a></h3>
+<h2 id="-">您好，陌生人！</h2>
+<p>您需要 <a href="http://www.infoq.com/reginit.action" target="_blank">注册一个InfoQ账号</a> 或者 <a href="">登录</a> 才能进行评论。在您完成注册后还需要进行一些设置。</p>
+<h2 id="-infoq-">获得来自InfoQ的更多体验。<a href=""></a></h2>
+<p>允许的HTML标签: a,b,br,blockquote,i,li,pre,u,ul,p</p>
+<p>当有人回复此评论时请E-mail通知我</p>
+<p>社区评论 <a href="">Watch Thread</a></p>
+<p><a href=""><strong>CAS 描述有错</strong> by lin lirs Posted 10/01/2013 05:35</a>
+<a href=""><strong>Re: CAS 描述有错</strong> by 方 腾飞 Posted 11/01/2013 03:10</a></p>
+<p><a href=""><strong>请教大师，有个地方不是很明白</strong> by huang shuihua Posted 18/01/2013 02:58</a>
+<a href=""><strong>Re: 请教大师，有个地方不是很明白</strong> by 方 腾飞 Posted 18/01/2013 03:40</a></p>
+<p><a href=""><strong>看着不过瘾，买了本书</strong> by 杨 亮 Posted 04/03/2013 01:42</a>
+<a href=""></a></p>
+<p><strong>CAS 描述有错</strong> 10/01/2013 05:35 by lin lirs</p>
+<p>“它采用了“wait－free”算法（即CAS算法）来实现”， CAS不是指算法，而是一个原子操作，wait-free不等同CAS。
+<a href="http://en.wikipedia.org/wiki/Compare-and-swap" target="_blank">en.wikipedia.org/wiki/Compare-and-swap</a></p>
+<ul>
+<li><a href="">回复</a></li>
+<li><a href="">回到顶部</a></li>
+</ul>
+<p><a href=""></a></p>
+<p><strong>Re: CAS 描述有错</strong> 11/01/2013 03:10 by 方 腾飞</p>
+<p>的确！CAS是一个原子操作指令，可以用来实现“wait－free”算法。这里用“既CAS算法”的确不太合适，我加上的初衷是希望读者能很好的理解“wait－free”算法，但这样会产生一些歧义，所以还是删掉比较合适，感谢您的纠正。</p>
+<ul>
+<li><a href="">回复</a></li>
+<li><a href="">回到顶部</a>
+<a href=""></a></li>
+</ul>
+<p><strong>请教大师，有个地方不是很明白</strong> 18/01/2013 02:58 by huang shuihua</p>
+<p>(如果tail节点的next节点不为空，则将入队节点设置成tail节点，如果tail节点的next节点为空，则将入队节点设置成tail的next节点，所以tail节点不总是尾节点),这个还是不是很明白，能否有更加清晰一点的原理图show一下，谢谢!</p>
+<ul>
+<li><a href="">回复</a></li>
+<li><a href="">回到顶部</a></li>
+</ul>
+<p><a href=""></a></p>
+<p><strong>Re: 请教大师，有个地方不是很明白</strong> 18/01/2013 03:40 by 方 腾飞</p>
+<p>tail节点并总是尾节点。入队的时候，入队节点要放在队列的尾部，那首先要定位尾节点是哪个节点？所以这里通过tail节点来定位尾节点。尾节点要么是tail节点，要么是tail的next节点。所以入队会有两种情况
+情况1：tail节点的next节点不为空，那么插入后队列变成
+旧的tail节点-&gt;旧tail节点的next节点-&gt;入队节点（新tail节点）
+情况2：tail节点的next节点为空，那么插入后队列变成
+tail节点-&gt;入队节点</p>
+<ul>
+<li><a href="">回复</a></li>
+<li><a href="">回到顶部</a>
+<a href=""></a></li>
+</ul>
+<p><strong>看着不过瘾，买了本书</strong> 04/03/2013 01:42 by 杨 亮</p>
+<p>聊聊并发这个系列都看了，结合内存模型系列，但还是看着不过瘾，买了本书看。</p>
+<ul>
+<li><a href="">回复</a></li>
+<li><a href="">回到顶部</a></li>
+</ul>
+<p><a href="">关闭</a></p>
+<h3 id="-by"><em>**</em>by</h3>
+<p>发布于</p>
+<ul>
+<li><a href="">查看</a></li>
+<li><a href="">回复</a></li>
+<li><a href="">回到顶部</a>
+<a href="">关闭</a> 主题  您的回复 <a href="">引用原消息</a></li>
+</ul>
+<p>允许的HTML标签: a,b,br,blockquote,i,li,pre,u,ul,p
+当有人回复此评论时请E-mail通知我</p>
+<p><a href="">关闭</a> 主题  您的回复</p>
+<p>允许的HTML标签: a,b,br,blockquote,i,li,pre,u,ul,p
+当有人回复此评论时请E-mail通知我
+<a href="">关闭</a></p>
+<ul>
+<li>热点内容</li>
+<li><a href="">本周</a></li>
+<li><a href="">本月</a></li>
+<li><a href="">近6个月</a><h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
+</li>
+</ul>
+<h3 id="-thoughtworks-2013-5-http-www-infoq-com-cn-articles-thoughtworks-technology-radar-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/thoughtWorks-technology-radar?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">ThoughtWorks技术雷达（2013年5月）</a></h3>
+<h3 id="-1-5-http-www-infoq-com-cn-articles-iqiyi-cloud-push-practices-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/iqiyi-cloud-push-practices?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">让1.5亿移动端用户第一时间获取消息</a></h3>
+<h3 id="-thoughtworks-ceo-http-www-infoq-com-cn-news-2013-06-tw-guoxiao-on-talents-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/tw-guoxiao-on-talents?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">ThoughtWorks全球CEO郭晓谈软件人才的招聘与培养</a></h3>
+<h3 id="-http-www-infoq-com-cn-news-2013-06-10-sins-for-scalability-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/10-sins-for-scalability?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">影响可扩展性的十宗罪</a></h3>
+<h3 id="-6-http-www-infoq-com-cn-minibooks-architect-jun-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jun-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（6月刊）</a></h3>
+<h3 id="-http-www-infoq-com-cn-articles-function-switch-realize-better-continuous-implementations-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/function-switch-realize-better-continuous-implementations?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">使用功能开关更好地实现持续部署</a></h3>
+<h3 id="-eclipse-github-http-www-infoq-com-cn-news-2013-06-eclipse-github-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/eclipse-github?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Eclipse迁移到GitHub</a></h3>
+<h3 id="-newegg-com-http-www-infoq-com-cn-presentations-newegg-big-data-practice-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/presentations/newegg-big-data-practice?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Newegg.com大数据实践</a></h3>
+<h3 id="-http-www-infoq-com-cn-minibooks-software-sys-architect-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/software-sys-architect?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">软件系统架构：使用视点和视角与利益相关者合作</a></h3>
+<h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
+<h3 id="-6-http-www-infoq-com-cn-minibooks-architect-jun-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jun-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（6月刊）</a></h3>
+<h3 id="-rest-http-www-infoq-com-cn-news-2013-06-rest-drawbacks-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/rest-drawbacks?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">REST的缺点是什么？</a></h3>
+<h3 id="-google-web-ui-polymer-http-www-infoq-com-cn-news-2013-06-webcomponents-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/webcomponents?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Google 发布新一代Web UI库Polymer</a></h3>
+<h3 id="-http-www-infoq-com-cn-news-2013-06-dianping-xinnet-hacked-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/dianping-xinnet-hacked?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">大众点评网域名劫持事件概述</a></h3>
+<h3 id="-node-js-grunt-js-http-www-infoq-com-cn-articles-gruntjs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/GruntJs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">基于Node.js的自动化构建工具Grunt.js</a></h3>
+<h3 id="-node-js-node-js-http-www-infoq-com-cn-articles-what-is-nodejs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/what-is-nodejs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（一）：什么是Node.js</a></h3>
+<h3 id="-http-www-infoq-com-cn-minibooks-i-m-wrights-hard-code-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/i-m-wrights-hard-code?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">代码之殇·第二版</a></h3>
+<h3 id="-http-www-infoq-com-cn-minibooks-software-sys-architect-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/software-sys-architect?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">软件系统架构：使用视点和视角与利益相关者合作</a></h3>
+<h3 id="-18-java-http-www-infoq-com-cn-news-2013-06-zhuhong-on-java-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/zhuhong-on-java?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">大家谈18岁的Java——朱鸿：开过跑车后再去开大巴车总是有点不爽的</a></h3>
+<h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
+<h3 id="-java-http-www-infoq-com-cn-articles-java-memory-model-1-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/java-memory-model-1?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入理解Java内存模型（一）——基础</a></h3>
+<h3 id="-node-js-node-js-http-www-infoq-com-cn-articles-what-is-nodejs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/what-is-nodejs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（一）：什么是Node.js</a></h3>
+<h3 id="-node-js-node-js-npm-http-www-infoq-com-cn-articles-nodejs-npm-install-config-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/nodejs-npm-install-config?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（二）：Node.js&amp;NPM的安装与配置</a></h3>
+<h3 id="-3-http-www-infoq-com-cn-minibooks-architect-mar-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-mar-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（3月刊）</a></h3>
+<h3 id="-1-http-www-infoq-com-cn-minibooks-architect-jan-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jan-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（1月刊）</a></h3>
+<h3 id="-4-http-www-infoq-com-cn-minibooks-architect-apr-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-apr-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（4月刊）</a></h3>
+<h3 id="-java-http-www-infoq-com-cn-articles-java-threadpool-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/java-threadPool?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">聊聊并发（三）——JAVA线程池的分析和使用</a></h3>
+<h3 id="-2-http-www-infoq-com-cn-minibooks-architect-feb-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-feb-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（2月刊）</a></h3>
+<h3 id="-12306-github-http-www-infoq-com-cn-news-2013-01-12306-plugin-ddos-github-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/01/12306-plugin-ddos-github?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">12306订票助手插件拖垮GitHub事件原因始末</a></h3>
+<h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
+<h3 id="-thoughtworks-2013-5-http-www-infoq-com-cn-articles-thoughtworks-technology-radar-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/thoughtWorks-technology-radar?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">ThoughtWorks技术雷达（2013年5月）</a></h3>
+<h3 id="-1-5-http-www-infoq-com-cn-articles-iqiyi-cloud-push-practices-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/iqiyi-cloud-push-practices?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">让1.5亿移动端用户第一时间获取消息</a></h3>
+<h3 id="-thoughtworks-ceo-http-www-infoq-com-cn-news-2013-06-tw-guoxiao-on-talents-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/tw-guoxiao-on-talents?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">ThoughtWorks全球CEO郭晓谈软件人才的招聘与培养</a></h3>
+<h3 id="-http-www-infoq-com-cn-news-2013-06-10-sins-for-scalability-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/10-sins-for-scalability?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">影响可扩展性的十宗罪</a></h3>
+<h3 id="-6-http-www-infoq-com-cn-minibooks-architect-jun-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jun-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（6月刊）</a></h3>
+<h3 id="-http-www-infoq-com-cn-articles-function-switch-realize-better-continuous-implementations-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/function-switch-realize-better-continuous-implementations?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">使用功能开关更好地实现持续部署</a></h3>
+<h3 id="-eclipse-github-http-www-infoq-com-cn-news-2013-06-eclipse-github-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/eclipse-github?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Eclipse迁移到GitHub</a></h3>
+<h3 id="-newegg-com-http-www-infoq-com-cn-presentations-newegg-big-data-practice-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/presentations/newegg-big-data-practice?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Newegg.com大数据实践</a></h3>
+<h3 id="-http-www-infoq-com-cn-minibooks-software-sys-architect-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/software-sys-architect?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">软件系统架构：使用视点和视角与利益相关者合作</a></h3>
+<h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
+<h3 id="-6-http-www-infoq-com-cn-minibooks-architect-jun-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jun-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（6月刊）</a></h3>
+<h3 id="-rest-http-www-infoq-com-cn-news-2013-06-rest-drawbacks-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/rest-drawbacks?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">REST的缺点是什么？</a></h3>
+<h3 id="-google-web-ui-polymer-http-www-infoq-com-cn-news-2013-06-webcomponents-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/webcomponents?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Google 发布新一代Web UI库Polymer</a></h3>
+<h3 id="-http-www-infoq-com-cn-news-2013-06-dianping-xinnet-hacked-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/dianping-xinnet-hacked?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">大众点评网域名劫持事件概述</a></h3>
+<h3 id="-node-js-grunt-js-http-www-infoq-com-cn-articles-gruntjs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/GruntJs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">基于Node.js的自动化构建工具Grunt.js</a></h3>
+<h3 id="-node-js-node-js-http-www-infoq-com-cn-articles-what-is-nodejs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/what-is-nodejs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（一）：什么是Node.js</a></h3>
+<h3 id="-http-www-infoq-com-cn-minibooks-i-m-wrights-hard-code-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/i-m-wrights-hard-code?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">代码之殇·第二版</a></h3>
+<h3 id="-http-www-infoq-com-cn-minibooks-software-sys-architect-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/software-sys-architect?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">软件系统架构：使用视点和视角与利益相关者合作</a></h3>
+<h3 id="-18-java-http-www-infoq-com-cn-news-2013-06-zhuhong-on-java-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/zhuhong-on-java?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">大家谈18岁的Java——朱鸿：开过跑车后再去开大巴车总是有点不爽的</a></h3>
+<h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
+<h3 id="-java-http-www-infoq-com-cn-articles-java-memory-model-1-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/java-memory-model-1?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入理解Java内存模型（一）——基础</a></h3>
+<h3 id="-node-js-node-js-http-www-infoq-com-cn-articles-what-is-nodejs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/what-is-nodejs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（一）：什么是Node.js</a></h3>
+<h3 id="-node-js-node-js-npm-http-www-infoq-com-cn-articles-nodejs-npm-install-config-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/nodejs-npm-install-config?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（二）：Node.js&amp;NPM的安装与配置</a></h3>
+<h3 id="-3-http-www-infoq-com-cn-minibooks-architect-mar-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-mar-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（3月刊）</a></h3>
+<h3 id="-1-http-www-infoq-com-cn-minibooks-architect-jan-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jan-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（1月刊）</a></h3>
+<h3 id="-4-http-www-infoq-com-cn-minibooks-architect-apr-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-apr-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（4月刊）</a></h3>
+<h3 id="-java-http-www-infoq-com-cn-articles-java-threadpool-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/java-threadPool?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">聊聊并发（三）——JAVA线程池的分析和使用</a></h3>
+<h3 id="-2-http-www-infoq-com-cn-minibooks-architect-feb-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-feb-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（2月刊）</a></h3>
+<h3 id="-12306-github-http-www-infoq-com-cn-news-2013-01-12306-plugin-ddos-github-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/01/12306-plugin-ddos-github?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">12306订票助手插件拖垮GitHub事件原因始末</a></h3>
+<h2 id="-">深度内容</h2>
+<ul>
+<li><a href="">全部</a></li>
+<li><a href="">文章</a></li>
+<li><a href="">演讲</a></li>
+<li><a href="">访谈</a></li>
+<li><a href="">迷你书</a></li>
+</ul>
+<h2 id="-juergen-fesslmeier-javascript-http-www-infoq-com-cn-interviews-end-to-end-javascript-juergen-fesslmeier-javascript-"><a href="http://www.infoq.com/cn/interviews/end-to-end-javascript" title="Juergen Fesslmeier谈端到端的JavaScript开发" target="_blank">Juergen Fesslmeier谈端到端的JavaScript开发</a></h2>
+<p><a href="http://www.infoq.com/cn/author/Juergen-Fesslmeier" title="Juergen Fesslmeier" target="_blank">Juergen Fesslmeier</a> 七月 02, 2013</p>
+<p><a href="http://www.infoq.com/cn/interviews/end-to-end-javascript" title="Juergen Fesslmeier谈端到端的JavaScript开发" target="_blank"><img src="" alt=""></a></p>
+<h2 id="-http-www-infoq-com-cn-articles-design-pattern-automation-"><a href="http://www.infoq.com/cn/articles/Design-Pattern-Automation" title="设计模式自动化" target="_blank">设计模式自动化</a></h2>
+<p><a href="http://www.infoq.com/cn/author/Gael-Fraiteur-and-Yan-Cui" title="Gael Fraiteur and Yan Cui" target="_blank">Gael Fraiteur and Yan Cui</a> 七月 01, 2013</p>
+<p><a href="http://www.infoq.com/cn/articles/Design-Pattern-Automation" title="设计模式自动化" target="_blank"><img src="" alt=""></a></p>
+<h2 id="-http-www-infoq-com-cn-articles-designing-a-world-at-your-fingertips-mobile-user-interfaces-"><a href="http://www.infoq.com/cn/articles/designing-a-world-at-your-fingertips-mobile-user-interfaces" title="设计指尖上的世界：移动用户界面一瞥" target="_blank">设计指尖上的世界：移动用户界面一瞥</a></h2>
+<p><a href="http://www.infoq.com/cn/author/Forrest-Shull" title="Forrest Shull" target="_blank">Forrest Shull</a> 六月 28, 2013</p>
+<p><a href="http://www.infoq.com/cn/articles/designing-a-world-at-your-fingertips-mobile-user-interfaces" title="设计指尖上的世界：移动用户界面一瞥" target="_blank"><img src="" alt=""></a></p>
+<h2 id="-alm-http-www-infoq-com-cn-articles-integrated-alm-alm-"><a href="http://www.infoq.com/cn/articles/Integrated-ALM" title="成功的根本—集成的ALM工具" target="_blank">成功的根本—集成的ALM工具</a></h2>
+<p><a href="http://www.infoq.com/cn/author/Dave-West" title="Dave West" target="_blank">Dave West</a> 六月 28, 2013</p>
+<p><a href="http://www.infoq.com/cn/articles/Integrated-ALM" title="成功的根本—集成的ALM工具" target="_blank"><img src="" alt=""></a></p>
+<h2 id="-http-www-infoq-com-cn-articles-atdd-by-example-book-"><a href="http://www.infoq.com/cn/articles/atdd-by-example-book" title="书评：验收测试驱动开发实践指南" target="_blank">书评：验收测试驱动开发实践指南</a></h2>
+<p><a href="http://www.infoq.com/cn/author/Manuel-Pais" title="Manuel Pais" target="_blank">Manuel Pais</a> 六月 26, 2013</p>
+<p><a href="http://www.infoq.com/cn/articles/atdd-by-example-book" title="书评：验收测试驱动开发实践指南" target="_blank"><img src="" alt=""></a></p>
+<h2 id="-web-http-www-infoq-com-cn-presentations-across-device-web-web-"><a href="http://www.infoq.com/cn/presentations/across-device-web" title="跨终端的web" target="_blank">跨终端的web</a></h2>
+<p><a href="http://www.infoq.com/cn/author/%E8%88%92%E6%96%87%E4%BA%AE" title="舒文亮" target="_blank">舒文亮</a> 六月 26, 2013</p>
+<p><a href="http://www.infoq.com/cn/presentations/across-device-web" title="跨终端的web" target="_blank"><img src="" alt=""></a></p>
+<ul>
+<li><a href="">更早的 &gt;</a></li>
+</ul>
+<p><a href="">Close</a> E-mail  密码</p>
+<p><a href="http://www.infoq.com/cn/social/googleLogin.action?fl=login" title="使用Google账号登录" target="_blank">使用Google账号登录</a> <a href="http://www.infoq.com/cn/social/liveLogin.action?fl=login" title="使用Microsoft账号登录" target="_blank">使用Microsoft账号登录</a>
+<a href="">忘记密码？</a>
+ InfoQ账号使用的E-mail 发送邮件</p>
+<p><a href="">重新登录</a>
+重新发送激活信息 重新发送</p>
+<p><a href="">重新登录</a>
+<a href="http://www.infoq.com/cn/reginit.action" target="_blank">没有用户名？</a></p>
+<p><a href="http://www.infoq.com/cn/reginit.action" target="_blank">点击注册</a>
+<img src="&quot;定义(粉红" alt="">&quot;)<img src="&quot;假设(蓝色" alt="">&quot;)<img src="&quot;分析(黄色" alt="">&quot;)<img src="&quot;结论(橘红" alt="">&quot;)<img src="&quot;优势(绿色" alt="">&quot;)<img src="&quot;缺陷(紫色" alt="">&quot;)<img src="&quot;注意(红色" alt="">&quot;)<img src="&quot;清除背景色&quot;" alt=""><img src="&quot;书签&quot;" alt=""><img src="&quot;设为目录项&quot;" alt=""><img src="&quot;在Google中搜索&quot;" alt=""><img src="&quot;查找解释&quot;" alt=""><img src="&quot;标注&quot;" alt=""><img src="&quot;链接到所选文件夹/标签/样式/文件&quot;" alt=""><img src="&quot;Wiz助手&quot;" alt=""><img src="&quot;稍后阅读(tag" alt="">&quot;)</p>
+
+      
+    </div>
+    <section id='after_content_widget'><div class="widget" id="widget_after_content_wumiiRelatedItems>">
+<script type="text/javascript" id="wumiiRelatedItems"></script>
+</div><div class="widget" id="widget_after_content_post_footer_info>">
+<div class="panel panel-success">
+    <div class="panel-heading" align="center">希望本站内容对您有点用处,有什么疑问或建议请在后面留言评论</div>
+    <div align="center" class="panel-body">转载请注明作者(<a href="http://itsolife.com/about/">RobinChia</a>)和出处 <a href="http://itsolife.com">It so life</a> ，请勿用于任何商业用途</div>
+    <div class="panel-body">本文链接: <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析/">聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析</a></div>
+</div>
+</div></section>
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_多线程/">Java_多线程</a></li><li><a href="/categories/Java&J2EE/Java_多线程/并发/">并发</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_多线程/" class="label label-success">Java_多线程</a><a href="/tags/并发/" class="label label-info">并发</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+    <section id='after_post_widget'><div class="widget" id="widget_after_post_post_pageNav>">
+<ul class="pager">
+  
+  <li class="previous"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（四）——深入分析ConcurrentHashMap/" title="聊聊并发（四）——深入分析ConcurrentHashMap">&larr; 聊聊并发（四）——深入分析ConcurrentHashMap</a></li>
+  
+  
+  <li class="next"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程--探索java多线程（连载）1守护线程-ikon-BlogJava/" title="探索java多线程（连载）1 守护线程 ">探索java多线程（连载）1 守护线程  &rarr;</a></li>
+  
+</ul></div><div class="widget" id="widget_after_post_related_posts>">
+<ul class="list-group"><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（三）-IO性能的重要指标/">说说IO（三）</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-NIO--JavaNIOAPI详解/">Java NIO API详解</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Java知识点总结1/">Java知识点总结1</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--java实现double的精确计算和四舍五入/">java实现double的精确计算和四舍五入</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/">java集合类总结</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Servlet总结01——servlet的主要接口、类_javanewlearner的空间_百度空间/">Servlet总结01——servlet的主要接口、类_javanewlearner的空间_百度空间</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_字符集--eclipse生成javadoc时出错：编码GBK的不可映射字符/">eclipse生成javadoc时出错：编码GBK的不可映射字符</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE--Java使用”指针”快速比较字节/">Java使用”指针”快速比较字节</a></li></ul></div></section>    
+	<div id="comments"><!-- Duoshuo Comment BEGIN -->
+
+<div class="ds-thread"  data-thread-key="2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析"  data-url="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析/" data-title="聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析"></div>
+
+		
+
+<!-- Duoshuo Comment END -->
+
+</div></div><!--wapper-->
+       </div><!-- ID main-col END -->
+       <aside id="sidebar" class="alignright col-sx-6 col-sm-4 col-md-3 col-lg-3">
+<div id="widget_search" class="widget panel panel-primary">
+    <form action="//google.com/search" method="get" accept-charset="utf-8">
+  <div class="input-group">
+    <input class="form-control" id="searchbox" type="search" name="q" results="0" placeholder="search">
+    <span class="input-group-btn">
+      <button class="btn btn-default" type="submit">Go!</button>
+    </span>
+    <input type="hidden" name="q" value="site:itsolife.com">
+  </div>
+</form>
+</div>
+
+<div id="widget_category" class="widget panel panel-primary">
+  <div class="panel-heading">category</div>  <div data-src='category' class='ajax_widgets'>正在加载...</div>
+</div>
+
+<div id="widget_recent_posts" class="widget panel panel-primary">
+  <div class="panel-heading">recent posts</div>  <div data-src='recent_posts' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_tagcloud" class="widget panel panel-primary">
+  <div class="panel-heading">tagcloud</div>  <div data-src='tagcloud' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_latest_update_posts" class="widget panel panel-primary">
+  <div class="panel-heading">最近更新</div>  <div data-src='latest_update_posts' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_recent_comments" class="widget panel panel-primary">
+  <div class="panel-heading">recent comments</div>  
+
+<div class="list-group-item ds-recent-comments" data-num-items="6" data-show-avatars="1" data-show-time="1" data-show-title="1" data-show-admin="1" data-excerpt-length="50"></div>
+
+
+
+</div>
+
+</aside>
+       <div class="clearfix"></div>
+     </div><!-- row END -->
+  </div>
+  <footer id="footer" class="container">
+  <div class="panel panel-info">
+  <section id='footer_widget'></section>  <div class="panel-footer">
+  <div id="site-info">
+    <span class='author'>
+  
+  &copy; 2014 RobinChia
+  
+    &nbsp;&nbsp;</span>
+  
+  <span id='analytics-51la'></span><span id='analytics-google'>
+<script type="text/javascript">
+  var _gaq = _gaq || [];
+  _gaq.push(['_setAccount', 'UA-48559895-1']);
+  _gaq.push(['_trackPageview']);
+  _js2load.push({src:('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js'});
+</script></span><span id='analytics-cnzz'>
+<script type="text/javascript">var cnzz_protocol = (("https:" == document.location.protocol) ? " https://" : " http://");document.write(unescape("%3Cspan id='cnzz_stat_icon_5774006'%3E%3C/span%3E%3Cscript src='" + cnzz_protocol + "s17.cnzz.com/stat.php%3Fid%3D5774006%26show%3Dpic' type='text/javascript'%3E%3C/script%3E"));</script>
+</span><span id='analytics-baidu'>
+<script>
+var _hmt = _hmt || [];
+_js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
+</script>
+</span>  </div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-07 09:54:41</em></span></div>
+</div>
+<div class="clearfix"></div>
+
+
+  </div>
+  </footer>
+  
+        <script src="http://cdn.bootcss.com/jquery/1.10.2/jquery.min.js"></script>        
+        <script src="http://cdn.staticfile.org/twitter-bootstrap/3.1.0/js/bootstrap.min.js"></script>        
+                
+        <script src="http://cdn.bootcss.com/prettify/r298/prettify.min.js"></script>    <script type="text/javascript">
+   var lang=["bsh", "c", "cc", "cpp", "cs", "csh", "cyc", "cv", "htm", "html",
+    "java", "js", "m", "mxml", "perl", "pl", "pm", "py", "rb", "sh",
+    "xhtml", "xml", "xsl"];
+   var pretty_base='';
+   $('script').each(function(){
+	var c = $(this).attr('src');
+	if (!c)
+	    return;
+	if (c.match(/(\/)?prettify(\.min)?\.js/i))
+	{
+	    var index = c.lastIndexOf('/');
+	    if (index != -1)
+		pretty_base = c.substr(0,index + 1);
+	    return false;
+	}
+   })
+   $('pre code').each(function(){
+	var c = $(this).attr('class')
+	if (!c)
+	    return;
+	c = c.match(/\s?(lang\-\w+)/i);
+	if (c && lang.indexOf(c[1]) == -1)
+	{
+	    lang.push(c[1]);
+	    $.getScript(pretty_base + c[1] + '.min.js');
+	}
+   })
+
+    $(window).load(function(){
+       $("pre").addClass("prettyprint");
+       prettyPrint();
+    })
+</script>    
+            <script type="text/javascript">
+var duoshuoQuery = {short_name:"robinchia"};
+_js2load.push({src:'http://static.duoshuo.com/embed.js',charset:'UTF-8'});
+</script>
+    
+            <!--wumii_relatedItems-->
+
+<script type="text/javascript">
+    var wumiiPermaLink = "http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析/";
+    var wumiiTitle = "聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析";
+    var wumiiTags = "Java&J2EE,Java_多线程,并发";
+    var wumiiCategories = ["Java&J2EE","Java&J2EE","Java_多线程","并发"];
+    var wumiiSitePrefix = "http://itsolife.com";
+    var wumiiParams = "&num=5&mode=3&pf=JAVASCRIPT";
+    _js2load.push({src:'http://widget.wumii.cn/ext/relatedItemsWidget'});
+</script>
+<a href="http://www.wumii.com/widget/relatedItems" style="border:0;">
+<img src="http://static.wumii.cn/images/pixel.png" alt="无觅关联推荐，快速提升流量" style="border:0;padding:0;margin:0;" />
+</a>
+    
+        <script src="http://cdn.bootcss.com/fancybox/2.1.5/jquery.fancybox.min.js"></script>    <script type="text/javascript">
+(function($){
+  $('.entry').each(function(i){
+    $(this).find('img').each(function(){
+      var alt = this.alt;
+
+      if (alt){
+        $(this).before('<span class="caption">' + alt + '</span>');
+      }
+
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox" rel="fancybox' + i + '" />');
+    });
+  });
+
+  $('.fancybox').fancybox();
+})(jQuery);
+</script>    
+        <script src="http://cdn.bootcss.com/mathjax/2.3/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>    <script type="text/x-mathjax-config">
+  MathJax.Hub.Config({
+    tex2jax: {
+      skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+      inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+      processEscapes: true
+    }
+  });
+  MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+      all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+  });
+</script>
+    
+<script type="text/javascript">
+$('.ajax_widgets').each(function(){var src=$(this).attr('data-src');if(src)$(this).load('/widgets/'+src+'.html');});
+$.each(_js2load,function(index,obj){loadjs(obj.src,obj.charset)});
+</script>
+
+<div id="scroll2top">
+<img src="/scroll2top/arrow.png"/>
+</div>
+<script src="/scroll2top/scroll2top.min.js"></script>
+<div id="winterland">
+  <canvas></canvas>
+</div>
+<script src="/js/winterland.min.js"></script>
+
+  </body>
+</html>

@@ -1,0 +1,710 @@
+
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Memcached笔记——（四）应对高并发攻击 | It so life</title>
+<meta name="author" content="RobinChia">
+
+<meta name="description" content="Memcached笔记——（四）应对高并发攻击首页 资讯 精华 论坛 问答 博客 专栏 群组 更多 ▼
+
+招聘 搜索
+您还未登录 ! 登录 注册
+Snowolf的意境空间！
+
+博客
+微博
+相册
+收藏
+留言">
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+<meta property="og:title" content="Memcached笔记——（四）应对高并发攻击"/>
+<meta property="og:site_name" content="It so life"/>
+
+<!--[if IE]><style>.testIE.IE{display:inline;}</style><![endif]-->
+<!--[if lte IE 7]><link rel="stylesheet" href="/css/ie7.css" type="text/css"><![endif]-->
+<!--[if (lt IE 9)&(gt IE 7)]><style>.testIE.IE8{display:inline;}</style><![endif]-->
+<!--[if gt IE 8]><style>.testIE.IE9{display:inline;}</style><![endif]-->
+
+<link href="/favicon.png" rel="icon">
+<link rel="alternate" href="/atom.xml" title="It so life Feed" type="application/atom+xml">
+
+<link rel="stylesheet" href="http://cdn.staticfile.org/twitter-bootstrap/3.1.0/css/bootstrap.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/font-awesome/4.0.3/css/font-awesome.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/prettify/r298/prettify.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/fancybox/2.1.5/jquery.fancybox.min.css" type="text/css">
+<link rel="stylesheet" href="/css/style.css" type="text/css">
+<!--[if lt IE 9]>
+   <style>article,aside,dialog,footer,header,section,footer,nav,figure,menu{display:block}</style>
+   <script src="http://cdn.staticfile.org/html5shiv/r29/html5.min.js"></script>
+   <script src="http://cdn.staticfile.org/respond.js/1.4.2/respond.min.js"></script>
+<link href="http://cdn.staticfile.org/respond.js/1.4.2/respond-proxy.html" id="respond-proxy" rel="respond-proxy" />
+<link href="/js/respond.proxy.gif" id="respond-redirect" rel="respond-redirect" />
+<script src="/js/respond.proxy.js"></script>
+   <script src="http://cdn.bootcss.com/selectivizr/1.0.2/selectivizr-min.js"></script>
+<![endif]-->
+<script type="text/javascript">
+function loadjs(c,d){var a=document.createElement("script");a.async=!0;a.type="text/javascript";a.src=c;a.charset=d||"gbk";(document.getElementsByTagName("HEAD")[0]||document.getElementsByTagName("BODY")[0]).appendChild(a)};
+var _protocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+var _js2load = [];
+</script>
+
+</head>
+<body>
+      <header id="header" class="container"><nav id="main-nav" class="navbar navbar-default navbar-fixed-top " role="navigation">
+  <div class="container">
+    <div class="navbar-header">
+    <button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
+      <span class="sr-only">Toggle navigation</span>
+      <span class="icon-bar"></span>
+      <span class="icon-bar"></span>
+      <span class="icon-bar"></span>
+    </button>
+    <a class="navbar-brand" href="/">It so life</a>
+    </div>
+    <div  class="collapse navbar-collapse">
+      <ul  class="nav navbar-nav">
+  
+        <li><a href="/" title="Home">Home</a></li>      
+        <li><a href="/about/" title="About">About</a></li>      
+        <li><a href="/archives/" title="Archives">Archives</a></li>      
+      <li class='dropdown'>
+        <a class='dropdown-toggle' data-toggle='dropdown' href='#'>website<b class='caret'></b></a>
+        <ul class='dropdown-menu pure-menu-selected'>
+    
+          <li><a href="//groups.google.com/forum/#!forum/pongba" title="TopLanguage">TopLanguage</a></li>    
+          <li><a href="//itpub.net/" title="ITPub">ITPub</a></li>    
+          <li><a href="//blog.jobbole.com/" title="Bole">Bole</a></li>    
+          <li><a href="//nosql-database.org/" title="nosql">nosql</a></li>    
+          <li><a href="//gitimmersion.googol.im/" title="Git">Git</a></li>    
+        </ul>
+      </li>
+    
+      </ul>
+      <ul class="nav navbar-nav navbar-right">
+      
+        <li><a href="/atom.xml">RSS</a></li>
+      
+      
+        <li><a href="https://twitter.com/robinchia">twitter</a></li>
+      
+      
+      
+      
+        <li><a href="https://github.com/robinchia">github</a></li>
+      
+      </ul>
+    </div>
+  </div>
+</nav>
+<div class="clearfix"></div>
+</header>
+  <div id='content' class="container">
+     <div class="page-header-wrapper">
+      <!--[if lt IE 9]><div class="alert alert-warning alert-dismissable"><button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button><strong>提示:</strong>您的浏览器版本太低了,建议升级到 <strong><a href="http://windows.microsoft.com/zh-cn/internet-explorer/download-ie" title="IE9">IE9</a></strong> 以上,本站使用<a href="https://www.google.com/intl/zh-CN/chrome/">Chrome浏览器</a>可以获得最好的显示效果.</div><![endif]-->
+      <div class="page-header"><h1 align="center"><big>It so life</big> </h1>
+        <h5 align="center"><big>love as life</big></h5>
+      </div>
+     </div>
+     <div class="row">
+       <div id="main-col" class="alignleft col-sx-12 col-sm-8 col-md-9 col-lg-9">
+      <section id='header_widget'></section>
+          <div id="wrapper"><article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title">Memcached笔记——（四）应对高并发攻击</h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:31.000Z"> <a href="/2014/02/02/2014-02-02-Nosql-mongo--Memcached笔记——（四）应对高并发攻击/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    <section id='before_content_widget'></section>
+    <div class="entry">
+      
+        <h1 id="memcached-">Memcached笔记——（四）应对高并发攻击</h1>
+<p><a href="http://www.iteye.com/" target="_blank">首页</a> <a href="http://www.iteye.com/news" target="_blank">资讯</a> <a href="http://www.iteye.com/magazines" target="_blank">精华</a> <a href="http://www.iteye.com/forums" target="_blank">论坛</a> <a href="http://www.iteye.com/ask" target="_blank">问答</a> <a href="http://www.iteye.com/blogs" target="_blank">博客</a> <a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a> <a href="http://www.iteye.com/groups" target="_blank">群组</a> <a href="">更多 ▼</a></p>
+<p><a href="http://job.iteye.com/iteye" target="_blank">招聘</a> <a href="http://www.iteye.com/search" target="_blank">搜索</a></p>
+<p><a href="http://snowolf.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://snowolf.iteye.com/login" target="_blank">登录</a> <a href="http://snowolf.iteye.com/signup" target="_blank">注册</a></p>
+<h1 id="-snowolf-http-snowolf-iteye-com-"><a href="http://snowolf.iteye.com/" target="_blank">Snowolf的意境空间！</a></h1>
+<ul>
+<li><a href="http://snowolf.iteye.com/" target="_blank"><strong>博客</strong></a></li>
+<li><a href="http://snowolf.iteye.com/weibo" target="_blank">微博</a></li>
+<li><a href="http://snowolf.iteye.com/album" target="_blank">相册</a></li>
+<li><a href="http://snowolf.iteye.com/link" target="_blank">收藏</a></li>
+<li><a href="http://snowolf.iteye.com/blog/guest_book" target="_blank">留言</a></li>
+<li><a href="http://snowolf.iteye.com/blog/profile" target="_blank">关于我</a></li>
+</ul>
+<h3 id="-memcached-"><a href="">Memcached笔记——（四）应对高并发攻击</a> **</h3>
+<p><strong>博客分类：</strong></p>
+<ul>
+<li><a href="http://snowolf.iteye.com/category/214766" target="_blank">Java／Cache</a></li>
+<li><a href="http://snowolf.iteye.com/category/28518" target="_blank">Spring</a></li>
+<li><a href="http://snowolf.iteye.com/category/64267" target="_blank">Server Architecture／Distributed</a>
+<a href="http://www.iteye.com/blogs/tag/memcached" target="_blank">memcached</a><a href="http://www.iteye.com/blogs/tag/add" target="_blank">add</a><a href="http://www.iteye.com/blogs/tag/xmemcached" target="_blank">xmemcached</a> </li>
+</ul>
+<p>近半个月过得很痛苦，主要是产品上线后，引来无数机器用户恶意攻击，不停的刷新产品各个服务入口，制造垃圾数据，消耗资源。他们的最好成绩，1秒钟可以并发6次，赶在Database入库前，Cache进行Missing Loading前，强占这其中十几毫秒的时间，进行恶意攻击。</p>
+<p><strong>相关链接： 
+<a href="http://snowolf.iteye.com/blog/1447348" target="_blank">Memcached笔记——（一）安装&amp;常规错误&amp;监控 </a>
+<a href="http://snowolf.iteye.com/blog/1471805" target="_blank">Memcached笔记——（二）XMemcached&amp;Spring集成</a> 
+<a href="http://snowolf.iteye.com/blog/1576818" target="_blank">Memcached笔记——（三）Memcached使用总结</a> </strong></p>
+<p><a href="http://snowolf.iteye.com/admin/blogs/1677495/edit" title="Memcached笔记——（四）应对高并发攻击" target="_blank"><strong>Memcached笔记——（四）应对高并发攻击</strong></a></p>
+<p>为了应对上述情况，做了如下调整：</p>
+<ol>
+<li>更新数据时，先写Cache，然后写Database，如果可以，写操作交给队列后续完成。</li>
+<li>限制统一帐号，同一动作，同一秒钟并发次数，超过1次不做做动作，返回操作失败。</li>
+<li>限制统一用户，每日动作次数，超限返回操作失败。</li>
+</ol>
+<p>要完成上述操作，同事给我支招。用Memcached的add方法，就可以很快速的解决问题。不需要很繁琐的开发，也不需要依赖数据库记录，完全内存操作。<img src="" alt=""></p>
+<p>以下实现一个判定冲突的方法：</p>
+<p>Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>//<em>/</em> </li>
+<li>/* 冲突延时 1秒 </li>
+<li>/*/  </li>
+<li>public static final int MUTEX_EXP = 1;  </li>
+<li>//<em>/</em> </li>
+<li>/* 冲突键 </li>
+<li>/*/  </li>
+<li>public static final String MUTEX<em>KEY_PREFIX = &quot;MUTEX</em>&quot;;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 冲突判定 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/*/  </li>
+<li>public boolean isMutex(String key) {  </li>
+<li>return isMutex(key, MUTEX_EXP);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 冲突判定 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @param exp </li>
+<li>/* @return true 冲突 </li>
+<li>/*/  </li>
+<li>public boolean isMutex(String key, int exp) {  </li>
+<li>boolean status = true;  </li>
+<li>try {  </li>
+<li>if (memcachedClient.add(MUTEX_KEY_PREFIX + key, exp, &quot;true&quot;)) {  </li>
+<li>status = false;  </li>
+<li>}  </li>
+<li>} catch (Exception e) {  </li>
+<li>logger.error(e.getMessage(), e);  </li>
+<li>}  </li>
+<li>return status;  </li>
+<li></li>
+<li>}<br>//<em>/</em> /<em> 冲突延时 1秒 /</em>/ public static final int MUTEX<em>EXP = 1; //<em>/</em> /<em> 冲突键 /</em>/ public static final String MUTEX_KEY_PREFIX = &quot;MUTEX</em>&quot;; //<em>/</em> /<em> 冲突判定 /</em> /<em> @param key /</em>/ public boolean isMutex(String key) { return isMutex(key, MUTEX_EXP); } //<em>/</em> /<em> 冲突判定 /</em> /<em> @param key /</em> @param exp /<em> @return true 冲突 /</em>/ public boolean isMutex(String key, int exp) { boolean status = true; try { if (memcachedClient.add(MUTEX_KEY_PREFIX + key, exp, &quot;true&quot;)) { status = false; } } catch (Exception e) { logger.error(e.getMessage(), e); } return status; }</li>
+</ol>
+<p>做个说明：</p>
+<p>选项 说明 add 仅当存储空间中不存在键相同的数据时才保存 replace 仅当存储空间中存在键相同的数据时才保存 set 与add和replace不同，无论何时都保存</p>
+<p>也就是说，如果add操作返回为true，则认为当前不冲突！<img src="" alt=""></p>
+<p>回归场景，恶意用户1秒钟操作6次，遇到上述这个方法，只有乖乖地1秒后再来。别小看这1秒钟，一个数据库操作不过几毫秒。1秒延迟，足以降低系统负载，增加恶意用户成本。</p>
+<p>附我用到的基于XMemcached实现：</p>
+<p>Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>import net.rubyeye.xmemcached.MemcachedClient;  </li>
+<li></li>
+<li>import org.apache.log4j.Logger;  </li>
+<li>import org.springframework.beans.factory.annotation.Autowired;  </li>
+<li>import org.springframework.stereotype.Component;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/*  </li>
+<li>/* @author Snowolf </li>
+<li>/* @version 1.0 </li>
+<li>/* @since 1.0 </li>
+<li>/*/  </li>
+<li>@Component  </li>
+<li>public class MemcachedManager {  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 缓存时效 1天 </li>
+<li>/*/  </li>
+<li>public static final int CACHE_EXP_DAY = 3600 /* 24;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 缓存时效 1周 </li>
+<li>/*/  </li>
+<li>public static final int CACHE_EXP_WEEK = 3600 /<em> 24 /</em> 7;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 缓存时效 1月 </li>
+<li>/*/  </li>
+<li>public static final int CACHE_EXP_MONTH = 3600 /<em> 24 /</em> 30;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 缓存时效 永久 </li>
+<li>/*/  </li>
+<li>public static final int CACHE_EXP_FOREVER = 0;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 冲突延时 1秒 </li>
+<li>/*/  </li>
+<li>public static final int MUTEX_EXP = 1;  </li>
+<li>//<em>/</em> </li>
+<li>/* 冲突键 </li>
+<li>/*/  </li>
+<li>public static final String MUTEX<em>KEY_PREFIX = &quot;MUTEX</em>&quot;;  </li>
+<li>//<em>/</em> </li>
+<li>/* Logger for this class </li>
+<li>/*/  </li>
+<li>private static final Logger logger = Logger  </li>
+<li>.getLogger(MemcachedManager.class);  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* Memcached Client </li>
+<li>/*/  </li>
+<li>@Autowired  </li>
+<li>private MemcachedClient memcachedClient;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 缓存 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @param value </li>
+<li>/* @param exp </li>
+<li>/*            失效时间 </li>
+<li>/*/  </li>
+<li>public void cacheObject(String key, Object value, int exp) {  </li>
+<li>try {  </li>
+<li>memcachedClient.set(key, exp, value);  </li>
+<li>} catch (Exception e) {  </li>
+<li>logger.error(e.getMessage(), e);  </li>
+<li>}  </li>
+<li>logger.info(&quot;Cache Object: [&quot; + key + &quot;]&quot;);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* Shut down the Memcached Cilent. </li>
+<li>/*/  </li>
+<li>public void finalize() {  </li>
+<li>if (memcachedClient != null) {  </li>
+<li>try {  </li>
+<li>if (!memcachedClient.isShutdown()) {  </li>
+<li>memcachedClient.shutdown();  </li>
+<li>logger.debug(&quot;Shutdown MemcachedManager...&quot;);  </li>
+<li>}  </li>
+<li>} catch (Exception e) {  </li>
+<li>logger.error(e.getMessage(), e);  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 清理对象 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/*/  </li>
+<li>public void flushObject(String key) {  </li>
+<li>try {  </li>
+<li>memcachedClient.deleteWithNoReply(key);  </li>
+<li>} catch (Exception e) {  </li>
+<li>logger.error(e.getMessage(), e);  </li>
+<li>}  </li>
+<li>logger.info(&quot;Flush Object: [&quot; + key + &quot;]&quot;);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 冲突判定 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/*/  </li>
+<li>public boolean isMutex(String key) {  </li>
+<li>return isMutex(key, MUTEX_EXP);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 冲突判定 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @param exp </li>
+<li>/* @return true 冲突 </li>
+<li>/*/  </li>
+<li>public boolean isMutex(String key, int exp) {  </li>
+<li>boolean status = true;  </li>
+<li>try {  </li>
+<li>if (memcachedClient.add(MUTEX_KEY_PREFIX + key, exp, &quot;true&quot;)) {  </li>
+<li>status = false;  </li>
+<li>}  </li>
+<li>} catch (Exception e) {  </li>
+<li>logger.error(e.getMessage(), e);  </li>
+<li>}  </li>
+<li>return status;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 加载缓存对象 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>public <T> T loadObject(String key) {  </li>
+<li>T object = null;  </li>
+<li>try {  </li>
+<li>object = memcachedClient.<T> get(key);  </li>
+<li>} catch (Exception e) {  </li>
+<li>logger.error(e.getMessage(), e);  </li>
+<li>}  </li>
+<li>logger.info(&quot;Load Object: [&quot; + key + &quot;]&quot;);  </li>
+<li>return object;  </li>
+<li>}  </li>
+<li></li>
+<li>}<br>import net.rubyeye.xmemcached.MemcachedClient; import org.apache.log4j.Logger; import org.springframework.beans.factory.annotation.Autowired; import org.springframework.stereotype.Component; //<em>/</em> /<em> /</em> @author Snowolf /<em> @version 1.0 /</em> @since 1.0 /<em>/ @Component public class MemcachedManager { //</em>/<em> /</em> 缓存时效 1天 /<em>/ public static final int CACHE_EXP_DAY = 3600 /</em> 24; //<em>/</em> /<em> 缓存时效 1周 /</em>/ public static final int CACHE<em>EXP_WEEK = 3600 /<em> 24 /</em> 7; //<em>/</em> /<em> 缓存时效 1月 /</em>/ public static final int CACHE_EXP_MONTH = 3600 /<em> 24 /</em> 30; //<em>/</em> /<em> 缓存时效 永久 /</em>/ public static final int CACHE_EXP_FOREVER = 0; //<em>/</em> /<em> 冲突延时 1秒 /</em>/ public static final int MUTEX_EXP = 1; //<em>/</em> /<em> 冲突键 /</em>/ public static final String MUTEX_KEY_PREFIX = &quot;MUTEX</em>&quot;; //<em>/</em> /<em> Logger for this class /</em>/ private static final Logger logger = Logger .getLogger(MemcachedManager.class); //<em>/</em> /<em> Memcached Client /</em>/ @Autowired private MemcachedClient memcachedClient; //<em>/</em> /<em> 缓存 /</em> /<em> @param key /</em> @param value /<em> @param exp /</em> 失效时间 /<em>/ public void cacheObject(String key, Object value, int exp) { try { memcachedClient.set(key, exp, value); } catch (Exception e) { logger.error(e.getMessage(), e); } logger.info(&quot;Cache Object: [&quot; + key + &quot;]&quot;); } //</em>/<em> /</em> Shut down the Memcached Cilent. /<em>/ public void finalize() { if (memcachedClient != null) { try { if (!memcachedClient.isShutdown()) { memcachedClient.shutdown(); logger.debug(&quot;Shutdown MemcachedManager...&quot;); } } catch (Exception e) { logger.error(e.getMessage(), e); } } } //</em>/<em> /</em> 清理对象 /<em> /</em> @param key /<em>/ public void flushObject(String key) { try { memcachedClient.deleteWithNoReply(key); } catch (Exception e) { logger.error(e.getMessage(), e); } logger.info(&quot;Flush Object: [&quot; + key + &quot;]&quot;); } //</em>/<em> /</em> 冲突判定 /<em> /</em> @param key /<em>/ public boolean isMutex(String key) { return isMutex(key, MUTEX_EXP); } //</em>/<em> /</em> 冲突判定 /<em> /</em> @param key /<em> @param exp /</em> @return true 冲突 /<em>/ public boolean isMutex(String key, int exp) { boolean status = true; try { if (memcachedClient.add(MUTEX_KEY_PREFIX + key, exp, &quot;true&quot;)) { status = false; } } catch (Exception e) { logger.error(e.getMessage(), e); } return status; } //</em>/<em> /</em> 加载缓存对象 /<em> /</em> @param key /<em> @return /</em>/ public <T> T loadObject(String key) { T object = null; try { object = memcachedClient.<T> get(key); } catch (Exception e) { logger.error(e.getMessage(), e); } logger.info(&quot;Load Object: [&quot; + key + &quot;]&quot;); return object; } }</li>
+</ol>
+<p><strong>相关链接： 
+<a href="http://snowolf.iteye.com/blog/1447348" target="_blank">Memcached笔记——（一）安装&amp;常规错误&amp;监控 </a>
+<a href="http://snowolf.iteye.com/blog/1471805" target="_blank">Memcached笔记——（二）XMemcached&amp;Spring集成</a> 
+<a href="http://snowolf.iteye.com/blog/1576818" target="_blank">Memcached笔记——（三）Memcached使用总结</a> </strong></p>
+<p><a href=""><strong>Memcached笔记——（四）应对高并发攻击</strong></a>
+<strong>2</strong>
+顶</p>
+<p><strong>2</strong>
+踩</p>
+<p>分享到： <a href="&quot;分享到新浪微博&quot;"><img src="" alt=""></a> <a href="&quot;分享到腾讯微博&quot;"><img src="" alt=""></a></p>
+<p><a href="http://snowolf.iteye.com/blog/1679923" title="MySQL 运维笔记（一）—— 终止高负载SQL" target="_blank">MySQL 运维笔记（一）—— 终止高负载SQL</a> | <a href="http://snowolf.iteye.com/blog/1667104" title="征服 Redis + Jedis + Spring （二）—— 哈希表操作（HMGET HMSET）" target="_blank">征服 Redis + Jedis + Spring （二）—— ...</a></p>
+<ul>
+<li>2012-09-13 09:48</li>
+<li>浏览 3788</li>
+<li><a href="">评论(4)</a></li>
+<li>分类:<a href="http://www.iteye.com/blogs/category/architecture" target="_blank">企业架构</a></li>
+<li><a href="http://www.iteye.com/wiki/blog/1677495" target="_blank">相关推荐</a></li>
+</ul>
+<h3 id="-">评论</h3>
+<p><a href=""></a></p>
+<p>4 楼 <a href="http://snowolf.iteye.com/" title="snowolf" target="_blank">snowolf</a> 2012-12-11  </p>
+<p>zym820910 写道</p>
+<p>snowolf 写道</p>
+<p>CurrentJ 写道</p>
+<p>先写Cache，然后写Database，断电或者故障会导致用户数据丢失。
+各有利弊，需要根据业务需求权衡。<img src="" alt="">
+写得非常好！应对高并发的时候，我们通常的思维是泄洪模式，通过一道又一道的防洪大堤将洪水分流，尤其是在应对数据要求不严厉的SNS这类产品，异步的保存数据值得提倡！
+不过，更好的方式是：通过旁路式架构，解决代码层面的大部分压力。现在很多商城的商品展示和搜索都采用NOSQL技术来应对处理，异步增加或更新，并不显得那么重要了，更多的是通过产品和技术架构来调整，比如通过分析用户喜好，事先静态化搜索结果。
+赞同，感谢分享！<img src="" alt=""> 最核心的优化，还是应当在产品层面多下工夫。找到用户-产品-技术，三方都能满足的平衡点。
+3 楼 <a href="http://zym820910.iteye.com/" title="zym820910" target="_blank">zym820910</a> 2012-12-11  </p>
+<p>snowolf 写道</p>
+<p>CurrentJ 写道</p>
+<p>先写Cache，然后写Database，断电或者故障会导致用户数据丢失。
+各有利弊，需要根据业务需求权衡。<img src="" alt="">
+写得非常好！应对高并发的时候，我们通常的思维是泄洪模式，通过一道又一道的防洪大堤将洪水分流，尤其是在应对数据要求不严厉的SNS这类产品，异步的保存数据值得提倡！
+不过，更好的方式是：通过旁路式架构，解决代码层面的大部分压力。现在很多商城的商品展示和搜索都采用NOSQL技术来应对处理，异步增加或更新，并不显得那么重要了，更多的是通过产品和技术架构来调整，比如通过分析用户喜好，事先静态化搜索结果。</p>
+<p>2 楼 <a href="http://snowolf.iteye.com/" title="snowolf" target="_blank">snowolf</a> 2012-11-07  </p>
+<p>CurrentJ 写道</p>
+<p>先写Cache，然后写Database，断电或者故障会导致用户数据丢失。
+各有利弊，需要根据业务需求权衡。<img src="" alt="">
+1 楼 <a href="http://currentj.iteye.com/" title="CurrentJ" target="_blank">CurrentJ</a> 2012-11-07  </p>
+<p>先写Cache，然后写Database，断电或者故障会导致用户数据丢失。</p>
+<h3 id="-">发表评论</h3>
+<p><a href="http://snowolf.iteye.com/login" target="_blank"><img src="" alt=""></a><a href="http://snowolf.iteye.com/login" target="_blank">您还没有登录,请您登录后再发表评论</a></p>
+<p><a href="http://snowolf.iteye.com/" target="_blank"><img src="&quot;snowolf的博客: Snowolf的意境空间！&quot;" alt="snowolf的博客"></a></p>
+<p>snowolf</p>
+<ul>
+<li>浏览: 902532 次</li>
+<li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
+<li>来自: 北京</li>
+<li><img src="" alt=""><h3 id="-http-snowolf-iteye-com-blog-user_visits-">最近访客 <a href="http://snowolf.iteye.com/blog/user_visits" target="_blank">更多访客&gt;&gt;</a></h3>
+</li>
+</ul>
+<p><a href="http://torry-he.iteye.com/" target="_blank"><img src="&quot;torry_he的博客: &quot;" alt="torry_he的博客"></a></p>
+<p><a href="http://torry-he.iteye.com/" title="torry_he" target="_blank">torry_he</a></p>
+<p><a href="http://cxzucc.iteye.com/" target="_blank"><img src="&quot;cxzucc的博客: &quot;" alt="cxzucc的博客"></a></p>
+<p><a href="http://cxzucc.iteye.com/" title="cxzucc" target="_blank">cxzucc</a>
+<a href="http://greatestrabit.iteye.com/" target="_blank"><img src="&quot;greatestrabit的博客: &quot;" alt="greatestrabit的博客"></a></p>
+<p><a href="http://greatestrabit.iteye.com/" title="greatestrabit" target="_blank">greatestrabit</a></p>
+<p><a href="http://zhumingyuan.iteye.com/" target="_blank"><img src="&quot;zhumingyuan的博客: &quot;" alt="zhumingyuan的博客"></a></p>
+<p><a href="http://zhumingyuan.iteye.com/" title="zhumingyuan" target="_blank">zhumingyuan</a></p>
+<h3 id="-">文章分类</h3>
+<ul>
+<li><a href="http://snowolf.iteye.com/" target="_blank">全部博客 (161)</a></li>
+<li><a href="http://snowolf.iteye.com/category/44718" target="_blank">职场 &amp;&amp; 心情 (22)</a></li>
+<li><a href="http://snowolf.iteye.com/category/28520" target="_blank">Java／Basic (17)</a></li>
+<li><a href="http://snowolf.iteye.com/category/102898" target="_blank">Java／Compression (7)</a></li>
+<li><a href="http://snowolf.iteye.com/category/68576" target="_blank">Java／Security (22)</a></li>
+<li><a href="http://snowolf.iteye.com/category/147023" target="_blank">Java／Maven (3)</a></li>
+<li><a href="http://snowolf.iteye.com/category/214766" target="_blank">Java／Cache (11)</a></li>
+<li><a href="http://snowolf.iteye.com/category/38039" target="_blank">Eclipse (4)</a></li>
+<li><a href="http://snowolf.iteye.com/category/28518" target="_blank">Spring (19)</a></li>
+<li><a href="http://snowolf.iteye.com/category/39212" target="_blank">ORM／Hibernate (2)</a></li>
+<li><a href="http://snowolf.iteye.com/category/36643" target="_blank">ORM／iBatis (3)</a></li>
+<li><a href="http://snowolf.iteye.com/category/28851" target="_blank">DB／NoSQL (10)</a></li>
+<li><a href="http://snowolf.iteye.com/category/34962" target="_blank">DB／MySQL (7)</a></li>
+<li><a href="http://snowolf.iteye.com/category/93301" target="_blank">DB／MS SQL Server (4)</a></li>
+<li><a href="http://snowolf.iteye.com/category/64032" target="_blank">OS／Linux (10)</a></li>
+<li><a href="http://snowolf.iteye.com/category/124565" target="_blank">OS／Mac (7)</a></li>
+<li><a href="http://snowolf.iteye.com/category/67920" target="_blank">C／C++ (4)</a></li>
+<li><a href="http://snowolf.iteye.com/category/48004" target="_blank">Server Architecture／Basic (11)</a></li>
+<li><a href="http://snowolf.iteye.com/category/64267" target="_blank">Server Architecture／Distributed (17)</a></li>
+<li><a href="http://snowolf.iteye.com/category/51869" target="_blank">Moblie／Andriod (2)</a></li>
+<li><a href="http://snowolf.iteye.com/category/64109" target="_blank">WebService (3)</a></li>
+<li><a href="http://snowolf.iteye.com/category/195003" target="_blank">Objective-C (1)</a></li>
+<li><a href="http://snowolf.iteye.com/category/28519" target="_blank">Html (1)</a></li>
+<li><a href="http://snowolf.iteye.com/category/68028" target="_blank">设计模式 (1)</a></li>
+<li><a href="http://snowolf.iteye.com/category/271868" target="_blank">Scala (0)</a></li>
+<li><p><a href="http://snowolf.iteye.com/category/274875" target="_blank">Kafka (1)</a></p>
+<h3 id="-">社区版块</h3>
+</li>
+<li><p><a href="http://snowolf.iteye.com/blog/news" target="_blank">我的资讯</a> (0)</p>
+</li>
+<li><a href="http://snowolf.iteye.com/blog/post" target="_blank">我的论坛</a> (66)</li>
+<li><a href="http://snowolf.iteye.com/blog/answered_problems" target="_blank">我的问答</a> (4)</li>
+</ul>
+<h3 id="-">存档分类</h3>
+<ul>
+<li><a href="http://snowolf.iteye.com/blog/monthblog/2013-05" target="_blank">2013-05</a> (2)</li>
+<li><a href="http://snowolf.iteye.com/blog/monthblog/2013-04" target="_blank">2013-04</a> (1)</li>
+<li><a href="http://snowolf.iteye.com/blog/monthblog/2013-03" target="_blank">2013-03</a> (3)</li>
+<li><p><a href="http://snowolf.iteye.com/blog/monthblog_more" target="_blank">更多存档...</a></p>
+<h3 id="-">评论排行榜</h3>
+</li>
+<li><p><a href="http://snowolf.iteye.com/blog/1667104" title="征服 Redis + Jedis + Spring （二）—— 哈希表操作（HMGET HMSET）" target="_blank">征服 Redis + Jedis + Spring （二）—— ...</a></p>
+</li>
+<li><a href="http://snowolf.iteye.com/blog/1681944" title="MySQL 查询时强制区分大小写" target="_blank">MySQL 查询时强制区分大小写</a></li>
+<li><a href="http://snowolf.iteye.com/blog/1679923" title="MySQL 运维笔记（一）—— 终止高负载SQL" target="_blank">MySQL 运维笔记（一）—— 终止高负载SQL</a></li>
+<li><a href="http://snowolf.iteye.com/blog/1666908" title="征服 Redis + Jedis + Spring （一）—— 配置&amp;常规操作（GET SET DEL）" target="_blank">征服 Redis + Jedis + Spring （一）—— ...</a></li>
+<li><a href="http://snowolf.iteye.com/blog/1748094" title="我的职场生涯（十）——又一个两年" target="_blank">我的职场生涯（十）——又一个两年</a></li>
+</ul>
+<h3 id="-">最新评论</h3>
+<ul>
+<li><a href="http://dbh0512.iteye.com/" title="dbh0512" target="_blank">dbh0512</a>： 这样操作只是在缓存中读取吗?项目中是不是只有在海量频繁读取某一 ...
+<a href="http://snowolf.iteye.com/blog/1666908#bc2322585" target="_blank">征服 Redis + Jedis + Spring （一）—— 配置&amp;常规操作（GET SET DEL）</a></li>
+<li><a href="http://jacy9.iteye.com/" title="愤怒的程序猿" target="_blank">愤怒的程序猿</a>： LZ:keytool错误:java.lang.Exceptio ...
+<a href="http://snowolf.iteye.com/blog/397693#bc2322089" target="_blank">Java加密技术（九）——初探SSL</a></li>
+<li><a href="http://snowolf.iteye.com/" title="snowolf" target="_blank">snowolf</a>： juwend 写道如果被加密的明文使用String ming ...
+<a href="http://snowolf.iteye.com/blog/381767#bc2321550" target="_blank">Java加密技术（四）——非对称加密算法RSA</a></li>
+<li><a href="http://simylau.iteye.com/" title="simylau" target="_blank">simylau</a>： water_lang 写道@Autowired      pr ...
+<a href="http://snowolf.iteye.com/blog/577989#bc2320738" target="_blank">Spring 注解学习手札（一） 构建简单Web应用</a></li>
+<li><a href="http://ifox.iteye.com/" title="ifox" target="_blank">ifox</a>： phrmgb 写道学习了，这些东东有时感觉很偏的，但是特殊的业 ...
+<a href="http://snowolf.iteye.com/blog/1329649#bc2319809" target="_blank">Java关键字——transient</a>
+声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
+© 2003-2012 ITeye.com. All rights reserved. [ 京ICP证110151号 京公网安备110105010620 ]
+<img src="http://stat.iteye.com/?url=http%3A%2F%2Fsnowolf.iteye.com%2Fblog%2F1677495&amp;referrer=&amp;user_id=" alt=""> <img src="http://dt.tongji.linezing.com/tongji.do?unit_id=1122445&amp;uv_id=15753577192130187469&amp;uv_new=0&amp;cna=&amp;cg=&amp;mid=&amp;mmland=&amp;ade=&amp;adtm=&amp;sttm=&amp;cpa=&amp;ss_id=3627902245&amp;ss_no=0&amp;ec=1&amp;ref=&amp;url=http%3A//snowolf.iteye.com/blog/1677495&amp;title=Memcached%u7B14%u8BB0%u2014%u2014%uFF08%u56DB%uFF09%u5E94%u5BF9%u9AD8%u5E76%u53D1%u653B%u51FB - Snowolf%u7684%u610F%u5883%u7A7A%u95F4%uFF01 - ITeye%u6280%u672F%u7F51%u7AD9&amp;charset=utf-8&amp;domain=iteye.com&amp;hashval=909&amp;filtered=0&amp;app=Microsoft Internet Explorer&amp;agent=Mozilla/5.0 %28compatible%3B MSIE 9.0%3B Windows NT 6.1%3B WOW64%3B Trident/5.0%3B SLCC2%3B .NET CLR 2.0.50727%3B .NET CLR 3.5.30729%3B .NET CLR 3.0.30729%3B Media Center PC 6.0%3B .NET4.0C%3B .NET4.0E%3B InfoPath.3%29&amp;color=24-bit&amp;screen=1600x900&amp;lg=zh-cn&amp;je=1&amp;fv=10.0&amp;st=1377062586&amp;vc=eee3dea2&amp;ut=2&amp;url_id=0&amp;cnu=0.01284455030611481" alt=""><a href="http://tongji.alimama.com/report.html?unit_id=1122445" target="_blank"><img src="" alt="量子统计"></a></li>
+</ul>
+
+      
+    </div>
+    <section id='after_content_widget'><div class="widget" id="widget_after_content_wumiiRelatedItems>">
+<script type="text/javascript" id="wumiiRelatedItems"></script>
+</div><div class="widget" id="widget_after_content_post_footer_info>">
+<div class="panel panel-success">
+    <div class="panel-heading" align="center">希望本站内容对您有点用处,有什么疑问或建议请在后面留言评论</div>
+    <div align="center" class="panel-body">转载请注明作者(<a href="http://itsolife.com/about/">RobinChia</a>)和出处 <a href="http://itsolife.com">It so life</a> ，请勿用于任何商业用途</div>
+    <div class="panel-body">本文链接: <a href="/2014/02/02/2014-02-02-Nosql-mongo--Memcached笔记——（四）应对高并发攻击/">Memcached笔记——（四）应对高并发攻击</a></div>
+</div>
+</div></section>
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Nosql/">Nosql</a></li></span><span class="breadcrumb"><li><a href="/categories/Nosql/">Nosql</a></li><li><a href="/categories/Nosql/mongo/">mongo</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Nosql/" class="label label-primary">Nosql</a><a href="/tags/mongo/" class="label label-success">mongo</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:31"datetime="2014-03-07 09:54:31"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-Nosql-mongo--Memcached笔记——（四）应对高并发攻击/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-Nosql-mongo--Memcached笔记——（四）应对高并发攻击" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+    <section id='after_post_widget'><div class="widget" id="widget_after_post_post_pageNav>">
+<ul class="pager">
+  
+  <li class="previous"><a href="/2014/02/02/2014-02-02-Nosql--译NoSQL生态系统/" title="[译] NoSQL生态系统">&larr; [译] NoSQL生态系统</a></li>
+  
+  
+  <li class="next"><a href="/2014/02/02/2014-02-02-Nosql-mongo--MongoDB基础入门_云涛_新浪博客/" title="MongoDB基础入门_云涛_新浪博客">MongoDB基础入门_云涛_新浪博客 &rarr;</a></li>
+  
+</ul></div><div class="widget" id="widget_after_post_related_posts>">
+<ul class="list-group"><li class="list-group-item"><a href="/2014/02/02/2014-02-02-Nosql--NoSQL数据建模技术/">NoSQL 数据建模技术</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-Nosql-mongo--MongoDB基础问题及使用方式-随风飘云-ChinaUnix博客/">MongoDB基础问题及使用方式</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-Nosql-mongo--MongoDB客户端MongoVue-张善友-博客园/">MongoDB 客户端 MongoVue </a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-Nosql--NoSQL数据库探讨之一－为什么要用非关系数据库？-robbin的自言自语/">NoSQL数据库探讨之一 － 为什么要用非关系数据库？ </a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-Nosql--译NoSQL生态系统/">[译] NoSQL生态系统</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-Nosql--NoSQL数据库笔谈/">NoSQL数据库笔谈</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-Nosql-mongo--MongoDB客户端工具-MongoDB-SimpleFramework/">MongoDB 客户端工具 </a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-Nosql--GoogleDremel原理–如何能3秒分析1PB/">Google Dremel 原理 – 如何能3秒分析1PB</a></li></ul></div></section>    
+	<div id="comments"><!-- Duoshuo Comment BEGIN -->
+
+<div class="ds-thread"  data-thread-key="2014-02-02-Nosql-mongo--Memcached笔记——（四）应对高并发攻击"  data-url="http://itsolife.com/2014/02/02/2014-02-02-Nosql-mongo--Memcached笔记——（四）应对高并发攻击/" data-title="Memcached笔记——（四）应对高并发攻击"></div>
+
+		
+
+<!-- Duoshuo Comment END -->
+
+</div></div><!--wapper-->
+       </div><!-- ID main-col END -->
+       <aside id="sidebar" class="alignright col-sx-6 col-sm-4 col-md-3 col-lg-3">
+<div id="widget_search" class="widget panel panel-primary">
+    <form action="//google.com/search" method="get" accept-charset="utf-8">
+  <div class="input-group">
+    <input class="form-control" id="searchbox" type="search" name="q" results="0" placeholder="search">
+    <span class="input-group-btn">
+      <button class="btn btn-default" type="submit">Go!</button>
+    </span>
+    <input type="hidden" name="q" value="site:itsolife.com">
+  </div>
+</form>
+</div>
+
+<div id="widget_category" class="widget panel panel-primary">
+  <div class="panel-heading">category</div>  <div data-src='category' class='ajax_widgets'>正在加载...</div>
+</div>
+
+<div id="widget_recent_posts" class="widget panel panel-primary">
+  <div class="panel-heading">recent posts</div>  <div data-src='recent_posts' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_tagcloud" class="widget panel panel-primary">
+  <div class="panel-heading">tagcloud</div>  <div data-src='tagcloud' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_latest_update_posts" class="widget panel panel-primary">
+  <div class="panel-heading">最近更新</div>  <div data-src='latest_update_posts' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_recent_comments" class="widget panel panel-primary">
+  <div class="panel-heading">recent comments</div>  
+
+<div class="list-group-item ds-recent-comments" data-num-items="6" data-show-avatars="1" data-show-time="1" data-show-title="1" data-show-admin="1" data-excerpt-length="50"></div>
+
+
+
+</div>
+
+</aside>
+       <div class="clearfix"></div>
+     </div><!-- row END -->
+  </div>
+  <footer id="footer" class="container">
+  <div class="panel panel-info">
+  <section id='footer_widget'></section>  <div class="panel-footer">
+  <div id="site-info">
+    <span class='author'>
+  
+  &copy; 2014 RobinChia
+  
+    &nbsp;&nbsp;</span>
+  
+  <span id='analytics-51la'></span><span id='analytics-google'>
+<script type="text/javascript">
+  var _gaq = _gaq || [];
+  _gaq.push(['_setAccount', 'UA-48559895-1']);
+  _gaq.push(['_trackPageview']);
+  _js2load.push({src:('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js'});
+</script></span><span id='analytics-cnzz'>
+<script type="text/javascript">var cnzz_protocol = (("https:" == document.location.protocol) ? " https://" : " http://");document.write(unescape("%3Cspan id='cnzz_stat_icon_5774006'%3E%3C/span%3E%3Cscript src='" + cnzz_protocol + "s17.cnzz.com/stat.php%3Fid%3D5774006%26show%3Dpic' type='text/javascript'%3E%3C/script%3E"));</script>
+</span><span id='analytics-baidu'>
+<script>
+var _hmt = _hmt || [];
+_js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
+</script>
+</span>  </div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-07 09:54:31</em></span></div>
+</div>
+<div class="clearfix"></div>
+
+
+  </div>
+  </footer>
+  
+        <script src="http://cdn.bootcss.com/jquery/1.10.2/jquery.min.js"></script>        
+        <script src="http://cdn.staticfile.org/twitter-bootstrap/3.1.0/js/bootstrap.min.js"></script>        
+                
+        <script src="http://cdn.bootcss.com/prettify/r298/prettify.min.js"></script>    <script type="text/javascript">
+   var lang=["bsh", "c", "cc", "cpp", "cs", "csh", "cyc", "cv", "htm", "html",
+    "java", "js", "m", "mxml", "perl", "pl", "pm", "py", "rb", "sh",
+    "xhtml", "xml", "xsl"];
+   var pretty_base='';
+   $('script').each(function(){
+	var c = $(this).attr('src');
+	if (!c)
+	    return;
+	if (c.match(/(\/)?prettify(\.min)?\.js/i))
+	{
+	    var index = c.lastIndexOf('/');
+	    if (index != -1)
+		pretty_base = c.substr(0,index + 1);
+	    return false;
+	}
+   })
+   $('pre code').each(function(){
+	var c = $(this).attr('class')
+	if (!c)
+	    return;
+	c = c.match(/\s?(lang\-\w+)/i);
+	if (c && lang.indexOf(c[1]) == -1)
+	{
+	    lang.push(c[1]);
+	    $.getScript(pretty_base + c[1] + '.min.js');
+	}
+   })
+
+    $(window).load(function(){
+       $("pre").addClass("prettyprint");
+       prettyPrint();
+    })
+</script>    
+            <script type="text/javascript">
+var duoshuoQuery = {short_name:"robinchia"};
+_js2load.push({src:'http://static.duoshuo.com/embed.js',charset:'UTF-8'});
+</script>
+    
+            <!--wumii_relatedItems-->
+
+<script type="text/javascript">
+    var wumiiPermaLink = "http://itsolife.com/2014/02/02/2014-02-02-Nosql-mongo--Memcached笔记——（四）应对高并发攻击/";
+    var wumiiTitle = "Memcached笔记——（四）应对高并发攻击";
+    var wumiiTags = "Nosql,mongo";
+    var wumiiCategories = ["Nosql","Nosql","mongo"];
+    var wumiiSitePrefix = "http://itsolife.com";
+    var wumiiParams = "&num=5&mode=3&pf=JAVASCRIPT";
+    _js2load.push({src:'http://widget.wumii.cn/ext/relatedItemsWidget'});
+</script>
+<a href="http://www.wumii.com/widget/relatedItems" style="border:0;">
+<img src="http://static.wumii.cn/images/pixel.png" alt="无觅关联推荐，快速提升流量" style="border:0;padding:0;margin:0;" />
+</a>
+    
+        <script src="http://cdn.bootcss.com/fancybox/2.1.5/jquery.fancybox.min.js"></script>    <script type="text/javascript">
+(function($){
+  $('.entry').each(function(i){
+    $(this).find('img').each(function(){
+      var alt = this.alt;
+
+      if (alt){
+        $(this).before('<span class="caption">' + alt + '</span>');
+      }
+
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox" rel="fancybox' + i + '" />');
+    });
+  });
+
+  $('.fancybox').fancybox();
+})(jQuery);
+</script>    
+        <script src="http://cdn.bootcss.com/mathjax/2.3/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>    <script type="text/x-mathjax-config">
+  MathJax.Hub.Config({
+    tex2jax: {
+      skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+      inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+      processEscapes: true
+    }
+  });
+  MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+      all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+  });
+</script>
+    
+<script type="text/javascript">
+$('.ajax_widgets').each(function(){var src=$(this).attr('data-src');if(src)$(this).load('/widgets/'+src+'.html');});
+$.each(_js2load,function(index,obj){loadjs(obj.src,obj.charset)});
+</script>
+
+<div id="scroll2top">
+<img src="/scroll2top/arrow.png"/>
+</div>
+<script src="/scroll2top/scroll2top.min.js"></script>
+<div id="winterland">
+  <canvas></canvas>
+</div>
+<script src="/js/winterland.min.js"></script>
+
+  </body>
+</html>

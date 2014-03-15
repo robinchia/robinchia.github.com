@@ -1,0 +1,565 @@
+
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Garbage First介绍 | It so life</title>
+<meta name="author" content="RobinChia">
+
+<meta name="description" content="Garbage First介绍BlueDavy之技术Blog
+理论不懂就实践，实践不会就学理论！
+
+Garbage First介绍
+本文摘自《构建高性能的大型分布式Java应用》一书，Garbage First简称G1，它的目标是要做到尽量减少GC所导致的应用暂停的时间，让应用达到准实时的效果，同时保持JVM堆空间的利用率，将作为CMS的替代者在JDK 7中闪亮登场，其最大的特色在于允许指定在某个时间段内GC所导致的应用暂停的时间最大为多少，例如在100秒内最多允许GC导致的应用暂停时间为1秒，这个特性对于准实时响应的系统而言非常的吸引人，这样就再也不用担心系统突然会暂停个两三秒了。">
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+<meta property="og:title" content="Garbage First介绍"/>
+<meta property="og:site_name" content="It so life"/>
+
+<!--[if IE]><style>.testIE.IE{display:inline;}</style><![endif]-->
+<!--[if lte IE 7]><link rel="stylesheet" href="/css/ie7.css" type="text/css"><![endif]-->
+<!--[if (lt IE 9)&(gt IE 7)]><style>.testIE.IE8{display:inline;}</style><![endif]-->
+<!--[if gt IE 8]><style>.testIE.IE9{display:inline;}</style><![endif]-->
+
+<link href="/favicon.png" rel="icon">
+<link rel="alternate" href="/atom.xml" title="It so life Feed" type="application/atom+xml">
+
+<link rel="stylesheet" href="http://cdn.staticfile.org/twitter-bootstrap/3.1.0/css/bootstrap.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/font-awesome/4.0.3/css/font-awesome.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/prettify/r298/prettify.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/fancybox/2.1.5/jquery.fancybox.min.css" type="text/css">
+<link rel="stylesheet" href="/css/style.css" type="text/css">
+<!--[if lt IE 9]>
+   <style>article,aside,dialog,footer,header,section,footer,nav,figure,menu{display:block}</style>
+   <script src="http://cdn.staticfile.org/html5shiv/r29/html5.min.js"></script>
+   <script src="http://cdn.staticfile.org/respond.js/1.4.2/respond.min.js"></script>
+<link href="http://cdn.staticfile.org/respond.js/1.4.2/respond-proxy.html" id="respond-proxy" rel="respond-proxy" />
+<link href="/js/respond.proxy.gif" id="respond-redirect" rel="respond-redirect" />
+<script src="/js/respond.proxy.js"></script>
+   <script src="http://cdn.bootcss.com/selectivizr/1.0.2/selectivizr-min.js"></script>
+<![endif]-->
+<script type="text/javascript">
+function loadjs(c,d){var a=document.createElement("script");a.async=!0;a.type="text/javascript";a.src=c;a.charset=d||"gbk";(document.getElementsByTagName("HEAD")[0]||document.getElementsByTagName("BODY")[0]).appendChild(a)};
+var _protocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+var _js2load = [];
+</script>
+
+</head>
+<body>
+      <header id="header" class="container"><nav id="main-nav" class="navbar navbar-default navbar-fixed-top " role="navigation">
+  <div class="container">
+    <div class="navbar-header">
+    <button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
+      <span class="sr-only">Toggle navigation</span>
+      <span class="icon-bar"></span>
+      <span class="icon-bar"></span>
+      <span class="icon-bar"></span>
+    </button>
+    <a class="navbar-brand" href="/">It so life</a>
+    </div>
+    <div  class="collapse navbar-collapse">
+      <ul  class="nav navbar-nav">
+  
+        <li><a href="/" title="Home">Home</a></li>      
+        <li><a href="/about/" title="About">About</a></li>      
+        <li><a href="/archives/" title="Archives">Archives</a></li>      
+      <li class='dropdown'>
+        <a class='dropdown-toggle' data-toggle='dropdown' href='#'>website<b class='caret'></b></a>
+        <ul class='dropdown-menu pure-menu-selected'>
+    
+          <li><a href="//groups.google.com/forum/#!forum/pongba" title="TopLanguage">TopLanguage</a></li>    
+          <li><a href="//itpub.net/" title="ITPub">ITPub</a></li>    
+          <li><a href="//blog.jobbole.com/" title="Bole">Bole</a></li>    
+          <li><a href="//nosql-database.org/" title="nosql">nosql</a></li>    
+          <li><a href="//gitimmersion.googol.im/" title="Git">Git</a></li>    
+        </ul>
+      </li>
+    
+      </ul>
+      <ul class="nav navbar-nav navbar-right">
+      
+        <li><a href="/atom.xml">RSS</a></li>
+      
+      
+        <li><a href="https://twitter.com/robinchia">twitter</a></li>
+      
+      
+      
+      
+        <li><a href="https://github.com/robinchia">github</a></li>
+      
+      </ul>
+    </div>
+  </div>
+</nav>
+<div class="clearfix"></div>
+</header>
+  <div id='content' class="container">
+     <div class="page-header-wrapper">
+      <!--[if lt IE 9]><div class="alert alert-warning alert-dismissable"><button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button><strong>提示:</strong>您的浏览器版本太低了,建议升级到 <strong><a href="http://windows.microsoft.com/zh-cn/internet-explorer/download-ie" title="IE9">IE9</a></strong> 以上,本站使用<a href="https://www.google.com/intl/zh-CN/chrome/">Chrome浏览器</a>可以获得最好的显示效果.</div><![endif]-->
+      <div class="page-header"><h1 align="center"><big>It so life</big> </h1>
+        <h5 align="center"><big>love as life</big></h5>
+      </div>
+     </div>
+     <div class="row">
+       <div id="main-col" class="alignleft col-sx-12 col-sm-8 col-md-9 col-lg-9">
+      <section id='header_widget'></section>
+          <div id="wrapper"><article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title">Garbage First介绍</h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--GarbageFirst介绍/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    <section id='before_content_widget'></section>
+    <div class="entry">
+      
+        <h1 id="garbage-first-">Garbage First介绍</h1>
+<h1 id="-bluedavy-blog-http-www-blogjava-net-bluedavy-"><a href="http://www.blogjava.net/BlueDavy/" target="_blank">BlueDavy之技术Blog</a></h1>
+<p>理论不懂就实践，实践不会就学理论！</p>
+<h2 id="-garbage-first-http-www-blogjava-net-bluedavy-archive-2009-03-11-259230-html-"><a href="http://www.blogjava.net/BlueDavy/archive/2009/03/11/259230.html" target="_blank">Garbage First介绍</a></h2>
+<p>本文摘自《构建高性能的大型分布式Java应用》一书，Garbage First简称G1，它的目标是要做到尽量减少GC所导致的应用暂停的时间，让应用达到准实时的效果，同时保持JVM堆空间的利用率，将作为CMS的替代者在JDK 7中闪亮登场，其最大的特色在于允许指定在某个时间段内GC所导致的应用暂停的时间最大为多少，例如在100秒内最多允许GC导致的应用暂停时间为1秒，这个特性对于准实时响应的系统而言非常的吸引人，这样就再也不用担心系统突然会暂停个两三秒了。</p>
+<p>G1要做到这样的效果，也是有前提的，一方面是硬件环境的要求，必须是多核的CPU以及较大的内存（从规范来看，512M以上就满足条件了），另外一方面是需要接受吞吐量的稍微降低，对于实时性要求高的系统而言，这点应该是可以接受的。</p>
+<p>为了能够达到这样的效果，G1在原有的各种GC策略上进行了吸收和改进，在G1中可以看到增量收集器和CMS的影子，但它不仅仅是吸收原有GC策略的优点，并在此基础上做出了很多的改进，简单来说，G1吸收了增量GC以及CMS的精髓，将整个jvm Heap划分为多个固定大小的region，扫描时采用Snapshot-at-the-beginning的并发marking算法（具体在后面内容详细解释）对整个heap中的region进行mark，回收时根据region中活跃对象的bytes进行排序，首先回收活跃对象bytes小以及回收耗时短（预估出来的时间）的region，回收的方法为将此region中的活跃对象复制到另外的region中，根据指定的GC所能占用的时间来估算能回收多少region，这点和以前版本的Full GC时得处理整个heap非常不同，这样就做到了能够尽量短时间的暂停应用，又能回收内存，由于这种策略在回收时首先回收的是垃圾对象所占空间最多的region，因此称为Garbage First。</p>
+<p>看完上面对于G1策略的简短描述，并不能清楚的掌握G1，在继续详细看G1的步骤之前，必须先明白G1对于JVM Heap的改造，这些对于习惯了划分为new generation、old generation的大家来说都有不少的新意。</p>
+<p>G1将Heap划分为多个固定大小的region，这也是G1能够实现控制GC导致的应用暂停时间的前提，region之间的对象引用通过remembered set来维护，每个region都有一个remembered set，remembered set中包含了引用当前region中对象的region的对象的pointer，由于同时应用也会造成这些region中对象的引用关系不断的发生改变，G1采用了Card Table来用于应用通知region修改remembered sets，Card Table由多个512字节的Card构成，这些Card在Card Table中以1个字节来标识，每个应用的线程都有一个关联的remembered set log，用于缓存和顺序化线程运行时造成的对于card的修改，另外，还有一个全局的filled RS buffers，当应用线程执行时修改了card后，如果造成的改变仅为同一region中的对象之间的关联，则不记录remembered set log，如造成的改变为跨region中的对象的关联，则记录到线程的remembered set log，如线程的remembered set log满了，则放入全局的filled RS buffers中，线程自身则重新创建一个新的remembered set log，remembered set本身也是一个由一堆cards构成的哈希表。</p>
+<p>尽管G1将Heap划分为了多个region，但其默认采用的仍然是分代的方式，只是仅简单的划分为了年轻代（young）和非年轻代，这也是由于G1仍然坚信大多数新创建的对象都是不需要长的生命周期的，对于应用新创建的对象，G1将其放入标识为young的region中，对于这些region，并不记录remembered set logs，扫描时只需扫描活跃的对象，G1在分代的方式上还可更细的划分为：fully young或partially young，fully young方式暂停的时候仅处理young regions，partially同样处理所有的young regions，但它还会根据允许的GC的暂停时间来决定是否要加入其他的非young regions，G1是运行到fully-young方式还是partially young方式，外部是不能决定的，在启动时，G1采用的为fully-young方式，当G1完成一次Concurrent Marking后，则切换为partially young方式，随后G1跟踪每次回收的效率，如果回收fully-young中的regions已经可以满足内存需要的话，那么就切换回fully young方式，但当heap size的大小接近满的情况下，G1会切换到partially young方式，以保证能提供足够的内存空间给应用使用。</p>
+<p>除了分代方式的划分外，G1还支持另外一种pure G1的方式，也就是不进行代的划分，pure方式和分代方式的具体不同在下面的具体执行步骤中进行描述。</p>
+<p>掌握了这些概念后，继续来看G1的具体执行步骤：</p>
+<ol>
+<li>Initial Marking</li>
+</ol>
+<p>G1对于每个region都保存了两个标识用的bitmap，一个为previous marking bitmap，一个为next marking bitmap，bitmap中包含了一个bit的地址信息来指向对象的起始点。</p>
+<p>开始Initial Marking之前，首先并发的清空next marking bitmap，然后停止所有应用线程，并扫描标识出每个region中root可直接访问到的对象，将region中top的值放入next top at mark start（TAMS）中，之后恢复所有应用线程。</p>
+<p>触发这个步骤执行的条件为：</p>
+<p>l  G1定义了一个JVM Heap大小的百分比的阀值，称为h，另外还有一个H，H的值为(1-h)/<em>Heap Size，目前这个h的值是固定的，后续G1也许会将其改为动态的，根据jvm的运行情况来动态的调整，在分代方式下，G1还定义了一个u以及soft limit，soft limit的值为H-u/</em>Heap Size，当Heap中使用的内存超过了soft limit值时，就会在一次clean up执行完毕后在应用允许的GC暂停时间范围内尽快的执行此步骤；</p>
+<p>l  在pure方式下，G1将marking与clean up组成一个环，以便clean up能充分的使用marking的信息，当clean up开始回收时，首先回收能够带来最多内存空间的regions，当经过多次的clean up，回收到没多少空间的regions时，G1重新初始化一个新的marking与clean up构成的环。</p>
+<ol>
+<li>Concurrent Marking</li>
+</ol>
+<p>按照之前Initial Marking扫描到的对象进行遍历，以识别这些对象的下层对象的活跃状态，对于在此期间应用线程并发修改的对象的以来关系则记录到remembered set logs中，新创建的对象则放入比top值更高的地址区间中，这些新创建的对象默认状态即为活跃的，同时修改top值。</p>
+<ol>
+<li>Final Marking Pause</li>
+</ol>
+<p>当应用线程的remembered set logs未满时，是不会放入filled RS buffers中的，在这样的情况下，这些remebered set logs中记录的card的修改就会被更新了，因此需要这一步，这一步要做的就是把应用线程中存在的remembered set logs的内容进行处理，并相应的修改remembered sets，这一步需要暂停应用，并行的运行。</p>
+<ol>
+<li>Live Data Counting and Cleanup</li>
+</ol>
+<p>值得注意的是，在G1中，并不是说Final Marking Pause执行完了，就肯定执行Cleanup这步的，由于这步需要暂停应用，G1为了能够达到准实时的要求，需要根据用户指定的最大的GC造成的暂停时间来合理的规划什么时候执行Cleanup，另外还有几种情况也是会触发这个步骤的执行的：</p>
+<p>l  G1采用的是复制方法来进行收集，必须保证每次的”to space”的空间都是够的，因此G1采取的策略是当已经使用的内存空间达到了H时，就执行Cleanup这个步骤；</p>
+<p>l  对于full-young和partially-young的分代模式的G1而言，则还有情况会触发Cleanup的执行，full-young模式下，G1根据应用可接受的暂停时间、回收young regions需要消耗的时间来估算出一个yound regions的数量值，当JVM中分配对象的young regions的数量达到此值时，Cleanup就会执行；partially-young模式下，则会尽量频繁的在应用可接受的暂停时间范围内执行Cleanup，并最大限度的去执行non-young regions的Cleanup。</p>
+<p>这一步中GC线程并行的扫描所有region，计算每个region中低于next TAMS值中marked data的大小，然后根据应用所期望的GC的短延时以及G1对于region回收所需的耗时的预估，排序region，将其中活跃的对象复制到其他region中。</p>
+<p>G1为了能够尽量的做到准实时的响应，例如估算暂停时间的算法、对于经常被引用的对象的特殊处理等，G1为了能够让GC既能够充分的回收内存，又能够尽量少的导致应用的暂停，可谓费尽心思，从G1的论文中的性能评测来看效果也是不错的，不过如果G1能允许开发人员在编写代码时指定哪些对象是不用mark的就更完美了，这对于有巨大缓存的应用而言，会有很大的帮助，G1将随JDK 6 Update 14 beta发布。</p>
+<p>posted on 2009-03-11 22:18 <a href="http://www.blogjava.net/BlueDavy/" target="_blank">BlueDavy</a> 阅读(5465) <a href="">评论(3)</a>  <a href="http://www.blogjava.net/BlueDavy/admin/EditPosts.aspx?postid=259230" target="_blank">编辑</a>  <a href="http://www.blogjava.net/BlueDavy/AddToFavorite.aspx?id=259230" target="_blank">收藏</a> 所属分类: <a href="http://www.blogjava.net/BlueDavy/category/1366.html" target="_blank">Java</a></p>
+<p> <img src="" alt=""></p>
+<p><a href=""></a> <a href=""></a></p>
+<p>[</p>
+<h3 id="-">评论</h3>
+<p>]()</p>
+<h3 id="-permalink-re-garbage-first-re-garbage-first-2009-03-14-13-37-phpxer-http-www-blogjava-net-phpxer-"><a href=""></a><a href="&quot;permalink: re: Garbage First介绍&quot;">/#</a> <a href=""></a>re: Garbage First介绍  2009-03-14 13:37  <a href="http://www.blogjava.net/phpxer/">phpxer</a></h3>
+<p>Mark  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=phpxer" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
+<h3 id="-permalink-re-garbage-first-re-garbage-first-2009-04-01-12-14-http-www-owner0571-com-about-asp-c-cs-"><a href="&quot;permalink: re: Garbage First介绍&quot;">/#</a> <a href=""></a>re: Garbage First介绍  2009-04-01 12:14  <a href="http://www.owner0571.com/about.asp?c=CS">中国兄弟连</a></h3>
+<p>给你踩踩哈!  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e4%b8%ad%e5%9b%bd%e5%85%84%e5%bc%9f%e8%bf%9e" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
+<h3 id="-permalink-re-garbage-first-re-garbage-first-2013-03-04-23-52-http-www-helemao-com-"><a href="&quot;permalink: re: Garbage First介绍&quot;">/#</a> <a href=""></a>re: Garbage First介绍<a href=""></a>  2013-03-04 23:52  <a href="http://www.helemao.com/" target="_blank">呵乐猫</a></h3>
+<p>学习了。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e5%91%b5%e4%b9%90%e7%8c%ab" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a>
+<a href="http://www.blogjava.net/RequireRegister.aspx" target="_blank">新用户注册</a>  <a href="">刷新评论列表</a>  </p>
+<p><a href=""></a> <a href="http://www.aliyun.com/cps/channel?channel_id=1306&amp;user=0&amp;lv=1">推荐购买云服务器（15%返利+最高千元奖金）</a>   <a href="http://www.cnblogs.com/" target="_blank">博客园</a>  <a href="http://q.cnblogs.com/" target="_blank">博问</a>  <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://job.cnblogs.com/cate-java_programmer/" target="_blank">Java程序员招聘</a> 标题  请输入标题 姓名  请输入你的姓名 主页 请输入验证码 验证码 /*  <img src="http://www.blogjava.net/Modules/CaptchaImage/JpegImage.aspx?cacheid=20130727130737" alt=""> 内容(请不要发表任何与政治相关的内容) 请输入评论内容 Remember Me?   <a href="http://www.blogjava.net/login.aspx?ReturnURL=http://www.blogjava.net/BlueDavy/archive/2009/03/11/259230.html&amp;SourceURL=/BlueDavy/archive/2009/03/11/259230.html" target="_blank">登录</a>       [使用Ctrl+Enter键可以直接提交]      网站导航:</p>
+<p><a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园</a>   <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>   <a href="http://kb.cnblogs.com/" target="_blank">知识库</a>   <a href="http://www.cppblog.com/" target="_blank">C++博客</a>   <a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a>   <a href="http://www.blogjava.net/BlueDavy/archive/2009/03/11/259230.html?opt=admin" target="_blank">管理</a> 相关文章:</p>
+<ul>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/05/25/321796.html" target="_blank">关于《分布式Java应用：基础与实践》一书</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/04/30/319794.html" target="_blank">杭州程序员圆桌交流第二期视频</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/03/22/316148.html" target="_blank">第一次杭州程序员交流会总结</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/03/19/315989.html" target="_blank">杭州程序员圆桌交流第一期–并发编程PPT</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/12/03/304597.html" target="_blank">GCLogViewer(tool to visualize gc log) V0.2 Release</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/11/25/303662.html" target="_blank">Simple Scala actor Vs java Thread Vs Kilim Test</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/11/06/301448.html" target="_blank">《构建高性能的大型分布式Java应用》目录&amp;试读样章</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/10/10/297661.html" target="_blank">动态跟踪Java代码的执行状况工具--BTrace</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/10/09/297562.html" target="_blank">GC策略的调优</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/08/06/290003.html" target="_blank">Hessian 3.2.0的两个bug</a><br>Powered by: <a href="http://www.blogjava.net/" target="_blank">BlogJava</a> Copyright © BlueDavy<h3 id="-">公告</h3>
+</li>
+</ul>
+<p><a href="http://www.douban.com/subject/3843896/" target="_blank"><img src="" alt=""></a> 
+<a href="http://china.osgiusers.org/" target="_blank"><img src="" alt=""></a>
+<a href="http://feed.feedsky.com/bluedavy" title="BlogJava-BlueDavy之技术Blog" target="_blank"><img src="" alt=""></a> <a href="http://feed.feedsky.com/bluedavy" target="_blank"><img src="" alt="feedsky"></a>
+<a href="http://www.zhuaxia.com/add_channel.php?url=http://feed.feedsky.com/bluedavy" target="_blank"><img src="" alt="抓虾"></a>
+<a href="http://fusion.google.com/add?feedurl=http://feed.feedsky.com/bluedavy" target="_blank"><img src="" alt="google reader"></a>
+<a href="http://www.xianguo.com/subscribe.php?url=http://feed.feedsky.com/bluedavy" target="_blank"><img src="" alt="鲜果"></a></p>
+<h3 id="-">导航</h3>
+<ul>
+<li><a href="http://www.blogjava.net/" target="_blank">BlogJava</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/" target="_blank">首页</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/contact.aspx?id=1" target="_blank">联系</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/rss" target="_blank">聚合</a><a href="http://www.blogjava.net/BlueDavy/rss" target="_blank"><img src="" alt=""></a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/admin/EditPosts.aspx" target="_blank">管理</a>
+<a href="&quot;转到上一个月&quot;">&lt;</a>2009年3月<a href="&quot;转到下一个月&quot;">&gt;</a>日一二三四五六222324252627281234<a href="http://www.blogjava.net/BlueDavy/archive/2009/03/05.html" target="_blank">5</a><a href="http://www.blogjava.net/BlueDavy/archive/2009/03/06.html" target="_blank">6</a>78910<a href="http://www.blogjava.net/BlueDavy/archive/2009/03/11.html" target="_blank">11</a><a href="http://www.blogjava.net/BlueDavy/archive/2009/03/12.html" target="_blank">12</a>1314151617181920212223242526<a href="http://www.blogjava.net/BlueDavy/archive/2009/03/27.html" target="_blank">27</a>282930311234</li>
+</ul>
+<h3 id="-">统计</h3>
+<ul>
+<li>随笔 - 294</li>
+<li>文章 - 2</li>
+<li>评论 - 2068</li>
+<li>引用 - 1</li>
+</ul>
+<h3 id="-">随笔分类</h3>
+<ul>
+<li><a href="http://www.blogjava.net/BlueDavy/category/10609.html" target="_blank">@RIAWork(10)</a> <a href="http://www.blogjava.net/BlueDavy/category/10609.html/rss" title="Subscribe to @RIAWork(10)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/category/32839.html" target="_blank">Internet(20)</a> <a href="http://www.blogjava.net/BlueDavy/category/32839.html/rss" title="Subscribe to Internet(20)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/category/1366.html" target="_blank">Java(82)</a> <a href="http://www.blogjava.net/BlueDavy/category/1366.html/rss" title="Subscribe to Java(82)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/category/8127.html" target="_blank">Javascript(7)</a> <a href="http://www.blogjava.net/BlueDavy/category/8127.html/rss" title="Subscribe to Javascript(7)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/category/18356.html" target="_blank">OSGi、SOA、SCA(81)</a> <a href="http://www.blogjava.net/BlueDavy/category/18356.html/rss" title="Subscribe to OSGi、SOA、SCA(81)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/category/1514.html" target="_blank">Plugin Architecture(10)</a> <a href="http://www.blogjava.net/BlueDavy/category/1514.html/rss" title="Subscribe to Plugin Architecture(10)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/category/1513.html" target="_blank">Workflow(4)</a> <a href="http://www.blogjava.net/BlueDavy/category/1513.html/rss" title="Subscribe to Workflow(4)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/category/11559.html" target="_blank">业界随想(28)</a> <a href="http://www.blogjava.net/BlueDavy/category/11559.html/rss" title="Subscribe to 业界随想(28)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/category/22527.html" target="_blank">数据集成(8)</a> <a href="http://www.blogjava.net/BlueDavy/category/22527.html/rss" title="Subscribe to 数据集成(8)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/category/1911.html" target="_blank">系统设计(38)</a> <a href="http://www.blogjava.net/BlueDavy/category/1911.html/rss" title="Subscribe to 系统设计(38)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/category/1367.html" target="_blank">软件工程(22)</a> <a href="http://www.blogjava.net/BlueDavy/category/1367.html/rss" title="Subscribe to 软件工程(22)" target="_blank">(rss)</a></li>
+</ul>
+<h3 id="-">随笔档案</h3>
+<ul>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/05.html" target="_blank">2010年5月 (3)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/04.html" target="_blank">2010年4月 (4)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/03.html" target="_blank">2010年3月 (3)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/02.html" target="_blank">2010年2月 (1)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/01.html" target="_blank">2010年1月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/12.html" target="_blank">2009年12月 (1)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/11.html" target="_blank">2009年11月 (3)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/10.html" target="_blank">2009年10月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/09.html" target="_blank">2009年9月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/08.html" target="_blank">2009年8月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/07.html" target="_blank">2009年7月 (3)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/06.html" target="_blank">2009年6月 (1)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/05.html" target="_blank">2009年5月 (4)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/04.html" target="_blank">2009年4月 (5)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/03.html" target="_blank">2009年3月 (5)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/01.html" target="_blank">2009年1月 (1)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/11.html" target="_blank">2008年11月 (3)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/10.html" target="_blank">2008年10月 (1)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/09.html" target="_blank">2008年9月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/08.html" target="_blank">2008年8月 (1)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/07.html" target="_blank">2008年7月 (4)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/06.html" target="_blank">2008年6月 (4)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/05.html" target="_blank">2008年5月 (3)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/04.html" target="_blank">2008年4月 (1)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/03.html" target="_blank">2008年3月 (3)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/02.html" target="_blank">2008年2月 (1)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/01.html" target="_blank">2008年1月 (10)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/12.html" target="_blank">2007年12月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/11.html" target="_blank">2007年11月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/10.html" target="_blank">2007年10月 (6)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/09.html" target="_blank">2007年9月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/08.html" target="_blank">2007年8月 (4)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/07.html" target="_blank">2007年7月 (5)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/06.html" target="_blank">2007年6月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/05.html" target="_blank">2007年5月 (4)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/04.html" target="_blank">2007年4月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/03.html" target="_blank">2007年3月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/02.html" target="_blank">2007年2月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/01.html" target="_blank">2007年1月 (1)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/12.html" target="_blank">2006年12月 (6)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/11.html" target="_blank">2006年11月 (5)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/10.html" target="_blank">2006年10月 (8)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/09.html" target="_blank">2006年9月 (13)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/08.html" target="_blank">2006年8月 (15)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/07.html" target="_blank">2006年7月 (3)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/06.html" target="_blank">2006年6月 (7)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/05.html" target="_blank">2006年5月 (9)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/04.html" target="_blank">2006年4月 (12)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/03.html" target="_blank">2006年3月 (13)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/02.html" target="_blank">2006年2月 (9)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/01.html" target="_blank">2006年1月 (14)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/12.html" target="_blank">2005年12月 (11)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/11.html" target="_blank">2005年11月 (14)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/10.html" target="_blank">2005年10月 (9)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/09.html" target="_blank">2005年9月 (10)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/08.html" target="_blank">2005年8月 (5)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/07.html" target="_blank">2005年7月 (9)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/06.html" target="_blank">2005年6月 (9)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/05.html" target="_blank">2005年5月 (2)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/02.html" target="_blank">2005年2月 (1)</a></li>
+</ul>
+<h3 id="-">文章档案</h3>
+<ul>
+<li><a href="http://www.blogjava.net/BlueDavy/archives/2005/05.html" target="_blank">2005年5月 (2)</a></li>
+</ul>
+<h3 id="blogger-s">Blogger&#39;s</h3>
+<ul>
+<li><a href="http://www.dbanotes.net/" target="_blank">DBANotes</a></li>
+<li>大名鼎鼎了，勿需多说</li>
+<li><a href="http://www.esbzone.net/" target="_blank">ESBZone</a> <a href="http://www.esbzone.net/feed" title="Subscribe to ESBZone" target="_blank">(rss)</a></li>
+<li>SOA实战者，强烈推荐</li>
+<li><a href="http://kenwublog.com/" target="_blank">kenwu&#39;s blog[推荐]</a> <a href="http://feed.kenwublog.com/" title="Subscribe to kenwu&#39;s blog[推荐]" target="_blank">(rss)</a></li>
+<li>Java底层和JVM的很多文章，强烈推荐。</li>
+<li><a href="http://dreamhead.blogbus.com/" target="_blank">梦想风暴</a></li>
+<li><a href="http://www.blogjava.net/cenwenchu/" target="_blank">西湖边的穷秀才</a></li>
+</ul>
+<h3 id="-">搜索</h3>
+<p>*</p>
+<ul>
+<li></li>
+</ul>
+<h3 id="-http-www-blogjava-net-bluedavy-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/BlueDavy/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
+<ul>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2013/07/19/321796.html#401750" target="_blank">1. re: 关于《分布式Java应用：基础与实践》一书</a></li>
+<li>博主 大神啊 这个博客很久没有更新了</li>
+<li>--1836567962@qq.com</li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2013/07/11/267970.html#401444" target="_blank">2. re: 网站架构相关PPT、文章整理（更新于2009-7-15）</a></li>
+<li>这个文章很有用，收藏</li>
+<li>--度哥网</li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2013/05/28/267968.html#399877" target="_blank">3. re: OSGi Opendoc &amp; Book</a></li>
+<li>评论内容较长,点击标题查看</li>
+<li>--stono</li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2013/05/28/267968.html#399865" target="_blank">4. re: OSGi Opendoc &amp; Book</a></li>
+<li>我再看《OSGi》原理与最佳实践，可是源码没有办法下载呀；
+有没有什么办法呢？</li>
+<li>--stono</li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2013/05/27/321796.html#399801" target="_blank">5. re: 关于《分布式Java应用：基础与实践》一书</a></li>
+<li>在这篇blog中放置了我收集的一些网站架构相关的PPT和文章</li>
+<li>--色都</li>
+</ul>
+<h3 id="-">阅读排行榜</h3>
+<ul>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/09/03/226749.html" target="_blank">1. 大型网站架构演变和知识体系(57638)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/04/28/267970.html" target="_blank">2. 网站架构相关PPT、文章整理（更新于2009-7-15）(38732)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/03/27/37582.html" target="_blank">3. Hibernate实践(31780)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/06/13/6037.html" target="_blank">4. 系统设计说明书(架构、概要、详细)目录结构(24258)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/08/25/65741.html" target="_blank">5. 发布《OSGi实战》正式版(17725)</a></li>
+</ul>
+<h3 id="-">评论排行榜</h3>
+<ul>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/09/03/226749.html" target="_blank">1. 大型网站架构演变和知识体系(96)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/09/07/12340.html" target="_blank">2. 漫谈CMS(88)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/04/28/267970.html" target="_blank">3. 网站架构相关PPT、文章整理（更新于2009-7-15）(66)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/09/29/149631.html" target="_blank">4. 《OSGi进阶》预览版发布(59)</a></li>
+<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/08/25/65741.html" target="_blank">5. 发布《OSGi实战》正式版(54)</a></li>
+</ul>
+
+      
+    </div>
+    <section id='after_content_widget'><div class="widget" id="widget_after_content_wumiiRelatedItems>">
+<script type="text/javascript" id="wumiiRelatedItems"></script>
+</div><div class="widget" id="widget_after_content_post_footer_info>">
+<div class="panel panel-success">
+    <div class="panel-heading" align="center">希望本站内容对您有点用处,有什么疑问或建议请在后面留言评论</div>
+    <div align="center" class="panel-body">转载请注明作者(<a href="http://itsolife.com/about/">RobinChia</a>)和出处 <a href="http://itsolife.com">It so life</a> ，请勿用于任何商业用途</div>
+    <div class="panel-body">本文链接: <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--GarbageFirst介绍/">Garbage First介绍</a></div>
+</div>
+</div></section>
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--GarbageFirst介绍/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--GarbageFirst介绍" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+    <section id='after_post_widget'><div class="widget" id="widget_after_post_post_pageNav>">
+<ul class="pager">
+  
+  <li class="previous"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JAVA启动参数整理/" title="JAVA启动参数整理">&larr; JAVA启动参数整理</a></li>
+  
+  
+  <li class="next"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--GC策略的调优/" title="GC策略的调优">GC策略的调优 &rarr;</a></li>
+  
+</ul></div><div class="widget" id="widget_after_post_related_posts>">
+<ul class="list-group"><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-report--DynamicReportsGettingstarted/">DynamicReports(Getting started)</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/">JVM调优总结（五）</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--java实现double的精确计算和四舍五入/">java实现double的精确计算和四舍五入</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC/">Java加密技术（一）——BASE64与单向加密算法MD5&SHA&MAC</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（三）——JAVA线程池的分析和使用/">聊聊并发（三）——JAVA线程池的分析和使用</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（六）——数字签名算法DSA/">Java加密技术（六）——数字签名算法DSA</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-算法--时间复杂度/">时间复杂度</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--跟我一起阅读Java源代码之HashMap/">跟我一起阅读Java源代码之HashMap</a></li></ul></div></section>    
+	<div id="comments"><!-- Duoshuo Comment BEGIN -->
+
+<div class="ds-thread"  data-thread-key="2014-02-02-JavaJ2EE-JVM--GarbageFirst介绍"  data-url="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--GarbageFirst介绍/" data-title="Garbage First介绍"></div>
+
+		
+
+<!-- Duoshuo Comment END -->
+
+</div></div><!--wapper-->
+       </div><!-- ID main-col END -->
+       <aside id="sidebar" class="alignright col-sx-6 col-sm-4 col-md-3 col-lg-3">
+<div id="widget_search" class="widget panel panel-primary">
+    <form action="//google.com/search" method="get" accept-charset="utf-8">
+  <div class="input-group">
+    <input class="form-control" id="searchbox" type="search" name="q" results="0" placeholder="search">
+    <span class="input-group-btn">
+      <button class="btn btn-default" type="submit">Go!</button>
+    </span>
+    <input type="hidden" name="q" value="site:itsolife.com">
+  </div>
+</form>
+</div>
+
+<div id="widget_category" class="widget panel panel-primary">
+  <div class="panel-heading">category</div>  <div data-src='category' class='ajax_widgets'>正在加载...</div>
+</div>
+
+<div id="widget_recent_posts" class="widget panel panel-primary">
+  <div class="panel-heading">recent posts</div>  <div data-src='recent_posts' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_tagcloud" class="widget panel panel-primary">
+  <div class="panel-heading">tagcloud</div>  <div data-src='tagcloud' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_latest_update_posts" class="widget panel panel-primary">
+  <div class="panel-heading">最近更新</div>  <div data-src='latest_update_posts' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_recent_comments" class="widget panel panel-primary">
+  <div class="panel-heading">recent comments</div>  
+
+<div class="list-group-item ds-recent-comments" data-num-items="6" data-show-avatars="1" data-show-time="1" data-show-title="1" data-show-admin="1" data-excerpt-length="50"></div>
+
+
+
+</div>
+
+</aside>
+       <div class="clearfix"></div>
+     </div><!-- row END -->
+  </div>
+  <footer id="footer" class="container">
+  <div class="panel panel-info">
+  <section id='footer_widget'></section>  <div class="panel-footer">
+  <div id="site-info">
+    <span class='author'>
+  
+  &copy; 2014 RobinChia
+  
+    &nbsp;&nbsp;</span>
+  
+  <span id='analytics-51la'></span><span id='analytics-google'>
+<script type="text/javascript">
+  var _gaq = _gaq || [];
+  _gaq.push(['_setAccount', 'UA-48559895-1']);
+  _gaq.push(['_trackPageview']);
+  _js2load.push({src:('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js'});
+</script></span><span id='analytics-cnzz'>
+<script type="text/javascript">var cnzz_protocol = (("https:" == document.location.protocol) ? " https://" : " http://");document.write(unescape("%3Cspan id='cnzz_stat_icon_5774006'%3E%3C/span%3E%3Cscript src='" + cnzz_protocol + "s17.cnzz.com/stat.php%3Fid%3D5774006%26show%3Dpic' type='text/javascript'%3E%3C/script%3E"));</script>
+</span><span id='analytics-baidu'>
+<script>
+var _hmt = _hmt || [];
+_js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
+</script>
+</span>  </div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-07 09:54:42</em></span></div>
+</div>
+<div class="clearfix"></div>
+
+
+  </div>
+  </footer>
+  
+        <script src="http://cdn.bootcss.com/jquery/1.10.2/jquery.min.js"></script>        
+        <script src="http://cdn.staticfile.org/twitter-bootstrap/3.1.0/js/bootstrap.min.js"></script>        
+                
+        <script src="http://cdn.bootcss.com/prettify/r298/prettify.min.js"></script>    <script type="text/javascript">
+   var lang=["bsh", "c", "cc", "cpp", "cs", "csh", "cyc", "cv", "htm", "html",
+    "java", "js", "m", "mxml", "perl", "pl", "pm", "py", "rb", "sh",
+    "xhtml", "xml", "xsl"];
+   var pretty_base='';
+   $('script').each(function(){
+	var c = $(this).attr('src');
+	if (!c)
+	    return;
+	if (c.match(/(\/)?prettify(\.min)?\.js/i))
+	{
+	    var index = c.lastIndexOf('/');
+	    if (index != -1)
+		pretty_base = c.substr(0,index + 1);
+	    return false;
+	}
+   })
+   $('pre code').each(function(){
+	var c = $(this).attr('class')
+	if (!c)
+	    return;
+	c = c.match(/\s?(lang\-\w+)/i);
+	if (c && lang.indexOf(c[1]) == -1)
+	{
+	    lang.push(c[1]);
+	    $.getScript(pretty_base + c[1] + '.min.js');
+	}
+   })
+
+    $(window).load(function(){
+       $("pre").addClass("prettyprint");
+       prettyPrint();
+    })
+</script>    
+            <script type="text/javascript">
+var duoshuoQuery = {short_name:"robinchia"};
+_js2load.push({src:'http://static.duoshuo.com/embed.js',charset:'UTF-8'});
+</script>
+    
+            <!--wumii_relatedItems-->
+
+<script type="text/javascript">
+    var wumiiPermaLink = "http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--GarbageFirst介绍/";
+    var wumiiTitle = "Garbage First介绍";
+    var wumiiTags = "JVM,Java&J2EE";
+    var wumiiCategories = ["Java&J2EE","Java&J2EE","JVM"];
+    var wumiiSitePrefix = "http://itsolife.com";
+    var wumiiParams = "&num=5&mode=3&pf=JAVASCRIPT";
+    _js2load.push({src:'http://widget.wumii.cn/ext/relatedItemsWidget'});
+</script>
+<a href="http://www.wumii.com/widget/relatedItems" style="border:0;">
+<img src="http://static.wumii.cn/images/pixel.png" alt="无觅关联推荐，快速提升流量" style="border:0;padding:0;margin:0;" />
+</a>
+    
+        <script src="http://cdn.bootcss.com/fancybox/2.1.5/jquery.fancybox.min.js"></script>    <script type="text/javascript">
+(function($){
+  $('.entry').each(function(i){
+    $(this).find('img').each(function(){
+      var alt = this.alt;
+
+      if (alt){
+        $(this).before('<span class="caption">' + alt + '</span>');
+      }
+
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox" rel="fancybox' + i + '" />');
+    });
+  });
+
+  $('.fancybox').fancybox();
+})(jQuery);
+</script>    
+        <script src="http://cdn.bootcss.com/mathjax/2.3/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>    <script type="text/x-mathjax-config">
+  MathJax.Hub.Config({
+    tex2jax: {
+      skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+      inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+      processEscapes: true
+    }
+  });
+  MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+      all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+  });
+</script>
+    
+<script type="text/javascript">
+$('.ajax_widgets').each(function(){var src=$(this).attr('data-src');if(src)$(this).load('/widgets/'+src+'.html');});
+$.each(_js2load,function(index,obj){loadjs(obj.src,obj.charset)});
+</script>
+
+<div id="scroll2top">
+<img src="/scroll2top/arrow.png"/>
+</div>
+<script src="/scroll2top/scroll2top.min.js"></script>
+<div id="winterland">
+  <canvas></canvas>
+</div>
+<script src="/js/winterland.min.js"></script>
+
+  </body>
+</html>

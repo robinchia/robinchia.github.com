@@ -1,0 +1,399 @@
+
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Xenserver5.5服务器HA功能的实现 | It so life</title>
+<meta name="author" content="RobinChia">
+
+<meta name="description" content="Xenserver5.5服务器HA功能的实现  Xenserver5.5 服务器 HA 功能的实现
+Xenserver 最新的版本为 5.5，此版本支持最新的 HA（High Availability） 、 snapshot 等功能，最近发现挺多人询问关于 HA 功能的使用。其实 HA 的功能在 Xenserver 中实现起来非常简单，只要满足以下几个条件即可 （1） 虚拟机必须置于共享存储中，例如 iSCSI、FC SAN； （2） 需要两台以上的 Xenserver，并且设置了资源池 pool； （3） 所有 Xenserver 有静态 IP 地址； （4） 购买的 Xenserver 版本需要支持 HA（即 Enterprise 版本） ，具体的版本请 参考下列版本比较；">
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+<meta property="og:title" content="Xenserver5.5服务器HA功能的实现"/>
+<meta property="og:site_name" content="It so life"/>
+
+<!--[if IE]><style>.testIE.IE{display:inline;}</style><![endif]-->
+<!--[if lte IE 7]><link rel="stylesheet" href="/css/ie7.css" type="text/css"><![endif]-->
+<!--[if (lt IE 9)&(gt IE 7)]><style>.testIE.IE8{display:inline;}</style><![endif]-->
+<!--[if gt IE 8]><style>.testIE.IE9{display:inline;}</style><![endif]-->
+
+<link href="/favicon.png" rel="icon">
+<link rel="alternate" href="/atom.xml" title="It so life Feed" type="application/atom+xml">
+
+<link rel="stylesheet" href="http://cdn.staticfile.org/twitter-bootstrap/3.1.0/css/bootstrap.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/font-awesome/4.0.3/css/font-awesome.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/prettify/r298/prettify.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/fancybox/2.1.5/jquery.fancybox.min.css" type="text/css">
+<link rel="stylesheet" href="/css/style.css" type="text/css">
+<!--[if lt IE 9]>
+   <style>article,aside,dialog,footer,header,section,footer,nav,figure,menu{display:block}</style>
+   <script src="http://cdn.staticfile.org/html5shiv/r29/html5.min.js"></script>
+   <script src="http://cdn.staticfile.org/respond.js/1.4.2/respond.min.js"></script>
+<link href="http://cdn.staticfile.org/respond.js/1.4.2/respond-proxy.html" id="respond-proxy" rel="respond-proxy" />
+<link href="/js/respond.proxy.gif" id="respond-redirect" rel="respond-redirect" />
+<script src="/js/respond.proxy.js"></script>
+   <script src="http://cdn.bootcss.com/selectivizr/1.0.2/selectivizr-min.js"></script>
+<![endif]-->
+<script type="text/javascript">
+function loadjs(c,d){var a=document.createElement("script");a.async=!0;a.type="text/javascript";a.src=c;a.charset=d||"gbk";(document.getElementsByTagName("HEAD")[0]||document.getElementsByTagName("BODY")[0]).appendChild(a)};
+var _protocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+var _js2load = [];
+</script>
+
+</head>
+<body>
+      <header id="header" class="container"><nav id="main-nav" class="navbar navbar-default navbar-fixed-top " role="navigation">
+  <div class="container">
+    <div class="navbar-header">
+    <button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
+      <span class="sr-only">Toggle navigation</span>
+      <span class="icon-bar"></span>
+      <span class="icon-bar"></span>
+      <span class="icon-bar"></span>
+    </button>
+    <a class="navbar-brand" href="/">It so life</a>
+    </div>
+    <div  class="collapse navbar-collapse">
+      <ul  class="nav navbar-nav">
+  
+        <li><a href="/" title="Home">Home</a></li>      
+        <li><a href="/about/" title="About">About</a></li>      
+        <li><a href="/archives/" title="Archives">Archives</a></li>      
+      <li class='dropdown'>
+        <a class='dropdown-toggle' data-toggle='dropdown' href='#'>website<b class='caret'></b></a>
+        <ul class='dropdown-menu pure-menu-selected'>
+    
+          <li><a href="//groups.google.com/forum/#!forum/pongba" title="TopLanguage">TopLanguage</a></li>    
+          <li><a href="//itpub.net/" title="ITPub">ITPub</a></li>    
+          <li><a href="//blog.jobbole.com/" title="Bole">Bole</a></li>    
+          <li><a href="//nosql-database.org/" title="nosql">nosql</a></li>    
+          <li><a href="//gitimmersion.googol.im/" title="Git">Git</a></li>    
+        </ul>
+      </li>
+    
+      </ul>
+      <ul class="nav navbar-nav navbar-right">
+      
+        <li><a href="/atom.xml">RSS</a></li>
+      
+      
+        <li><a href="https://twitter.com/robinchia">twitter</a></li>
+      
+      
+      
+      
+        <li><a href="https://github.com/robinchia">github</a></li>
+      
+      </ul>
+    </div>
+  </div>
+</nav>
+<div class="clearfix"></div>
+</header>
+  <div id='content' class="container">
+     <div class="page-header-wrapper">
+      <!--[if lt IE 9]><div class="alert alert-warning alert-dismissable"><button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button><strong>提示:</strong>您的浏览器版本太低了,建议升级到 <strong><a href="http://windows.microsoft.com/zh-cn/internet-explorer/download-ie" title="IE9">IE9</a></strong> 以上,本站使用<a href="https://www.google.com/intl/zh-CN/chrome/">Chrome浏览器</a>可以获得最好的显示效果.</div><![endif]-->
+      <div class="page-header"><h1 align="center"><big>It so life</big> </h1>
+        <h5 align="center"><big>love as life</big></h5>
+      </div>
+     </div>
+     <div class="row">
+       <div id="main-col" class="alignleft col-sx-12 col-sm-8 col-md-9 col-lg-9">
+      <section id='header_widget'></section>
+          <div id="wrapper"><article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title">Xenserver5.5服务器HA功能的实现</h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:37.000Z"> <a href="/2014/02/02/2014-02-02-虚拟化_Citrix--Xenserver55服务器HA功能的实现/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    <section id='before_content_widget'></section>
+    <div class="entry">
+      
+        <h1 id="xenserver5-5-ha-">Xenserver5.5服务器HA功能的实现</h1>
+<p><img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+Xenserver 最新的版本为 5.5，此版本支持最新的 HA（High Availability） 、 snapshot 等功能，最近发现挺多人询问关于 HA 功能的使用。其实 HA 的功能在 Xenserver 中实现起来非常简单，只要满足以下几个条件即可 （1） 虚拟机必须置于共享存储中，例如 iSCSI、FC SAN； （2） 需要两台以上的 Xenserver，并且设置了资源池 pool； （3） 所有 Xenserver 有静态 IP 地址； （4） 购买的 Xenserver 版本需要支持 HA（即 Enterprise 版本） ，具体的版本请 参考下列版本比较；
+接下介绍如何在 Xenserver 中实现 HA 的功能 环境说明 由 于 没 有 实 际 的 物 理 服 务 器 来 安 装 Xenserver ， 只 能 选 择 在 VMware vSphere4.0 上安装 Xenserver，并安装了一台 Openfiler 来提供 iSCSI 服务。由于
+1 / 17
+<img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+是在 VMware vSphere，因此，我丌能在安装好的 Xenserver 里启劢 Windows 的 虚拟机，只能安装一台 Linux 系统的虚拟主机来作为此次演示的虚拟机。 选 择 安 装 Windows XP 虚 拟 机 的 话 ， 在 启 劢 时 ， 会 出 现 如 下 提 示
+服务器 Xenserver01 Xenserver02 Openfiler XenCenter
+版本 5.5 5.5 2.3 5.5
+IP 192.168.253.97 192.168.253.98 192.168.253.92 192.168.253.5
+（1） 创建 Xenserver 资源池， 打开 XenCenter， 然后选择 “Tool” “New Tool” — ， 按照向导输入 Pool 的名称，然后添加我们的 Xenserver 服务器 （2） 为资源池 Xen 添加 iSCSI 共享存储。打开 XenCenter，选择“Storage”— “New Storage Repository” ，然后选择“iSCSI”
+2 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+（3） 输入 iSCSI 的名称和服务器地址，并输入 iSCSI 的传输端口，默认是 3260 输入后，点击“Discover IQNs”和“Discover LUNs”
+（4） 由于是新增的 iSCSI，因此，需要先对其迚行格式化操作。
+3 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+（5） 完成后，为资源池 Xen 开启 HA 功能。
+（6） 开启 HA 的配置向导
+4 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+（7） 选择 hearbeat SR，这里可以看到我们刚添加的 iSCSI 存储，选择该存储
+5 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+（8） 指定 HA 的保护级别，指定资源池中的 Xenserver 出现问题时，虚拟机可 以自劢启劢
+（9） 完成 HA 的设置
+6 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+（10） 安装 Linux 虚拟机
+7 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+8 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+9 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+10 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+（11） 修改 HA 的保护级别为“1” ，即开启保护
+11 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+（12） 虚拟机运行在 Xenserver02 上， 接下来， 我们模拟 Xenserver02 出现故障， 我们在 VMware vCenter 上将 Xenserver02 的网卡设置到其他网络中
+12 / 17
+<img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+（13） 稍等片刻，在 XenCenter 中可以看到 Xenserver02 已经断开，虚拟机 “Redhat Enterprise Linux 5.2”自劢重启并切换到 Xenserver01 上运行
+13 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+（14） 再次查看资源池 Xen 的 HA 设置， 可以看到 Xenserver02 已经出现了故障， 由于只有单机，因此，HA 功能失效
+14 / 17
+<img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+（15） 当资源池 Xen 中的两台 Xenserver 都恢复通讯正常后， 功能自劢恢复， HA 我们也可以根据需要对 HA 的保护级别迚行修改，指定当运行虚拟机的 Xenserver 出现故障时，HA 的保护劢作是自劢切换还是重启虚拟机。   “Protect“开启 HA 对虚拟机的保护功能 “Restart if Possible“在 Xenserver 出现故障时，如果可能，则在资源池中另 外的 Xenserver 上重新启劢虚拟机  “Do Not Restart“在 Xenserver 出现故障时，丌重启虚拟机
+15 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+16 / 17
+<img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Xenserver5.5 服务器 HA 功能的实现
+作者：Canvin Email：Jianshaowen@gmail.com
+17 / 17</p>
+
+      
+    </div>
+    <section id='after_content_widget'><div class="widget" id="widget_after_content_wumiiRelatedItems>">
+<script type="text/javascript" id="wumiiRelatedItems"></script>
+</div><div class="widget" id="widget_after_content_post_footer_info>">
+<div class="panel panel-success">
+    <div class="panel-heading" align="center">希望本站内容对您有点用处,有什么疑问或建议请在后面留言评论</div>
+    <div align="center" class="panel-body">转载请注明作者(<a href="http://itsolife.com/about/">RobinChia</a>)和出处 <a href="http://itsolife.com">It so life</a> ，请勿用于任何商业用途</div>
+    <div class="panel-body">本文链接: <a href="/2014/02/02/2014-02-02-虚拟化_Citrix--Xenserver55服务器HA功能的实现/">Xenserver5.5服务器HA功能的实现</a></div>
+</div>
+</div></section>
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/虚拟化_Citrix/">虚拟化_Citrix</a></li></span></span> | <span class="tags">Tagged <a href="/tags/虚拟化_Citrix/" class="label label-primary">虚拟化_Citrix</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:37"datetime="2014-03-07 09:54:37"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-虚拟化_Citrix--Xenserver55服务器HA功能的实现/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-虚拟化_Citrix--Xenserver55服务器HA功能的实现" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+    <section id='after_post_widget'><div class="widget" id="widget_after_post_post_pageNav>">
+<ul class="pager">
+  
+  <li class="previous"><a href="/2014/02/02/2014-02-02-Httpclient--HttpClient接收数据的问题/" title="HttpClient接收数据的问题">&larr; HttpClient接收数据的问题</a></li>
+  
+  
+  <li class="next"><a href="/2014/02/02/2014-02-02-Httpclient--HttpClient-HttpClientLoggingPractices/" title="HttpClient ">HttpClient  &rarr;</a></li>
+  
+</ul></div><div class="widget" id="widget_after_post_related_posts>">
+<ul class="list-group"><li class="list-group-item"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--Xenserver55服务器HA功能的实现/">Xenserver5.5服务器HA功能的实现</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--Resource_Manager_Guide/">Resource_Manager_Guide</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--CitrixMfcomProgrammingForAdministrators--/">Citrix Mfcom Programming For Administrators</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--Citrix系统的安全分析--欢迎访问417的博客/">Citrix 系统的安全分析</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--SmartAuditorEventAPIOverview-1/">SmartAuditor Event API Overview</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--CitrixMfcomProgrammingForAdministrators/">Citrix Mfcom Programming For Administrators</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--ConnectingThroughWindowsFirewallWindows/">Connecting Through Windows Firewall (Windows)</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--Resource_Manager_Updates/">Resource_Manager_Updates</a></li></ul></div></section>    
+	<div id="comments"><!-- Duoshuo Comment BEGIN -->
+
+<div class="ds-thread"  data-thread-key="2014-02-02-虚拟化_Citrix--Xenserver55服务器HA功能的实现"  data-url="http://itsolife.com/2014/02/02/2014-02-02-虚拟化_Citrix--Xenserver55服务器HA功能的实现/" data-title="Xenserver5.5服务器HA功能的实现"></div>
+
+		
+
+<!-- Duoshuo Comment END -->
+
+</div></div><!--wapper-->
+       </div><!-- ID main-col END -->
+       <aside id="sidebar" class="alignright col-sx-6 col-sm-4 col-md-3 col-lg-3">
+<div id="widget_search" class="widget panel panel-primary">
+    <form action="//google.com/search" method="get" accept-charset="utf-8">
+  <div class="input-group">
+    <input class="form-control" id="searchbox" type="search" name="q" results="0" placeholder="search">
+    <span class="input-group-btn">
+      <button class="btn btn-default" type="submit">Go!</button>
+    </span>
+    <input type="hidden" name="q" value="site:itsolife.com">
+  </div>
+</form>
+</div>
+
+<div id="widget_category" class="widget panel panel-primary">
+  <div class="panel-heading">category</div>  <div data-src='category' class='ajax_widgets'>正在加载...</div>
+</div>
+
+<div id="widget_recent_posts" class="widget panel panel-primary">
+  <div class="panel-heading">recent posts</div>  <div data-src='recent_posts' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_tagcloud" class="widget panel panel-primary">
+  <div class="panel-heading">tagcloud</div>  <div data-src='tagcloud' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_latest_update_posts" class="widget panel panel-primary">
+  <div class="panel-heading">最近更新</div>  <div data-src='latest_update_posts' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_recent_comments" class="widget panel panel-primary">
+  <div class="panel-heading">recent comments</div>  
+
+<div class="list-group-item ds-recent-comments" data-num-items="6" data-show-avatars="1" data-show-time="1" data-show-title="1" data-show-admin="1" data-excerpt-length="50"></div>
+
+
+
+</div>
+
+</aside>
+       <div class="clearfix"></div>
+     </div><!-- row END -->
+  </div>
+  <footer id="footer" class="container">
+  <div class="panel panel-info">
+  <section id='footer_widget'></section>  <div class="panel-footer">
+  <div id="site-info">
+    <span class='author'>
+  
+  &copy; 2014 RobinChia
+  
+    &nbsp;&nbsp;</span>
+  
+  <span id='analytics-51la'></span><span id='analytics-google'>
+<script type="text/javascript">
+  var _gaq = _gaq || [];
+  _gaq.push(['_setAccount', 'UA-48559895-1']);
+  _gaq.push(['_trackPageview']);
+  _js2load.push({src:('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js'});
+</script></span><span id='analytics-cnzz'>
+<script type="text/javascript">var cnzz_protocol = (("https:" == document.location.protocol) ? " https://" : " http://");document.write(unescape("%3Cspan id='cnzz_stat_icon_5774006'%3E%3C/span%3E%3Cscript src='" + cnzz_protocol + "s17.cnzz.com/stat.php%3Fid%3D5774006%26show%3Dpic' type='text/javascript'%3E%3C/script%3E"));</script>
+</span><span id='analytics-baidu'>
+<script>
+var _hmt = _hmt || [];
+_js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
+</script>
+</span>  </div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-07 09:54:37</em></span></div>
+</div>
+<div class="clearfix"></div>
+
+
+  </div>
+  </footer>
+  
+        <script src="http://cdn.bootcss.com/jquery/1.10.2/jquery.min.js"></script>        
+        <script src="http://cdn.staticfile.org/twitter-bootstrap/3.1.0/js/bootstrap.min.js"></script>        
+                
+        <script src="http://cdn.bootcss.com/prettify/r298/prettify.min.js"></script>    <script type="text/javascript">
+   var lang=["bsh", "c", "cc", "cpp", "cs", "csh", "cyc", "cv", "htm", "html",
+    "java", "js", "m", "mxml", "perl", "pl", "pm", "py", "rb", "sh",
+    "xhtml", "xml", "xsl"];
+   var pretty_base='';
+   $('script').each(function(){
+	var c = $(this).attr('src');
+	if (!c)
+	    return;
+	if (c.match(/(\/)?prettify(\.min)?\.js/i))
+	{
+	    var index = c.lastIndexOf('/');
+	    if (index != -1)
+		pretty_base = c.substr(0,index + 1);
+	    return false;
+	}
+   })
+   $('pre code').each(function(){
+	var c = $(this).attr('class')
+	if (!c)
+	    return;
+	c = c.match(/\s?(lang\-\w+)/i);
+	if (c && lang.indexOf(c[1]) == -1)
+	{
+	    lang.push(c[1]);
+	    $.getScript(pretty_base + c[1] + '.min.js');
+	}
+   })
+
+    $(window).load(function(){
+       $("pre").addClass("prettyprint");
+       prettyPrint();
+    })
+</script>    
+            <script type="text/javascript">
+var duoshuoQuery = {short_name:"robinchia"};
+_js2load.push({src:'http://static.duoshuo.com/embed.js',charset:'UTF-8'});
+</script>
+    
+            <!--wumii_relatedItems-->
+
+<script type="text/javascript">
+    var wumiiPermaLink = "http://itsolife.com/2014/02/02/2014-02-02-虚拟化_Citrix--Xenserver55服务器HA功能的实现/";
+    var wumiiTitle = "Xenserver5.5服务器HA功能的实现";
+    var wumiiTags = "虚拟化_Citrix";
+    var wumiiCategories = ["虚拟化_Citrix"];
+    var wumiiSitePrefix = "http://itsolife.com";
+    var wumiiParams = "&num=5&mode=3&pf=JAVASCRIPT";
+    _js2load.push({src:'http://widget.wumii.cn/ext/relatedItemsWidget'});
+</script>
+<a href="http://www.wumii.com/widget/relatedItems" style="border:0;">
+<img src="http://static.wumii.cn/images/pixel.png" alt="无觅关联推荐，快速提升流量" style="border:0;padding:0;margin:0;" />
+</a>
+    
+        <script src="http://cdn.bootcss.com/fancybox/2.1.5/jquery.fancybox.min.js"></script>    <script type="text/javascript">
+(function($){
+  $('.entry').each(function(i){
+    $(this).find('img').each(function(){
+      var alt = this.alt;
+
+      if (alt){
+        $(this).before('<span class="caption">' + alt + '</span>');
+      }
+
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox" rel="fancybox' + i + '" />');
+    });
+  });
+
+  $('.fancybox').fancybox();
+})(jQuery);
+</script>    
+        <script src="http://cdn.bootcss.com/mathjax/2.3/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>    <script type="text/x-mathjax-config">
+  MathJax.Hub.Config({
+    tex2jax: {
+      skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+      inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+      processEscapes: true
+    }
+  });
+  MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+      all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+  });
+</script>
+    
+<script type="text/javascript">
+$('.ajax_widgets').each(function(){var src=$(this).attr('data-src');if(src)$(this).load('/widgets/'+src+'.html');});
+$.each(_js2load,function(index,obj){loadjs(obj.src,obj.charset)});
+</script>
+
+<div id="scroll2top">
+<img src="/scroll2top/arrow.png"/>
+</div>
+<script src="/scroll2top/scroll2top.min.js"></script>
+<div id="winterland">
+  <canvas></canvas>
+</div>
+<script src="/js/winterland.min.js"></script>
+
+  </body>
+</html>

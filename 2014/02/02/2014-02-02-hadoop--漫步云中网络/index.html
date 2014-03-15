@@ -1,0 +1,651 @@
+
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>漫步云中网络 | It so life</title>
+<meta name="author" content="RobinChia">
+
+<meta name="description" content="漫步云中网络张 华, 高级软件工程师, IBM
+
+龚 永生, 资深软件工程师, IBM
+简介： 在生产环境中，云中的网络通常被划分为公共网络、管理网络和服务网络。本文首先通过三个小试验向您介绍了如何通过 TAP/TUN、NAT、Linux Bridge、VLAN 等技术实现云中网络的一般原理。有了这些基础，相信您会对接下来介绍的一个具体的 OpenStack 云的示例网络配置倍感亲切。同理，这些基础也将助您在其他云中网络中轻松漫步。">
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+<meta property="og:title" content="漫步云中网络"/>
+<meta property="og:site_name" content="It so life"/>
+
+<!--[if IE]><style>.testIE.IE{display:inline;}</style><![endif]-->
+<!--[if lte IE 7]><link rel="stylesheet" href="/css/ie7.css" type="text/css"><![endif]-->
+<!--[if (lt IE 9)&(gt IE 7)]><style>.testIE.IE8{display:inline;}</style><![endif]-->
+<!--[if gt IE 8]><style>.testIE.IE9{display:inline;}</style><![endif]-->
+
+<link href="/favicon.png" rel="icon">
+<link rel="alternate" href="/atom.xml" title="It so life Feed" type="application/atom+xml">
+
+<link rel="stylesheet" href="http://cdn.staticfile.org/twitter-bootstrap/3.1.0/css/bootstrap.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/font-awesome/4.0.3/css/font-awesome.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/prettify/r298/prettify.min.css" type="text/css">
+<link rel="stylesheet" href="http://cdn.bootcss.com/fancybox/2.1.5/jquery.fancybox.min.css" type="text/css">
+<link rel="stylesheet" href="/css/style.css" type="text/css">
+<!--[if lt IE 9]>
+   <style>article,aside,dialog,footer,header,section,footer,nav,figure,menu{display:block}</style>
+   <script src="http://cdn.staticfile.org/html5shiv/r29/html5.min.js"></script>
+   <script src="http://cdn.staticfile.org/respond.js/1.4.2/respond.min.js"></script>
+<link href="http://cdn.staticfile.org/respond.js/1.4.2/respond-proxy.html" id="respond-proxy" rel="respond-proxy" />
+<link href="/js/respond.proxy.gif" id="respond-redirect" rel="respond-redirect" />
+<script src="/js/respond.proxy.js"></script>
+   <script src="http://cdn.bootcss.com/selectivizr/1.0.2/selectivizr-min.js"></script>
+<![endif]-->
+<script type="text/javascript">
+function loadjs(c,d){var a=document.createElement("script");a.async=!0;a.type="text/javascript";a.src=c;a.charset=d||"gbk";(document.getElementsByTagName("HEAD")[0]||document.getElementsByTagName("BODY")[0]).appendChild(a)};
+var _protocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+var _js2load = [];
+</script>
+
+</head>
+<body>
+      <header id="header" class="container"><nav id="main-nav" class="navbar navbar-default navbar-fixed-top " role="navigation">
+  <div class="container">
+    <div class="navbar-header">
+    <button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
+      <span class="sr-only">Toggle navigation</span>
+      <span class="icon-bar"></span>
+      <span class="icon-bar"></span>
+      <span class="icon-bar"></span>
+    </button>
+    <a class="navbar-brand" href="/">It so life</a>
+    </div>
+    <div  class="collapse navbar-collapse">
+      <ul  class="nav navbar-nav">
+  
+        <li><a href="/" title="Home">Home</a></li>      
+        <li><a href="/about/" title="About">About</a></li>      
+        <li><a href="/archives/" title="Archives">Archives</a></li>      
+      <li class='dropdown'>
+        <a class='dropdown-toggle' data-toggle='dropdown' href='#'>website<b class='caret'></b></a>
+        <ul class='dropdown-menu pure-menu-selected'>
+    
+          <li><a href="//groups.google.com/forum/#!forum/pongba" title="TopLanguage">TopLanguage</a></li>    
+          <li><a href="//itpub.net/" title="ITPub">ITPub</a></li>    
+          <li><a href="//blog.jobbole.com/" title="Bole">Bole</a></li>    
+          <li><a href="//nosql-database.org/" title="nosql">nosql</a></li>    
+          <li><a href="//gitimmersion.googol.im/" title="Git">Git</a></li>    
+        </ul>
+      </li>
+    
+      </ul>
+      <ul class="nav navbar-nav navbar-right">
+      
+        <li><a href="/atom.xml">RSS</a></li>
+      
+      
+        <li><a href="https://twitter.com/robinchia">twitter</a></li>
+      
+      
+      
+      
+        <li><a href="https://github.com/robinchia">github</a></li>
+      
+      </ul>
+    </div>
+  </div>
+</nav>
+<div class="clearfix"></div>
+</header>
+  <div id='content' class="container">
+     <div class="page-header-wrapper">
+      <!--[if lt IE 9]><div class="alert alert-warning alert-dismissable"><button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button><strong>提示:</strong>您的浏览器版本太低了,建议升级到 <strong><a href="http://windows.microsoft.com/zh-cn/internet-explorer/download-ie" title="IE9">IE9</a></strong> 以上,本站使用<a href="https://www.google.com/intl/zh-CN/chrome/">Chrome浏览器</a>可以获得最好的显示效果.</div><![endif]-->
+      <div class="page-header"><h1 align="center"><big>It so life</big> </h1>
+        <h5 align="center"><big>love as life</big></h5>
+      </div>
+     </div>
+     <div class="row">
+       <div id="main-col" class="alignleft col-sx-12 col-sm-8 col-md-9 col-lg-9">
+      <section id='header_widget'></section>
+          <div id="wrapper"><article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title">漫步云中网络</h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--漫步云中网络/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    <section id='before_content_widget'></section>
+    <div class="entry">
+      
+        <h1 id="-">漫步云中网络</h1>
+<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#author1" target="_blank">张 华</a>, 高级软件工程师, IBM</p>
+<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#author2" target="_blank">龚 永生</a>, 资深软件工程师, IBM</p>
+<p><strong>简介：</strong> 在生产环境中，云中的网络通常被划分为公共网络、管理网络和服务网络。本文首先通过三个小试验向您介绍了如何通过 TAP/TUN、NAT、Linux Bridge、VLAN 等技术实现云中网络的一般原理。有了这些基础，相信您会对接下来介绍的一个具体的 OpenStack 云的示例网络配置倍感亲切。同理，这些基础也将助您在其他云中网络中轻松漫步。
+来源： <a href="[http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/](http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/)">[http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/](http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/)</a> </p>
+<p>阅读本文前，最好能先了解以下的知识：</p>
+<ul>
+<li>了解 OpenStack 将有助于对本文的理解。本文讲解的是 Linux 虚拟网络中的一般原理方法 , 虽不仅限于应用在 OpenStack 之中 , 但本文的实验是以 OpenStack 为基础的。OpenStack 是一个开源的 IaaS 云 , 您可以从 devstack 脚本 (<a href="http://devstack.org/" target="_blank"><a href="http://devstack.org/">http://devstack.org/</a></a>) 开始熟悉它。</li>
+<li>了解 QEMU 也将有助于对本文的理解。QEMU 是一种支持多种 CPU 的机器模拟器 , 本文采用 QEMU 来创建虚拟机验证本文中的试验。</li>
+</ul>
+<p><a href="">什么是云？</a></p>
+<p>什么是云？我的理解是，为多租户提供各层次上的服务（如操作系统层、中间件层、应用软件层等）的可动态水平扩展的服务器集群称之为云。所以云具有大规模、高可扩展性、按需服务、自动化、节能环保、高可靠性等特点。下图１从软件堆栈视角勾画了云的架构：
+<a href=""><strong>图 1. 云的架构</strong></a>
+<img src="" alt="图 1. 云的架构"> </p>
+<ul>
+<li><strong>IaaS, Infrastructure as a Service，基础设施即服务：</strong>您可以简单理解为将可伸缩的操作系统（虚机或实机）实例作为基础设施服务卖给多租户，然后按需计算费用。当然，将操作系统作为基础设施服务只是 IaaS 中的一种，且是最主要的一种，我怕大家概念混淆所以就只重点提了这种。实际上，只要是基础设施提供服务了从概念上讲都应该叫 IaaS，比如说关系型数据库，如果是集群部署的话，它也是基础设施提供服务了，也应该叫 IaaS。这类产品如 IBM 的 Smart Cloud Entry，如开源的 OpenStack。</li>
+<li><strong>PaaS, Platform as a Service, 平台即服务：</strong>您可以简单理解为将可伸缩的中间件资源作为平台服务卖给多租户，然后按需计算费用。举个例子，如果 SaaS 应用程序的并发瞬间加大的话，PaaS 可以自动实时地启动一个由 IaaS 提供的操作系统实例，然后自动在它上面部署中间件应用服务器（如 IBM 的 WebSphere），最后再部署一套该 SaaS 应用实例，并自动将它们纳入到负载均衡体系之中，从而实现平台服务的自动伸缩，这就是 PaaS。这类产品如 IBM 的 IWD，如 Google 的 App Engine。</li>
+<li><strong>SaaS, Software as a Service, 软件即服务：</strong>您可以简单理解为可伸缩的分布式软件作为软件服务为用户提供某种在线服务，如视频服务，地图服务等。</li>
+<li><strong>XaaS, X as a Server, 一切即服务：</strong>只要是给多租户按需提供服务都可以叫 XaaS, 像在 OpenStack 中，将网络部分代码单独抽出来组成 Quantum 工程，就可以叫网络即服务（NaaS, Network as a Service)；像使用 xCat 自动部署裸机可以叫裸机即服务（MaaS, Bare-metal as a Service)。</li>
+</ul>
+<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">什么是云中网络？</a></p>
+<p>在传统的数据中心中，每个网口对应唯一一个物理机；有了云，一台物理网卡可能会承载多个虚拟网卡。物理网卡与虚拟网卡之间的关系无外乎就是下列三种情况：</p>
+<ol>
+<li>一对一，一个物理网卡对应对一个虚拟网卡，是下面一对多情况的一种特例</li>
+<li>一对多，一个物理网卡对应多个虚拟网卡，是本文要介绍的情况</li>
+<li>多对一，多个物理网对应一个虚拟网卡，即我们常说的 Bonding，用作负载均衡
+<a href=""><strong>图 2. 虚拟网络的主要内容</strong></a>
+<img src="" alt="图 2. 虚拟网络的主要内容"> </li>
+</ol>
+<p>上图 2 显示了虚拟网络的主要内容：</p>
+<ol>
+<li>目前，对网络的虚拟化主要集中在第 2 层和第 3 层</li>
+<li>在 Linux 中，第 2 层通常使用 TAP 设备来实现虚拟网卡，使用 Linux Bridge 来实现虚拟交换机</li>
+<li>在 Linux 中，第 3 层通常是基于 Iptable 的 NAT，路由及转发</li>
+<li>对于网络隔离，可以采用传统的基于 802.1Q 协议的 VLAN 技术，但这受限于 VLAN ID 大小范围的限制，并且需要手动地在各物理交换机上配置 VLAN；也可以采用虚拟交换机软件，如 Openvswitch，它可以自动创建 GRE 隧道来避免手动去为物理交换机配置 VLAN。</li>
+</ol>
+<p>下面将结合一个生产环境中的网络实例来讲解如何实现一个虚拟网络。</p>
+<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">云中网络实验</a></p>
+<p>在生产环境中，按通用做法一般将云中网络划分为三大部分，公共网络、管理&amp;存储网络、服务网络。</p>
+<p><strong>公共网络：</strong>用于云向外部租户提供 API 调用或者访问</p>
+<p><strong>管理网络：</strong>用于云中各物理机之间的通信</p>
+<p><strong>存储网络：</strong>用于 iSCSI 服务端与客户端之间的流量，一般与管理网络同</p>
+<p><strong>服务网络：</strong>虚机内部使用的网络</p>
+<p>为了将上述网络的实现原理讲清楚，我们选择了两台物理机做实验，并将采用 NAT、Linux Bridge、VLAN 技术分步实现一个典型的 OpenStack 云的网络拓扑。当然，这种网络的原理是通用的，并不仅限于 OpenStack 云。</p>
+<ol>
+<li>台式机 (node1)， 双有线网卡， 将作为控制节点、存储节点及一个计算节点</li>
+<li>笔记本 (node2)，一有线网卡，将作为一个计算节点</li>
+<li>路由器，家中 ADSL 宽带出口</li>
+<li>交换机 , 用于连接各物理机</li>
+</ol>
+<p>值得一提的是，如果采用了 VLAN 技术进行网络隔离，且想要两台物理机上的虚机能够互访的话，交换机必须是支持 VLAN 的，且需要手动将交换机相应的端口配置成 Trunk 模式。因为我没有支持 VLAN 的物理交换机，在本实验中，我是采用直连线直接连接两台实验机器的。</p>
+<p>下图 3 显示了实验网络拓扑：
+<a href=""><strong>图 3. OpenStack 实验网络拓扑</strong></a>
+<img src="" alt=""> </p>
+<p><strong>公共网络：</strong>192.168.99.0/24 网段，外网用户通过公共网络上提供的服务来访问云。注意：在实际的生产环境中，公共网络一般采用外网 IP，因为我没有外网 IP，所以用 192.168.99.0 网段模拟。将台式机的一有线网卡 eth1 与 TP-Link 路由器相连即可。</p>
+<p><strong>管理＆存储网络：</strong>172.16.99.0/24 网段，管理网络用于 OpenStack 各组件以及 DB、MQ 之间进行通信；存储网络用于存储节点和需要使用外部存储的计算节点之间的通信。将台式机的另一有线网卡 eth0 和笔记本电脑的有线网卡 eth0 连接到交换机即可。</p>
+<p><strong>服务网络：</strong>10.0.0.0/8 网段，用于虚机内部。</p>
+<p>两个节点的基本网络配置如下：
+<a href=""><strong>清单 1. node1 的基本网络配置</strong></a></p>
+<p>root@node1:/home/hua/# cat /etc/network/interfaces
+auto lo</p>
+<p>iface lo inet loopback
+auto eth1</p>
+<p>iface eth1 inet dhcp
+up iptables -t nat -A POSTROUTING -s 172.16.99.0/24 -o eth1 -j MASQUERADE</p>
+<p>auto eth0
+iface eth0 inet static</p>
+<p>address 172.16.99.108
+netmask 255.255.255.0</p>
+<p>network 172.16.99.0
+broadcast 172.16.99.255</p>
+<p><a href=""><strong>清单 2. node2 的基本网络配置</strong></a>
+[</p>
+<p>cat /etc/sysconfig/network-scripts/ifcfg-eth0
+DEVICE=eth0</p>
+<p>HWADDR=00:21:86:94:63:27
+ONBOOT=yes</p>
+<p>BOOTPROTO=static
+USERCTL=yes</p>
+<p>PEERDNS=yes
+IPV6INIT=no</p>
+<p>NM_CONTROLLED=yes
+TYPE=Ethernet</p>
+<p>NETMASK=255.255.255.0
+IPADDR=172.16.99.109</p>
+<p>NETWORK=172.16.99.0
+GATEWAY=172.16.99.108</p>
+<p>DNS1=202.106.195.68
+DNS2=202.106.46.151</p>
+<p>我虽然只用了两台物理机来模拟实际生产环境的部署模型， 但文中的这种部署结构是典型的，如果是大规模部署的话，只需要将控制节点上的每一个进程（如 DB、MQ、glance、keystone、nova-api、nova-schedule、nova-network 等）分布部署在每一台物理机即可。想要进一步的 HA 的话，可以：</p>
+<ul>
+<li>将 DB 配置成集群模式</li>
+<li>将 MQ 配置成集群模式</li>
+<li>采用 multi-host 模式，将 nova-network 同时安装在计算节点 (nova-compute) 上</li>
+<li>将 nova-api、nova-schedule 这些无状态的服务也同时部署在计算节点上，再加上负载均衡器分发负载</li>
+<li>采用多网卡做 Bonding
+]()</li>
+</ul>
+<p><a href=""></a><a href="">NAT</a></p>
+<p>node2 可以通过 NAT 方式访问外网，数据流向如下：</p>
+<ol>
+<li>node2 中需设置网关指向 node1 的 eth0，例： GATEWAY=172.16.99.108</li>
+<li>在 node1 中打开 ipv4 转发功能，这样，node1 会相当于一台路由器，在 eth0 收到来自 node2 的数据之后，会将数据包转发到其他网卡 eth1， sysctl -w net.ipv4.ip_forward=1</li>
+<li>在 node1 上设置 NAT 规则，这样，从 node2（172.16.99.0/24 网段）发出的数据包看来起就像从 node1 的 eth1 发出的一样： iptables -t nat -A POSTROUTING -s 172.16.99.0/24 -o eth1 -j MASQUERADE</li>
+</ol>
+<p><a href="">Linux Bridge</a></p>
+<p>网桥 ( Bridge ) 工作在二层，了解链路层协议，按帧转发数据。就是交我们常说的交换机，所以连接到网桥的设备处于同一网段。
+<a href=""><strong>图 4. 网桥示例</strong></a>
+<img src="" alt="图 4. 网桥示例"> </p>
+<p>上图 4 显示了 node1 网桥中的 VM1 与 node2 网桥中的 VM2 是如何通信的。在 openstack 中，这是典型的 multi-host 模式，即每一个计算节点均部署了网络服务来提供网关服务。Linux Bridge 充当了交换机的功能，而将 sysctl -w net.ipv4.ip_forward 设置为 1 也相当于 node1 同时充当了一个路由器（路由器的实质就是一个具有多个网卡的机器，因为它的多网卡同时具有这些不同网段的 IP 地址，所以它能将一个网络的流量路由转发到另一个网络）。</p>
+<p>网桥，交换机，是用来连接两个 LAN 的。 是根据 MAC 与端口的映射进行转发的，而在虚机的网卡都是知道的，若从转发数据库知道目的 MAC 地址，以太网帧就只会正确的网桥端口传输，否则，就会扩散到网桥设备的所有端口。</p>
+<p>因为网桥工作在第二层，所以 eth0.1, tap0, tap1 这些网卡均不需要设置 IP（因为对于上层路由器来说，它们是同一个子网，只需要将 IP 设置在 br1 上即可）。同时， 对 Linux 而言，网桥是虚拟设备，因此，除非将一个或多个真实设备绑定到网桥设备上，否则它就无法接收或传输任何东西。所以需要将一个真实设备（如 eth0）或者真实设备的 vlan 接口（如 eth0.1) 加入到网桥。对于前一种情况，将 eth0 加入到网桥之后，eth0 便不再具有 IP，这时候它与 tap0 这些虚拟网卡均通过 br1 处于 10.0.1.0/24 网络，当然我们也可以为网桥 br1 设置一个别名让它也具有 172.16.99.0/24 网管网段的 IP 地址。）</p>
+<p>下面，我们来实现这个示例网桥，在 node1 与 node2 上分别执行下述脚本（对重要命令的描述请参见注释）：
+<a href=""><strong>清单 3. node1 与 node2 的 Linux Bridge 配置脚本</strong></a></p>
+<p>/#!/bin/sh
+TAP=tap0</p>
+<p>BRIDGE=br1
+IFACE=eth0</p>
+<p><strong>MANAGE_IP=172.16.99.108</strong></p>
+<p>SERVICE_IP=10.0.1.1
+GATEWAY=10.0.1.1</p>
+<p>BROADCAST=10.0.1.255
+/# 设置物理网卡为混杂模式</p>
+<p>ifdown $IFACE
+ifconfig $IFACE 0.0.0.0 promisc up</p>
+<p>/# 创建网桥，并物理网卡加入网桥，同时设置网桥的 IP 为服务网络网段
+brctl addbr $BRIDGE</p>
+<p>brctl addif $BRIDGE $IFACE
+brctl stp $BRIDGE on</p>
+<p>ifconfig $BRIDGE $SERVICE_IP netmask 255.255.255.0 broadcast $BROADCAST
+route add default gw $GATEWAY</p>
+<p>/# 在网桥上设置多 IP，让它同时具有管理网段的 IP
+ifconfig ${BRIDGE}:0 $MANAGE_IP netmask 255.255.255.0 broadcast 172.16.99.255</p>
+<p>注意，上述黑体的一句在 node2 中需要作相应修改，其余不变，如下：
+MANAGE_IP=172.16.99.109</p>
+<p><a href="">VLAN</a></p>
+<p>图 4 同样适用于 VLAN 网络，下面我们来实现它。在 node1 与 node2 上分别执行下述脚本：
+<a href=""><strong>清单 4. node1 与 node2 的 VLAN 配置脚本</strong></a></p>
+<p><strong>MAC=c8:3a:35:d7:86:da</strong></p>
+<p>IP=10.0.1.1/24
+ip link add link eth1 name eth1.1 type vlan id 1</p>
+<p>ip link set eth1.1 up
+brctl addbr br1</p>
+<p>brctl setfd br1 0
+brctl stp br1 on</p>
+<p>ip link set br1 address $MAC
+ip link set br1 up</p>
+<p>brctl addif br1 eth1.1
+ip addr add $IP dev br1</p>
+<p>注意，上述黑体的一句在 node2 中需要作相应修改，其余不变，如下：
+MAC= c8:3a:35:d7:86:db</p>
+<p><a href="">测试</a></p>
+<p>我们采用 QEMU 创建虚拟机来进行测试，其中网络部分的配置为：
+  <interface type='bridge'></p>
+<p>   <mac address='52:54:00:00:01:89'/>
+ 　　  <source bridge='br1'/></p>
+<p> 　　  <address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>
+  </interface></p>
+<p>我们使用一个现成的镜像，下载地址：
+curl <a href="http://wiki.qemu.org/download/linux-0.2.img.bz2" target="_blank">http://wiki.qemu.org/download/linux-0.2.img.bz2</a> -o /bak/kvmimages/linux-0.2.img</p>
+<p>在 node1 与 node2 上分别用下列配置定义两个虚机，注意，下面打粗体的部分（<mac address='52:54:00:00:01:89'/>）在两个节点中请设置不一样的值。</p>
+<p>cat /etc/libvirt/qemu/test.xml
+<a href=""><strong>清单 5. node1 与 node2 的虚机定义文件</strong></a></p>
+<domain type='qemu'>
+ <strong><name>VM1</name></strong>
+
+<uuid></uuid>
+<memory>393216</memory>
+
+<currentMemory>393216</currentMemory>
+<vcpu>1</vcpu>
+
+<os>
+<type arch='i686' machine='pc-1.0'>hvm</type>
+
+<boot dev='hd'/>
+</os>
+
+<features>
+<acpi/>
+
+</features>
+<clock offset='utc'/>
+
+<on_poweroff>destroy</on_poweroff>
+<on_reboot>restart</on_reboot>
+
+<on_crash>destroy</on_crash>
+<devices>
+
+<emulator>/usr/bin/qemu-system-i386</emulator>
+<disk type='block' device='disk'>
+
+<driver name='qemu' type='raw'/>
+<source dev='/bak/kvmimages/linux-0.2.img'/>
+
+<target dev='hda' bus='ide'/>
+<address type='drive' controller='0' bus='0' unit='0'/>
+
+</disk>
+<controller type='ide' index='0'>
+
+<address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x1'/>
+</controller>
+
+<interface type='bridge'>
+ <strong><mac address='52:54:00:00:01:89'/></strong>
+
+<source bridge='br1'/>
+<address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>
+
+</interface>
+<input type='tablet' bus='usb'/>
+
+<input type='mouse' bus='ps2'/>
+<graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'>
+
+<listen type='address' address='127.0.0.1'/>
+</graphics>
+
+<video>
+<model type='cirrus' vram='9216' heads='1'/>
+
+<address type='pci' domain='0x0000' bus='0x00' slot='0x02' function='0x0'/>
+</video>
+
+<memballoon model='virtio'>
+<address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>
+
+</memballoon>
+</devices>
+
+</domain>
+
+<p>然后用上述配置创建虚机（virsh define /etc/libvirt/qemu/test.xml ），接着启动虚机（ virsh start test ），最后设置虚机的 IP 和默认网关， 如下：</p>
+<p><strong>VM1：</strong></p>
+<p>ifconfig eth0 10.0.1.2 netmask 255.255.255.0 broadcast 10.0.1.255
+route add default gw 10.0.1.1</p>
+<p><strong>VM3：</strong>
+ifconfig eth0 10.0.1.3 netmask 255.255.255.0 broadcast 10.0.1.255</p>
+<p>route add default gw 10.0.1.1</p>
+<p>这时候在一虚机上 ping 另一虚机 , 如果能够 ping 通，成功。若想要 ping 外网的话，还需在 /etc/resolv.conf 文件中添加域名，如下图 5 所示：
+<a href=""><strong>图 5. 验证实验是否成功</strong></a>
+<img src="" alt="图 5. 验证实验是否成功"> </p>
+<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">OpenStack 云中网络拓扑配置示例</a></p>
+<p>在掌握了上述基本原理之后，应该不难理解下面 OpenStack 云中的网络拓扑。</p>
+<p>在 OpenStack 中，目前存在着 nova-network 与 quantum 两种网络组件。nova-network 仅支持下列三种网络拓扑：</p>
+<ul>
+<li>FlatManager, 不支持 VLAN，也不支持 DHCP 的扁平网络</li>
+<li>FlatDHCPManager，不支持 VLAN，但支持 DHCP 的扁平网络</li>
+<li>VlanManager，支持 VLAN，也支持 DHCP 的 VLAN 隔离网络</li>
+</ul>
+<p>如今 nova-network 的代码已经全部挪到了 Quantum 工程中，但在网络拓扑方面，二者的原理是一致的，所以下面只给出一个典型的 nova-network 的网络配置，有了上面的基础，现在看这段配置是否会感到很亲切呢？
+<a href=""><strong>清单 6. /etc/nova/nova.conf 中的网络配置示例</strong></a></p>
+<p>/#/#/#/#/# nova-network /#/#/#/#/#
+network_manager=nova.network.manager.VlanManager</p>
+<p>public_interface=eth1
+vlan_interface=eth0</p>
+<p>network_host=node1
+fixed_range=10.0.0.0/8</p>
+<p>network_size=1024
+dhcpbridge_flagfile=/etc/nova/nova.conf</p>
+<p>dhcpbridge=/usr/bin/nova-dhcpbridge
+force_dhcp_release=True</p>
+<p>fixed_ip_disassociate_timeout=30
+my_ip=172.16.99.108</p>
+<p>routing_source_ip=192.168.99.108</p>
+<p>相关参数说明如下：</p>
+<ul>
+<li>network_manager，目前支持 VlanManager、FlatManager、FlatDHCPManager 三种拓扑</li>
+<li>public_interface, 接外网的物理网卡 , floating ip 功能需要用到它</li>
+<li>valn_interface, 用于划分 VLAN 的物理网卡</li>
+<li>fixed_range, 服务网络，即虚机内部所用的网络地址</li>
+<li>my_ip，管理网络，用于安装 Openstack 组件的物理机之间的通信。例如：本实验中的控制节点同时具有外网网络地址 192.168.99.108 与管理网络地址 172.16.99.108，另一计算节点的管理网络地址为 172.16.99.109，所以 my_ip 应该设置为 172.16.99.108</li>
+<li>routing_source_ip, NAT 映射后的公共网络 IP，设置了此参数，会自动执行 NAT 命令： iptables -t nat -A POSTROUTING -s 172.16.99.0/24 -o eth1 -j SNAT --to 192.168.99.108</li>
+</ul>
+<p>显然，如果没有区分公共网络与管理网络，即它们处于同一网段的话，并不需要配置 my_ip 及 routing_source_ip 两个参数。</p>
+<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">结论</a></p>
+<p>云中网络一般被划分为公共网络、管理网络 &amp; 存储网络与服务网络三大类。虚拟网络拓扑一般有 NAT、Bridge、VLAN 三种情形。我们手工一步一步地通过 NAT、Bridge、VLAN 三个试验简单实现了一个上述典型的云中网络。原理都是相通的，您再看 OpenStack 云中网络或才其他云的网络时都会倍感亲切。</p>
+<p><a href="">参考资料</a></p>
+<p><strong>学习</strong></p>
+<ul>
+<li>参考 <a href="http://devstack.org/" target="_blank">Devstack 官网</a>，您可以从 devstack 脚本快速上手 Openstack。 </li>
+<li>参考 <a href="http://docs.openstack.org/" target="_blank">Openstack 官网</a>，您可以获得更多关于 Openstack 的知识。 </li>
+<li>参考 <a href="http://wiki.openstack.org/Quantum-Linux-Bridge-Plugin/" target="_blank">Quantum Wiki</a>, 您可以获得关于 Linux Bridge 网络的一般原理。 </li>
+<li>“<a href="http://www.ibm.com/developerworks/cn/cloud/library/cl-openstack-cloud/" target="_blank">使用 OpenStack 实现云计算和存储</a>”（developerWorks，2012 年 9 月）：Infrastructure as a Service (IaaS) 云平台种类繁多，例如像 Nebula 和 Eucalyptus 这样为人熟知的解决方案。而此领域的一个新来者已展示了其不俗的增长，不仅包括用户数量的增长，还包括支持公司的数量的大量增长。在本文中，我们将了解这个开源平台 OpenStack，发现它是否真的是一种开源云操作系统。</li>
+<li><p><a href="https://www.ibm.com/developerworks/cn/cloud/index.html" target="_blank">developerWorks 云计算站点</a> 提供了有关云计算的更新资源，包括</p>
+</li>
+<li><p>云计算 <a href="http://www.ibm.com/developerworks/cn/cloud/newto.html" target="_blank">简介</a>。</p>
+</li>
+<li>更新的 <a href="http://www.ibm.com/developerworks/cn/cloud/resources.html" target="_blank">技术文章和教程，以及网络广播</a>，让您的开发变得轻松，<a href="http://www.ibm.com/developerworks/cn/cloud/events.html" target="_blank">专家研讨会和录制会议</a> 帮助您成为高效的云开发人员。</li>
+<li>连接转为云计算设计的 <a href="http://www.ibm.com/developerworks/cn/cloud/products.html" target="_blank">IBM 产品下载和信息</a>。</li>
+<li>关于 <a href="http://www.ibm.com/developerworks/cn/cloud/collaborate.html" target="_blank">社区最新话题</a> 的活动聚合。</li>
+<li>加入<a href="https://www.ibm.com/developerworks/mydeveloperworks/groups/service/html/communityview?communityUuid=e69e9c57-3210-49b0-a603-ca597c736557" target="_blank">云计算讨论组</a>，了解和讨论云计算的最新技术、解决方案、趋势等内容。 </li>
+</ul>
+<p><strong>讨论</strong></p>
+<ul>
+<li>加入 <a href="http://www.ibm.com/developerworks/cn/community/" target="_blank">developerWorks 中文社区</a>。查看开发人员推动的博客、论坛、组和维基，并与其他 developerWorks 用户交流。</li>
+</ul>
+<p><a href="">作者简介</a>
+<a href=""></a>张华，IBM 高级软件工程师热衷于技术钻研，拥有丰富的搜索引擎、应用服务器、互联网、云计算领域的行业经验，精通 Java、JavaEE、Linux、Network 等技术，目前正从事 OpenStack 相关的工作。</p>
+<p><a href=""></a>龚永生，IBM 资深软件工程师，热衷于开源软件，具有多年的 Linux，Java 和 JavaEE 经验。目前是 OpenStack 项目的积极贡献者。</p>
+
+      
+    </div>
+    <section id='after_content_widget'><div class="widget" id="widget_after_content_wumiiRelatedItems>">
+<script type="text/javascript" id="wumiiRelatedItems"></script>
+</div><div class="widget" id="widget_after_content_post_footer_info>">
+<div class="panel panel-success">
+    <div class="panel-heading" align="center">希望本站内容对您有点用处,有什么疑问或建议请在后面留言评论</div>
+    <div align="center" class="panel-body">转载请注明作者(<a href="http://itsolife.com/about/">RobinChia</a>)和出处 <a href="http://itsolife.com">It so life</a> ，请勿用于任何商业用途</div>
+    <div class="panel-body">本文链接: <a href="/2014/02/02/2014-02-02-hadoop--漫步云中网络/">漫步云中网络</a></div>
+</div>
+</div></section>
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--漫步云中网络/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--漫步云中网络" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+    <section id='after_post_widget'><div class="widget" id="widget_after_post_post_pageNav>">
+<ul class="pager">
+  
+  <li class="previous"><a href="/2014/02/02/2014-02-02-hadoop--深入理解Hadoop集群和网络/" title="深入理解Hadoop集群和网络">&larr; 深入理解Hadoop集群和网络</a></li>
+  
+  
+  <li class="next"><a href="/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事1：外企也就那么回事/" title="IT外企那点儿事(1)：外企也就那么回事">IT外企那点儿事(1)：外企也就那么回事 &rarr;</a></li>
+  
+</ul></div><div class="widget" id="widget_after_post_related_posts>">
+<ul class="list-group"><li class="list-group-item"><a href="/2014/02/02/2014-02-02-hadoop--Hadoop知识分享文稿byquqi99-技术并艺术着/">Hadoop知识分享文稿 ( by quqi99 ) </a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-hadoop--深入理解Hadoop集群和网络/">深入理解Hadoop集群和网络</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-hadoop--HadoopSummit2013见闻：看完基本了解整个Hadoop生态圈格局和趋势了/">Hadoop Summit 2013见闻：看完基本了解整个Hadoop生态圈格局和趋势了</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-hadoop--CentOS的Hadoop集群配置/">CentOS的Hadoop集群配置</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-hadoop--mapred_tutorial/">mapred_tutorial</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-hadoop--Hadoop集群_Hadoop安装配置/">Hadoop集群_Hadoop安装配置</a></li><li class="list-group-item"><a href="/2014/03/15/将hadoop源码转作eclipse工程/">将Hadoop源码转作eclipse工程</a></li><li class="list-group-item"><a href="/2014/02/02/2014-02-02-hadoop--hdfs_design/">hdfs_design</a></li></ul></div></section>    
+	<div id="comments"><!-- Duoshuo Comment BEGIN -->
+
+<div class="ds-thread"  data-thread-key="2014-02-02-hadoop--漫步云中网络"  data-url="http://itsolife.com/2014/02/02/2014-02-02-hadoop--漫步云中网络/" data-title="漫步云中网络"></div>
+
+		
+
+<!-- Duoshuo Comment END -->
+
+</div></div><!--wapper-->
+       </div><!-- ID main-col END -->
+       <aside id="sidebar" class="alignright col-sx-6 col-sm-4 col-md-3 col-lg-3">
+<div id="widget_search" class="widget panel panel-primary">
+    <form action="//google.com/search" method="get" accept-charset="utf-8">
+  <div class="input-group">
+    <input class="form-control" id="searchbox" type="search" name="q" results="0" placeholder="search">
+    <span class="input-group-btn">
+      <button class="btn btn-default" type="submit">Go!</button>
+    </span>
+    <input type="hidden" name="q" value="site:itsolife.com">
+  </div>
+</form>
+</div>
+
+<div id="widget_category" class="widget panel panel-primary">
+  <div class="panel-heading">category</div>  <div data-src='category' class='ajax_widgets'>正在加载...</div>
+</div>
+
+<div id="widget_recent_posts" class="widget panel panel-primary">
+  <div class="panel-heading">recent posts</div>  <div data-src='recent_posts' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_tagcloud" class="widget panel panel-primary">
+  <div class="panel-heading">tagcloud</div>  <div data-src='tagcloud' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_latest_update_posts" class="widget panel panel-primary">
+  <div class="panel-heading">最近更新</div>  <div data-src='latest_update_posts' class='ajax_widgets'>正在加载...</div></div>
+
+<div id="widget_recent_comments" class="widget panel panel-primary">
+  <div class="panel-heading">recent comments</div>  
+
+<div class="list-group-item ds-recent-comments" data-num-items="6" data-show-avatars="1" data-show-time="1" data-show-title="1" data-show-admin="1" data-excerpt-length="50"></div>
+
+
+
+</div>
+
+</aside>
+       <div class="clearfix"></div>
+     </div><!-- row END -->
+  </div>
+  <footer id="footer" class="container">
+  <div class="panel panel-info">
+  <section id='footer_widget'></section>  <div class="panel-footer">
+  <div id="site-info">
+    <span class='author'>
+  
+  &copy; 2014 RobinChia
+  
+    &nbsp;&nbsp;</span>
+  
+  <span id='analytics-51la'></span><span id='analytics-google'>
+<script type="text/javascript">
+  var _gaq = _gaq || [];
+  _gaq.push(['_setAccount', 'UA-48559895-1']);
+  _gaq.push(['_trackPageview']);
+  _js2load.push({src:('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js'});
+</script></span><span id='analytics-cnzz'>
+<script type="text/javascript">var cnzz_protocol = (("https:" == document.location.protocol) ? " https://" : " http://");document.write(unescape("%3Cspan id='cnzz_stat_icon_5774006'%3E%3C/span%3E%3Cscript src='" + cnzz_protocol + "s17.cnzz.com/stat.php%3Fid%3D5774006%26show%3Dpic' type='text/javascript'%3E%3C/script%3E"));</script>
+</span><span id='analytics-baidu'>
+<script>
+var _hmt = _hmt || [];
+_js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
+</script>
+</span>  </div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-07 09:54:36</em></span></div>
+</div>
+<div class="clearfix"></div>
+
+
+  </div>
+  </footer>
+  
+        <script src="http://cdn.bootcss.com/jquery/1.10.2/jquery.min.js"></script>        
+        <script src="http://cdn.staticfile.org/twitter-bootstrap/3.1.0/js/bootstrap.min.js"></script>        
+                
+        <script src="http://cdn.bootcss.com/prettify/r298/prettify.min.js"></script>    <script type="text/javascript">
+   var lang=["bsh", "c", "cc", "cpp", "cs", "csh", "cyc", "cv", "htm", "html",
+    "java", "js", "m", "mxml", "perl", "pl", "pm", "py", "rb", "sh",
+    "xhtml", "xml", "xsl"];
+   var pretty_base='';
+   $('script').each(function(){
+	var c = $(this).attr('src');
+	if (!c)
+	    return;
+	if (c.match(/(\/)?prettify(\.min)?\.js/i))
+	{
+	    var index = c.lastIndexOf('/');
+	    if (index != -1)
+		pretty_base = c.substr(0,index + 1);
+	    return false;
+	}
+   })
+   $('pre code').each(function(){
+	var c = $(this).attr('class')
+	if (!c)
+	    return;
+	c = c.match(/\s?(lang\-\w+)/i);
+	if (c && lang.indexOf(c[1]) == -1)
+	{
+	    lang.push(c[1]);
+	    $.getScript(pretty_base + c[1] + '.min.js');
+	}
+   })
+
+    $(window).load(function(){
+       $("pre").addClass("prettyprint");
+       prettyPrint();
+    })
+</script>    
+            <script type="text/javascript">
+var duoshuoQuery = {short_name:"robinchia"};
+_js2load.push({src:'http://static.duoshuo.com/embed.js',charset:'UTF-8'});
+</script>
+    
+            <!--wumii_relatedItems-->
+
+<script type="text/javascript">
+    var wumiiPermaLink = "http://itsolife.com/2014/02/02/2014-02-02-hadoop--漫步云中网络/";
+    var wumiiTitle = "漫步云中网络";
+    var wumiiTags = "hadoop";
+    var wumiiCategories = ["hadoop"];
+    var wumiiSitePrefix = "http://itsolife.com";
+    var wumiiParams = "&num=5&mode=3&pf=JAVASCRIPT";
+    _js2load.push({src:'http://widget.wumii.cn/ext/relatedItemsWidget'});
+</script>
+<a href="http://www.wumii.com/widget/relatedItems" style="border:0;">
+<img src="http://static.wumii.cn/images/pixel.png" alt="无觅关联推荐，快速提升流量" style="border:0;padding:0;margin:0;" />
+</a>
+    
+        <script src="http://cdn.bootcss.com/fancybox/2.1.5/jquery.fancybox.min.js"></script>    <script type="text/javascript">
+(function($){
+  $('.entry').each(function(i){
+    $(this).find('img').each(function(){
+      var alt = this.alt;
+
+      if (alt){
+        $(this).before('<span class="caption">' + alt + '</span>');
+      }
+
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox" rel="fancybox' + i + '" />');
+    });
+  });
+
+  $('.fancybox').fancybox();
+})(jQuery);
+</script>    
+        <script src="http://cdn.bootcss.com/mathjax/2.3/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>    <script type="text/x-mathjax-config">
+  MathJax.Hub.Config({
+    tex2jax: {
+      skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+      inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+      processEscapes: true
+    }
+  });
+  MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+      all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+  });
+</script>
+    
+<script type="text/javascript">
+$('.ajax_widgets').each(function(){var src=$(this).attr('data-src');if(src)$(this).load('/widgets/'+src+'.html');});
+$.each(_js2load,function(index,obj){loadjs(obj.src,obj.charset)});
+</script>
+
+<div id="scroll2top">
+<img src="/scroll2top/arrow.png"/>
+</div>
+<script src="/scroll2top/scroll2top.min.js"></script>
+<div id="winterland">
+  <canvas></canvas>
+</div>
+<script src="/js/winterland.min.js"></script>
+
+  </body>
+</html>
