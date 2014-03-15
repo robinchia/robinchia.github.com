@@ -802,172 +802,6 @@ Command line代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java垃圾回收策略调优-实践篇/">Java 垃圾回收策略调优</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java垃圾回收策略调优-实践篇/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-">Java 垃圾回收策略调优-实践篇</h1>
-<p><a href="http://www.douban.com/accounts/login?source=group" target="_blank">登录</a> <a href="http://www.douban.com/accounts/register?source=group" target="_blank">注册</a></p>
-<ul>
-<li><a href="http://www.douban.com/" target="_blank">豆瓣</a></li>
-<li><a href="http://book.douban.com/" target="_blank">读书</a></li>
-<li><a href="http://movie.douban.com/" target="_blank">电影</a></li>
-<li><a href="http://music.douban.com/" target="_blank">音乐</a></li>
-<li><a href="http://www.douban.com/location/" target="_blank">同城</a></li>
-<li><a href="http://www.douban.com/group/" target="_blank">小组</a></li>
-<li><a href="http://read.douban.com/?dcs=top-nav&amp;dcm=douban" target="_blank">阅读</a></li>
-<li><a href="http://douban.fm/" target="_blank">豆瓣FM</a></li>
-<li><a href="">更多</a></li>
-</ul>
-<p><a href="http://9.douban.com/" target="_blank">九点</a> <a href="http://alphatown.com/" target="_blank">阿尔法城</a> <a href="http://www.douban.com/mobile/" target="_blank">移动应用</a></p>
-<p><a href="http://www.douban.com/group/" target="_blank">豆瓣小组</a></p>
-<ul>
-<li><a href="http://www.douban.com/group/explore" target="_blank">发现小组</a></li>
-<li><a href="http://www.douban.com/group/explore_topic" target="_blank">发现话题</a>
-搜索：  小组、话题<h1 id="java-">Java 垃圾回收策略调优，实践篇</h1>
-</li>
-</ul>
-<p><a href="http://www.douban.com/people/1851090/" target="_blank"><img src="" alt="KK"></a></p>
-<h3 id="-kk-http-www-douban-com-people-1851090-2008-10-22-13-26-30">来自: <a href="http://www.douban.com/people/1851090/" target="_blank">KK</a> 2008-10-22 13:26:30</h3>
-<p>JVM参数调优是一个很头痛的问题，可能和应用有关系，下面是本人一些调优的实践经验，希望对读者能有帮助，环境LinuxAS4,resin2.1.17,JDK6.0,2CPU,4G内存,dell2950服务器，网站是shedewang.com，新手可能觉得这文章没有用。
-一：串行垃圾回收，也就是默认配置，完成10万request用时153秒，JVM参数配置如下
-$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps &quot;;
-这种配置一般在resin启动24小时内似乎没有大问题，网站可以正常访问，但查看日志发现，在接近24小时时，Full GC执行越来越频繁，大约每隔3分钟就有一次Full GC，每次Full GC系统会停顿6秒左右，作为一个网站来说，用户等待6秒恐怕太长了，所以这种方式有待改善。MaxTenuringThreshold=7表示一个对象如果在救助空间移动7次还没有被回收就放入年老代，GCTimeRatio=19表示java可以用5%的时间来做垃圾回收，1/(1+19)=1 /20=5%。
-二：并行回收，完成10万request用时117秒，配置如下：
-$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xmx2048M -Xms2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+UseParallelGC -XX:ParallelGCThreads=20 -XX:+UseParallelOldGC -XX:MaxGCPauseMillis=500 -XX:+UseAdaptiveSizePolicy -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 &quot;;
-并行回收我尝试过多种组合配置，似乎都没什么用，resin启动3小时左右就会停顿，时间超过10 秒。也有可能是参数设置不够好的原因，MaxGCPauseMillis表示GC最大停顿时间，在resin刚启动还没有执行Full GC时系统是正常的，但一旦执行Full GC，MaxGCPauseMillis根本没有用，停顿时间可能超过20秒，之后会发生什么我也不再关心了，赶紧重启resin，尝试其他回收策略。
-三：并发回收，完成10万request用时60秒，比并行回收差不多快一倍，是默认回收策略性能的2.5倍，配置如下：
-$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:+UseConcMarkSweepGC -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+UseCMSCompactAtFullCollection -XX:CMSFullGCsBeforeCompaction=0 &quot;;
-这个配置虽然不会出现10秒连不上的情况，但系统重启3个小时左右，每隔几分钟就会有5秒连不上的情况，查看gc.log，发现在执行ParNewGC时有个promotion failed错误，从而转向执行Full GC，造成系统停顿，而且会很频繁，每隔几分钟就有一次，所以还得改善。UseCMSCompactAtFullCollection是表是执行Full GC后对内存进行整理压缩，免得产生内存碎片，CMSFullGCsBeforeCompaction=N表示执行N次Full GC后执行内存压缩。
-四：增量回收，完成10万request用时171秒，太慢了，配置如下
-$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -Xincgc &quot;;
-似乎回收得也不太干净，而且也对性能有较大影响，不值得试。
-五：并发回收的I-CMS模式，和增量回收差不多，完成10万request用时170秒。
-$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+UseConcMarkSweepGC -XX:+CMSIncrementalMode -XX:+CMSIncrementalPacing -XX:CMSIncrementalDutyCycleMin=0 -XX:CMSIncrementalDutyCycle=10 -XX:-TraceClassUnloading &quot;;
-采用了sun推荐的参数，回收效果不好，照样有停顿，数小时之内就会频繁出现停顿，什么sun推荐的参数，照样不好使。
-六：递增式低暂停收集器，还叫什么火车式回收，不知道属于哪个系，完成10万request用时153秒
-$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+UseTrainGC &quot;;
-该配置效果也不好，影响性能，所以没试。
-七：相比之下，还是并发回收比较好，性能比较高，只要能解决ParNewGC（并行回收年轻代）时的promotion failed错误就一切好办了，查了很多文章，发现引起promotion failed错误的原因是CMS来不及回收（CMS默认在年老代占到90%左右才会执行），年老代又没有足够的空间供GC把一些活的对象从年轻代移到年老代，所以执行Full GC。CMSInitiatingOccupancyFraction=70表示年老代占到约70%时就开始执行CMS，这样就不会出现Full GC了。SoftRefLRUPolicyMSPerMB这个参数也是我认为比较有用的，官方解释是softly reachable objects will remain alive for some amount of time after the last time they were referenced. The default value is one second of lifetime per free megabyte in the heap，我觉得没必要等1秒，所以设置成0。配置如下
-$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -XX:+DisableExplicitGC -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSPermGenSweepingEnabled -XX:+UseCMSCompactAtFullCollection -XX:CMSFullGCsBeforeCompaction=0 -XX:+CMSClassUnloadingEnabled -XX:-CMSParallelRemarkEnabled -XX:CMSInitiatingOccupancyFraction=70 -XX:SoftRefLRUPolicyMSPerMB=0 -XX:+PrintClassHistogram -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCApplicationStoppedTime -Xloggc:log/gc.log &quot;;
-上面这个配置内存上升的很慢，24小时之内几乎没有停顿现象，最长的只停滞了0.8s，ParNew GC每30秒左右才执行一次，每次回收约0.2秒，看来问题应该暂时解决了。
-参数不明白的可以上网查，本人认为比较重要的几个参数是：-Xms -Xmx -Xmn MaxTenuringThreshold GCTimeRatio UseConcMarkSweepGC CMSInitiatingOccupancyFraction SoftRefLRUPolicyMSPerMB
-<a href="http://www.douban.com/group/topic/4450520/?type=like#sep" target="_blank">7人</a> 喜欢  <a href="http://www.douban.com/accounts/register?reason=like" title="标为喜欢？" target="_blank">喜欢</a></p>
-<p><a href="">回应</a> <a href="http://www.douban.com/group/topic/4450520/?type=rec#sep" target="_blank">推荐</a> <a href="http://www.douban.com/group/topic/4450520/?type=like#sep" target="_blank">喜欢</a>  <a href="http://www.douban.com/group/topic/4450520/?author=1#sep" target="_blank">只看楼主</a></p>
-<ul>
-<li><a href="http://www.douban.com/people/xds2000/" target="_blank"><img src="" alt="肖"></a></li>
-</ul>
-<h3 id="-http-www-douban-com-people-xds2000-beijing-2008-10-22-22-53-34"><a href="http://www.douban.com/people/xds2000/" target="_blank">肖</a> (@Beijing) 2008-10-22 22:53:34</h3>
-<p>首先使用64 bit os,是一个提高性能的不二法规.
-第二,任何调优应该有场景,在未知情况应该使用loggc导出日志分析,再加参数.对于参数的好与坏,我希望楼主能贴出更多的自已的思路</p>
-<p><a href="http://www.douban.com/group/topic/4450520/?cid=36481624#last" target="_blank">回应</a> <a href="&quot;真的要删除肖的发言?&quot;">删除</a></p>
-<ul>
-<li><a href="http://www.douban.com/people/1851090/" target="_blank"><img src="" alt="KK"></a></li>
-</ul>
-<h3 id="-kk-http-www-douban-com-people-1851090-2008-10-27-15-32-12"><a href="http://www.douban.com/people/1851090/" target="_blank">KK</a> 2008-10-27 15:32:12</h3>
-<p>还有，如果遇到内存泄漏，要用jstack和jmap、jstat等多看看，应该可以找到问题，还要多看看gc日志各个区域内存使用情况和gc频率，这样才可以作出最佳配置。Good Luck</p>
-<p><a href="http://www.douban.com/group/topic/4450520/?cid=36890822#last" target="_blank">回应</a> <a href="&quot;真的要删除KK的发言?&quot;">删除</a></p>
-<ul>
-<li><a href="http://www.douban.com/people/1851090/" target="_blank"><img src="" alt="KK"></a></li>
-</ul>
-<h3 id="-kk-http-www-douban-com-people-1851090-2008-11-03-17-37-21"><a href="http://www.douban.com/people/1851090/" target="_blank">KK</a> 2008-11-03 17:37:21</h3>
-<p>内存问题和应用有很大关系，我的应用因为用到了缓存，所以年老代比较大，多看看gc日志，出了问题多用Jstack,jmap等工具查看，这样才可以最大的优化JVM参数。经过进两个星期的调试，我的配置是/usr/local/jdk/bin/java -Dresin.home=/usr/local/resin -server -Xms1800M -Xmx1800M -Xmn300M -Xss512K -XX:PermSize=300M -XX:MaxPermSize=300M -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=5 -XX:GCTimeRatio=19 -Xnoclassgc -XX:+DisableExplicitGC -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+UseCMSCompactAtFullCollection -XX:CMSFullGCsBeforeCompaction=0 -XX:-CMSParallelRemarkEnabled -XX:CMSInitiatingOccupancyFraction=70 -XX:SoftRefLRUPolicyMSPerMB=0 -XX:+PrintClassHistogram -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintHeapAtGC -Xloggc:log/gc.log
-72小时之内没有一点停顿，我是32位LinuxAS4操作系统。</p>
-<p><a href="http://www.douban.com/group/topic/4450520/?cid=37459097#last" target="_blank">回应</a> <a href="&quot;真的要删除KK的发言?&quot;">删除</a></p>
-<ul>
-<li><a href="http://www.douban.com/people/foxswily/" target="_blank"><img src="" alt="Foxswily"></a></li>
-</ul>
-<h3 id="-foxswily-http-www-douban-com-people-foxswily-2008-11-03-17-45-09"><a href="http://www.douban.com/people/foxswily/" target="_blank">Foxswily</a> 2008-11-03 17:45:09</h3>
-<p>mark先，前一段做一个对性能要求高的项目，典型的高DB负载，把着眼点都放在了DB优化上(最终效果也不错，大概提高了40倍左右的性能)，一直没有考虑jvm优化，疏忽了。
-but，jvm的优化性价比貌似不是很高，化很大力气得到回报如何有待实践检验。</p>
-<p><a href="http://www.douban.com/group/topic/4450520/?cid=37459727#last" target="_blank">回应</a> <a href="&quot;真的要删除Foxswily的发言?&quot;">删除</a></p>
-<ul>
-<li><a href="http://www.douban.com/people/1851090/" target="_blank"><img src="" alt="KK"></a></li>
-</ul>
-<h3 id="-kk-http-www-douban-com-people-1851090-2008-11-03-17-55-02"><a href="http://www.douban.com/people/1851090/" target="_blank">KK</a> 2008-11-03 17:55:02</h3>
-<p>不是纯粹性能问题，到一定时候JVM参数必须优化，不然访问量大的时候会造成频繁的Full GC或者CMS，Full GC有时能让整个系统停顿10秒，10秒内用户的任何点击都在等待状态，要是隔2分钟就来一次Full GC，恐怕用户和老板都受不了了。
-并发回收如果配置的不好照样会产生Full GC。:)</p>
-<p><a href="http://www.douban.com/group/topic/4450520/?cid=37460534#last" target="_blank">回应</a> <a href="&quot;真的要删除KK的发言?&quot;">删除</a></p>
-<ul>
-<li><a href="http://www.douban.com/people/foxswily/" target="_blank"><img src="" alt="Foxswily"></a></li>
-</ul>
-<h3 id="-foxswily-http-www-douban-com-people-foxswily-2008-11-03-17-58-43"><a href="http://www.douban.com/people/foxswily/" target="_blank">Foxswily</a> 2008-11-03 17:58:43</h3>
-<p>有道理，支持这种有内容、有见地的讨论贴。</p>
-<p><a href="http://www.douban.com/group/topic/4450520/?cid=37460849#last" target="_blank">回应</a> <a href="&quot;真的要删除Foxswily的发言?&quot;">删除</a></p>
-<ul>
-<li><a href="http://www.douban.com/people/lozen/" target="_blank"><img src="" alt="洛臻星轮"></a></li>
-</ul>
-<h3 id="-http-www-douban-com-people-lozen-2012-05-22-23-22-11"><a href="http://www.douban.com/people/lozen/" target="_blank">洛臻星轮</a> 2012-05-22 23:22:11</h3>
-<p>感谢下，用了里面的很多参数，目前好使了，让它再多跑跑
-项目中Full GC一次停顿了个快十秒，一停顿事件就积压，隔段时间又停顿，事件积压得越来越严重，程序就崩了...</p>
-<p><a href="http://www.douban.com/group/topic/4450520/?cid=347193386#last" target="_blank">回应</a> <a href="&quot;真的要删除洛臻星轮的发言?&quot;">删除</a></p>
-<ul>
-<li><h3 id="-alzq-http-www-douban-com-people-55956054-2012-07-20-13-00-19"><a href="http://www.douban.com/people/55956054/" target="_blank">alzq</a> 2012-07-20 13:00:19</h3>
-</li>
-</ul>
-<p>好配置，实验中……效果不错～</p>
-<p><a href="http://www.douban.com/group/topic/4450520/?cid=364769409#last" target="_blank">回应</a> <a href="&quot;真的要删除alzq的发言?&quot;">删除</a></p>
-<h2 id="-">你的回应</h2>
-<p>回应请先 <a href="http://www.douban.com/accounts/register?reason=discuss" target="_blank">登录</a> , 或 <a href="http://www.douban.com/accounts/register?reason=discuss" target="_blank">注册</a></p>
-<p>推荐到广播</p>
-<p><a href="http://www.douban.com/group/java/?ref=sidebar" target="_blank"><img src="" alt=""></a></p>
-<p><a href="http://www.douban.com/group/java/?ref=sidebar" target="_blank">Java&amp;Android移动应用编程</a></p>
-<p>9641 人聚集在这个小组
- <a href="">加入小组</a></p>
-<h2 id="-http-www-douban-com-group-java-topics-">最新话题  ( <a href="http://www.douban.com/group/java/#topics" target="_blank">更多</a> )</h2>
-<ul>
-<li><a href="http://www.douban.com/group/topic/41487832/" title="[Java开发] Java怎么用POI读取Excel函数" target="_blank">[Java开发] Java怎么用POI读取Excel函数</a>   (若水520sunny)</li>
-<li><a href="http://www.douban.com/group/topic/41485336/" title="帮5买-招聘ETL开发工程师" target="_blank">帮5买-招聘ETL开发工程师</a>   (挚爱Bernabeu)</li>
-<li><a href="http://www.douban.com/group/topic/41482883/" title="搜狗-招聘Java软件工程师" target="_blank">搜狗-招聘Java软件工程师</a>   (挚爱Bernabeu)</li>
-<li><a href="http://www.douban.com/group/topic/41472005/" title="谁能稍稍帮我分析下Logcat，给个提示，感激不尽！" target="_blank">谁能稍稍帮我分析下Logcat，给个提示，感激不尽！</a>   (shanby)</li>
-<li><p><a href="http://www.douban.com/group/topic/41466302/" title="推荐一个很好的android&amp;ios学习网站" target="_blank">推荐一个很好的android&amp;ios学习网站</a>   (　)</p>
-<h2 id="-">全站热点话题:</h2>
-</li>
-<li><p><a href="http://www.douban.com/group/topic/41486032/?r=1" title="【搬运中】别小看吃货的智慧 818某些外面卖的看起来挺贵的甜品饮料 很多可以自己在家做" target="_blank">【搬运中】别小看吃货的智慧 818某些外面...</a>   37回应</p>
-</li>
-<li><a href="http://www.douban.com/group/topic/41483943/?r=1" title="【推荐】夏日彩妆routine" target="_blank">【推荐】夏日彩妆routine</a>   55回应</li>
-<li><a href="http://www.douban.com/group/topic/41414533/?r=1" title="有关毕业报到证，公务员，事业单位考试面试神马的都可以问我" target="_blank">有关毕业报到证，公务员，事业单位考试面...</a>   197回应</li>
-<li><a href="http://www.douban.com/group/topic/41448032/?r=1" title="【意向】Mitsui.家的男装" target="_blank">【意向】Mitsui.家的男装</a>   45回应</li>
-<li><a href="http://www.douban.com/group/topic/41321572/?r=1" title="【异国】分享一点关于西方世界的看法" target="_blank">【异国】分享一点关于西方世界的看法</a>   184回应</li>
-<li><a href="http://www.douban.com/group/topic/41462291/?r=1" title="【住在我房子里的美女到底是个什么东西？？？!!!】" target="_blank">【住在我房子里的美女到底是个什么东西？...</a>   63回应</li>
-<li><a href="http://www.douban.com/group/topic/41358235/?r=1" title="关于天蝎男喜欢女生类型的讨论" target="_blank">关于天蝎男喜欢女生类型的讨论</a>   283回应</li>
-<li><a href="http://www.douban.com/group/topic/41460023/?r=1" title="求扒苏见信！！！196的黑料有木有？" target="_blank">求扒苏见信！！！196的黑料有木有？</a>   285回应</li>
-</ul>
-<h3 id="-">手机扫描二维码，让小组随时陪伴你</h3>
-<p><img src="" alt=""></p>
-<p><a href="http://www.douban.com/mobile/ipa?app_name=group" target="_blank">App Store下载</a> <a href="http://www.douban.com/j/app/apk?app_name=group_android" target="_blank">点击直接下载</a></p>
-<p>© 2005－2013 douban.com, all rights reserved   <a href="http://www.douban.com/about" target="_blank">关于豆瓣</a> · <a href="http://www.douban.com/jobs" target="_blank">在豆瓣工作</a> · <a href="http://www.douban.com/about?topic=contactus" target="_blank">联系我们</a> · <a href="http://www.douban.com/about?policy=disclaimer" target="_blank">免责声明</a> · <a href="http://www.douban.com/help/group" target="_blank">帮助中心</a> · <a href="http://developers.douban.com/" target="_blank">开发者</a> · <a href="http://www.douban.com/mobile/group" target="_blank">手机小组</a> · <a href="http://www.douban.com/partner/" target="_blank">豆瓣广告</a></p>
-<p><a href="">↑回顶部</a>
-<a href="">×</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java垃圾回收策略调优-实践篇/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--Java垃圾回收策略调优-实践篇" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java7的新特性一览表/">Java 7 的新特性一览表</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java7的新特性一览表/">feb. 2 2014</a></time></span>      
@@ -1415,6 +1249,671 @@ Checked Exception目前我所知道,Java是唯一使用的语言.而那些后续
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-report--DynamicReportsGettingstarted/">DynamicReports(Getting started)</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-report--DynamicReportsGettingstarted/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="dynamicreports-getting-started-">DynamicReports(Getting started)</h1>
+<h2 id="getting-started">Getting started</h2>
+<p><strong>Table of contents</strong></p>
+<ol>
+<li><a href="http://www.dynamicreports.org/getting-started#overview" target="_blank">Overview</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#simplereport" target="_blank">Simple report</a></li>
+</ol>
+<ul>
+<li><a href="http://www.dynamicreports.org/getting-started#step1" target="_blank">Step 1 : Start</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#step2" target="_blank">Step 2 : Styles</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#step3" target="_blank">Step 3 : Additional columns</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#step4" target="_blank">Step 4 : Group</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#step5" target="_blank">Step 5 : Subtotals</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#step6" target="_blank">Step 6 : Charts</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#step7" target="_blank">Step 7 : Column grid &amp; Containers</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#step8" target="_blank">Step 8 : Hide subtotal</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#step9" target="_blank">Step 9 : Title</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#step10" target="_blank">Step 10 : Currency data type</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#step11" target="_blank">Step 11 : Detail row highlighters</a></li>
+<li><a href="http://www.dynamicreports.org/getting-started#step12" target="_blank">Step 12 : Conditional styles</a></li>
+</ul>
+<p><a href=""></a></p>
+<h3 id="overview">Overview</h3>
+<p>Creating a report with <strong>DynamicReports</strong> is very easy, take a look at the example below
+01</p>
+<p>import</p>
+<p>static</p>
+<p>net.sf.dynamicreports.report.builder.DynamicReports./*;</p>
+<p>02</p>
+<p>public</p>
+<p>class</p>
+<p>Report {
+03</p>
+<p>04</p>
+<p>private</p>
+<p>void</p>
+<p>build() {
+05</p>
+<p>try</p>
+<p>{</p>
+<p>06</p>
+<p>report()</p>
+<p>//create new report design
+07</p>
+<p>.columns(...)</p>
+<p>//adds columns</p>
+<p>08</p>
+<p>.groupBy(...)</p>
+<p>//adds groups
+09</p>
+<p>.subtotalsAtSummary(...)</p>
+<p>//adds subtotals</p>
+<p>10</p>
+<p>...
+11</p>
+<p>//set datasource</p>
+<p>12</p>
+<p>.setDataSource(...)
+13</p>
+<p>//export report</p>
+<p>14</p>
+<p>.toPdf(...)</p>
+<p>//export report to pdf
+15</p>
+<p>.toXls(...)</p>
+<p>//export report to excel</p>
+<p>16</p>
+<p>...
+17</p>
+<p>//other outputs</p>
+<p>18</p>
+<p>.toJasperPrint()</p>
+<p>//creates jasperprint object
+19</p>
+<p>.show()</p>
+<p>//shows report</p>
+<p>20</p>
+<p>.print()</p>
+<p>//prints report
+21</p>
+<p>...</p>
+<p>22</p>
+<p>}</p>
+<p>catch</p>
+<p>(DRException e) {
+23</p>
+<p>e.printStackTrace(); </p>
+<p>24</p>
+<p>}
+25</p>
+<p>} </p>
+<p>26</p>
+<p>... 
+27</p>
+<p>}</p>
+<p>See <a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/ReportBuilder.html" target="_blank">ReportBuilder</a> class for all available features and <a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/jasper/builder/JasperReportBuilder.html" target="_blank">JasperReportBuilder</a> class for all available exports and outputs</p>
+<p><a href=""></a></p>
+<h3 id="simple-report">Simple report</h3>
+<p>Please note that this is a tutorial example and that this tutorial doesn&#39;t describe all features!</p>
+<p>You will learn in this section how to create a simple report step by step.
+First we need to create an empty report desing, configure it and set a datasource. Afterwards the report will be ready to export into any format.
+It&#39;s important to remember the <a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/DynamicReports.html" target="_blank">DynamicReports</a> class, through which you will have available most of features. The class provides methods for building a particular piece of a report.
+Let&#39;s start!</p>
+<p><a href=""></a></p>
+<h3 id="step-1-start">Step 1 : Start</h3>
+<p>First define columns through <a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/column/ColumnBuilders.html" target="_blank">DynamicReports.col</a>.column(title, field name, datatype) (the field name must match with the name of a field contained in the datasource) and pass them into the report as follows:
+1</p>
+<p>.columns(</p>
+<p>//add columns</p>
+<p>2</p>
+<p>//             title,     field name     data type
+3</p>
+<p>col.column(</p>
+<p>&quot;Item&quot;</p>
+<p>,      </p>
+<p>&quot;item&quot;</p>
+<p>,      type.stringType()),</p>
+<p>4</p>
+<p>col.column(</p>
+<p>&quot;Quantity&quot;</p>
+<p>,  </p>
+<p>&quot;quantity&quot;</p>
+<p>,  type.integerType()),
+5</p>
+<p>col.column(</p>
+<p>&quot;Unit price&quot;</p>
+<p>,</p>
+<p>&quot;unitprice&quot;</p>
+<p>, type.bigDecimalType()))</p>
+<p>now define some text at the title and number of pages at the page footer as follows:</p>
+<p>1</p>
+<p>.title(cmp.text(</p>
+<p>&quot;Getting started&quot;</p>
+<p>))</p>
+<p>//shows report title</p>
+<p>2</p>
+<p>.pageFooter(cmp.pageXofY())</p>
+<p>//shows number of page at page footer</p>
+<p><a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/component/ComponentBuilders.html" target="_blank">DynamicReports.cmp</a>.text(some text) - creates a component that shows a text
+<a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/component/ComponentBuilders.html" target="_blank">DynamicReports.cmp</a>.pageXofY() - creates a component that shows page X of Y
+Methods <strong>title(...)</strong> and <strong>pageFooter(...)</strong> allows to customize a particular report band by adding components to it</p>
+<p><a href="http://www.dynamicreports.org/examples/simplereport_step01.png" title="SimpleReport_Step01" target="_blank"><img src="" alt="SimpleReport_Step01"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step01.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step01.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step01" title="SimpleReport_Step01" target="_blank">SimpleReport_Step01</a></p>
+<p><a href=""></a></p>
+<h3 id="step-2-styles">Step 2 : Styles</h3>
+<p>Each style can have a parent style from which it will inherit its properties. Empty style can be created by <a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/style/StyleBuilders.html" target="_blank">DynamicReports.stl</a>.style()
+01</p>
+<p>StyleBuilder boldStyle         = stl.style().bold(); </p>
+<p>02</p>
+<p>StyleBuilder boldCenteredStyle = stl.style(boldStyle)
+03</p>
+<p>.setHorizontalAlignment(HorizontalAlignment.CENTER);</p>
+<p>04</p>
+<p>StyleBuilder columnTitleStyle  = stl.style(boldCenteredStyle)
+05</p>
+<p>.setBorder(stl.pen1Point())</p>
+<p>06</p>
+<p>.setBackgroundColor(Color.LIGHT_GRAY);
+07</p>
+<p>report()</p>
+<p>08</p>
+<p>.setColumnTitleStyle(columnTitleStyle) 
+09</p>
+<p>.highlightDetailEvenRows() </p>
+<p>10</p>
+<p>.title(cmp.text(</p>
+<p>&quot;Getting started&quot;</p>
+<p>).setStyle(boldCenteredStyle))
+11</p>
+<p>.pageFooter(cmp.pageXofY().setStyle(boldCenteredStyle)) <a href="http://www.dynamicreports.org/examples/simplereport_step02.png" title="SimpleReport_Step02" target="_blank"><img src="" alt="SimpleReport_Step02"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step02.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step02.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step02" title="SimpleReport_Step02" target="_blank">SimpleReport_Step02</a></p>
+<p><a href=""></a></p>
+<h3 id="step-3-additional-columns">Step 3 : Additional columns</h3>
+<p>You can very easy multiply, divide, add or subtract column of numbers by another column of numbers or by a number value
+1</p>
+<p>//price = unitPrice /* quantity </p>
+<p>2</p>
+<p>TextColumnBuilder<BigDecimal> priceColumn = unitPriceColumn.multiply(quantityColumn)
+3</p>
+<p>.setTitle(</p>
+<p>&quot;Price&quot;</p>
+<p>);</p>
+<p>Adding percentage of any column of numbers is simple <a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/column/ColumnBuilders.html" target="_blank">DynamicReports.col</a>.percentageColumn(title, column)</p>
+<p>1</p>
+<p>PercentageColumnBuilder pricePercColumn = col.percentageColumn(</p>
+<p>&quot;Price %&quot;</p>
+<p>, priceColumn);</p>
+<p><a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/column/ColumnBuilders.html" target="_blank">DynamicReports.col</a>.reportRowNumberColumn(title) creates a column that shows row number</p>
+<p>1</p>
+<p>TextColumnBuilder<Integer> rowNumberColumn =</p>
+<p>2</p>
+<p>col.reportRowNumberColumn(</p>
+<p>&quot;No.&quot;</p>
+<p>) 
+3</p>
+<p>//sets the fixed width of a column, width = 2 /* character width </p>
+<p>4</p>
+<p>.setFixedColumns(</p>
+<p>2</p>
+<p>) 
+5</p>
+<p>.setHorizontalAlignment(HorizontalAlignment.CENTER);  <a href="http://www.dynamicreports.org/examples/simplereport_step03.png" title="SimpleReport_Step03" target="_blank"><img src="" alt="SimpleReport_Step03"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step03.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step03.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step03" title="SimpleReport_Step03" target="_blank">SimpleReport_Step03</a></p>
+<p><a href=""></a></p>
+<h3 id="step-4-group">Step 4 : Group</h3>
+<p>We continue by adding a group as shown below
+1</p>
+<p>.groupBy(itemColumn) <a href="http://www.dynamicreports.org/examples/simplereport_step04.png" title="SimpleReport_Step04" target="_blank"><img src="" alt="SimpleReport_Step04"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step04.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step04.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step04" title="SimpleReport_Step04" target="_blank">SimpleReport_Step04</a></p>
+<p><a href=""></a></p>
+<h3 id="step-5-subtotals">Step 5 : Subtotals</h3>
+<p>Now we can try to sum a column of numbers. Subtotal of sum is created through <a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/subtotal/SubtotalBuilders.html" target="_blank">DynamicReports.sbt</a>.sum(column)
+1</p>
+<p>.subtotalsAtSummary( </p>
+<p>2</p>
+<p>sbt.sum(unitPriceColumn), sbt.sum(priceColumn)) 
+3</p>
+<p>.subtotalsAtFirstGroupFooter( </p>
+<p>4</p>
+<p>sbt.sum(unitPriceColumn), sbt.sum(priceColumn)) </p>
+<p>Method <strong>subtotalsAtSummary(...)</strong> allows to add subtotals to the summary band
+Method <strong>subtotalsAtFirstGroupFooter(...)</strong> will find first defined group and add subtotals to the group footer band</p>
+<p><a href="http://www.dynamicreports.org/examples/simplereport_step05.png" title="SimpleReport_Step05" target="_blank"><img src="" alt="SimpleReport_Step05"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step05.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step05.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step05" title="SimpleReport_Step05" target="_blank">SimpleReport_Step05</a></p>
+<p><a href=""></a></p>
+<h3 id="step-6-charts">Step 6 : Charts</h3>
+<p><a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/chart/ChartBuilders.html" target="_blank">DynamicReports.cht</a> provide methods for building charts. Category and series are required.
+01</p>
+<p>Bar3DChartBuilder itemChart = cht.bar3DChart()</p>
+<p>02</p>
+<p>.setTitle(</p>
+<p>&quot;&lt;a href=&quot;</p>
+<p>http:</p>
+<p>//www.dynamicreports.org/examples/sales&quot; title=&quot;Sales&quot;&gt;Sales</a> by item&quot;)
+03</p>
+<p>.setCategory(itemColumn)</p>
+<p>04</p>
+<p>.addSerie(
+05</p>
+<p>cht.serie(unitPriceColumn), cht.serie(priceColumn));</p>
+<p>06</p>
+<p>Bar3DChartBuilder itemChart2 = cht.bar3DChart()
+07</p>
+<p>.setTitle(</p>
+<p>&quot;&lt;a href=&quot;</p>
+<p>http:</p>
+<p>//www.dynamicreports.org/examples/sales&quot; title=&quot;Sales&quot;&gt;Sales</a> by item&quot;)</p>
+<p>08</p>
+<p>.setCategory(itemColumn)
+09</p>
+<p>.setUseSeriesAsCategory(</p>
+<p>true</p>
+<p>)</p>
+<p>10</p>
+<p>.addSerie(
+11</p>
+<p>cht.serie(unitPriceColumn), cht.serie(priceColumn));</p>
+<p>Chart is a component and can be placed into any report band.</p>
+<p>1</p>
+<p>.summary(itemChart, itemChart2) <a href="http://www.dynamicreports.org/examples/simplereport_step06.png" title="SimpleReport_Step06" target="_blank"><img src="" alt="SimpleReport_Step06"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step06.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step06.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step06" title="SimpleReport_Step06" target="_blank">SimpleReport_Step06</a></p>
+<p><a href=""></a></p>
+<h3 id="step-7-column-grid-containers">Step 7 : Column grid &amp; Containers</h3>
+<p>Components inserted into the bands are arranged vertically, each component is below the previously added component. To arrange components horizontally it is needed to wrap these components with a horizontal container. Container is a component as well and therefore it can be added to any of the report bands.
+1</p>
+<p>.summary( </p>
+<p>2</p>
+<p>cmp.horizontalList(itemChart, itemChart2))</p>
+<p>Columns layout can be modified by a column grid. The layout is applied to the columns title, details and subtotals.</p>
+<p>1</p>
+<p>.columnGrid( </p>
+<p>2</p>
+<p>rowNumberColumn, quantityColumn, unitPriceColumn,
+3</p>
+<p>grid.verticalColumnGridList(priceColumn, pricePercColumn)) <a href="http://www.dynamicreports.org/examples/simplereport_step07.png" title="SimpleReport_Step07" target="_blank"><img src="" alt="SimpleReport_Step07"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step07.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step07.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step07" title="SimpleReport_Step07" target="_blank">SimpleReport_Step07</a></p>
+<p><a href=""></a></p>
+<h3 id="step-8-hide-subtotal">Step 8 : Hide subtotal</h3>
+<p>Subtotal for the group notebook is unnecessary because contains only one row.
+We need to change the group declaration and set the boolean expression condition on which depends whether subtotal is printed.
+<a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/expression/ExpressionBuilders.html" target="_blank">DynamicReports.exp</a>.printWhenGroupHasMoreThanOneRow(itemGroup) creates a boolean condition which returns true when itemGroup has more than one row.
+1</p>
+<p>ColumnGroupBuilder itemGroup = grp.group(itemColumn); </p>
+<p>2</p>
+<p>itemGroup.setPrintSubtotalsWhenExpression(
+3</p>
+<p>exp.printWhenGroupHasMoreThanOneRow(itemGroup));</p>
+<p>1</p>
+<p>.groupBy(itemGroup)
+<a href="http://www.dynamicreports.org/examples/simplereport_step08.png" title="SimpleReport_Step08" target="_blank"><img src="" alt="SimpleReport_Step08"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step08.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step08.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step08" title="SimpleReport_Step08" target="_blank">SimpleReport_Step08</a></p>
+<p><a href=""></a></p>
+<h3 id="step-9-title">Step 9 : Title</h3>
+<p>First define a title style.
+1</p>
+<p>StyleBuilder titleStyle = stl.style(boldCenteredStyle)</p>
+<p>2</p>
+<p>.setVerticalAlignment(VerticalAlignment.MIDDLE)
+3</p>
+<p>.setFontSize(</p>
+<p>15</p>
+<p>);</p>
+<p><a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/component/ComponentBuilders.html" target="_blank">DynamicReports.cmp</a>.image() creates an image component
+<a href="http://apidocs.dynamicreports.org/net/sf/dynamicreports/report/builder/component/ComponentBuilders.html" target="_blank">DynamicReports.cmp</a>.filler() creates an empty component</p>
+<p>1</p>
+<p>.title(</p>
+<p>//shows report title</p>
+<p>2</p>
+<p>cmp.horizontalList()
+3</p>
+<p>.add(</p>
+<p>4</p>
+<p>cmp.image(getClass().getResourceAsStream(</p>
+<p>&quot;../images/dynamicreports.png&quot;</p>
+<p>)).setFixedDimension(</p>
+<p>80</p>
+<p>,</p>
+<p>80</p>
+<p>),
+5</p>
+<p>cmp.text(</p>
+<p>&quot;DynamicReports&quot;</p>
+<p>).setStyle(titleStyle).setHorizontalAlignment(HorizontalAlignment.LEFT),</p>
+<p>6</p>
+<p>cmp.text(</p>
+<p>&quot;Getting started&quot;</p>
+<p>).setStyle(titleStyle).setHorizontalAlignment(HorizontalAlignment.RIGHT))
+7</p>
+<p>.newRow()</p>
+<p>8</p>
+<p>.add(cmp.filler().setStyle(stl.style().setTopBorder(stl.pen2Point())).setFixedHeight(</p>
+<p>10</p>
+<p>)))</p>
+<p>The defined filler creates an additional blank space between the title and the column header.
+Setting top border of a filler draws the line at the bottom of the title.
+Horizontal list, as previously mentioned, arranges components horizontally in one row but by calling the method row() a new horizontal list is created which is located at the bottom of the previous horizontal list.</p>
+<p><a href="http://www.dynamicreports.org/examples/simplereport_step09.png" title="SimpleReport_Step09" target="_blank"><img src="" alt="SimpleReport_Step09"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step09.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step09.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step09" title="SimpleReport_Step09" target="_blank">SimpleReport_Step09</a></p>
+<p><a href=""></a></p>
+<h3 id="step-10-currency-data-type">Step 10 : Currency data type</h3>
+<p>Unit price and price column are currency types.
+Showing currency is possible by setting pattern to both columns (via method setPattern()), but the best practice is to create a custom data type and apply it to the columns. The custom data type then can be used in other reports.
+01</p>
+<p>CurrencyType currencyType =</p>
+<p>new</p>
+<p>CurrencyType();</p>
+<p>02</p>
+<p>TextColumnBuilder<BigDecimal> unitPriceColumn = col.column(</p>
+<p>&quot;Unit price&quot;</p>
+<p>,</p>
+<p>&quot;unitprice&quot;</p>
+<p>, currencyType);
+03</p>
+<p>//price = unitPrice /* quantity</p>
+<p>04</p>
+<p>TextColumnBuilder<BigDecimal> priceColumn     = unitPriceColumn.multiply(quantityColumn).setTitle(</p>
+<p>&quot;Price&quot;</p>
+<p>)
+05</p>
+<p>.setDataType(currencyType);</p>
+<p>06</p>
+<p>private</p>
+<p>class</p>
+<p>CurrencyType</p>
+<p>extends</p>
+<p>BigDecimalType {
+07</p>
+<p>private</p>
+<p>static</p>
+<p>final</p>
+<p>long</p>
+<p>serialVersionUID = 1L;</p>
+<p>08</p>
+<p>09</p>
+<p>@Override</p>
+<p>10</p>
+<p>public</p>
+<p>String getPattern() {
+11</p>
+<p>return</p>
+<p>&quot;$ /#,/#/#/#.00&quot;</p>
+<p>;</p>
+<p>12</p>
+<p>}
+13</p>
+<p>} <a href="http://www.dynamicreports.org/examples/simplereport_step10.png" title="SimpleReport_Step10" target="_blank"><img src="" alt="SimpleReport_Step10"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step10.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step10.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step10" title="SimpleReport_Step10" target="_blank">SimpleReport_Step10</a></p>
+<p><a href=""></a></p>
+<h3 id="step-11-detail-row-highlighters">Step 11 : Detail row highlighters</h3>
+<p>1</p>
+<p>ConditionalStyleBuilder condition1 = stl.conditionalStyle(cnd.greater(priceColumn,</p>
+<p>150</p>
+<p>))</p>
+<p>2</p>
+<p>.setBackgroundColor(</p>
+<p>new</p>
+<p>Color(</p>
+<p>210</p>
+<p>,</p>
+<p>255</p>
+<p>,</p>
+<p>210</p>
+<p>));
+3</p>
+<p>ConditionalStyleBuilder condition2 = stl.conditionalStyle(cnd.smaller(priceColumn,</p>
+<p>30</p>
+<p>))</p>
+<p>4</p>
+<p>.setBackgroundColor(</p>
+<p>new</p>
+<p>Color(</p>
+<p>255</p>
+<p>,</p>
+<p>210</p>
+<p>,</p>
+<p>210</p>
+<p>));</p>
+<p>1</p>
+<p>.detailRowHighlighters(</p>
+<p>2</p>
+<p>condition1, condition2)</p>
+<p>Condition1 is applied only if price is greater than 150 and sets background color of a row to green.
+Condition2 is applied only if price is smaller than 30 and sets background color of a row to red.
+<a href="http://www.dynamicreports.org/examples/simplereport_step11.png" title="SimpleReport_Step11" target="_blank"><img src="" alt="SimpleReport_Step11"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step11.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step11.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step11" title="SimpleReport_Step11" target="_blank">SimpleReport_Step11</a></p>
+<p><a href=""></a></p>
+<h3 id="step-12-conditional-styles">Step 12 : Conditional styles</h3>
+<p>1</p>
+<p>ConditionalStyleBuilder condition3 = stl.conditionalStyle(cnd.greater(priceColumn,</p>
+<p>200</p>
+<p>))</p>
+<p>2</p>
+<p>.setBackgroundColor(</p>
+<p>new</p>
+<p>Color(</p>
+<p>0</p>
+<p>,</p>
+<p>190</p>
+<p>,</p>
+<p>0</p>
+<p>))
+3</p>
+<p>.bold();</p>
+<p>4</p>
+<p>ConditionalStyleBuilder condition4 = stl.conditionalStyle(cnd.smaller(priceColumn,</p>
+<p>20</p>
+<p>))
+5</p>
+<p>.setBackgroundColor(</p>
+<p>new</p>
+<p>Color(</p>
+<p>190</p>
+<p>,</p>
+<p>0</p>
+<p>,</p>
+<p>0</p>
+<p>))</p>
+<p>6</p>
+<p>.bold();
+7</p>
+<p>StyleBuilder priceStyle = stl.style()</p>
+<p>8</p>
+<p>.conditionalStyles(
+9</p>
+<p>condition3, condition4);</p>
+<p>1</p>
+<p>priceColumn = unitPriceColumn.multiply(quantityColumn).setTitle(</p>
+<p>&quot;Price&quot;</p>
+<p>)</p>
+<p>2</p>
+<p>.setDataType(currencyType)
+3</p>
+<p>.setStyle(priceStyle);</p>
+<p>Condition3 is applied only if price is greater than 200 and sets background color of a price to green.
+Condition4 is applied only if price is smaller than 20 and sets background color of a price to red.
+<a href="http://www.dynamicreports.org/examples/simplereport_step12.png" title="SimpleReport_Step12" target="_blank"><img src="" alt="SimpleReport_Step12"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step12.pdf" title="pdf preview" target="_blank"><img src="" alt="pdf"></a><a href="http://www.dynamicreports.org/examples/simplereport_step12.png" target="_blank"><img src="" alt="preview"></a> <a href="http://www.dynamicreports.org/examples/simplereport_step12" title="SimpleReport_Step12" target="_blank">SimpleReport_Step1</a></p>
+<p>来源： <a href="[http://www.dynamicreports.org/getting-started](http://www.dynamicreports.org/getting-started)">[http://www.dynamicreports.org/getting-started](http://www.dynamicreports.org/getting-started)</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/report/">report</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/report/" class="label label-success">report</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-report--DynamicReportsGettingstarted/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-report--DynamicReportsGettingstarted" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java垃圾回收策略调优-实践篇/">Java 垃圾回收策略调优</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java垃圾回收策略调优-实践篇/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-">Java 垃圾回收策略调优-实践篇</h1>
+<p><a href="http://www.douban.com/accounts/login?source=group" target="_blank">登录</a> <a href="http://www.douban.com/accounts/register?source=group" target="_blank">注册</a></p>
+<ul>
+<li><a href="http://www.douban.com/" target="_blank">豆瓣</a></li>
+<li><a href="http://book.douban.com/" target="_blank">读书</a></li>
+<li><a href="http://movie.douban.com/" target="_blank">电影</a></li>
+<li><a href="http://music.douban.com/" target="_blank">音乐</a></li>
+<li><a href="http://www.douban.com/location/" target="_blank">同城</a></li>
+<li><a href="http://www.douban.com/group/" target="_blank">小组</a></li>
+<li><a href="http://read.douban.com/?dcs=top-nav&amp;dcm=douban" target="_blank">阅读</a></li>
+<li><a href="http://douban.fm/" target="_blank">豆瓣FM</a></li>
+<li><a href="">更多</a></li>
+</ul>
+<p><a href="http://9.douban.com/" target="_blank">九点</a> <a href="http://alphatown.com/" target="_blank">阿尔法城</a> <a href="http://www.douban.com/mobile/" target="_blank">移动应用</a></p>
+<p><a href="http://www.douban.com/group/" target="_blank">豆瓣小组</a></p>
+<ul>
+<li><a href="http://www.douban.com/group/explore" target="_blank">发现小组</a></li>
+<li><a href="http://www.douban.com/group/explore_topic" target="_blank">发现话题</a>
+搜索：  小组、话题<h1 id="java-">Java 垃圾回收策略调优，实践篇</h1>
+</li>
+</ul>
+<p><a href="http://www.douban.com/people/1851090/" target="_blank"><img src="" alt="KK"></a></p>
+<h3 id="-kk-http-www-douban-com-people-1851090-2008-10-22-13-26-30">来自: <a href="http://www.douban.com/people/1851090/" target="_blank">KK</a> 2008-10-22 13:26:30</h3>
+<p>JVM参数调优是一个很头痛的问题，可能和应用有关系，下面是本人一些调优的实践经验，希望对读者能有帮助，环境LinuxAS4,resin2.1.17,JDK6.0,2CPU,4G内存,dell2950服务器，网站是shedewang.com，新手可能觉得这文章没有用。
+一：串行垃圾回收，也就是默认配置，完成10万request用时153秒，JVM参数配置如下
+$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps &quot;;
+这种配置一般在resin启动24小时内似乎没有大问题，网站可以正常访问，但查看日志发现，在接近24小时时，Full GC执行越来越频繁，大约每隔3分钟就有一次Full GC，每次Full GC系统会停顿6秒左右，作为一个网站来说，用户等待6秒恐怕太长了，所以这种方式有待改善。MaxTenuringThreshold=7表示一个对象如果在救助空间移动7次还没有被回收就放入年老代，GCTimeRatio=19表示java可以用5%的时间来做垃圾回收，1/(1+19)=1 /20=5%。
+二：并行回收，完成10万request用时117秒，配置如下：
+$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xmx2048M -Xms2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+UseParallelGC -XX:ParallelGCThreads=20 -XX:+UseParallelOldGC -XX:MaxGCPauseMillis=500 -XX:+UseAdaptiveSizePolicy -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 &quot;;
+并行回收我尝试过多种组合配置，似乎都没什么用，resin启动3小时左右就会停顿，时间超过10 秒。也有可能是参数设置不够好的原因，MaxGCPauseMillis表示GC最大停顿时间，在resin刚启动还没有执行Full GC时系统是正常的，但一旦执行Full GC，MaxGCPauseMillis根本没有用，停顿时间可能超过20秒，之后会发生什么我也不再关心了，赶紧重启resin，尝试其他回收策略。
+三：并发回收，完成10万request用时60秒，比并行回收差不多快一倍，是默认回收策略性能的2.5倍，配置如下：
+$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:+UseConcMarkSweepGC -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+UseCMSCompactAtFullCollection -XX:CMSFullGCsBeforeCompaction=0 &quot;;
+这个配置虽然不会出现10秒连不上的情况，但系统重启3个小时左右，每隔几分钟就会有5秒连不上的情况，查看gc.log，发现在执行ParNewGC时有个promotion failed错误，从而转向执行Full GC，造成系统停顿，而且会很频繁，每隔几分钟就有一次，所以还得改善。UseCMSCompactAtFullCollection是表是执行Full GC后对内存进行整理压缩，免得产生内存碎片，CMSFullGCsBeforeCompaction=N表示执行N次Full GC后执行内存压缩。
+四：增量回收，完成10万request用时171秒，太慢了，配置如下
+$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -Xincgc &quot;;
+似乎回收得也不太干净，而且也对性能有较大影响，不值得试。
+五：并发回收的I-CMS模式，和增量回收差不多，完成10万request用时170秒。
+$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+UseConcMarkSweepGC -XX:+CMSIncrementalMode -XX:+CMSIncrementalPacing -XX:CMSIncrementalDutyCycleMin=0 -XX:CMSIncrementalDutyCycle=10 -XX:-TraceClassUnloading &quot;;
+采用了sun推荐的参数，回收效果不好，照样有停顿，数小时之内就会频繁出现停顿，什么sun推荐的参数，照样不好使。
+六：递增式低暂停收集器，还叫什么火车式回收，不知道属于哪个系，完成10万request用时153秒
+$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -Xloggc:log/gc.log -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+UseTrainGC &quot;;
+该配置效果也不好，影响性能，所以没试。
+七：相比之下，还是并发回收比较好，性能比较高，只要能解决ParNewGC（并行回收年轻代）时的promotion failed错误就一切好办了，查了很多文章，发现引起promotion failed错误的原因是CMS来不及回收（CMS默认在年老代占到90%左右才会执行），年老代又没有足够的空间供GC把一些活的对象从年轻代移到年老代，所以执行Full GC。CMSInitiatingOccupancyFraction=70表示年老代占到约70%时就开始执行CMS，这样就不会出现Full GC了。SoftRefLRUPolicyMSPerMB这个参数也是我认为比较有用的，官方解释是softly reachable objects will remain alive for some amount of time after the last time they were referenced. The default value is one second of lifetime per free megabyte in the heap，我觉得没必要等1秒，所以设置成0。配置如下
+$JAVA_ARGS .= &quot; -Dresin.home=$SERVER_ROOT -server -Xms2048M -Xmx2048M -Xmn512M -XX:PermSize=256M -XX:MaxPermSize=256M -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=7 -XX:GCTimeRatio=19 -Xnoclassgc -XX:+DisableExplicitGC -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSPermGenSweepingEnabled -XX:+UseCMSCompactAtFullCollection -XX:CMSFullGCsBeforeCompaction=0 -XX:+CMSClassUnloadingEnabled -XX:-CMSParallelRemarkEnabled -XX:CMSInitiatingOccupancyFraction=70 -XX:SoftRefLRUPolicyMSPerMB=0 -XX:+PrintClassHistogram -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCApplicationStoppedTime -Xloggc:log/gc.log &quot;;
+上面这个配置内存上升的很慢，24小时之内几乎没有停顿现象，最长的只停滞了0.8s，ParNew GC每30秒左右才执行一次，每次回收约0.2秒，看来问题应该暂时解决了。
+参数不明白的可以上网查，本人认为比较重要的几个参数是：-Xms -Xmx -Xmn MaxTenuringThreshold GCTimeRatio UseConcMarkSweepGC CMSInitiatingOccupancyFraction SoftRefLRUPolicyMSPerMB
+<a href="http://www.douban.com/group/topic/4450520/?type=like#sep" target="_blank">7人</a> 喜欢  <a href="http://www.douban.com/accounts/register?reason=like" title="标为喜欢？" target="_blank">喜欢</a></p>
+<p><a href="">回应</a> <a href="http://www.douban.com/group/topic/4450520/?type=rec#sep" target="_blank">推荐</a> <a href="http://www.douban.com/group/topic/4450520/?type=like#sep" target="_blank">喜欢</a>  <a href="http://www.douban.com/group/topic/4450520/?author=1#sep" target="_blank">只看楼主</a></p>
+<ul>
+<li><a href="http://www.douban.com/people/xds2000/" target="_blank"><img src="" alt="肖"></a></li>
+</ul>
+<h3 id="-http-www-douban-com-people-xds2000-beijing-2008-10-22-22-53-34"><a href="http://www.douban.com/people/xds2000/" target="_blank">肖</a> (@Beijing) 2008-10-22 22:53:34</h3>
+<p>首先使用64 bit os,是一个提高性能的不二法规.
+第二,任何调优应该有场景,在未知情况应该使用loggc导出日志分析,再加参数.对于参数的好与坏,我希望楼主能贴出更多的自已的思路</p>
+<p><a href="http://www.douban.com/group/topic/4450520/?cid=36481624#last" target="_blank">回应</a> <a href="&quot;真的要删除肖的发言?&quot;">删除</a></p>
+<ul>
+<li><a href="http://www.douban.com/people/1851090/" target="_blank"><img src="" alt="KK"></a></li>
+</ul>
+<h3 id="-kk-http-www-douban-com-people-1851090-2008-10-27-15-32-12"><a href="http://www.douban.com/people/1851090/" target="_blank">KK</a> 2008-10-27 15:32:12</h3>
+<p>还有，如果遇到内存泄漏，要用jstack和jmap、jstat等多看看，应该可以找到问题，还要多看看gc日志各个区域内存使用情况和gc频率，这样才可以作出最佳配置。Good Luck</p>
+<p><a href="http://www.douban.com/group/topic/4450520/?cid=36890822#last" target="_blank">回应</a> <a href="&quot;真的要删除KK的发言?&quot;">删除</a></p>
+<ul>
+<li><a href="http://www.douban.com/people/1851090/" target="_blank"><img src="" alt="KK"></a></li>
+</ul>
+<h3 id="-kk-http-www-douban-com-people-1851090-2008-11-03-17-37-21"><a href="http://www.douban.com/people/1851090/" target="_blank">KK</a> 2008-11-03 17:37:21</h3>
+<p>内存问题和应用有很大关系，我的应用因为用到了缓存，所以年老代比较大，多看看gc日志，出了问题多用Jstack,jmap等工具查看，这样才可以最大的优化JVM参数。经过进两个星期的调试，我的配置是/usr/local/jdk/bin/java -Dresin.home=/usr/local/resin -server -Xms1800M -Xmx1800M -Xmn300M -Xss512K -XX:PermSize=300M -XX:MaxPermSize=300M -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=5 -XX:GCTimeRatio=19 -Xnoclassgc -XX:+DisableExplicitGC -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+UseCMSCompactAtFullCollection -XX:CMSFullGCsBeforeCompaction=0 -XX:-CMSParallelRemarkEnabled -XX:CMSInitiatingOccupancyFraction=70 -XX:SoftRefLRUPolicyMSPerMB=0 -XX:+PrintClassHistogram -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintHeapAtGC -Xloggc:log/gc.log
+72小时之内没有一点停顿，我是32位LinuxAS4操作系统。</p>
+<p><a href="http://www.douban.com/group/topic/4450520/?cid=37459097#last" target="_blank">回应</a> <a href="&quot;真的要删除KK的发言?&quot;">删除</a></p>
+<ul>
+<li><a href="http://www.douban.com/people/foxswily/" target="_blank"><img src="" alt="Foxswily"></a></li>
+</ul>
+<h3 id="-foxswily-http-www-douban-com-people-foxswily-2008-11-03-17-45-09"><a href="http://www.douban.com/people/foxswily/" target="_blank">Foxswily</a> 2008-11-03 17:45:09</h3>
+<p>mark先，前一段做一个对性能要求高的项目，典型的高DB负载，把着眼点都放在了DB优化上(最终效果也不错，大概提高了40倍左右的性能)，一直没有考虑jvm优化，疏忽了。
+but，jvm的优化性价比貌似不是很高，化很大力气得到回报如何有待实践检验。</p>
+<p><a href="http://www.douban.com/group/topic/4450520/?cid=37459727#last" target="_blank">回应</a> <a href="&quot;真的要删除Foxswily的发言?&quot;">删除</a></p>
+<ul>
+<li><a href="http://www.douban.com/people/1851090/" target="_blank"><img src="" alt="KK"></a></li>
+</ul>
+<h3 id="-kk-http-www-douban-com-people-1851090-2008-11-03-17-55-02"><a href="http://www.douban.com/people/1851090/" target="_blank">KK</a> 2008-11-03 17:55:02</h3>
+<p>不是纯粹性能问题，到一定时候JVM参数必须优化，不然访问量大的时候会造成频繁的Full GC或者CMS，Full GC有时能让整个系统停顿10秒，10秒内用户的任何点击都在等待状态，要是隔2分钟就来一次Full GC，恐怕用户和老板都受不了了。
+并发回收如果配置的不好照样会产生Full GC。:)</p>
+<p><a href="http://www.douban.com/group/topic/4450520/?cid=37460534#last" target="_blank">回应</a> <a href="&quot;真的要删除KK的发言?&quot;">删除</a></p>
+<ul>
+<li><a href="http://www.douban.com/people/foxswily/" target="_blank"><img src="" alt="Foxswily"></a></li>
+</ul>
+<h3 id="-foxswily-http-www-douban-com-people-foxswily-2008-11-03-17-58-43"><a href="http://www.douban.com/people/foxswily/" target="_blank">Foxswily</a> 2008-11-03 17:58:43</h3>
+<p>有道理，支持这种有内容、有见地的讨论贴。</p>
+<p><a href="http://www.douban.com/group/topic/4450520/?cid=37460849#last" target="_blank">回应</a> <a href="&quot;真的要删除Foxswily的发言?&quot;">删除</a></p>
+<ul>
+<li><a href="http://www.douban.com/people/lozen/" target="_blank"><img src="" alt="洛臻星轮"></a></li>
+</ul>
+<h3 id="-http-www-douban-com-people-lozen-2012-05-22-23-22-11"><a href="http://www.douban.com/people/lozen/" target="_blank">洛臻星轮</a> 2012-05-22 23:22:11</h3>
+<p>感谢下，用了里面的很多参数，目前好使了，让它再多跑跑
+项目中Full GC一次停顿了个快十秒，一停顿事件就积压，隔段时间又停顿，事件积压得越来越严重，程序就崩了...</p>
+<p><a href="http://www.douban.com/group/topic/4450520/?cid=347193386#last" target="_blank">回应</a> <a href="&quot;真的要删除洛臻星轮的发言?&quot;">删除</a></p>
+<ul>
+<li><h3 id="-alzq-http-www-douban-com-people-55956054-2012-07-20-13-00-19"><a href="http://www.douban.com/people/55956054/" target="_blank">alzq</a> 2012-07-20 13:00:19</h3>
+</li>
+</ul>
+<p>好配置，实验中……效果不错～</p>
+<p><a href="http://www.douban.com/group/topic/4450520/?cid=364769409#last" target="_blank">回应</a> <a href="&quot;真的要删除alzq的发言?&quot;">删除</a></p>
+<h2 id="-">你的回应</h2>
+<p>回应请先 <a href="http://www.douban.com/accounts/register?reason=discuss" target="_blank">登录</a> , 或 <a href="http://www.douban.com/accounts/register?reason=discuss" target="_blank">注册</a></p>
+<p>推荐到广播</p>
+<p><a href="http://www.douban.com/group/java/?ref=sidebar" target="_blank"><img src="" alt=""></a></p>
+<p><a href="http://www.douban.com/group/java/?ref=sidebar" target="_blank">Java&amp;Android移动应用编程</a></p>
+<p>9641 人聚集在这个小组
+ <a href="">加入小组</a></p>
+<h2 id="-http-www-douban-com-group-java-topics-">最新话题  ( <a href="http://www.douban.com/group/java/#topics" target="_blank">更多</a> )</h2>
+<ul>
+<li><a href="http://www.douban.com/group/topic/41487832/" title="[Java开发] Java怎么用POI读取Excel函数" target="_blank">[Java开发] Java怎么用POI读取Excel函数</a>   (若水520sunny)</li>
+<li><a href="http://www.douban.com/group/topic/41485336/" title="帮5买-招聘ETL开发工程师" target="_blank">帮5买-招聘ETL开发工程师</a>   (挚爱Bernabeu)</li>
+<li><a href="http://www.douban.com/group/topic/41482883/" title="搜狗-招聘Java软件工程师" target="_blank">搜狗-招聘Java软件工程师</a>   (挚爱Bernabeu)</li>
+<li><a href="http://www.douban.com/group/topic/41472005/" title="谁能稍稍帮我分析下Logcat，给个提示，感激不尽！" target="_blank">谁能稍稍帮我分析下Logcat，给个提示，感激不尽！</a>   (shanby)</li>
+<li><p><a href="http://www.douban.com/group/topic/41466302/" title="推荐一个很好的android&amp;ios学习网站" target="_blank">推荐一个很好的android&amp;ios学习网站</a>   (　)</p>
+<h2 id="-">全站热点话题:</h2>
+</li>
+<li><p><a href="http://www.douban.com/group/topic/41486032/?r=1" title="【搬运中】别小看吃货的智慧 818某些外面卖的看起来挺贵的甜品饮料 很多可以自己在家做" target="_blank">【搬运中】别小看吃货的智慧 818某些外面...</a>   37回应</p>
+</li>
+<li><a href="http://www.douban.com/group/topic/41483943/?r=1" title="【推荐】夏日彩妆routine" target="_blank">【推荐】夏日彩妆routine</a>   55回应</li>
+<li><a href="http://www.douban.com/group/topic/41414533/?r=1" title="有关毕业报到证，公务员，事业单位考试面试神马的都可以问我" target="_blank">有关毕业报到证，公务员，事业单位考试面...</a>   197回应</li>
+<li><a href="http://www.douban.com/group/topic/41448032/?r=1" title="【意向】Mitsui.家的男装" target="_blank">【意向】Mitsui.家的男装</a>   45回应</li>
+<li><a href="http://www.douban.com/group/topic/41321572/?r=1" title="【异国】分享一点关于西方世界的看法" target="_blank">【异国】分享一点关于西方世界的看法</a>   184回应</li>
+<li><a href="http://www.douban.com/group/topic/41462291/?r=1" title="【住在我房子里的美女到底是个什么东西？？？!!!】" target="_blank">【住在我房子里的美女到底是个什么东西？...</a>   63回应</li>
+<li><a href="http://www.douban.com/group/topic/41358235/?r=1" title="关于天蝎男喜欢女生类型的讨论" target="_blank">关于天蝎男喜欢女生类型的讨论</a>   283回应</li>
+<li><a href="http://www.douban.com/group/topic/41460023/?r=1" title="求扒苏见信！！！196的黑料有木有？" target="_blank">求扒苏见信！！！196的黑料有木有？</a>   285回应</li>
+</ul>
+<h3 id="-">手机扫描二维码，让小组随时陪伴你</h3>
+<p><img src="" alt=""></p>
+<p><a href="http://www.douban.com/mobile/ipa?app_name=group" target="_blank">App Store下载</a> <a href="http://www.douban.com/j/app/apk?app_name=group_android" target="_blank">点击直接下载</a></p>
+<p>© 2005－2013 douban.com, all rights reserved   <a href="http://www.douban.com/about" target="_blank">关于豆瓣</a> · <a href="http://www.douban.com/jobs" target="_blank">在豆瓣工作</a> · <a href="http://www.douban.com/about?topic=contactus" target="_blank">联系我们</a> · <a href="http://www.douban.com/about?policy=disclaimer" target="_blank">免责声明</a> · <a href="http://www.douban.com/help/group" target="_blank">帮助中心</a> · <a href="http://developers.douban.com/" target="_blank">开发者</a> · <a href="http://www.douban.com/mobile/group" target="_blank">手机小组</a> · <a href="http://www.douban.com/partner/" target="_blank">豆瓣广告</a></p>
+<p><a href="">↑回顶部</a>
+<a href="">×</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java垃圾回收策略调优-实践篇/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--Java垃圾回收策略调优-实践篇" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java虚拟机技术总结07年写的-原JavaEye精华帖/">Java虚拟机技术总结(07年写的</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java虚拟机技术总结07年写的-原JavaEye精华帖/">feb. 2 2014</a></time></span>      
@@ -1552,681 +2051,6 @@ Note: 还有JVM运行时(Runtime)架构，ClassLoader加载class过程没有总�
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--eden区没有发生minorgc，对象直接分配在了oldgen/">eden区没有发生minor gc，对象直接分配在了old gen</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--eden区没有发生minorgc，对象直接分配在了oldgen/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="eden-minor-gc-old-gen">eden区没有发生minor gc，对象直接分配在了old gen</h1>
-<p><a href="http://hllvm.group.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://hllvm.group.iteye.com/login" target="_blank">登录</a> <a href="http://hllvm.group.iteye.com/signup" target="_blank">注册</a></p>
-<p><a href="http://www.iteye.com/" target="_blank"><img src="&quot;ITeye-最棒的软件开发交流社区&quot;" alt="ITeye3.0"></a></p>
-<p><a href="http://www.iteye.com/groups" target="_blank">群组首页</a> → <a href="http://hllvm.group.iteye.com/groups/category/language" target="_blank">编程语言</a> → <a href="http://hllvm.group.iteye.com/" target="_blank">高级语言虚拟机</a> → <a href="http://hllvm.group.iteye.com/group/forum" target="_blank">论坛</a></p>
-<p><img src="" alt=""> <a href="http://hllvm.group.iteye.com/group/topic/38293/post/new" target="_blank">发表回复</a></p>
-<h3 id="-http-hllvm-group-iteye-com-group-forum-tag_id-690-eden-minor-gc-old-gen-"><a href="http://hllvm.group.iteye.com/group/forum?tag_id=690" target="_blank">[讨论]</a> <a href="">eden区没有发生minor gc，对象直接分配在了old gen</a></h3>
-<p><a href="http://zsl8544-163-com.iteye.com/" target="_blank"><img src="&quot;等待雨季的到来的博客: &quot;" alt="等待雨季的到来的博客"></a> <a href="http://zsl8544-163-com.iteye.com/" title="等待雨季的到来" target="_blank">等待雨季的到来</a> 2013-07-21</p>
-<p>我的测试代码如下
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>//<em>/</em> </li>
-<li>/* -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution </li>
-<li>/*/  </li>
-<li>public static void testAllocation(){  </li>
-<li>byte[] byte1 = new byte[_1MB/*5];  </li>
-<li>byte[] byte2 = new byte[_1MB/*10];  </li>
-<li>byte1 = null;  </li>
-<li>byte2 = null;                         </li>
-<li>byte[] byte3 = new byte[_1MB/*5];  </li>
-<li>byte[] byte4 = new byte[_1MB/*10];  </li>
-<li>byte3 = null;  </li>
-<li>byte4 = null;  </li>
-<li>byte[] byte5 = new byte[_1MB/*15];   </li>
-<li><p>}<br>//<em>/</em> /<em> -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution /</em>/ public static void testAllocation(){ byte[] byte1 = new byte[_1MB/<em>5]; byte[] byte2 = new byte[_1MB/</em>10]; byte1 = null; byte2 = null; byte[] byte3 = new byte[_1MB/<em>5]; byte[] byte4 = new byte[_1MB/</em>10]; byte3 = null; byte4 = null; byte[] byte5 = new byte[_1MB/*15]; }
-因为没有用NewSize限定新生代的初始大小，所以eden区的初始大小为20M，而我用MaxNewSize限定了新生代的初始大小为40M。
-GC Log
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>[GC  </p>
-</li>
-<li>Desired survivor size 3538944 bytes, new threshold 7 (max 15)  </li>
-<li>[PSYoungGen: 16194K-&gt;368K(24320K)] 16194K-&gt;368K(79872K), 0.0020460 secs] [Times: user=0.01 sys=0.00, real=0.00 secs]   </li>
-<li>Heap  </li>
-<li>PSYoungGen      total 24320K, used 17199K [0x0000000115490000, 0x0000000117c90000, 0x0000000117c90000)  </li>
-<li>eden space 20864K, 80% used [0x0000000115490000,0x00000001164ffe38,0x00000001168f0000)  </li>
-<li>from space 3456K, 10% used [0x00000001168f0000,0x000000011694c010,0x0000000116c50000)  </li>
-<li>to   space 3456K, 0% used [0x0000000117930000,0x0000000117930000,0x0000000117c90000)  </li>
-<li>ParOldGen       total 55552K, used 15360K [0x0000000111890000, 0x0000000114ed0000, 0x0000000115490000)  </li>
-<li>object space 55552K, 27% used [0x0000000111890000,0x0000000112790010,0x0000000114ed0000)  </li>
-<li>PSPermGen       total 21248K, used 2695K [0x000000010c690000, 0x000000010db50000, 0x0000000111890000)  </li>
-<li>object space 21248K, 12% used [0x000000010c690000,0x000000010c931ef0,0x000000010db50000)<br>[GC Desired survivor size 3538944 bytes, new threshold 7 (max 15) [PSYoungGen: 16194K-&gt;368K(24320K)] 16194K-&gt;368K(79872K), 0.0020460 secs] [Times: user=0.01 sys=0.00, real=0.00 secs] Heap PSYoungGen total 24320K, used 17199K <a href="http://rednaxelafx.iteye.com/">0x0000000115490000, 0x0000000117c90000, 0x0000000117c90000) eden space 20864K, 80% used [0x0000000115490000,0x00000001164ffe38,0x00000001168f0000) from space 3456K, 10% used [0x00000001168f0000,0x000000011694c010,0x0000000116c50000) to space 3456K, 0% used [0x0000000117930000,0x0000000117930000,0x0000000117c90000) ParOldGen total 55552K, used 15360K [0x0000000111890000, 0x0000000114ed0000, 0x0000000115490000) object space 55552K, 27% used [0x0000000111890000,0x0000000112790010,0x0000000114ed0000) PSPermGen total 21248K, used 2695K [0x000000010c690000, 0x000000010db50000, 0x0000000111890000) object space 21248K, 12% used [0x000000010c690000,0x000000010c931ef0,0x000000010db50000)
-现象：
-当分配byte3时触发了一次minor gc，byte1和byte2都被回收了，可是我分配byte5的时候，却直接分配在了老生代，byte3和byte4依旧在eden区，而byte5直接被分配在了老生代。
-问题：
-1、byte5为什么没有触发minor gc而是直接分配在老生代，byte3和byte4为什么没有被回收？
-2、eden区什么时候才会自动扩容到40M，当创建超过20M的对象时，都是直接分配在了老生，而创建大小超过老生代的对象时老生代会自动扩容。
-其他：
-我在用eclipse调试的时候发现，同样的测试代码在执行的时候输出的GC log居然会有很大的变化，有的时候eden区被初始化为8M有的时候初始化为20M。我工作在OS X下，JDK版本如下。
-java version &quot;1.7.0_25&quot;
-Java(TM) SE Runtime Environment (build 1.7.0_25-b15)
-Java HotSpot(TM) 64-Bit Server VM (build 23.25-b01, mixed mode)
-<img src="" alt="Spinner"> [<img src="&quot;RednaxelaFX的博客: Script Ahead, Code Behind&quot;" alt="RednaxelaFX的博客"></a> <a href="http://rednaxelafx.iteye.com/" title="RednaxelaFX" target="_blank">RednaxelaFX</a> 2013-07-25</li>
-</ol>
-<p>楼主是看了毕玄的实验之后自己动手测试么？
-把楼主的代码弄成可执行的，我用的测试代码是：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public class PSAllocTest {  </li>
-<li>private static final int _1KB = 1024;  </li>
-<li>private static final int _1MB = _1KB /* 1024;  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution </li>
-<li>/*/  </li>
-<li>public static void testAllocation() {  </li>
-<li>byte[] byte1 = new byte[_1MB/*5];  </li>
-<li>byte[] byte2 = new byte[_1MB/*10];  </li>
-<li>byte1 = null;  </li>
-<li>byte2 = null;                         </li>
-<li>byte[] byte3 = new byte[_1MB/*5];  </li>
-<li>byte[] byte4 = new byte[_1MB/*10];  </li>
-<li>byte3 = null;  </li>
-<li>byte4 = null;  </li>
-<li>byte[] byte5 = new byte[_1MB/*15];   </li>
-<li>}  </li>
-<li></li>
-<li>public static void main(String[] args) {  </li>
-<li>testAllocation();  </li>
-<li>}  </li>
-<li><p>}<br>public class PSAllocTest { private static final int _1KB = 1024; private static final int _1MB = _1KB /<em> 1024; //</em>/<em> /</em> -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution /<em>/ public static void testAllocation() { byte[] byte1 = new byte[_1MB/</em>5]; byte[] byte2 = new byte[_1MB/<em>10]; byte1 = null; byte2 = null; byte[] byte3 = new byte[_1MB/</em>5]; byte[] byte4 = new byte[_1MB/<em>10]; byte3 = null; byte4 = null; byte[] byte5 = new byte[_1MB/</em>15]; } public static void main(String[] args) { testAllocation(); } }
-我这边在JDK7u9 64-bit Server VM上跑看到的GC日志会有两次GC：
-Gc log代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>D:\test\pstest&gt;java -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M PSAllocTest  </p>
-</li>
-<li>[GC [PSYoungGen: 16002K-&gt;584K(18688K)] 16002K-&gt;584K(61376K), 0.0016857 secs] [Times: user=0.00 sys=0.00, real=0.00 secs]  </li>
-<li>[GC [PSYoungGen: 16648K-&gt;576K(34752K)] 32008K-&gt;15936K(77440K), 0.0014163 secs] [Times: user=0.00 sys=0.00, real=0.00 secs]  </li>
-<li>Heap  </li>
-<li>PSYoungGen      total 34752K, used 1218K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000)  </li>
-<li>eden space 32128K, 2% used [0x00000000fd800000,0x00000000fd8a0ab0,0x00000000ff760000)  </li>
-<li>from space 2624K, 21% used [0x00000000ff9f0000,0x00000000ffa80030,0x00000000ffc80000)  </li>
-<li>to   space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000)  </li>
-<li>ParOldGen       total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2505K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li><p>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c72638,0x00000000f5ec0000)<br>D:\test\pstest&gt;java -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M PSAllocTest [GC [PSYoungGen: 16002K-&gt;584K(18688K)] 16002K-&gt;584K(61376K), 0.0016857 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] [GC [PSYoungGen: 16648K-&gt;576K(34752K)] 32008K-&gt;15936K(77440K), 0.0014163 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] Heap PSYoungGen total 34752K, used 1218K <a href="&quot;复制代码&quot;">0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000) eden space 32128K, 2% used [0x00000000fd800000,0x00000000fd8a0ab0,0x00000000ff760000) from space 2624K, 21% used [0x00000000ff9f0000,0x00000000ffa80030,0x00000000ffc80000) to space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000) ParOldGen total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000) PSPermGen total 21248K, used 2505K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c72638,0x00000000f5ec0000)
-第二次GC其实已经在第5个数组成功分配之后了，就楼主关心的部分看我这边看到的跟楼主实验看到的行为一致，只要关心日志里的第一次GC就好了。
-如果加上额外参数的话，可以看到更多GC信息：
-Java代码 [<img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>D:\test\pstest&gt;java -Xmx100M -XX:+PrintGCDetails -XX:+PrintHeapAtGC -XX:+PrintTLAB -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution PSAllocTest  </p>
-</li>
-<li>{Heap before GC invocations=1 (full 0):  </li>
-<li>PSYoungGen      total 18688K, used 16002K [0x00000000fd800000, 0x00000000fecd0000, 0x0000000100000000)  </li>
-<li>eden space 16064K, 99% used [0x00000000fd800000,0x00000000fe7a0b60,0x00000000fe7b0000)  </li>
-<li>from space 2624K, 0% used [0x00000000fea40000,0x00000000fea40000,0x00000000fecd0000)  </li>
-<li>to   space 2624K, 0% used [0x00000000fe7b0000,0x00000000fe7b0000,0x00000000fea40000)  </li>
-<li>ParOldGen       total 42688K, used 0K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 0% used [0x00000000f9c00000,0x00000000f9c00000,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2495K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c6fc80,0x00000000f5ec0000)  </li>
-<li>TLAB: gc thread: 0x000000000028c000 [id: 10344] desired_size: 321KB slow allocs: 3  refill waste: 5232B alloc: 0.99998    16003KB refills: 2 waste  6.2% gc: 40912B slow: 40B fast: 0B  </li>
-<li>TLAB totals: thrds: 1  refills: 2 max: 2 slow allocs: 3 max 3 waste:  6.2% gc: 40912B max: 40912B slow: 40B max: 40B fast: 0B max: 0B  </li>
-<li>[GC  </li>
-<li>Desired survivor size 2686976 bytes, new threshold 7 (max 15)  </li>
-<li>[PSYoungGen: 16002K-&gt;640K(18688K)] 16002K-&gt;640K(61376K), 0.0015035 secs] [Times: user=0.00 sys=0.00, real=0.00 secs]   </li>
-<li>Heap after GC invocations=1 (full 0):  </li>
-<li>PSYoungGen      total 18688K, used 640K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000)  </li>
-<li>eden space 16064K, 0% used [0x00000000fd800000,0x00000000fd800000,0x00000000fe7b0000)  </li>
-<li>from space 2624K, 24% used [0x00000000fe7b0000,0x00000000fe850030,0x00000000fea40000)  </li>
-<li>to   space 2624K, 0% used [0x00000000ff9f0000,0x00000000ff9f0000,0x00000000ffc80000)  </li>
-<li>ParOldGen       total 42688K, used 0K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 0% used [0x00000000f9c00000,0x00000000f9c00000,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2495K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c6fc80,0x00000000f5ec0000)  </li>
-<li>}  </li>
-<li>{Heap before GC invocations=2 (full 0):  </li>
-<li>PSYoungGen      total 18688K, used 16704K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000)  </li>
-<li>eden space 16064K, 100% used [0x00000000fd800000,0x00000000fe7b0000,0x00000000fe7b0000)  </li>
-<li>from space 2624K, 24% used [0x00000000fe7b0000,0x00000000fe850030,0x00000000fea40000)  </li>
-<li>to   space 2624K, 0% used [0x00000000ff9f0000,0x00000000ff9f0000,0x00000000ffc80000)  </li>
-<li>ParOldGen       total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2498K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c708a0,0x00000000f5ec0000)  </li>
-<li>TLAB: gc thread: 0x00000000022a5800 [id: 10100] desired_size: 321KB slow allocs: 0  refill waste: 5136B alloc: 0.99998    16064KB refills: 1 waste 100.0% gc: 328952B slow: 0B fast: 0B  </li>
-<li>TLAB: gc thread: 0x000000000229e800 [id: 3928] desired_size: 321KB slow allocs: 0  refill waste: 5136B alloc: 0.99998    16064KB refills: 1 waste 100.0% gc: 328984B slow: 0B fast: 0B  </li>
-<li>TLAB totals: thrds: 2  refills: 2 max: 1 slow allocs: 0 max 0 waste: 100.0% gc: 657936B max: 328984B slow: 0B max: 0B fast: 0B max: 0B  </li>
-<li>[GC  </li>
-<li>Desired survivor size 2686976 bytes, new threshold 7 (max 15)  </li>
-<li>[PSYoungGen: 16704K-&gt;520K(34752K)] 32064K-&gt;15880K(77440K), 0.0012669 secs] [Times: user=0.00 sys=0.00, real=0.00 secs]   </li>
-<li>Heap after GC invocations=2 (full 0):  </li>
-<li>PSYoungGen      total 34752K, used 520K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000)  </li>
-<li>eden space 32128K, 0% used [0x00000000fd800000,0x00000000fd800000,0x00000000ff760000)  </li>
-<li>from space 2624K, 19% used [0x00000000ff9f0000,0x00000000ffa72020,0x00000000ffc80000)  </li>
-<li>to   space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000)  </li>
-<li>ParOldGen       total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2498K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c708a0,0x00000000f5ec0000)  </li>
-<li>}  </li>
-<li>Heap  </li>
-<li>PSYoungGen      total 34752K, used 1162K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000)  </li>
-<li>eden space 32128K, 2% used [0x00000000fd800000,0x00000000fd8a0ab0,0x00000000ff760000)  </li>
-<li>from space 2624K, 19% used [0x00000000ff9f0000,0x00000000ffa72020,0x00000000ffc80000)  </li>
-<li>to   space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000)  </li>
-<li>ParOldGen       total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2505K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li><p>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c72638,0x00000000f5ec0000)<br>D:\test\pstest&gt;java -Xmx100M -XX:+PrintGCDetails -XX:+PrintHeapAtGC -XX:+PrintTLAB -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution PSAllocTest {Heap before GC invocations=1 (full 0): PSYoungGen total 18688K, used 16002K [0x00000000fd800000, 0x00000000fecd0000, 0x0000000100000000) eden space 16064K, 99% used [0x00000000fd800000,0x00000000fe7a0b60,0x00000000fe7b0000) from space 2624K, 0% used [0x00000000fea40000,0x00000000fea40000,0x00000000fecd0000) to space 2624K, 0% used [0x00000000fe7b0000,0x00000000fe7b0000,0x00000000fea40000) ParOldGen total 42688K, used 0K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 0% used [0x00000000f9c00000,0x00000000f9c00000,0x00000000fc5b0000) PSPermGen total 21248K, used 2495K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c6fc80,0x00000000f5ec0000) TLAB: gc thread: 0x000000000028c000 [id: 10344] desired_size: 321KB slow allocs: 3 refill waste: 5232B alloc: 0.99998 16003KB refills: 2 waste 6.2% gc: 40912B slow: 40B fast: 0B TLAB totals: thrds: 1 refills: 2 max: 2 slow allocs: 3 max 3 waste: 6.2% gc: 40912B max: 40912B slow: 40B max: 40B fast: 0B max: 0B [GC Desired survivor size 2686976 bytes, new threshold 7 (max 15) [PSYoungGen: 16002K-&gt;640K(18688K)] 16002K-&gt;640K(61376K), 0.0015035 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] Heap after GC invocations=1 (full 0): PSYoungGen total 18688K, used 640K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000) eden space 16064K, 0% used [0x00000000fd800000,0x00000000fd800000,0x00000000fe7b0000) from space 2624K, 24% used [0x00000000fe7b0000,0x00000000fe850030,0x00000000fea40000) to space 2624K, 0% used [0x00000000ff9f0000,0x00000000ff9f0000,0x00000000ffc80000) ParOldGen total 42688K, used 0K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 0% used [0x00000000f9c00000,0x00000000f9c00000,0x00000000fc5b0000) PSPermGen total 21248K, used 2495K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c6fc80,0x00000000f5ec0000) } {Heap before GC invocations=2 (full 0): PSYoungGen total 18688K, used 16704K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000) eden space 16064K, 100% used [0x00000000fd800000,0x00000000fe7b0000,0x00000000fe7b0000) from space 2624K, 24% used [0x00000000fe7b0000,0x00000000fe850030,0x00000000fea40000) to space 2624K, 0% used [0x00000000ff9f0000,0x00000000ff9f0000,0x00000000ffc80000) ParOldGen total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000) PSPermGen total 21248K, used 2498K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c708a0,0x00000000f5ec0000) TLAB: gc thread: 0x00000000022a5800 [id: 10100] desired_size: 321KB slow allocs: 0 refill waste: 5136B alloc: 0.99998 16064KB refills: 1 waste 100.0% gc: 328952B slow: 0B fast: 0B TLAB: gc thread: 0x000000000229e800 [id: 3928] desired_size: 321KB slow allocs: 0 refill waste: 5136B alloc: 0.99998 16064KB refills: 1 waste 100.0% gc: 328984B slow: 0B fast: 0B TLAB totals: thrds: 2 refills: 2 max: 1 slow allocs: 0 max 0 waste: 100.0% gc: 657936B max: 328984B slow: 0B max: 0B fast: 0B max: 0B [GC Desired survivor size 2686976 bytes, new threshold 7 (max 15) [PSYoungGen: 16704K-&gt;520K(34752K)] 32064K-&gt;15880K(77440K), 0.0012669 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] Heap after GC invocations=2 (full 0): PSYoungGen total 34752K, used 520K <a href="&quot;复制代码&quot;">0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000) eden space 32128K, 0% used [0x00000000fd800000,0x00000000fd800000,0x00000000ff760000) from space 2624K, 19% used [0x00000000ff9f0000,0x00000000ffa72020,0x00000000ffc80000) to space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000) ParOldGen total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000) PSPermGen total 21248K, used 2498K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c708a0,0x00000000f5ec0000) } Heap PSYoungGen total 34752K, used 1162K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000) eden space 32128K, 2% used [0x00000000fd800000,0x00000000fd8a0ab0,0x00000000ff760000) from space 2624K, 19% used [0x00000000ff9f0000,0x00000000ffa72020,0x00000000ffc80000) to space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000) ParOldGen total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000) PSPermGen total 21248K, used 2505K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c72638,0x00000000f5ec0000)
-加上-XX:+PrintHeapAtGC可以看到每次GC前后堆布局的情况；加上-XX:+PrintTLAB可以看到TLAB的使用状况。
-从日志可以看到，这个线程的TLAB才只有321KB，不足以分配楼主例子里的任何一个数组。也就是说例子里的数组全部都不是在TLAB里分配的，而是直接分配在GC堆的共享部分。
-我们可以模拟一下楼主的例子的执行过程。整个例子都肯定是在解释器里跑的，所以我们就从解释器来切入。
-分配第一个5MB的数组时，解释器要执行newarray字节码指令，来到这里：
-hotspot/src/share/vm/interpreter/interpreterRuntime.cpp
-C++代码 [<img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>IRT_ENTRY(void, InterpreterRuntime::newarray(JavaThread/* thread, BasicType type, jint size))  </p>
-</li>
-<li>oop obj = oopFactory::new_typeArray(type, size, CHECK);  </li>
-<li>thread-&gt;set_vm_result(obj);  </li>
-<li><p>IRT_END<br>IRT_ENTRY(void, InterpreterRuntime::newarray(JavaThread/* thread, BasicType type, jint size)) oop obj = oopFactory::new_typeArray(type, size, CHECK); thread-&gt;set_vm_result(obj); IRT_END
-里面调用到：
-hotspot/src/share/vm/memory/oopFactory.cpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>typeArrayOop oopFactory::new_typeArray(BasicType type, int length, TRAPS) {  </p>
-</li>
-<li>klassOop type_asKlassOop = Universe::typeArrayKlassObj(type);  </li>
-<li>typeArrayKlass/* type_asArrayKlass = typeArrayKlass::cast(type_asKlassOop);  </li>
-<li>typeArrayOop result = type_asArrayKlass-&gt;allocate(length, THREAD);  </li>
-<li>return result;  </li>
-<li><p>}<br>typeArrayOop oopFactory::new_typeArray(BasicType type, int length, TRAPS) { klassOop type_asKlassOop = Universe::typeArrayKlassObj(type); typeArrayKlass/* type_asArrayKlass = typeArrayKlass::cast(type_asKlassOop); typeArrayOop result = type_asArrayKlass-&gt;allocate(length, THREAD); return result; }
-进一步调用到：
-hotspot/src/share/vm/oops/typeArrayKlass.cpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>typeArrayOop typeArrayKlass::allocate(int length, TRAPS) {  </p>
-</li>
-<li>assert(log2_element_size() &gt;= 0, &quot;bad scale&quot;);  </li>
-<li>if (length &gt;= 0) {  </li>
-<li>if (length &lt;= max_length()) {  </li>
-<li>size_t size = typeArrayOopDesc::object_size(layout_helper(), length);  </li>
-<li>KlassHandle h_k(THREAD, as_klassOop());  </li>
-<li>typeArrayOop t;  </li>
-<li>CollectedHeap/* ch = Universe::heap();  </li>
-<li>if (size &lt; ch-&gt;large_typearray_limit()) {  </li>
-<li>t = (typeArrayOop)CollectedHeap::array_allocate(h_k, (int)size, length, CHECK_NULL);  </li>
-<li>} else {  </li>
-<li>t = (typeArrayOop)CollectedHeap::large_typearray_allocate(h_k, (int)size, length, CHECK_NULL);  </li>
-<li>}  </li>
-<li>assert(t-&gt;is_parsable(), &quot;Don&#39;t publish unless parsable&quot;);  </li>
-<li>return t;  </li>
-<li>} else {  </li>
-<li>report_java_out_of_memory(&quot;Requested array size exceeds VM limit&quot;);  </li>
-<li>THROW_OOP_0(Universe::out_of_memory_error_array_size());  </li>
-<li>}  </li>
-<li>} else {  </li>
-<li>THROW_0(vmSymbols::java_lang_NegativeArraySizeException());  </li>
-<li>}  </li>
-<li><p>}<br>typeArrayOop typeArrayKlass::allocate(int length, TRAPS) { assert(log2_element_size() &gt;= 0, &quot;bad scale&quot;); if (length &gt;= 0) { if (length &lt;= max_length()) { size_t size = typeArrayOopDesc::object_size(layout_helper(), length); KlassHandle h_k(THREAD, as_klassOop()); typeArrayOop t; CollectedHeap/* ch = Universe::heap(); if (size &lt; ch-&gt;large_typearray_limit()) { t = (typeArrayOop)CollectedHeap::array_allocate(h_k, (int)size, length, CHECK_NULL); } else { t = (typeArrayOop)CollectedHeap::large_typearray_allocate(h_k, (int)size, length, CHECK_NULL); } assert(t-&gt;is_parsable(), &quot;Don&#39;t publish unless parsable&quot;); return t; } else { report_java_out_of_memory(&quot;Requested array size exceeds VM limit&quot;); THROW_OOP_0(Universe::out_of_memory_error_array_size()); } } else { THROW_0(vmSymbols::java_lang_NegativeArraySizeException()); } }
-这个地方我们看到代码根据要分配的数组是否大于large_typearray_limit()做了分支。那么这个界限是多大呢？
-hotspot/src/share/vm/gc_implementation/parallelScavenge/parallelScavengeHeap.hpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>size_t large_typearray_limit() { return FastAllocateSizeLimit; }<br>size_t large_typearray_limit() { return FastAllocateSizeLimit; }
-hotspot/src/share/vm/runtime/globals.hpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>develop(intx, FastAllocateSizeLimit, 128/*K,                               \  </p>
-</li>
-<li>//<em> Note:  This value is zero mod 1&lt;&lt;13 for a cheap sparc set. /</em>/  \  </li>
-<li><p>&quot;Inline allocations larger than this in doublewords must go slow&quot;)\<br>develop(intx, FastAllocateSizeLimit, 128/<em>K, \ //</em> Note: This value is zero mod 1&lt;&lt;13 for a cheap sparc set. /*/ \ &quot;Inline allocations larger than this in doublewords must go slow&quot;)\
-这里我们知道了如果对象大小大于128K个doubleword（8字节单元），也就是1MB，就不会进入快速分配路径，而会走慢速分配路径。楼主例子里的数组全部都大于1MB，所以都肯定会走满足分配路径。
-不过其实具体到现在HotSpot VM的实现，FastAllocateSizeLimit参数的影响甚微。
-它最明显的作用就是让HotSpot Server Compiler（C2）在编译Java方法时看到要分配大于该参数指定的大小的对象时不生成快速分配路径的代码，而直接调用回到VM的慢速分配路径。
-而对ParallelScanvege GC来说，这个参数其实设到多少都不影响该GC的行为：本来它就只间接影响到下面讲到的is_noref参数的值，但ParallelScavenge无视了is_noref参数。
-回到分配的模拟。接下来调用到：
-hotspot/src/share/vm/gc_interface/collectedHeap.inline.hpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>oop CollectedHeap::large_typearray_allocate(KlassHandle klass,  </p>
-</li>
-<li>int size,  </li>
-<li>int length,  </li>
-<li>TRAPS) {  </li>
-<li>debug_only(check_for_valid_allocation_state());  </li>
-<li>assert(!Universe::heap()-&gt;is_gc_active(), &quot;Allocation during gc not allowed&quot;);  </li>
-<li>assert(size &gt;= 0, &quot;int won&#39;t convert to size_t&quot;);  </li>
-<li>HeapWord/* obj = common_mem_allocate_init(size, true, CHECK_NULL);  </li>
-<li>post_allocation_setup_array(klass, obj, size, length);  </li>
-<li>NOT_PRODUCT(Universe::heap()-&gt;check_for_bad_heap_word_value(obj, size));  </li>
-<li>return (oop)obj;  </li>
-<li><p>}<br>oop CollectedHeap::large_typearray_allocate(KlassHandle klass, int size, int length, TRAPS) { debug_only(check_for_valid_allocation_state()); assert(!Universe::heap()-&gt;is_gc_active(), &quot;Allocation during gc not allowed&quot;); assert(size &gt;= 0, &quot;int won&#39;t convert to size_t&quot;); HeapWord/* obj = common_mem_allocate_init(size, true, CHECK_NULL); post_allocation_setup_array(klass, obj, size, length); NOT_PRODUCT(Universe::heap()-&gt;check_for_bad_heap_word_value(obj, size)); return (oop)obj; }
-这里留意它传给common_mem_allocate_init()的is_noref参数为true，就是说不要refill TLAB。
-同一文件里，
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>HeapWord/* CollectedHeap::common_mem_allocate_noinit(size_t size, bool is_noref, TRAPS) {  </p>
-</li>
-<li></li>
-<li>// Clear unhandled oops for memory allocation.  Memory allocation might  </li>
-<li>// not take out a lock if from tlab, so clear here.  </li>
-<li>CHECK_UNHANDLED_OOPS_ONLY(THREAD-&gt;clear_unhandled_oops();)  </li>
-<li></li>
-<li>if (HAS_PENDING_EXCEPTION) {  </li>
-<li>NOT_PRODUCT(guarantee(false, &quot;Should not allocate with exception pending&quot;));  </li>
-<li>return NULL;  // caller does a CHECK_0 too  </li>
-<li>}  </li>
-<li></li>
-<li>// We may want to update this, is_noref objects might not be allocated in TLABs.  </li>
-<li>HeapWord/* result = NULL;  </li>
-<li>if (UseTLAB) {  </li>
-<li>result = CollectedHeap::allocate_from_tlab(THREAD, size);  </li>
-<li>if (result != NULL) {  </li>
-<li>assert(!HAS_PENDING_EXCEPTION,  </li>
-<li>&quot;Unexpected exception, will result in uninitialized storage&quot;);  </li>
-<li>return result;  </li>
-<li>}  </li>
-<li>}  </li>
-<li>bool gc_overhead_limit_was_exceeded = false;  </li>
-<li>result = Universe::heap()-&gt;mem_allocate(size,  </li>
-<li>is_noref,  </li>
-<li>false,  </li>
-<li>&amp;gc_overhead_limit_was_exceeded);  </li>
-<li>if (result != NULL) {  </li>
-<li>NOT_PRODUCT(Universe::heap()-&gt;  </li>
-<li>check_for_non_bad_heap_word_value(result, size));  </li>
-<li>assert(!HAS_PENDING_EXCEPTION,  </li>
-<li>&quot;Unexpected exception, will result in uninitialized storage&quot;);  </li>
-<li>THREAD-&gt;incr_allocated_bytes(size /* HeapWordSize);  </li>
-<li>return result;  </li>
-<li>}  </li>
-<li></li>
-<li></li>
-<li>if (!gc_overhead_limit_was_exceeded) {  </li>
-<li>// -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support  </li>
-<li>report_java_out_of_memory(&quot;Java heap space&quot;);  </li>
-<li></li>
-<li>if (JvmtiExport::should_post_resource_exhausted()) {  </li>
-<li>JvmtiExport::post_resource_exhausted(  </li>
-<li>JVMTI_RESOURCE_EXHAUSTED_OOM_ERROR | JVMTI_RESOURCE_EXHAUSTED_JAVA_HEAP,  </li>
-<li>&quot;Java heap space&quot;);  </li>
-<li>}  </li>
-<li></li>
-<li>THROW_OOP_0(Universe::out_of_memory_error_java_heap());  </li>
-<li>} else {  </li>
-<li>// -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support  </li>
-<li>report_java_out_of_memory(&quot;GC overhead limit exceeded&quot;);  </li>
-<li></li>
-<li>if (JvmtiExport::should_post_resource_exhausted()) {  </li>
-<li>JvmtiExport::post_resource_exhausted(  </li>
-<li>JVMTI_RESOURCE_EXHAUSTED_OOM_ERROR | JVMTI_RESOURCE_EXHAUSTED_JAVA_HEAP,  </li>
-<li>&quot;GC overhead limit exceeded&quot;);  </li>
-<li>}  </li>
-<li></li>
-<li>THROW_OOP_0(Universe::out_of_memory_error_gc_overhead_limit());  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>HeapWord/* CollectedHeap::common_mem_allocate_init(size_t size, bool is_noref, TRAPS) {  </li>
-<li>HeapWord/* obj = common_mem_allocate_noinit(size, is_noref, CHECK_NULL);  </li>
-<li>init_obj(obj, size);  </li>
-<li>return obj;  </li>
-<li><p>}<br>HeapWord/<em> CollectedHeap::common_mem_allocate_noinit(size_t size, bool is_noref, TRAPS) { // Clear unhandled oops for memory allocation. Memory allocation might // not take out a lock if from tlab, so clear here. CHECK_UNHANDLED_OOPS_ONLY(THREAD-&gt;clear_unhandled_oops();) if (HAS_PENDING_EXCEPTION) { NOT_PRODUCT(guarantee(false, &quot;Should not allocate with exception pending&quot;)); return NULL; // caller does a CHECK_0 too } // We may want to update this, is_noref objects might not be allocated in TLABs. HeapWord/</em> result = NULL; if (UseTLAB) { result = CollectedHeap::allocate_from_tlab(THREAD, size); if (result != NULL) { assert(!HAS_PENDING_EXCEPTION, &quot;Unexpected exception, will result in uninitialized storage&quot;); return result; } } bool gc_overhead_limit_was_exceeded = false; result = Universe::heap()-&gt;mem_allocate(size, is_noref, false, &amp;gc_overhead_limit_was_exceeded); if (result != NULL) { NOT_PRODUCT(Universe::heap()-&gt; check_for_non_bad_heap_word_value(result, size)); assert(!HAS_PENDING_EXCEPTION, &quot;Unexpected exception, will result in uninitialized storage&quot;); THREAD-&gt;incr_allocated_bytes(size /<em> HeapWordSize); return result; } if (!gc_overhead_limit_was_exceeded) { // -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support report_java_out_of_memory(&quot;Java heap space&quot;); if (JvmtiExport::should_post_resource_exhausted()) { JvmtiExport::post_resource_exhausted( JVMTI_RESOURCE_EXHAUSTED_OOM_ERROR | JVMTI_RESOURCE_EXHAUSTED_JAVA_HEAP, &quot;Java heap space&quot;); } THROW_OOP_0(Universe::out_of_memory_error_java_heap()); } else { // -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support report_java_out_of_memory(&quot;GC overhead limit exceeded&quot;); if (JvmtiExport::should_post_resource_exhausted()) { JvmtiExport::post_resource_exhausted( JVMTI_RESOURCE_EXHAUSTED_OOM_ERROR | JVMTI_RESOURCE_EXHAUSTED_JAVA_HEAP, &quot;GC overhead limit exceeded&quot;); } THROW_OOP_0(Universe::out_of_memory_error_gc_overhead_limit()); } } HeapWord/</em> CollectedHeap::common_mem_allocate_init(size_t size, bool is_noref, TRAPS) { HeapWord/* obj = common_mem_allocate_noinit(size, is_noref, CHECK_NULL); init_obj(obj, size); return obj; }
-然后会先调用到：
-hotspot/src/share/vm/gc_interface/collectedHeap.inline.hpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>HeapWord/<em> CollectedHeap::allocate_from_tlab(Thread/</em> thread, size_t size) {  </p>
-</li>
-<li>assert(UseTLAB, &quot;should use UseTLAB&quot;);  </li>
-<li></li>
-<li>HeapWord/* obj = thread-&gt;tlab().allocate(size);  </li>
-<li>if (obj != NULL) {  </li>
-<li>return obj;  </li>
-<li>}  </li>
-<li>// Otherwise...  </li>
-<li>return allocate_from_tlab_slow(thread, size);  </li>
-<li><p>}<br>HeapWord/<em> CollectedHeap::allocate_from_tlab(Thread/</em> thread, size_t size) { assert(UseTLAB, &quot;should use UseTLAB&quot;); HeapWord/* obj = thread-&gt;tlab().allocate(size); if (obj != NULL) { return obj; } // Otherwise... return allocate_from_tlab_slow(thread, size); }
-前面已经说了，TLAB的大小不足以分配楼主例子里的数组，所以thread-&gt;tlab().allocate()肯定会返回NULL表示无法分配，于是调用到：
-hotspot/src/share/vm/gc_interface/collectedHeap.cpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>HeapWord/<em> CollectedHeap::allocate_from_tlab_slow(Thread/</em> thread, size_t size) {  </p>
-</li>
-<li></li>
-<li>// Retain tlab and allocate object in shared space if  </li>
-<li>// the amount free in the tlab is too large to discard.  </li>
-<li>if (thread-&gt;tlab().free() &gt; thread-&gt;tlab().refill_waste_limit()) {  </li>
-<li>thread-&gt;tlab().record_slow_allocation(size);  </li>
-<li>return NULL;  </li>
-<li>}  </li>
-<li>// ...  </li>
-<li><p>}<br>HeapWord/<em> CollectedHeap::allocate_from_tlab_slow(Thread/</em> thread, size_t size) { // Retain tlab and allocate object in shared space if // the amount free in the tlab is too large to discard. if (thread-&gt;tlab().free() &gt; thread-&gt;tlab().refill_waste_limit()) { thread-&gt;tlab().record_slow_allocation(size); return NULL; } // ... }
-例子里TLAB几乎是空的，所以这个if判断肯定会通过，TLAB就会记录下一次slow allocation。从GC日志中第一次minor GC的TLAB统计信息可以看到3次slow allocation，其实就是头两个数组（5MB和10MB那两个）成功分配后，第三个数组（又一个5MB的）尝试在TLAB分配失败后打出的日志。
-那么回到CollectedHeap::common_mem_allocate_noinit()，它会调用Universe::heap()-&gt;mem_allocate(...)进一步尝试分配，传入的is_noref为true，is_tlab为false：
-hotspot/src/share/vm/gc_implementation/parallelScavengeHeap.cpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>// There are two levels of allocation policy here.  </p>
-</li>
-<li>//  </li>
-<li>// When an allocation request fails, the requesting thread must invoke a VM  </li>
-<li>// operation, transfer control to the VM thread, and await the results of a  </li>
-<li>// garbage collection. That is quite expensive, and we should avoid doing it  </li>
-<li>// multiple times if possible.  </li>
-<li>//  </li>
-<li>// To accomplish this, we have a basic allocation policy, and also a  </li>
-<li>// failed allocation policy.  </li>
-<li>//  </li>
-<li>// The basic allocation policy controls how you allocate memory without  </li>
-<li>// attempting garbage collection. It is okay to grab locks and  </li>
-<li>// expand the heap, if that can be done without coming to a safepoint.  </li>
-<li>// It is likely that the basic allocation policy will not be very  </li>
-<li>// aggressive.  </li>
-<li>//  </li>
-<li>// The failed allocation policy is invoked from the VM thread after  </li>
-<li>// the basic allocation policy is unable to satisfy a mem_allocate  </li>
-<li>// request. This policy needs to cover the entire range of collection,  </li>
-<li>// heap expansion, and out-of-memory conditions. It should make every  </li>
-<li>// attempt to allocate the requested memory.  </li>
-<li></li>
-<li>// Basic allocation policy. Should never be called at a safepoint, or  </li>
-<li>// from the VM thread.  </li>
-<li>//  </li>
-<li>// This method must handle cases where many mem_allocate requests fail  </li>
-<li>// simultaneously. When that happens, only one VM operation will succeed,  </li>
-<li>// and the rest will not be executed. For that reason, this method loops  </li>
-<li>// during failed allocation attempts. If the java heap becomes exhausted,  </li>
-<li>// we rely on the size_policy object to force a bail out.  </li>
-<li>HeapWord/* ParallelScavengeHeap::mem_allocate(  </li>
-<li>size_t size,  </li>
-<li>bool is_noref,  </li>
-<li>bool is_tlab,  </li>
-<li>bool/* gc_overhead_limit_was_exceeded) {  </li>
-<li>assert(!SafepointSynchronize::is_at_safepoint(), &quot;should not be at safepoint&quot;);  </li>
-<li>assert(Thread::current() != (Thread/*)VMThread::vm_thread(), &quot;should not be in vm thread&quot;);  </li>
-<li>assert(!Heap_lock-&gt;owned_by_self(), &quot;this thread should not own the Heap_lock&quot;);  </li>
-<li></li>
-<li>// In general gc_overhead_limit_was_exceeded should be false so  </li>
-<li>// set it so here and reset it to true only if the gc time  </li>
-<li>// limit is being exceeded as checked below.  </li>
-<li>/*gc_overhead_limit_was_exceeded = false;  </li>
-<li></li>
-<li>HeapWord/* result = young_gen()-&gt;allocate(size, is_tlab);  </li>
-<li></li>
-<li>uint loop_count = 0;  </li>
-<li>uint gc_count = 0;  </li>
-<li></li>
-<li>while (result == NULL) {  </li>
-<li>// We don&#39;t want to have multiple collections for a single filled generation.  </li>
-<li>// To prevent this, each thread tracks the total_collections() value, and if  </li>
-<li>// the count has changed, does not do a new collection.  </li>
-<li>//  </li>
-<li>// The collection count must be read only while holding the heap lock. VM  </li>
-<li>// operations also hold the heap lock during collections. There is a lock  </li>
-<li>// contention case where thread A blocks waiting on the Heap_lock, while  </li>
-<li>// thread B is holding it doing a collection. When thread A gets the lock,  </li>
-<li>// the collection count has already changed. To prevent duplicate collections,  </li>
-<li>// The policy MUST attempt allocations during the same period it reads the  </li>
-<li>// total_collections() value!  </li>
-<li>{  </li>
-<li>MutexLocker ml(Heap_lock);  </li>
-<li>gc_count = Universe::heap()-&gt;total_collections();  </li>
-<li></li>
-<li>result = young_gen()-&gt;allocate(size, is_tlab);  </li>
-<li></li>
-<li>// (1) If the requested object is too large to easily fit in the  </li>
-<li>//     young_gen, or  </li>
-<li>// (2) If GC is locked out via GCLocker, young gen is full and  </li>
-<li>//     the need for a GC already signalled to GCLocker (done  </li>
-<li>//     at a safepoint),  </li>
-<li>// ... then, rather than force a safepoint and (a potentially futile)  </li>
-<li>// collection (attempt) for each allocation, try allocation directly  </li>
-<li>// in old_gen. For case (2) above, we may in the future allow  </li>
-<li>// TLAB allocation directly in the old gen.  </li>
-<li>if (result != NULL) {  </li>
-<li>return result;  </li>
-<li>}  </li>
-<li>if (!is_tlab &amp;&amp;  </li>
-<li>size &gt;= (young_gen()-&gt;eden_space()-&gt;capacity_in_words(Thread::current()) / 2)) {  </li>
-<li>result = old_gen()-&gt;allocate(size, is_tlab);  </li>
-<li>if (result != NULL) {  </li>
-<li>return result;  </li>
-<li>}  </li>
-<li>}  </li>
-<li>if (GC_locker::is_active_and_needs_gc()) {  </li>
-<li>// GC is locked out. If this is a TLAB allocation,  </li>
-<li>// return NULL; the requestor will retry allocation  </li>
-<li>// of an idividual object at a time.  </li>
-<li>if (is_tlab) {  </li>
-<li>return NULL;  </li>
-<li>}  </li>
-<li></li>
-<li>// If this thread is not in a jni critical section, we stall  </li>
-<li>// the requestor until the critical section has cleared and  </li>
-<li>// GC allowed. When the critical section clears, a GC is  </li>
-<li>// initiated by the last thread exiting the critical section; so  </li>
-<li>// we retry the allocation sequence from the beginning of the loop,  </li>
-<li>// rather than causing more, now probably unnecessary, GC attempts.  </li>
-<li>JavaThread/* jthr = JavaThread::current();  </li>
-<li>if (!jthr-&gt;in_critical()) {  </li>
-<li>MutexUnlocker mul(Heap_lock);  </li>
-<li>GC_locker::stall_until_clear();  </li>
-<li>continue;  </li>
-<li>} else {  </li>
-<li>if (CheckJNICalls) {  </li>
-<li>fatal(&quot;Possible deadlock due to allocating while&quot;  </li>
-<li>&quot; in jni critical section&quot;);  </li>
-<li>}  </li>
-<li>return NULL;  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>if (result == NULL) {  </li>
-<li></li>
-<li>// Generate a VM operation  </li>
-<li>VM_ParallelGCFailedAllocation op(size, is_tlab, gc_count);  </li>
-<li>VMThread::execute(&amp;op);  </li>
-<li></li>
-<li>// Did the VM operation execute? If so, return the result directly.  </li>
-<li>// This prevents us from looping until time out on requests that can  </li>
-<li>// not be satisfied.  </li>
-<li>if (op.prologue_succeeded()) {  </li>
-<li>assert(Universe::heap()-&gt;is_in_or_null(op.result()),  </li>
-<li>&quot;result not in heap&quot;);  </li>
-<li></li>
-<li>// If GC was locked out during VM operation then retry allocation  </li>
-<li>// and/or stall as necessary.  </li>
-<li>if (op.gc_locked()) {  </li>
-<li>assert(op.result() == NULL, &quot;must be NULL if gc_locked() is true&quot;);  </li>
-<li>continue;  // retry and/or stall as necessary  </li>
-<li>}  </li>
-<li></li>
-<li>// Exit the loop if the gc time limit has been exceeded.  </li>
-<li>// The allocation must have failed above (&quot;result&quot; guarding  </li>
-<li>// this path is NULL) and the most recent collection has exceeded the  </li>
-<li>// gc overhead limit (although enough may have been collected to  </li>
-<li>// satisfy the allocation).  Exit the loop so that an out-of-memory  </li>
-<li>// will be thrown (return a NULL ignoring the contents of  </li>
-<li>// op.result()),  </li>
-<li>// but clear gc_overhead_limit_exceeded so that the next collection  </li>
-<li>// starts with a clean slate (i.e., forgets about previous overhead  </li>
-<li>// excesses).  Fill op.result() with a filler object so that the  </li>
-<li>// heap remains parsable.  </li>
-<li>const bool limit_exceeded = size_policy()-&gt;gc_overhead_limit_exceeded();  </li>
-<li>const bool softrefs_clear = collector_policy()-&gt;all_soft_refs_clear();  </li>
-<li>assert(!limit_exceeded || softrefs_clear, &quot;Should have been cleared&quot;);  </li>
-<li>if (limit_exceeded &amp;&amp; softrefs_clear) {  </li>
-<li>/*gc_overhead_limit_was_exceeded = true;  </li>
-<li>size_policy()-&gt;set_gc_overhead_limit_exceeded(false);  </li>
-<li>if (PrintGCDetails &amp;&amp; Verbose) {  </li>
-<li>gclog_or_tty-&gt;print_cr(&quot;ParallelScavengeHeap::mem_allocate: &quot;  </li>
-<li>&quot;return NULL because gc_overhead_limit_exceeded is set&quot;);  </li>
-<li>}  </li>
-<li>if (op.result() != NULL) {  </li>
-<li>CollectedHeap::fill_with_object(op.result(), size);  </li>
-<li>}  </li>
-<li>return NULL;  </li>
-<li>}  </li>
-<li></li>
-<li>return op.result();  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>// The policy object will prevent us from looping forever. If the  </li>
-<li>// time spent in gc crosses a threshold, we will bail out.  </li>
-<li>loop_count++;  </li>
-<li>if ((result == NULL) &amp;&amp; (QueuedAllocationWarningCount &gt; 0) &amp;&amp;  </li>
-<li>(loop_count % QueuedAllocationWarningCount == 0)) {  </li>
-<li>warning(&quot;ParallelScavengeHeap::mem_allocate retries %d times \n\t&quot;  </li>
-<li>&quot; size=%d %s&quot;, loop_count, size, is_tlab ? &quot;(TLAB)&quot; : &quot;&quot;);  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>return result;  </li>
-<li><p>}<br>// There are two levels of allocation policy here. // // When an allocation request fails, the requesting thread must invoke a VM // operation, transfer control to the VM thread, and await the results of a // garbage collection. That is quite expensive, and we should avoid doing it // multiple times if possible. // // To accomplish this, we have a basic allocation policy, and also a // failed allocation policy. // // The basic allocation policy controls how you allocate memory without // attempting garbage collection. It is okay to grab locks and // expand the heap, if that can be done without coming to a safepoint. // It is likely that the basic allocation policy will not be very // aggressive. // // The failed allocation policy is invoked from the VM thread after // the basic allocation policy is unable to satisfy a mem_allocate // request. This policy needs to cover the entire range of collection, // heap expansion, and out-of-memory conditions. It should make every // attempt to allocate the requested memory. // Basic allocation policy. Should never be called at a safepoint, or // from the VM thread. // // This method must handle cases where many mem_allocate requests fail // simultaneously. When that happens, only one VM operation will succeed, // and the rest will not be executed. For that reason, this method loops // during failed allocation attempts. If the java heap becomes exhausted, // we rely on the size_policy object to force a bail out. HeapWord/<em> ParallelScavengeHeap::mem_allocate( size_t size, bool is_noref, bool is_tlab, bool/</em> gc_overhead_limit_was_exceeded) { assert(!SafepointSynchronize::is_at_safepoint(), &quot;should not be at safepoint&quot;); assert(Thread::current() != (Thread/<em>)VMThread::vm_thread(), &quot;should not be in vm thread&quot;); assert(!Heap_lock-&gt;owned_by_self(), &quot;this thread should not own the Heap_lock&quot;); // In general gc_overhead_limit_was_exceeded should be false so // set it so here and reset it to true only if the gc time // limit is being exceeded as checked below. /</em>gc_overhead_limit_was_exceeded = false; HeapWord/<em> result = young_gen()-&gt;allocate(size, is_tlab); uint loop_count = 0; uint gc_count = 0; while (result == NULL) { // We don&#39;t want to have multiple collections for a single filled generation. // To prevent this, each thread tracks the total_collections() value, and if // the count has changed, does not do a new collection. // // The collection count must be read only while holding the heap lock. VM // operations also hold the heap lock during collections. There is a lock // contention case where thread A blocks waiting on the Heap_lock, while // thread B is holding it doing a collection. When thread A gets the lock, // the collection count has already changed. To prevent duplicate collections, // The policy MUST attempt allocations during the same period it reads the // total_collections() value! { MutexLocker ml(Heap_lock); gc_count = Universe::heap()-&gt;total_collections(); result = young_gen()-&gt;allocate(size, is_tlab); // (1) If the requested object is too large to easily fit in the // young_gen, or // (2) If GC is locked out via GCLocker, young gen is full and // the need for a GC already signalled to GCLocker (done // at a safepoint), // ... then, rather than force a safepoint and (a potentially futile) // collection (attempt) for each allocation, try allocation directly // in old_gen. For case (2) above, we may in the future allow // TLAB allocation directly in the old gen. if (result != NULL) { return result; } if (!is_tlab &amp;&amp; size &gt;= (young_gen()-&gt;eden_space()-&gt;capacity_in_words(Thread::current()) / 2)) { result = old_gen()-&gt;allocate(size, is_tlab); if (result != NULL) { return result; } } if (GC_locker::is_active_and_needs_gc()) { // GC is locked out. If this is a TLAB allocation, // return NULL; the requestor will retry allocation // of an idividual object at a time. if (is_tlab) { return NULL; } // If this thread is not in a jni critical section, we stall // the requestor until the critical section has cleared and // GC allowed. When the critical section clears, a GC is // initiated by the last thread exiting the critical section; so // we retry the allocation sequence from the beginning of the loop, // rather than causing more, now probably unnecessary, GC attempts. JavaThread/</em> jthr = JavaThread::current(); if (!jthr-&gt;in_critical()) { MutexUnlocker mul(Heap_lock); GC_locker::stall_until_clear(); continue; } else { if (CheckJNICalls) { fatal(&quot;Possible deadlock due to allocating while&quot; &quot; in jni critical section&quot;); } return NULL; } } } if (result == NULL) { // Generate a VM operation VM_ParallelGCFailedAllocation op(size, is_tlab, gc_count); VMThread::execute(&amp;op); // Did the VM operation execute? If so, return the result directly. // This prevents us from looping until time out on requests that can // not be satisfied. if (op.prologue_succeeded()) { assert(Universe::heap()-&gt;is_in_or_null(op.result()), &quot;result not in heap&quot;); // If GC was locked out during VM operation then retry allocation // and/or stall as necessary. if (op.gc_locked()) { assert(op.result() == NULL, &quot;must be NULL if gc_locked() is true&quot;); continue; // retry and/or stall as necessary } // Exit the loop if the gc time limit has been exceeded. // The allocation must have failed above (&quot;result&quot; guarding // this path is NULL) and the most recent collection has exceeded the // gc overhead limit (although enough may have been collected to // satisfy the allocation). Exit the loop so that an out-of-memory // will be thrown (return a NULL ignoring the contents of // op.result()), // but clear gc_overhead_limit_exceeded so that the next collection // starts with a clean slate (i.e., forgets about previous overhead // excesses). Fill op.result() with a filler object so that the // heap remains parsable. const bool limit_exceeded = size_policy()-&gt;gc_overhead_limit_exceeded(); const bool softrefs_clear = collector_policy()-&gt;all_soft_refs_clear(); assert(!limit_exceeded || softrefs_clear, &quot;Should have been cleared&quot;); if (limit_exceeded &amp;&amp; softrefs_clear) { /*gc_overhead_limit_was_exceeded = true; size_policy()-&gt;set_gc_overhead_limit_exceeded(false); if (PrintGCDetails &amp;&amp; Verbose) { gclog_or_tty-&gt;print_cr(&quot;ParallelScavengeHeap::mem_allocate: &quot; &quot;return NULL because gc_overhead_limit_exceeded is set&quot;); } if (op.result() != NULL) { CollectedHeap::fill_with_object(op.result(), size); } return NULL; } return op.result(); } } // The policy object will prevent us from looping forever. If the // time spent in gc crosses a threshold, we will bail out. loop_count++; if ((result == NULL) &amp;&amp; (QueuedAllocationWarningCount &gt; 0) &amp;&amp; (loop_count % QueuedAllocationWarningCount == 0)) { warning(&quot;ParallelScavengeHeap::mem_allocate retries %d times \n\t&quot; &quot; size=%d %s&quot;, loop_count, size, is_tlab ? &quot;(TLAB)&quot; : &quot;&quot;); } } return result; }
-这里会先尝试在young gen里分配
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>// Allocation  </p>
-</li>
-<li>HeapWord/* allocate(size_t word_size, bool is_tlab) {  </li>
-<li>HeapWord/* result = eden_space()-&gt;cas_allocate(word_size);  </li>
-<li>return result;  </li>
-<li><p>}<br>// Allocation HeapWord/<em> allocate(size_t word_size, bool is_tlab) { HeapWord/</em> result = eden_space()-&gt;cas_allocate(word_size); return result; }
-实际上就是尝试在eden里做一次CAS分配。楼主例子里的头两个数组都会在这里分配成功，把eden占用到99%。然后到第三个数组触发GC前试图分配的时候，eden已经没有足够空间了，分配就会失败从而返回NULL。
-然后就开始进入“试图分配 -&gt; 不行的话GC -&gt; 再试图分配 -&gt; 不行的话再GC -&gt; 再试图分配”的循环。
-做了第一次minor GC后，头两个数组都被GC掉了，eden为空，于是再试图在young gen里分配第三个数组（5MB那个）就成功了。第四个数组（10MB那个）分配的状况与第二个数组类似，都不需要另外触发GC就可以成功。
-等到要分配第5个数组（15MB那个）时，堆的状况跟要分配第三个数组时类似，eden都是99%满，所以楼主可能会以为这个数组也会在GC后分配到eden里。实际状况却是它在young gen尝试分配失败后，真的进入GC前还会试图分配，来到ParallelScavengeHeap::mem_allocate()的这个分支：
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>if (!is_tlab &amp;&amp;  </p>
-</li>
-<li>size &gt;= (young_gen()-&gt;eden_space()-&gt;capacity_in_words(Thread::current()) / 2)) {  </li>
-<li>result = old_gen()-&gt;allocate(size, is_tlab);  </li>
-<li>if (result != NULL) {  </li>
-<li>return result;  </li>
-<li>}  </li>
-<li>}<br>if (!is_tlab &amp;&amp; size &gt;= (young_gen()-&gt;eden_space()-&gt;capacity_in_words(Thread::current()) / 2)) { result = old_gen()-&gt;allocate(size, is_tlab); if (result != NULL) { return result; } }
-此时eden的capacity有15MB多，一半就是不到8MB，第5个数组有15MB多一点，肯定超过了这个判断条件的限制，于是就直接在old gen尝试分配，成功，就不需要做GC，因而之前的第3和第4个数组就都还在。
-等待雨季的到来 写道</li>
-</ol>
-<p>1、byte5为什么没有触发minor gc而是直接分配在老生代，byte3和byte4为什么没有被回收？
-总结一下过程：
-第1个数组：
-大小5MB，慢速路径上在young gen分配直接成功；
-第2个数组：
-大小10MB，慢速路径上在young gen分配直接成功；
-第3个数组：
-大小5MB，慢速路径上在young gen分配失败，
-（进入循环）再尝试在young gen分配，还是失败，
-没达到去old gen分配的大小限制，
-于是真的触发一次minor GC，eden清空，
-再尝试在young gen分配，成功；
-第4个数组：
-大小10MB，慢速路径上在young gen分配直接成功；
-第5个数组：
-大小15MB，慢速路径上在young gen分配失败，
-（进入循环）再尝试在young gen分配，还是失败，</p>
-<h1 id="-old-gen-old-gen-gc-">达到了去old gen直接分配的大小限制，在old gen上分配成功。没有触发GC。</h1>
-<p>等待雨季的到来 写道</p>
-<p>2、eden区什么时候才会自动扩容到40M，当创建超过20M的对象时，都是直接分配在了老生，而创建大小超过老生代的对象时老生代会自动扩容。
-上面的过程已经很清楚了。如果创建20MB的对象，它在eden分配会失败（此时只有15MB多一点的容量），然后又满足了直接在old gen分配的条件（试图分配的大小大于eden的capacity的一半），就跑到old gen分配了。</p>
-<h1 id="-java-tlab-eden-gc-">如果是比较正常的Java程序，创建的多数对象都是小对象，都通过TLAB来分配，那就可以观察到eden经过几次GC后渐渐扩容到最大大小。</h1>
-<p>等待雨季的到来 写道</p>
-<p>其他：
-我在用eclipse调试的时候发现，同样的测试代码在执行的时候输出的GC log居然会有很大的变化，有的时候eden区被初始化为8M有的时候初始化为20M。
-这个问题我就不太清楚了。通过Eclipse来调试Java程序，在目标Java程序里会产生一些额外的垃圾，我不太肯定这跟您看到的抖动有没有关系。
-<img src="" alt="Spinner"> <a href="http://zsl8544-163-com.iteye.com/" target="_blank"><img src="&quot;等待雨季的到来的博客: &quot;" alt="等待雨季的到来的博客"></a> <a href="http://zsl8544-163-com.iteye.com/" title="等待雨季的到来" target="_blank">等待雨季的到来</a> 前天</p>
-<p>实在是太感谢R大神百忙之中能给出这么细致入微的解释了！受益匪浅！以前我的认识只是eden区会在GC之后分配内存，并不知道如果分配内存大于eden区capacity一半就会直接在old gen分配的规则。
-只是由于我对TLAB的具体细节只知甚少，对您下面的eden扩容的解释还是不是太清楚。
-引用</p>
-<p>如果是比较正常的Java程序，创建的多数对象都是小对象，都通过TLAB来分配，那就可以观察到eden经过几次GC后渐渐扩容到最大大小。
-为什么说创建小对象，通过TLAB来分配，eden就会渐渐扩容到最大了呢？
-还有一个比较傻的问题，内存区域扩容之后还会再缩小吗？有内存扩容这个设计的原因是不是capacity小得内存区域收集的会更快呢？
-<img src="" alt="Spinner"> <a href="http://zsl8544-163-com.iteye.com/" target="_blank"><img src="&quot;等待雨季的到来的博客: &quot;" alt="等待雨季的到来的博客"></a> <a href="http://zsl8544-163-com.iteye.com/" title="等待雨季的到来" target="_blank">等待雨季的到来</a> 前天</p>
-<p>对了，我没有看毕玄的实验，能给个链接吗？
-我看的是您推荐的周志明老师写的深入Java虚拟机。
-<img src="" alt="Spinner"> <a href="http://icyfenix.iteye.com/" target="_blank"><img src="&quot;IcyFenix的博客: FenixSoft 3.0&quot;" alt="IcyFenix的博客"></a> <a href="http://icyfenix.iteye.com/" title="IcyFenix" target="_blank">IcyFenix</a> 昨天</p>
-<p>等待雨季的到来 写道</p>
-<p>实在是太感谢R大神百忙之中能给出这么细致入微的解释了！受益匪浅！以前我的认识只是eden区会在GC之后分配内存，并不知道如果分配内存大于eden区capacity一半就会直接在old gen分配的规则。
-只是由于我对TLAB的具体细节只知甚少，对您下面的eden扩容的解释还是不是太清楚。
-引用</p>
-<p>如果是比较正常的Java程序，创建的多数对象都是小对象，都通过TLAB来分配，那就可以观察到eden经过几次GC后渐渐扩容到最大大小。
-为什么说创建小对象，通过TLAB来分配，eden就会渐渐扩容到最大了呢？
-还有一个比较傻的问题，内存区域扩容之后还会再缩小吗？有内存扩容这个设计的原因是不是capacity小得内存区域收集的会更快呢？
-赞R大的详细解答。我被召唤来回答楼上的2个问题“eden是如何扩容的？”，“eden扩容之后还会缩小吗？”
-也按照上面一步一步分析代码来解释，但过程有点多，我就只帖方法名，具体代码不粘上来了，代码可以到openjdk的repo上直接看。
-1.遇到分配内存指令（InterpreterRuntime中的new或者newarray这些字节码模版）
-2.开始分配内存（前面R大写的分配数组oopFactory::new_typeArray或者分配对象instanceKlass::allocate_instance）
-3.向CollectedHeap请求内存（入口是CollectedHeap::array_allocate或者CollectedHeap::obj_allocate，两者最终走到CollectedHeap::common_mem_allocate_noinit方法中）
-4.如果能够通过TLAB顺利分配（allocate_from_tlab方法）就在TLAB上划
-5.否则，通过mem_allocate方法在eden上划。这个是纯虚方法，因此要看CollectedHeap的子类ParallelScavengeHeap（LZ使用PS收集器）
-6.在men_allocate方法中，先通过cas_allocate在MutableSpace上划，不成功的话，堕入GC-尝试分配-GC-尝试分配……的循环中，这个R大在前面讲的很详细，其他就不多说了，着重讲GC。
-7.进入GC的过程不是直接方法调用，是通过发送VM_ParallelGCFailedAllocation信号给VM线程触发的，最终转到ParallelScavengeHeap::failed_mem_allocate()方法中。
-8.该通过PSScavenge::invoke()开始GC过程，实际GC的活是在PSScavenge::invoke_no_policy()做的。
-9.invoke_no_policy()方法可以看到，实际上每次GC都会重置eden大小，即调用了ParallelScavengeHeap::resize_young_gen()方法，eden是否会真正改变，取决于这个方法传入的参数，如果和eden的原本大小不一样，那就相当于增加或者缩小了eden了。
-10.这里关系有点烦，补一段说清楚一些。resize_young_gen()方法的参数值就是PSAdaptiveSizePolicy::calculated_eden_size_in_bytes()返回值，换句话说，GC是否要改变eden大小，完全是由PSAdaptiveSizePolicy控制的（这个方法在它的父类AdaptiveSizePolicy中，但calculated_eden_size_in_bytes只是简单返回一个数值，数值是在子类中计算的，PSScavenge::invoke_no_policy()中调用了PSAdaptiveSizePolicy::compute_generation_free_space()去改变这个数值）。
-11.到这里，eden如何改变就取决于PSAdaptiveSizePolicy::compute_generation_free_space()的计算结果了。PS收集器的特点是可以设置一些目标策略，譬如追求吞吐量，追求最小停顿时间等，这个方法会根据用户选定的目标，调用adjust_for_minor_pause_time()、adjust_eden_for_footprint()、adjust_for_pause_time()等方法去计算eden的值，具体就不一个一个细说了。即使不详细看方法内容，光从eden_increment_with_supplement_aligned_up、eden_decrement_aligned_down这些明显含有“increment”、“decrement”的方法名字，也可以回答“内存区域扩容之后还会再缩小吗？”这个问题了。
-PS：如果对这个确实感兴趣，可以加个PrintAdaptiveSizePolicy，在每次重新计算内存区域大小时输出一些信息看看。
-PSS：我把自己的理解写完了，但也木有搞清楚PS收集器eden的大小计算，和TLAB分配的联系在哪里，请R大继续讲解。
-<img src="" alt="Spinner"></p>
-<p><img src="" alt=""> <a href="http://hllvm.group.iteye.com/group/topic/38293/post/new" target="_blank">发表回复</a></p>
-<p><a href="http://hllvm.group.iteye.com/" target="_blank">&gt;&gt;返回群组首页</a></p>
-<p><a href="http://hllvm.group.iteye.com/" target="_blank"><img src="&quot;高级语言虚拟机: 关注各种高级语言虚拟机（high-level language virtual machine，HLL VM）的设计与实现，泛化至各种高级语言的运行时的设计与实现。讨论范围包括JVM、CLI、Parrot等当前流行的VM平台，也包括Python、Ruby、JavaScript、Lua、Perl、Forth、Smalltalk等众多语言的引擎，还有历史上有影响的各种高级语言虚拟机，如SECD等。&quot;" alt="高级语言虚拟机群组"></a></p>
-<h3 id="-">相关讨论</h3>
-<ul>
-<li><a href="http://www.iteye.com/topic/802638" target="_blank">JVM内存管理：深入垃圾收集器与内存分配策略</a></li>
-<li><a href="http://www.iteye.com/topic/976522" target="_blank">java内存管理以及GC</a></li>
-<li><a href="http://www.iteye.com/topic/894148" target="_blank">HotSpot VM 内存堆的两个Servivor区</a></li>
-<li><a href="http://www.iteye.com/topic/814815" target="_blank">jvm crash,疑似GC的bug</a></li>
-<li><a href="http://www.iteye.com/topic/730461" target="_blank">借助HotSpot SA来一窥PermGen上的对象</a></li>
-<li><a href="http://www.iteye.com/" target="_blank">首页</a></li>
-<li><a href="http://www.iteye.com/news" target="_blank">资讯</a></li>
-<li><a href="http://www.iteye.com/magazines" target="_blank">精华</a></li>
-<li><a href="http://www.iteye.com/forums" target="_blank">论坛</a></li>
-<li><a href="http://www.iteye.com/ask" target="_blank">问答</a></li>
-<li><a href="http://www.iteye.com/blogs" target="_blank">博客</a></li>
-<li><a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a></li>
-<li><a href="http://www.iteye.com/groups" target="_blank">群组</a></li>
-<li><a href="http://job.iteye.com/iteye" target="_blank">招聘</a></li>
-<li><a href="http://www.iteye.com/search" target="_blank">搜索</a></li>
-<li><a href="http://hllvm.group.iteye.com/index/service" target="_blank">广告服务</a></li>
-<li><a href="http://webmaster.iteye.com/" target="_blank">ITeye黑板报</a></li>
-<li><a href="http://hllvm.group.iteye.com/index/contactus" target="_blank">联系我们</a></li>
-<li><a href="http://hllvm.group.iteye.com/index/friend_links" target="_blank">友情链接</a></li>
-</ul>
-<p>© 2003-2012 ITeye.com. [ <a href="http://www.miibeian.gov.cn/" target="_blank">京ICP证110151号</a> 京公网安备110105010620 ]
-百联优力(北京)投资有限公司 版权所有 <img src="http://stat.iteye.com/?url=http%3A%2F%2Fhllvm.group.iteye.com%2Fgroup%2Ftopic%2F38293&amp;referrer=http%3A%2F%2Fhllvm.group.iteye.com%2F&amp;user_id=" alt=""></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--eden区没有发生minorgc，对象直接分配在了oldgen/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--eden区没有发生minorgc，对象直接分配在了oldgen" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -2297,7 +2121,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:33:41</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:43:39</em></span></div>
 </div>
 <div class="clearfix"></div>
 

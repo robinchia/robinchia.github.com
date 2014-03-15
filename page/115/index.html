@@ -177,226 +177,6 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--hdfs_design/">hdfs_design</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--hdfs_design/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="hdfs_design">hdfs_design</h1>
-<p>HDFS Architecture
-by Dhruba Borthakur
-Table of contents
-1 2
-Introduction .......................................................................................................................3 Assumptions and Goals .....................................................................................................3
-2.1 2.2 2.3 2.4 2.5 2.6
-Hardware Failure .......................................................................................................... 3 Streaming Data Access .................................................................................................3 Large Data Sets .............................................................................................................3 Simple Coherency Model ............................................................................................. 4 “Moving Computation is Cheaper than Moving Data” ................................................4 Portability Across Heterogeneous Hardware and Software Platforms .........................4
-3 4 5
-NameNode and DataNodes ...............................................................................................4 The File System Namespace ............................................................................................. 5 Data Replication ................................................................................................................6
-5.1 5.2 5.3
-Replica Placement: The First Baby Steps .................................................................... 7 Replica Selection .......................................................................................................... 8 Safemode ...................................................................................................................... 8
-6 7 8
-The Persistence of File System Metadata ......................................................................... 8 The Communication Protocols ......................................................................................... 9 Robustness ........................................................................................................................ 9
-8.1 8.2 8.3 8.4 8.5
-Data Disk Failure, Heartbeats and Re-Replication .....................................................10 Cluster Rebalancing ....................................................................................................10 Data Integrity ..............................................................................................................10 Metadata Disk Failure ................................................................................................ 10 Snapshots ....................................................................................................................11
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS Architecture
-9
-Data Organization ........................................................................................................... 11
-9.1 9.2 9.3
-Data Blocks ................................................................................................................ 11 Staging ........................................................................................................................11 Replication Pipelining ................................................................................................ 12 FS Shell .....................................................................................................................12 DFSAdmin ................................................................................................................ 13 Browser Interface ......................................................................................................13 File Deletes and Undeletes ....................................................................................... 13 Decrease Replication Factor ..................................................................................... 14
-10
-Accessibility .................................................................................................................. 12
-10.1 10.2 10.3 11
-Space Reclamation ........................................................................................................ 13
-11.1 11.2 12
-References ..................................................................................................................... 14
-Page 2
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS Architecture</p>
-<ol>
-<li>Introduction
-The Hadoop Distributed File System (HDFS) is a distributed file system designed to run on commodity hardware. It has many similarities with existing distributed file systems. However, the differences from other distributed file systems are significant. HDFS is highly fault-tolerant and is designed to be deployed on low-cost hardware. HDFS provides high throughput access to application data and is suitable for applications that have large data sets. HDFS relaxes a few POSIX requirements to enable streaming access to file system data. HDFS was originally built as infrastructure for the Apache Nutch web search engine project. HDFS is part of the Apache Hadoop Core project. The project URL is <a href="http://hadoop.apache.org/core/" target="_blank">http://hadoop.apache.org/core/</a>.</li>
-<li>Assumptions and Goals
-2.1. Hardware Failure
-Hardware failure is the norm rather than the exception. An HDFS instance may consist of hundreds or thousands of server machines, each storing part of the file system’s data. The fact that there are a huge number of components and that each component has a non-trivial probability of failure means that some component of HDFS is always non-functional. Therefore, detection of faults and quick, automatic recovery from them is a core architectural goal of HDFS.
-2.2. Streaming Data Access
-Applications that run on HDFS need streaming access to their data sets. They are not general purpose applications that typically run on general purpose file systems. HDFS is designed more for batch processing rather than interactive use by users. The emphasis is on high throughput of data access rather than low latency of data access. POSIX imposes many hard requirements that are not needed for applications that are targeted for HDFS. POSIX semantics in a few key areas has been traded to increase data throughput rates.
-2.3. Large Data Sets
-Applications that run on HDFS have large data sets. A typical file in HDFS is gigabytes to terabytes in size. Thus, HDFS is tuned to support large files. It should provide high aggregate data bandwidth and scale to hundreds of nodes in a single cluster. It should support tens of millions of files in a single instance.
-Page 3
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS Architecture
-2.4. Simple Coherency Model
-HDFS applications need a write-once-read-many access model for files. A file once created, written, and closed need not be changed. This assumption simplifies data coherency issues and enables high throughput data access. A Map/Reduce application or a web crawler application fits perfectly with this model. There is a plan to support appending-writes to files in the future.
-2.5. “Moving Computation is Cheaper than Moving Data”
-A computation requested by an application is much more efficient if it is executed near the data it operates on. This is especially true when the size of the data set is huge. This minimizes network congestion and increases the overall throughput of the system. The assumption is that it is often better to migrate the computation closer to where the data is located rather than moving the data to where the application is running. HDFS provides interfaces for applications to move themselves closer to where the data is located.
-2.6. Portability Across Heterogeneous Hardware and Software Platforms
-HDFS has been designed to be easily portable from one platform to another. This facilitates widespread adoption of HDFS as a platform of choice for a large set of applications.</li>
-<li>NameNode and DataNodes
-HDFS has a master/slave architecture. An HDFS cluster consists of a single NameNode, a master server that manages the file system namespace and regulates access to files by clients. In addition, there are a number of DataNodes, usually one per node in the cluster, which manage storage attached to the nodes that they run on. HDFS exposes a file system namespace and allows user data to be stored in files. Internally, a file is split into one or more blocks and these blocks are stored in a set of DataNodes. The NameNode executes file system namespace operations like opening, closing, and renaming files and directories. It also determines the mapping of blocks to DataNodes. The DataNodes are responsible for serving read and write requests from the file system’s clients. The DataNodes also perform block creation, deletion, and replication upon instruction from the NameNode.
-Page 4
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-<img src="" alt=""> HDFS Architecture
-The NameNode and DataNode are pieces of software designed to run on commodity machines. These machines typically run a GNU/Linux operating system (OS). HDFS is built using the Java language; any machine that supports Java can run the NameNode or the DataNode software. Usage of the highly portable Java language means that HDFS can be deployed on a wide range of machines. A typical deployment has a dedicated machine that runs only the NameNode software. Each of the other machines in the cluster runs one instance of the DataNode software. The architecture does not preclude running multiple DataNodes on the same machine but in a real deployment that is rarely the case. The existence of a single NameNode in a cluster greatly simplifies the architecture of the system. The NameNode is the arbitrator and repository for all HDFS metadata. The system is designed in such a way that user data never flows through the NameNode.</li>
-<li>The File System Namespace
-HDFS supports a traditional hierarchical file organization. A user or an application can create directories and store files inside these directories. The file system namespace hierarchy is
-Page 5
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS Architecture
-similar to most other existing file systems; one can create and remove files, move a file from one directory to another, or rename a file. HDFS does not yet implement user quotas or access permissions. HDFS does not support hard links or soft links. However, the HDFS architecture does not preclude implementing these features. The NameNode maintains the file system namespace. Any change to the file system namespace or its properties is recorded by the NameNode. An application can specify the number of replicas of a file that should be maintained by HDFS. The number of copies of a file is called the replication factor of that file. This information is stored by the NameNode.</li>
-<li>Data Replication
-HDFS is designed to reliably store very large files across machines in a large cluster. It stores each file as a sequence of blocks; all blocks in a file except the last block are the same size. The blocks of a file are replicated for fault tolerance. The block size and replication factor are configurable per file. An application can specify the number of replicas of a file. The replication factor can be specified at file creation time and can be changed later. Files in HDFS are write-once and have strictly one writer at any time. The NameNode makes all decisions regarding replication of blocks. It periodically receives a Heartbeat and a Blockreport from each of the DataNodes in the cluster. Receipt of a Heartbeat implies that the DataNode is functioning properly. A Blockreport contains a list of all blocks on a DataNode.
-Page 6
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-<img src="" alt=""> HDFS Architecture
-5.1. Replica Placement: The First Baby Steps
-The placement of replicas is critical to HDFS reliability and performance. Optimizing replica placement distinguishes HDFS from most other distributed file systems. This is a feature that needs lots of tuning and experience. The purpose of a rack-aware replica placement policy is to improve data reliability, availability, and network bandwidth utilization. The current implementation for the replica placement policy is a first effort in this direction. The short-term goals of implementing this policy are to validate it on production systems, learn more about its behavior, and build a foundation to test and research more sophisticated policies. Large HDFS instances run on a cluster of computers that commonly spread across many racks. Communication between two nodes in different racks has to go through switches. In most cases, network bandwidth between machines in the same rack is greater than network bandwidth between machines in different racks. The NameNode determines the rack id each DataNode belongs to via the process outlined in Rack Awareness. A simple but non-optimal policy is to place replicas on unique racks. This prevents losing data when an entire rack fails and allows use of bandwidth from multiple
-Page 7
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS Architecture
-racks when reading data. This policy evenly distributes replicas in the cluster which makes it easy to balance load on component failure. However, this policy increases the cost of writes because a write needs to transfer blocks to multiple racks. For the common case, when the replication factor is three, HDFS’s placement policy is to put one replica on one node in the local rack, another on a different node in the local rack, and the last on a different node in a different rack. This policy cuts the inter-rack write traffic which generally improves write performance. The chance of rack failure is far less than that of node failure; this policy does not impact data reliability and availability guarantees. However, it does reduce the aggregate network bandwidth used when reading data since a block is placed in only two unique racks rather than three. With this policy, the replicas of a file do not evenly distribute across the racks. One third of replicas are on one node, two thirds of replicas are on one rack, and the other third are evenly distributed across the remaining racks. This policy improves write performance without compromising data reliability or read performance. The current, default replica placement policy described here is a work in progress.
-5.2. Replica Selection
-To minimize global bandwidth consumption and read latency, HDFS tries to satisfy a read request from a replica that is closest to the reader. If there exists a replica on the same rack as the reader node, then that replica is preferred to satisfy the read request. If angg/ HDFS cluster spans multiple data centers, then a replica that is resident in the local data center is preferred over any remote replica.
-5.3. Safemode
-On startup, the NameNode enters a special state called Safemode. Replication of data blocks does not occur when the NameNode is in the Safemode state. The NameNode receives Heartbeat and Blockreport messages from the DataNodes. A Blockreport contains the list of data blocks that a DataNode is hosting. Each block has a specified minimum number of replicas. A block is considered safely replicated when the minimum number of replicas of that data block has checked in with the NameNode. After a configurable percentage of safely replicated data blocks checks in with the NameNode (plus an additional 30 seconds), the NameNode exits the Safemode state. It then determines the list of data blocks (if any) that still have fewer than the specified number of replicas. The NameNode then replicates these blocks to other DataNodes.</li>
-<li>The Persistence of File System Metadata
-Page 8
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS Architecture
-The HDFS namespace is stored by the NameNode. The NameNode uses a transaction log called the EditLog to persistently record every change that occurs to file system metadata. For example, creating a new file in HDFS causes the NameNode to insert a record into the EditLog indicating this. Similarly, changing the replication factor of a file causes a new record to be inserted into the EditLog. The NameNode uses a file in its local host OS file system to store the EditLog. The entire file system namespace, including the mapping of blocks to files and file system properties, is stored in a file called the FsImage. The FsImage is stored as a file in the NameNode’s local file system too. The NameNode keeps an image of the entire file system namespace and file Blockmap in memory. This key metadata item is designed to be compact, such that a NameNode with 4 GB of RAM is plenty to support a huge number of files and directories. When the NameNode starts up, it reads the FsImage and EditLog from disk, applies all the transactions from the EditLog to the in-memory representation of the FsImage, and flushes out this new version into a new FsImage on disk. It can then truncate the old EditLog because its transactions have been applied to the persistent FsImage. This process is called a checkpoint. In the current implementation, a checkpoint only occurs when the NameNode starts up. Work is in progress to support periodic checkpointing in the near future. The DataNode stores HDFS data in files in its local file system. The DataNode has no knowledge about HDFS files. It stores each block of HDFS data in a separate file in its local file system. The DataNode does not create all files in the same directory. Instead, it uses a heuristic to determine the optimal number of files per directory and creates subdirectories appropriately. It is not optimal to create all local files in the same directory because the local file system might not be able to efficiently support a huge number of files in a single directory. When a DataNode starts up, it scans through its local file system, generates a list of all HDFS data blocks that correspond to each of these local files and sends this report to the NameNode: this is the Blockreport.</li>
-<li>The Communication Protocols
-All HDFS communication protocols are layered on top of the TCP/IP protocol. A client establishes a connection to a configurable TCP port on the NameNode machine. It talks the ClientProtocol with the NameNode. The DataNodes talk to the NameNode using the DataNode Protocol. A Remote Procedure Call (RPC) abstraction wraps both the Client Protocol and the DataNode Protocol. By design, the NameNode never initiates any RPCs. Instead, it only responds to RPC requests issued by DataNodes or clients.</li>
-<li>Robustness
-The primary objective of HDFS is to store data reliably even in the presence of failures. The
-Page 9
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS Architecture
-three common types of failures are NameNode failures, DataNode failures and network partitions.
-8.1. Data Disk Failure, Heartbeats and Re-Replication
-Each DataNode sends a Heartbeat message to the NameNode periodically. A network partition can cause a subset of DataNodes to lose connectivity with the NameNode. The NameNode detects this condition by the absence of a Heartbeat message. The NameNode marks DataNodes without recent Heartbeats as dead and does not forward any new IO requests to them. Any data that was registered to a dead DataNode is not available to HDFS any more. DataNode death may cause the replication factor of some blocks to fall below their specified value. The NameNode constantly tracks which blocks need to be replicated and initiates replication whenever necessary. The necessity for re-replication may arise due to many reasons: a DataNode may become unavailable, a replica may become corrupted, a hard disk on a DataNode may fail, or the replication factor of a file may be increased.
-8.2. Cluster Rebalancing
-The HDFS architecture is compatible with data rebalancing schemes. A scheme might automatically move data from one DataNode to another if the free space on a DataNode falls below a certain threshold. In the event of a sudden high demand for a particular file, a scheme might dynamically create additional replicas and rebalance other data in the cluster. These types of data rebalancing schemes are not yet implemented.
-8.3. Data Integrity
-It is possible that a block of data fetched from a DataNode arrives corrupted. This corruption can occur because of faults in a storage device, network faults, or buggy software. The HDFS client software implements checksum checking on the contents of HDFS files. When a client creates an HDFS file, it computes a checksum of each block of the file and stores these checksums in a separate hidden file in the same HDFS namespace. When a client retrieves file contents it verifies that the data it received from each DataNode matches the checksum stored in the associated checksum file. If not, then the client can opt to retrieve that block from another DataNode that has a replica of that block.
-8.4. Metadata Disk Failure
-The FsImage and the EditLog are central data structures of HDFS. A corruption of these files can cause the HDFS instance to be non-functional. For this reason, the NameNode can be configured to support maintaining multiple copies of the FsImage and EditLog. Any update
-Page 10
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS Architecture
-to either the FsImage or EditLog causes each of the FsImages and EditLogs to get updated synchronously. This synchronous updating of multiple copies of the FsImage and EditLog may degrade the rate of namespace transactions per second that a NameNode can support. However, this degradation is acceptable because even though HDFS applications are very data intensive in nature, they are not metadata intensive. When a NameNode restarts, it selects the latest consistent FsImage and EditLog to use. The NameNode machine is a single point of failure for an HDFS cluster. If the NameNode machine fails, manual intervention is necessary. Currently, automatic restart and failover of the NameNode software to another machine is not supported.
-8.5. Snapshots
-Snapshots support storing a copy of data at a particular instant of time. One usage of the snapshot feature may be to roll back a corrupted HDFS instance to a previously known good point in time. HDFS does not currently support snapshots but will in a future release.</li>
-<li>Data Organization
-9.1. Data Blocks
-HDFS is designed to support very large files. Applications that are compatible with HDFS are those that deal with large data sets. These applications write their data only once but they read it one or more times and require these reads to be satisfied at streaming speeds. HDFS supports write-once-read-many semantics on files. A typical block size used by HDFS is 64 MB. Thus, an HDFS file is chopped up into 64 MB chunks, and if possible, each chunk will reside on a different DataNode.
-9.2. Staging
-A client request to create a file does not reach the NameNode immediately. In fact, initially the HDFS client caches the file data into a temporary local file. Application writes are transparently redirected to this temporary local file. When the local file accumulates data worth over one HDFS block size, the client contacts the NameNode. The NameNode inserts the file name into the file system hierarchy and allocates a data block for it. The NameNode responds to the client request with the identity of the DataNode and the destination data block. Then the client flushes the block of data from the local temporary file to the specified DataNode. When a file is closed, the remaining un-flushed data in the temporary local file is transferred to the DataNode. The client then tells the NameNode that the file is closed. At this point, the NameNode commits the file creation operation into a persistent store. If the
-Page 11
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS Architecture
-NameNode dies before the file is closed, the file is lost. The above approach has been adopted after careful consideration of target applications that run on HDFS. These applications need streaming writes to files. If a client writes to a remote file directly without any client side buffering, the network speed and the congestion in the network impacts throughput considerably. This approach is not without precedent. Earlier distributed file systems, e.g. AFS, have used client side caching to improve performance. A POSIX requirement has been relaxed to achieve higher performance of data uploads.
-9.3. Replication Pipelining
-When a client is writing data to an HDFS file, its data is first written to a local file as explained in the previous section. Suppose the HDFS file has a replication factor of three. When the local file accumulates a full block of user data, the client retrieves a list of DataNodes from the NameNode. This list contains the DataNodes that will host a replica of that block. The client then flushes the data block to the first DataNode. The first DataNode starts receiving the data in small portions (4 KB), writes each portion to its local repository and transfers that portion to the second DataNode in the list. The second DataNode, in turn starts receiving each portion of the data block, writes that portion to its repository and then flushes that portion to the third DataNode. Finally, the third DataNode writes the data to its local repository. Thus, a DataNode can be receiving data from the previous one in the pipeline and at the same time forwarding data to the next one in the pipeline. Thus, the data is pipelined from one DataNode to the next.</li>
-<li>Accessibility
-HDFS can be accessed from applications in many different ways. Natively, HDFS provides a FileSystem Java API for applications to use. A C language wrapper for this Java API is also available. In addition, an HTTP browser can also be used to browse the files of an HDFS instance. Work is in progress to expose HDFS through the WebDAV protocol.
-10.1. FS Shell
-HDFS allows user data to be organized in the form of files and directories. It provides a commandline interface called FS shell that lets a user interact with the data in HDFS. The syntax of this command set is similar to other shells (e.g. bash, csh) that users are already familiar with. Here are some sample action/command pairs:
-Action Create a directory named /foodir Command bin/hadoop dfs -mkdir /foodir
-Page 12
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS Architecture
-Remove a directory named /foodir View the contents of a file named /foodir/myfile.txt
-bin/hadoop dfs -rmr /foodir bin/hadoop dfs -cat /foodir/myfile.txt
-FS shell is targeted for applications that need a scripting language to interact with the stored data.
-10.2. DFSAdmin
-The DFSAdmin command set is used for administering an HDFS cluster. These are commands that are used only by an HDFS administrator. Here are some sample action/command pairs:
-Action Put the cluster in Safemode Generate a list of DataNodes Recommission or decommission DataNode(s) Command bin/hadoop dfsadmin -safemode enter bin/hadoop dfsadmin -report bin/hadoop dfsadmin -refreshNodes
-10.3. Browser Interface
-A typical HDFS install configures a web server to expose the HDFS namespace through a configurable TCP port. This allows a user to navigate the HDFS namespace and view the contents of its files using a web browser.</li>
-<li>Space Reclamation
-11.1. File Deletes and Undeletes
-When a file is deleted by a user or an application, it is not immediately removed from HDFS. Instead, HDFS first renames it to a file in the /trash directory. The file can be restored quickly as long as it remains in /trash. A file remains in /trash for a configurable amount of time. After the expiry of its life in /trash, the NameNode deletes the file from the HDFS namespace. The deletion of a file causes the blocks associated with the file to be freed. Note that there could be an appreciable time delay between the time a file is deleted by a user and the time of the corresponding increase in free space in HDFS. A user can Undelete a file after deleting it as long as it remains in the /trash directory. If a user wants to undelete a file that he/she has deleted, he/she can navigate the /trash directory and retrieve the file. The /trash directory contains only the latest copy of the file
-Page 13
-Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS Architecture
-that was deleted. The /trash directory is just like any other directory with one special feature: HDFS applies specified policies to automatically delete files from this directory. The current default policy is to delete files from /trash that are more than 6 hours old. In the future, this policy will be configurable through a well defined interface.
-11.2. Decrease Replication Factor
-When the replication factor of a file is reduced, the NameNode selects excess replicas that can be deleted. The next Heartbeat transfers this information to the DataNode. The DataNode then removes the corresponding blocks and the corresponding free space appears in the cluster. Once again, there might be a time delay between the completion of the setReplication API call and the appearance of free space in the cluster.</li>
-<li>References
-Hadoop JavaDoc API. HDFS source code: <a href="http://hadoop.apache.org/core/version_control.html" target="_blank">http://hadoop.apache.org/core/version_control.html</a>
-Page 14
-Copyright © 2008 The Apache Software Foundation. All rights reserved.</li>
-</ol>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--hdfs_design/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--hdfs_design" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-zhiya-IT外企--一直都在注意Oracle的招聘信息/">一直都在注意Oracle的招聘信息</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-zhiya-IT外企--一直都在注意Oracle的招聘信息/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-oracle-">一直都在注意Oracle的招聘信息</h1>
-<p>一直都在注意Oracle的招聘信息，毕竟是世界第二大软件公司呀。可是，奇怪的是观察了很长的时间都没有发现任何招聘广告。并且，从我对它的初步了解来看，与微软，Google中国研发中心比起来，它显得那样的无声无息。终于有一天的早上，打开zhaopin.com，第一次发现了Oracle的招聘信息。高兴的是，里边包括若干个测试的职位。马上把简历投了过去。下午接到了电话，一听果然就是Oracle的，要跟我安排面试。Oracle的招聘比较奇怪，没有recruiter,都是hiring manager跟你联系。
-面试当天，早了几分钟来到公司，被前台领到一间会议室里面，给了一套试题来做。同屋已经有好几个人在做题了，心理顿感不爽。本来以为是要单独给我面试的，没想到竟然会跟大家一起做题。更没想到的是，当我打开试题的时候，我好像基本都不会做。实话实说，我并没有什么Oracle的技术背景，可是我觉得做测试也不需要懂这么多试题上的知识吧？硬着头皮做了两道，实在做不下去了，起身就走。到了前台，告诉他们我感觉这个面试不对劲。他们才反应过来给搞错了。忙着给我的hiring manager打电话，让我去了她那里。
-Hiring manager是个中年女士，看起来人就很nice。面试也是在一间会议室进行的，做了一屋子的人。看来对一个测试人员的面试也搞得挺隆重。Hiring manager并没有提问，第一个提问的是个技术大拿。他面试的场面我还从来没经历过。简单的说就是，他看着你简历问你问题，问得肯定是你做过的东西，但是，问得深度是特别的深，一般你还回答不上来。这种知识面，深度的人，到任何地方都是大拿。我是挺佩服的。第二个面试的可能是一个香港人，他主要是考察我的英文水平，用英文跟我聊了很长时间。第三个人主要是考察我的Linux的技术，很抱歉好久没有用Linux了，问我的很多简单的命令，本来我以前是会的，可是忘记了。不过，这个时候那个manager讲话了，说我的背景学Linux应该是很快的事情。然后我主要跟他们聊了自动化测试的东西，他们竟然还没有什么自动化的测试，基本还是靠手工测试。他们也希望我能够在自动化测试方面能够给公司带来些新鲜的东西。
-第二天，manager给我打电话，说美国的老板想跟我聊聊。与此同时，我也接受到美国的一封email,要跟我电话面试，搞得我有点迷惑。最后才知道，是两个不同的老板要跟我面试。定了周末两天的上午，因为对方是在加州，我们合适的时间只有每天的上午。第一天面试是一个中国人，不过我们全是用英文交谈的。看得出他对我很满意，多次给我说这个职位不是在他的team，如果对方的不要我，我可以来他的team。他是做日本方面的项目，另一个team是做 open source的项目。一直谈的都很愉快，直到谈到待遇的问题。说实话，我当时的目标是每月2万，不过由于微软，Google的情况还不明朗，不想再错过这次机会，因此就要了每月1.5万。没想到他却明确回答不能满足，并跟我说他们有很多福利等等。最后问我要多少钱，我就回答算上福利全年20万。实际上当时有点傻，因为月薪1.5万和加上福利年薪20万应该是差不多的。对方就没有再说什么，我们结束了谈话。第二天是个老外，主要谈一些技术的问题吧，我也没感觉是好是坏，因为昨天的人已经说过不行就去他的team了。
-不过，后来他们就再也没跟我联系过。我估计是我的要价太高了，而且我最近知道我一个朋友有多年的Oracle经验，刚刚进入他们那里，也不过是20万年薪。这样解释了我的一个疑惑。我当时就奇怪，堂堂一个Oracle怎么把研发中心放到上地。看来他们本身就不想投入太多。后来又听人说，这个中心的老板不地道，总之有一些rumor,不知道是真是假。
-我想当时如果我真想进的话，开口小点应该是没什么问题的。这里给大家介绍一个面试的经验，对方的技术你不熟悉可能不是一个大问题。面试的时候，一定要有自信，让对方知道你有能力，有激情，有头脑。并且，一定要大胆跟他们讨论一些你擅长的技术问题。让他们更细致的了解你的能力，留下与其他人不一样的印象，就更容易打动他们。还有一个经验就是，谈待遇的时候，如果你真的想进这个公司，你就不要说具体数目了，就说我很珍惜这个工作进会，我一直都期望能进入你们的公司，你们可以按照标准给我工资就可以了，我没什么特殊的要求。我后来的面试在待遇上都是如此回答的，并且都得到了offer。
-下次有时间，讲讲我去微软，北电面试的经验教训。</p>
-<p>来源： <a href="[http://www.linuxdiyf.com/viewarticle.php?id=97760](http://www.linuxdiyf.com/viewarticle.php?id=97760)">[http://www.linuxdiyf.com/viewarticle.php?id=97760](http://www.linuxdiyf.com/viewarticle.php?id=97760)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/zhiya/">zhiya</a></li></span><span class="breadcrumb"><li><a href="/categories/职涯/">职涯</a></li><li><a href="/categories/职涯/IT外企/">IT外企</a></li></span></span> | <span class="tags">Tagged <a href="/tags/IT外企/" class="label label-primary">IT外企</a><a href="/tags/zhiya/" class="label label-success">zhiya</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-zhiya-IT外企--一直都在注意Oracle的招聘信息/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-zhiya-IT外企--一直都在注意Oracle的招聘信息" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事7：做一个优秀的基层/">IT外企那点儿事(7)：做一个优秀的基层</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事7：做一个优秀的基层/">feb. 2 2014</a></time></span>      
@@ -820,6 +600,401 @@ Copyright © 觉先</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事5：像系统一样升级/">IT外企那点儿事(5)：像系统一样升级</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事5：像系统一样升级/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="it-5-">IT外企那点儿事(5)：像系统一样升级</h1>
+<p><a href=""></a></p>
+<h1 id="-http-www-cnblogs-com-forfuture1978-"><a href="http://www.cnblogs.com/forfuture1978/" target="_blank">觉先</a></h1>
+<p>  <a href="http://www.cnblogs.com/" target="_blank">博客园</a> :: <a href="http://www.cnblogs.com/forfuture1978/" target="_blank">首页</a> :: <a href="http://q.cnblogs.com/" target="_blank">博问</a> :: <a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a> :: <a href="http://www.cnblogs.com/forfuture1978/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a> :: <a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" target="_blank">联系</a> :: <a href="http://www.cnblogs.com/forfuture1978/rss" target="_blank">订阅</a> <a href="http://www.cnblogs.com/forfuture1978/rss" target="_blank"><img src="" alt="订阅"></a> :: <a href="http://www.cnblogs.com/forfuture1978/admin/EditPosts.aspx" target="_blank">管理</a> :: <img src="" alt="">   130 随笔 :: 0 文章 :: 544 评论 :: 0 引用
+<a href="">&lt;</a>2010年5月<a href="">&gt;</a>日一二三四五六252627282930<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/01.html" target="_blank">1</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/02.html" target="_blank">2</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/03.html" target="_blank">3</a>4<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/05.html" target="_blank">5</a>67<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/08.html" target="_blank">8</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/09.html" target="_blank">9</a>101112<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/13.html" target="_blank">13</a>1415<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/16.html" target="_blank">16</a>1718<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/19.html" target="_blank">19</a>2021<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/22.html" target="_blank">22</a>23<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/24.html" target="_blank">24</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/25.html" target="_blank">25</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/26.html" target="_blank">26</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/27.html" target="_blank">27</a>2829303112345</p>
+<h3 id="-">公告</h3>
+<p>昵称：<a href="http://home.cnblogs.com/u/forfuture1978/" target="_blank">觉先</a>
+园龄：<a href="http://home.cnblogs.com/u/forfuture1978/" title="入园时间：2009-12-10" target="_blank">3年7个月</a>
+荣誉：<a href="http://www.cnblogs.com/expert/" target="_blank">推荐博客</a>
+粉丝：<a href="http://home.cnblogs.com/u/forfuture1978/followers/" target="_blank">560</a>
+关注：<a href="http://home.cnblogs.com/u/forfuture1978/followees/" target="_blank">3</a></p>
+<p><a href="">+加关注</a></p>
+<h3 id="-">搜索</h3>
+<h3 id="-">常用链接</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/MyPosts.html" target="_blank">我的随笔</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/MyComments.html" target="_blank">我的评论</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/OtherPosts.html" title="我发表过评论的随笔" target="_blank">我的参与</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/RecentComments.html" target="_blank">最新评论</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/tag/" target="_blank">我的标签</a></li>
+</ul>
+<h3 id="-">随笔分类</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300670.html" target="_blank">Hadoop原理与代码分析(7)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300669.html" target="_blank">IT外企那点儿事(12)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345798.html" target="_blank">Java(2)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345797.html" target="_blank">Linux(14)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300665.html" target="_blank">Lucene原理与代码分析(38)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300666.html" target="_blank">长尾理论(16)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345794.html" target="_blank">管理学(10)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345800.html" target="_blank">经济学(4)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345796.html" target="_blank">算法(1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345795.html" target="_blank">闲话IT业(3)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300667.html" target="_blank">心理学与管理学效应(9)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300668.html" target="_blank">组织行为学(15)</a></li>
+</ul>
+<h3 id="-">随笔档案</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11.html" target="_blank">2012年11月 (3)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/01.html" target="_blank">2012年1月 (5)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2011/12.html" target="_blank">2011年12月 (6)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2011/10.html" target="_blank">2011年10月 (3)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2011/09.html" target="_blank">2011年9月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/11.html" target="_blank">2010年11月 (8)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/10.html" target="_blank">2010年10月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/09.html" target="_blank">2010年9月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08.html" target="_blank">2010年8月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/07.html" target="_blank">2010年7月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06.html" target="_blank">2010年6月 (6)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05.html" target="_blank">2010年5月 (22)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/04.html" target="_blank">2010年4月 (18)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/03.html" target="_blank">2010年3月 (8)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/02.html" target="_blank">2010年2月 (39)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/01.html" target="_blank">2010年1月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2009/12.html" target="_blank">2009年12月 (6)</a></li>
+</ul>
+<h3 id="-">相册</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/gallery/247104.html" target="_blank">IT外企那点儿事</a></li>
+</ul>
+<h3 id="-">最新评论</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html#2727561" target="_blank">1. Re:IT外企那点儿事(12)：也说跳槽</a></li>
+<li>楼主怎么之后没有更新hadoop的相关信息了呢？是没有再研究了吗？</li>
+<li>--lyeoswu</li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html#2713121" target="_blank">2. Re:Lucene 原理与代码分析完整版</a></li>
+<li>提个建议，你生成的pdf中没有目录，影响阅读，用office转制的过程中其实设置一下即可，方便大众嘛~，还望能发我一份，谢谢！
+sendreams@hotmail.com</li>
+<li>--sendreams</li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html#2712415" target="_blank">3. Re:IT外企那点儿事(12)：也说跳槽</a></li>
+<li><a href="&quot;查看所回复的评论&quot;">@</a>mojunbin
+现在这公司，本来做的Siverlight，我进去后没多久就转JAVA了，最近在公司折腾JAVA的一些东西，业余时间玩玩游戏，看看CLR、并折腾linux。现在观点有所转变，觉得学技术更多的是为了扩宽思维、提高眼界</li>
+<li>--峰顶飞龙</li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html#2711923" target="_blank">4. Re:IT外企那点儿事(12)：也说跳槽</a></li>
+<li><a href="&quot;查看所回复的评论&quot;">@</a>峰顶飞龙
+您的经历和我差不多，呵呵。不晓得现在兄弟在搞C/C++呢？</li>
+<li>--mojunbin</li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/11/23/1884967.html#2708814" target="_blank">5. Re:Hadoop学习总结之五：Hadoop的运行痕迹</a></li>
+<li>楼主你好，在远程调试MapReduce时，本地代码进入不了自定义的job类，而是进入到Credentials class中，此类在hadoop-core-1.0.4.jar中，请问楼主在调试过程可否遇到此问题？</li>
+<li>--彭莉珊</li>
+</ul>
+<h3 id="-">阅读排行榜</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08/04/1791660.html" target="_blank">1. IT外企那点儿事(8)：又是一年加薪时(26799)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html" target="_blank">2. Lucene 原理与代码分析完整版(25616)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/02/23/1671909.html" target="_blank">3. 从技术生命周期看IT历史(20878)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2009/12/21/1628546.html" target="_blank">4. 101个著名的管理学及心理学效应(20828)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/11/14/1877086.html" target="_blank">5. Hadoop学习总结之三：Map-Reduce入门(18681)</a></li>
+</ul>
+<h3 id="-">评论排行榜</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html" target="_blank">1. Lucene 原理与代码分析完整版(68)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/05/1727644.html" target="_blank">2. IT外企那点儿事(4)：激动人心的入职演讲(39)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/13/1734162.html" target="_blank">3. IT外企那点儿事(6)：管理路线和技术路线(37)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08/04/1791660.html" target="_blank">4. IT外企那点儿事(8)：又是一年加薪时(35)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html" target="_blank">5. IT外企那点儿事(12)：也说跳槽(33)</a></li>
+</ul>
+<h3 id="-">推荐排行榜</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html" target="_blank">1. Lucene 原理与代码分析完整版(55)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/03/1726200.html" target="_blank">2. IT外企那点儿事(3)：奇怪的面试(39)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08/04/1791660.html" target="_blank">3. IT外企那点儿事(8)：又是一年加薪时(36)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html" target="_blank">4. IT外企那点儿事(12)：也说跳槽(34)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/13/1734162.html" target="_blank">5. IT外企那点儿事(6)：管理路线和技术路线(27)</a></li>
+</ul>
+<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/09/1730857.html" target="_blank">IT外企那点儿事(5)：像系统一样升级</a></p>
+<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/04/30/1725341.html" target="_blank">IT外企那点儿事(1)：外企也就那么回事</a></p>
+<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/02/1725948.html" target="_blank">IT外企那点儿事(2)：多种多样的外企</a></p>
+<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/03/1726200.html" target="_blank">IT外企那点儿事(3)：奇怪的面试</a></p>
+<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/05/1727644.html" target="_blank">IT外企那点儿事(4)：激动人心的入职演讲</a></p>
+<p>进行完入职培训，便开启了你在外企中的程序人生了，需要说明的是，此文章不仅限外企。</p>
+<p>如果待足够长的时间，你将从程序员，高级程序员，team lead，一直到manager，甚至director。</p>
+<p>我们姑且宏观审视一下此过程，然后再品味一个个细节。</p>
+<p>然而审视的过程猛然发现，所谓程序员就是把自己作为程序的人。</p>
+<p>《道德经》第四十二章：道生一，一生二，二生三，三生万物。</p>
+<p>此句大概说明的是宇宙万物发展变化的过程，而道则为宇宙万物运行的规律。</p>
+<p>万事万物都有自身的规律，万有引力是规律，相对论是规律，而天天陪伴在我们程序员身边的算法，操作系统，计算机组成等，也可以看成大自然众多规律中的一小部分，也只有掌握好这些规律，我们才能掌控好计算机的运行。</p>
+<p>系统的开发，程序员的升级又何尝不是经历了这样一个过程呢？</p>
+<h2 id="-"><strong>一、认识规律：道</strong></h2>
+<p>做一个系统，首先要掌握此项目所需要的技术，如果相关技术没有使用过，则此项技术就是一门尚未认知的规律。在项目开始之前，必须要系统性的认知相关的技术，否则面临较大的风险。</p>
+<p>做一个程序员，首先要掌握计算机方面的知识，对知识的掌握，同样需要系统性，否则职业生涯也会面临很大的困难。</p>
+<p><strong>系统性在此阶段至关重要。</strong></p>
+<p>如果在项目中，对相关的技术没有系统性的认识，则会造成以下后果：</p>
+<ul>
+<li>设计出的系统不具有扩展性</li>
+<li>应用了笨拙的方式设计程序</li>
+<li>出现Bug时无所适从</li>
+</ul>
+<p>不知道大家是否参加过这样的项目开发过程，由于时间紧任务重，项目组在没有一个人系统了解某项技术的时候就进行了开发，大家只好从网上下载一些Sample code来通过复制粘贴来拼凑程序，甚至连每一项配置或每一行代码都没搞清楚，就照猫画虎的拿过来用了，这样不但到了后期，系统几乎没有任何扩展性，并且任何不同于Sample code的灵活的改动都是一件十分痛苦的事情，项目组就像眉头苍蝇一样四处乱改乱闯，但并不清楚每一次改动的真正后果，这样要进行大量的尝试和返工，最后整的整个项目组很累，还没有效果，这个过程我称之为“盲试”，也即在不明白原理的情况下靠反复的体力劳动，逐一遍历所有自己认为可能的修改。</p>
+<p>“盲试”是初入职场的程序员经常犯的错误，初入职场，信心百倍，情绪高涨，急于出成果是多数时候的心态，当一个任务下达到手中的时候，并不是系统的阅读文档，进行方案评估以及框架设计(这些其实都是磨刀不误砍柴工的事情)，而是急着上手来做，可能在项目的早期，能够很快的出效果，但是随着项目的进行，维护成本越来越大，经常加班，而效果甚微。而对有经验的程序员来讲，前期进行了良好的设计，后期添加模块，需求的灵活变动是相对轻松的事情。</p>
+<p>其实也可以理解这种状况的出现，毕竟老板都是心狠手辣的，才不会给你那么多事件做调研，程序员总是有一种被皮鞭赶着走的感觉，从而根本无法系统性的掌握技术和框架设计。这也是面试了很多程序员，每每都号称做过A,B,C项目，分别应用了a,b,c的技术，然而往深入问的时候发现，他们对技术a,b,c的了解也就仅限于A,B,C项目中，对其他一无所知了。</p>
+<p>没有系统性的认识技术，则可能写出很多笨拙的程序，丑陋的实现。因为你只知其一，不知其二，只知其然，不知其所以然，本来人家框架中有高效的现成的技术实现这一方面的功能，你不知道，于是根据自己了解的片面技术勉强拼凑成功能，自然也实现了效果，然而当自己开始看这方面的经典书籍的时候，不禁感慨：“咳，原来能够很简单搞定的，当时竟然笨笨的写N多的代码。”</p>
+<p>没有系统性的认识技术，出现Bug的时候比添加新模块更痛苦，因为不明白原理，所以只能从表面现象去猜，然后又是进行“盲试”的过程。</p>
+<p>因而对技术的系统性认识，实在是不但对项目负责，更是对自己负责的一件事情。如果老板是技术型的，在估计项目时间的时候，应该劝说其将这方面考虑进去，如果老板是非技术型的，则程序员也应该自己留下缓冲时间。不然你辛辛苦苦白天八小时给老板了，晚上再加班几个小时又给老板了，你自己如何进步呢？</p>
+<p>如果对于程序员，对计算机方面的技术没有系统性的认识，同样存在上述的问题。</p>
+<p>你的职业生涯同样没有扩展性。如果不能够系统的掌握算法，数据结构，操作系统，计算机网络，计算机组成等基础知识，在程序员的初期可能不明显，随便培训培训也能写出不错的程序，然而当转换方向或者平台的时候，会面临很大的痛苦。而我们能够看到的身边的优秀程序员们，无论让他们做C,C++还是Java，无论是linux还是windows，他们都能够很快的上手，是因为基础好的缘故。</p>
+<p>项目和程序员认识规律的方式，其实也无非读书，文档，及原型开发(对于程序员来说，实习阶段相当于Prototyping)。</p>
+<p><strong>总结：项目或程序员的第一阶段：悟道，关键词：“系统性”</strong></p>
+<h2 id="-">#</h2>
+<h2 id="-"><strong>二、道生一</strong></h2>
+<p>当掌握了项目相关的道，也即技术的时候，就要真正的进入项目开发了。</p>
+<p>当前的项目，仍然由一个进程组成的系统比较少了，由于数据量的增大，基本都会开发多节点的分布式系统，然而再复杂的系统，也基本是从单节点系统开始做的，也即所谓道生一的过程。</p>
+<p>当掌握了计算机相关技术的时候，你就可以成为一个真正的程序员了。当然不可能让你一开始就管理一个项目组，此时唯一要管理好的，是你自己。</p>
+<p><strong>开放性和扎实性是此阶段的重中之重。</strong></p>
+<p>对于项目来讲，一个好的单节点系统，所谓开放，就是即便设计单节点的系统，也要站在设计多节点的系统的角度来考虑，使做出来的系统更加容易被扩展成多节点的系统。所谓扎实，就是单节点系统要麻雀虽小，五脏俱全，扎扎实实的实现大部分功能，并有相当量的测试用例来保证功能的正确。</p>
+<p>否则会造成以下后果：</p>
+<ul>
+<li>当做多节点系统时候，发现单节点系统需要大量修改，甚至等于白做，重新开始。</li>
+<li>单节点不稳定，以至于多节点时Bug丛生，但不知道是因为错误出在多节点实现部分，还是单节点部分，较难定位。</li>
+<li>没有足够的测试用例，当为了多节点进行修改的时候，不能保证的功能实现仍然行为正确。</li>
+</ul>
+<p>假设做一个100个节点的项目，要100天时间的话，并非每个节点要1天的时间，而是第一个节点就需要30天的时间，当第一个节点做好之后，扩展后面是很自然的事情，然而如果第一个节点做不好，每天都做一个节点，每天都把昨天做的设计推翻然后重做，怕是100天也完不成100个节点。这个例子比较极端，然而在我们周围没有发生过吗？</p>
+<p>对于程序员来讲，做一个好的螺丝钉，同样需要开放和扎实。</p>
+<p>所谓开放，就是我们虽然仅仅是最最低级的员工，可能整个系统的架构根本轮不到我们，但是这并不表明我们只盯着自己的一亩三分地，完成功能了事，而是要经常站在整个项目的角度考虑问题。不想当将军的士兵不是好士兵，建议做一下几件事情：</p>
+<ul>
+<li>在项目的各种会议上，经常站在项目经理和架构师的角度考虑问题，要是自己会如何设计，前辈们为何这样设计，然后多问前辈问题。虽然最初的想法比较幼稚，但可以不说出来，但是长时间这样思考，会发现自己的设计水平会突飞猛进的，慢慢的，你会发现你能够在会议中给出一些建议，然后你会发现能够发现前辈设计中的一些缺陷，然后你会发现你能够对当前的设计提供恰当的改进方案，终于有一天你发现你不再是一个单节点的普通程序员了。</li>
+<li>除了完成自己的功能外，多看一看前辈们实现过的代码，用自己的方式手绘一些他们的架构图，记下不太明白的部分及觉得很优秀可以借鉴的部分。</li>
+<li>尝试在自己的模块中(可能最初是很小很小的模块)尝试使用学到架构。</li>
+<li>可以重读或新读一些经典书籍，争取能够用业界内公认的理论来解释自己接触到的设计及架构，使得从感性认识上升到理性认识。比如原来前辈们写这些类，用的是这种设计模式，它还有以下的优点和缺点，适合设计怎么样的系统。这样不但有利于我们在以后的项目中恰当的使用已掌握的设计，而且也有利于向他人准确的描述项目。试想在面试中，一个专业术语要比杂七杂八的列一大筐类更显水平吧。</li>
+<li>可以在餐桌上，向自己的同学，朋友描述一下学到的架构，让你的朋友往细节里问，不确定的回去再下功夫，争取做到虽然你只是项目中的一个螺丝钉，但是好像你从头到尾设计了这个系统一样。</li>
+</ul>
+<p>这里要提醒一下大家，并不是所有的上司都喜欢要当将军的士兵和老问问题的员工，适当把握火候吧。</p>
+<p>所谓扎实，就是指对接触到的知识，都应该根据实践，结合理论，由点到面的掌握。在这个阶段，信息量是很大，要学的东西很多，往往对各种技术都接触一下，又对各种技术都浅尝辄止，最后形成样样通，样样松的局面，阻碍了自己的发展。面试的时候也经常发现一些应试者，掌握的东西仅仅局限于他做过的那个点上，相关知识的掌握非常弱，这自然会影响他从一个单节点程序员向多节点发展。因而每当在项目中接触到一方面的东西，除了上班完成项目外，下班后多看一些有关此方面的书，博客等，使得从知识点变成知识面，知其然，还要知其所以然，并了解存在的问题。当白天在MFC中拖完控件后，总应该读一些《深入浅出MFC》来了解其机制，读一下《windows核心编程》了解一下windows API及一些原理，最好读一下《windows internals》了解一下原理背后的故事，不然面试的时候如何向别人开口做过windows下的程序设计呢？总不能够创建过socket对象就声称会socket编程吧，至少看一下《UNIX Network Programming》。用过NFS怎么不把linux的filesystem的机制了解一下呢？</p>
+<p>当然这样是很累很费时间的，然而刚毕业的我们，没有经验，没有人脉，没有资金，有的不就是时间吗？</p>
+<p>珍惜刚毕业的这几年多多打实一下基础，等年纪大了，精力没这么旺盛了，很多事情要照顾了，还要靠这时候的老本啊。</p>
+<p><strong>总结：项目或程序员的第二阶段：道生一，关键词：“开放性”“扎实性”</strong></p>
+<h2 id="-">三、一生二</h2>
+<p>对于项目来讲，当单节点系统足够稳定的时候，是应该向client/server或者master/slave结果扩展的时候了，也即一生二的过程。</p>
+<p>对于程序员来讲，当你已经足够胜任个人工作的时候，是可以带一个实习生或者初级程序员了。</p>
+<p><strong>此步的关键即&quot;communication&quot;，沟通。</strong></p>
+<p>对于系统来讲，主要考虑的应该是节点之间如何通信，如何协作，采取何种协议。</p>
+<ul>
+<li>通信可以是面向连接的，也可以是不面向连接的。可以是同步的，也可以是异步的。</li>
+<li>通信是分层次的，不同的情况应用不同层次的协议，heartbeat用何种协议，内部数据块传输用何种协议，发布成service向外提供服务用何种协议，都是应该考虑的。</li>
+<li>数据的内部结构就想接口一样是要通过沟通商定的，便于解析又易于扩展，rpc? serialized object? xml? json? protocol buffer? 还是自己定义的格式？</li>
+<li>对于要经常访问的客户端，连接池是必须的，每次建立连接是很耗时的</li>
+<li>服务器端应该有对连接总数的限制，以及请求的分发，拥塞控制(并不一定是网络拥塞，而是某个阶段的处理相对较慢)</li>
+<li>通信模块在项目中不应该是任何两个需要通信的模块都要开发的，而是应该作为基础性模块，经过大量的测试后达到稳定，使得需要应用通信模块的人员能够集中精力在本身的逻辑上，当模块间协作出现故障的时候，不用担心是通信模块传错了的问题。</li>
+</ul>
+<p>对于程序员来讲，同样要考虑和实习生或初级程序员之间的通信协议问题。</p>
+<p>有的代码自己觉得写的很清楚，但是让新手上手的时候，如何能够准确的描述你的思路，想法，设计，遇到的困难呢？如何根据对方的反馈确认对方真实了解了你所表达的信息呢？有很多有经验的程序员，由于天天面对着电脑而疏于和人的沟通，可能会一肚子能耐却说不出来，非常可惜；而对于新人，他的回馈是懂了可并不一定代表他真的懂了，也可能是不懂又不敢说。</p>
+<ul>
+<li>重要的问题的沟通应该是同步的，也即面对面沟通，这样除了语言上的反馈，还能通过表情得到一定的反馈。任何问题都要事先划分为若干阶段，最好脑子中有张拓扑图，后一阶段的理解会依赖于前一阶段的理解，一股脑把所有的信息放在对方面前，任何人都会晕。每经历一个阶段，都要收集一次反馈，作为信息的发送方，可以通过事先准备一些关键点的问题来检测对方是否真正了解，作为接收方，可以通过&quot;你的意思是说。。。&quot;等以自己的方式重复对方的表达来进行反馈。</li>
+<li>注意拥塞控制，每一次的讨论争取一个小时内完成，再长效果会下降，接受者感觉信息被塞了满满一脑子，没有头绪，难有清晰的思路了。</li>
+<li>每次沟通都应该至少有会议记录和部分结论，不然讨论等于白讨论，否则会发生团队经常开会，但是总在讨论同样一些问题，感觉上好像每次都在头脑风暴，其实效率很差。</li>
+<li>对于重要的结论应该是面向连接的，也即书面(邮件，文档，wiki)告知，并有书面回复(ok, I am following the bug XXX)。</li>
+<li>可以建立一些连接池，也即沟通的特定上下文。经过一定时间的团队磨合，可以下意识的创造或达成共识的一些词汇来代替一定的上下文，可以提高沟通效率。比如&quot;明天甲系统出report&quot;，则程序员明白要有单元测试覆盖率报告，QA明白要有当前bug的报告，性能测试组应该有甲系统性能测试报告。</li>
+<li>沟通也是分层次的，最容易犯的错误的无论针对谁，写的文档，发的邮件都是一样的。其实针对不同层次的人，应该提供的信息不同，对于本团队人员，原理，架构，设计，测试，每步怎么做，结果如何，具体数据都应该说明，而对于其他团队的人员，具体的数据和每步怎么做就不需要了，对于项目经理，仅仅说明原理，架构，结论就可以了，对于高层来视察工作，原理加结果就行了。这也是为什么一篇文档有abstract,  summary, overview, concepts, detail, appendix等等部分，其实是对不同的人员看的。</li>
+</ul>
+<p><strong>总结：项目或程序员的第三阶段：一生二，关键词：“沟通”</strong></p>
+<h2 id="-">四、二生三</h2>
+<p>对于项目来讲，当Client/Server或者Master/Slave已经运行稳定，是应该开发一个Master多个Slave的时候了，即二生三的过程。</p>
+<p>对于程序员来讲，当你能够很好的带一个实习生或者初级程序员的时候，是可以成为一个小的Team lead了。</p>
+<p><strong>此步的关键是load balance，平衡。</strong></p>
+<p>对于系统来讲，负载均衡最重要的是两个目的：</p>
+<ul>
+<li>高可靠性：当一个服务器crash的时候，不至于影响对外提供服务。</li>
+<li>高性能：多台服务器可以并行的做事情，提供服务，加快相应时间。</li>
+</ul>
+<p>其实说到底，负载均衡采用的是Data partitioning(数据分块)或Data replication(数据复制)的方法。数据分块即按照某种策略，将某类请求全部指向某个服务器，比如说按照时间分块，例如邮件备份系统，可以将某个时间段的邮件全部放在一个服务器内，对这个时间段的查询全部指向此服务器；再比如按照地区分块，例如地图信息管理系统，将某个地区的数据全部放在一个服务器内。数据复制即将同样一部分数据复制多份，放在不同的服务器上，既保证高可靠性，又能将请求平均的分配给多个服务器，例如Google File system中将数据复制三份，大型网站的服务器也一般会将同一内容放在不同的服务器上。</p>
+<p>对于程序员来讲，沟通同样重要，但是不再是局限于一对一的沟通了，不再是能把问题表达清楚就可以了，而是要在团队内部保持平衡。无论是工作压力，项目有趣程度，培训机会，成长机会都应该平衡。</p>
+<p>也无非是两个目的：</p>
+<ul>
+<li>高可靠性：项目不会因为一个人的生病，休假，离职而影响项目的进度。</li>
+<li>高性能：整个团队的力量发挥出来，不至于一个人成为了瓶颈。</li>
+</ul>
+<p>所采用的不过也是数据分块和数据复制的方式。</p>
+<p>所谓数据分块，即不同的人负责不同的模块，比如一个负责前端，一个负责后端，或者一个负责开发，一个负责测试等，这能够带来高性能，因为每个人的专业化和经验会使得效率提高，但是同时带来的问题是高可靠性，如果转负责这个模块的人离开，换一个人将大大降低效率。工作压力也不能很好的平衡，往往一个系统的初期阶段，后端的开发十分忙，而前端相对较闲，而到了后期，前端开发非常忙，而后端已经稳定，因而较闲。况且，人不是机器，是有边际效应的，当负责一个模块时间一长，兴趣会大大降低，觉得没有成就感，成长也少了。因而数据复制的方式也是必要的，也即通过伙伴开发，Knowledge sharing，code review等方式，让不同模块的人之间相互了解对方的模块，从而带来高可靠性，也即一个人不在，其他的人可以较快的跟上，也可以在一个模块压力大的时候，其他人帮忙做一些辅助的东西，比如各种tool，测试用例，性能测试，甚至改一些优先级较低的bug，不仅平衡了工作压力，而且接触新的模块会使得员工有较大成长，也是工作更加有趣。</p>
+<p><strong>总结：项目或程序员的第四阶段：二生三，关键词：“平衡”</strong></p>
+<h2 id="-">五、三生万物</h2>
+<p>如果道生一，一生二，二生三是质变的过程，则三生万物是量变的过程。</p>
+<p>对于计算机系统来讲，如果一个master能够很好的平衡两三个slave，则可以很好的扩展到十个甚至百个，千个。但是原理是理想的，现实却是，当master管理的slave的数量达到一定的数目的时候，master就是一个瓶颈，master的高性能和高可靠性又成了问题，这时候可以用多个master进行数据复制从而负载平衡，也可以使得多个master每个管理一个group的slave，这时候就应该有master的master了，也即系统出现了分层。Hadoop的Multirack cluster就是这样的一棵树。</p>
+<p>对于团队的管理也是同样的，每个人的直接管理精力在10个人左右，多于这些人，往往会有很多疏漏的地方，或者疲惫不堪，因而，当一个团队成长的一定的程度的时候，也是需要分层的。当团队增长的15至20人的时候，应该考虑从现有的人员中选出master，也即team lead或者至少是coordinator，使得组织也成为了一棵树装。</p>
+<p><strong>总结：项目或程序人生的第五阶段：三生万物，关键词：“分层”</strong></p>
+<p>分类: <a href="http://www.cnblogs.com/forfuture1978/category/300669.html" target="_blank">IT外企那点儿事</a></p>
+<p>绿色通道： <a href="">好文要顶</a> <a href="">关注我</a> <a href="">收藏该文</a><a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" target="_blank">与我联系</a> <a href="&quot;分享至新浪微博&quot;"><img src="" alt=""></a>
+<a href="http://home.cnblogs.com/u/forfuture1978/" target="_blank"><img src="" alt=""></a></p>
+<p><a href="http://home.cnblogs.com/u/forfuture1978/" target="_blank">觉先</a>
+<a href="http://home.cnblogs.com/u/forfuture1978/followees" target="_blank">关注 - 3</a>
+<a href="http://home.cnblogs.com/u/forfuture1978/followers" target="_blank">粉丝 - 560</a></p>
+<p>荣誉：<a href="http://www.cnblogs.com/expert/" target="_blank">推荐博客</a>
+<a href="">+加关注</a></p>
+<p>18</p>
+<p>0
+(请您对文章做出评价)</p>
+<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/08/1730201.html" target="_blank">«</a> 上一篇：<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/08/1730201.html" title="发布于2010-05-08 00:21" target="_blank">Lucene学习总结之八：Lucene的查询语法，JavaCC及QueryParser(2)</a>
+<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/13/1734162.html" target="_blank">»</a> 下一篇：<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/13/1734162.html" title="发布于2010-05-13 01:51" target="_blank">IT外企那点儿事(6)：管理路线和技术路线</a>
+posted on 2010-05-09 01:10 <a href="http://www.cnblogs.com/forfuture1978/" target="_blank">觉先</a> 阅读(6603) 评论(28) <a href="http://www.cnblogs.com/forfuture1978/admin/EditPosts.aspx?postid=1730857" target="_blank">编辑</a> <a href="">收藏</a></p>
+<p><a href=""></a></p>
+<h3 id="-">评论</h3>
+<p><a href="">/#1楼</a><a href=""></a>  2010-05-09 01:29  <a href="http://www.cnblogs.com/Jax/">Jianqiang Bao</a> <a href="http://space.cnblogs.com/msg/send/Jianqiang+Bao" title="发送站内短消息" target="_blank"> </a></p>
+<p>下一章是离职吧 ：)</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u13430.jpg" target="_blank">http://pic.cnitblog.com/face/u13430.jpg</a></p>
+<p><a href="">/#2楼</a><a href=""></a>  2010-05-09 01:35  <a href="http://www.cnblogs.com/pinpkm/">个人知识管理</a> <a href="http://space.cnblogs.com/msg/send/%e4%b8%aa%e4%ba%ba%e7%9f%a5%e8%af%86%e7%ae%a1%e7%90%86" title="发送站内短消息" target="_blank"> </a></p>
+<p>太好了。我是一字一句看完后才写下。
+要是这样的资料能让更多程序员看到就好了。好的资料还是很稀缺的。
+但愿所有的人至少能看上三遍。反复阅读是最基本的个人知识管理的学习技巧。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#3楼</a><a href=""></a>  2010-05-09 09:21  <a href="http://www.cnblogs.com/Mainz/">Mainz</a> <a href="http://space.cnblogs.com/msg/send/Mainz" title="发送站内短消息" target="_blank"> </a></p>
+<p>顶了~看完留名</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u28306.png?id=23214645" target="_blank">http://pic.cnitblog.com/face/u28306.png?id=23214645</a></p>
+<p><a href="">/#4楼</a><a href=""></a>  2010-05-09 11:01  <a href="http://www.cnblogs.com/wing011203/">李胜攀</a> <a href="http://space.cnblogs.com/msg/send/%e6%9d%8e%e8%83%9c%e6%94%80" title="发送站内短消息" target="_blank"> </a></p>
+<p>太强了！</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/26980/20130411124002.png" target="_blank">http://pic.cnitblog.com/face/26980/20130411124002.png</a></p>
+<p><a href="">/#5楼</a><a href=""></a>  2010-05-09 11:29  <a href="http://home.cnblogs.com/u/56534/">o℃浪漫</a> <a href="http://space.cnblogs.com/msg/send/o%e2%84%83%e6%b5%aa%e6%bc%ab" title="发送站内短消息" target="_blank"> </a></p>
+<p>一字一句，仔细斟酌过！谢谢总结！</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#6楼</a><a href=""></a>  2010-05-09 12:04  <a href="http://www.cnblogs.com/coki/">Coki</a> <a href="http://space.cnblogs.com/msg/send/Coki" title="发送站内短消息" target="_blank"> </a></p>
+<p>和前四节文风和主旨好像有点脱节
+文章主旨似乎是在以软件工程的思路类比人的职业规划，但大量篇幅都是在讲软件开发的一些心得和要点，和职业规划没什么联动，对相似性的归纳描述不足。
+而且文章标题关键词是“升级”，按照这个文章系列的侧重，重点应该是个人自我能力的变化和升职的技巧，文章内容好像并没有什么关系。
+个人感觉这篇文章单独拉出来做一篇探讨项目管理心得的文章更好。
+仅本人一家之言，如有错误，还请谅解。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#7楼</a><a href=""></a>[楼主]  2010-05-09 17:30  <a href="http://www.cnblogs.com/forfuture1978/">觉先</a> <a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" title="发送站内短消息" target="_blank"> </a></p>
+<p><a href="&quot;查看所回复的评论&quot;">@</a>Coki
+谢谢您的建议，会在以后的写作中注意。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u103165.jpg" target="_blank">http://pic.cnitblog.com/face/u103165.jpg</a></p>
+<p><a href="">/#8楼</a><a href=""></a>  2010-05-09 21:32  <a href="http://www.cnblogs.com/fooxiaoqiang/">付晓强</a> <a href="http://space.cnblogs.com/msg/send/%e4%bb%98%e6%99%93%e5%bc%ba" title="发送站内短消息" target="_blank"> </a></p>
+<p>好文章啊，很喜欢，如果转载了，不会说我什么吧。毕竟是好东西，开源一下吧。谢谢博主了。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u131747.jpg" target="_blank">http://pic.cnitblog.com/face/u131747.jpg</a></p>
+<p><a href="">/#9楼</a><a href=""></a>[楼主]  2010-05-10 00:31  <a href="http://www.cnblogs.com/forfuture1978/">觉先</a> <a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" title="发送站内短消息" target="_blank"> </a></p>
+<p><a href="&quot;查看所回复的评论&quot;">@</a>付晓强
+转载没问题，写明出处和链接就可以了。
+谢谢您关注</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u103165.jpg" target="_blank">http://pic.cnitblog.com/face/u103165.jpg</a></p>
+<p><a href="">/#10楼</a><a href=""></a>  2010-05-10 08:43  <a href="http://www.cnblogs.com/yuphone/">.COM 缺氧®</a> <a href="http://space.cnblogs.com/msg/send/.COM+%e7%bc%ba%e6%b0%a7&amp;%23174%3b" title="发送站内短消息" target="_blank"> </a></p>
+<p>果断留名。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u97502.jpg" target="_blank">http://pic.cnitblog.com/face/u97502.jpg</a></p>
+<p><a href="">/#11楼</a><a href=""></a>  2010-05-10 09:55  <a href="http://www.cnblogs.com/jciwolf/">Jerry Qian</a> <a href="http://space.cnblogs.com/msg/send/Jerry+Qian" title="发送站内短消息" target="_blank"> </a></p>
+<p>期待离职</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#12楼</a><a href=""></a>  2010-05-10 14:32  <a href="http://www.cnblogs.com/fit/">别爱上哥，哥只是个传说！</a> <a href="http://space.cnblogs.com/msg/send/%e5%88%ab%e7%88%b1%e4%b8%8a%e5%93%a5%ef%bc%8c%e5%93%a5%e5%8f%aa%e6%98%af%e4%b8%aa%e4%bc%a0%e8%af%b4%ef%bc%81" title="发送站内短消息" target="_blank"> </a></p>
+<p>为我2亿7千万人民币而奋斗.</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#13楼</a><a href=""></a>  2010-05-10 17:21  <a href="http://www.cnblogs.com/starnc/">老子不服</a> <a href="http://space.cnblogs.com/msg/send/%e8%80%81%e5%ad%90%e4%b8%8d%e6%9c%8d" title="发送站内短消息" target="_blank"> </a></p>
+<p>很有点哲学的味道</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u47315.jpg" target="_blank">http://pic.cnitblog.com/face/u47315.jpg</a></p>
+<p><a href="">/#14楼</a><a href=""></a>  2010-05-10 22:13  <a href="http://www.cnblogs.com/liping13599168/">Leepy</a> <a href="http://space.cnblogs.com/msg/send/Leepy" title="发送站内短消息" target="_blank"> </a></p>
+<p>写得不错，顶一顶！</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u18497.jpg" target="_blank">http://pic.cnitblog.com/face/u18497.jpg</a></p>
+<p><a href="">/#15楼</a><a href=""></a>  2010-05-11 12:57  <a href="http://www.cnblogs.com/chinese-zmm/">chinese_submarine</a> <a href="http://space.cnblogs.com/msg/send/chinese_submarine" title="发送站内短消息" target="_blank"> </a></p>
+<p>不错，很受启发~</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u28698.png" target="_blank">http://pic.cnitblog.com/face/u28698.png</a></p>
+<p><a href="">/#16楼</a><a href=""></a>  2010-05-13 10:48  <a href="http://www.cnblogs.com/millen/">赵文星</a> <a href="http://space.cnblogs.com/msg/send/%e8%b5%b5%e6%96%87%e6%98%9f" title="发送站内短消息" target="_blank"> </a></p>
+<p>好文章，是经验积累的结晶。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#17楼</a><a href=""></a>  2010-05-13 22:56  <a href="http://www.cnblogs.com/likwo/">Likwo</a> <a href="http://space.cnblogs.com/msg/send/Likwo" title="发送站内短消息" target="_blank"> </a></p>
+<p>好文。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#18楼</a><a href=""></a>  2010-05-14 00:54  <a href="http://www.cnblogs.com/Gildor/">Ken Wang</a> <a href="http://space.cnblogs.com/msg/send/Ken+Wang" title="发送站内短消息" target="_blank"> </a></p>
+<p>写得很好。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#19楼</a><a href=""></a>  2010-05-14 08:45  <a href="http://www.cnblogs.com/cbcye/">Gary Zhang</a> <a href="http://space.cnblogs.com/msg/send/Gary+Zhang" title="发送站内短消息" target="_blank"> </a></p>
+<p>写得很细，这么走下来估计得个十五，二十年的时间吧。在这样浮躁的环境，急功近利的社会，不知道这样走过来的有多少人？</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#20楼</a><a href=""></a>  2010-05-14 13:04  <a href="http://www.cnblogs.com/kongyiyun/">空逸云</a> <a href="http://space.cnblogs.com/msg/send/%e7%a9%ba%e9%80%b8%e4%ba%91" title="发送站内短消息" target="_blank"> </a></p>
+<p>LZ.很感谢你能这样分享自己的经验,作为一名即将毕业的学生.以前,我不明白为什么说一个程序员到了30左右逐渐就不行了呢?除了体力跟不上,原来主要还是时间.您让我知道了外企与国企(或者说民企)的区别.在这之前.一直想着该怎么学下去,原本以为.只要一直持之以恒,努力专研.net Framework就可以.花个4~5年时间做到熟知,善用的地步..现在明白.学习不是只学框架,而更该注重思想的学习.总之.很感谢您.或者说.最后这两篇文章都与外企没多大的关系.但是还是很喜欢看.看着其他的前辈做过的路.能让我对前方的路看得更加清晰.能未雨绸缪.THX.希望LZ能多写些有关于程序员成长方面的文章,更多的把自己的经历记录下来,好让我们这些后生多多学习.</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u88464.jpg?id=20154053" target="_blank">http://pic.cnitblog.com/face/u88464.jpg?id=20154053</a></p>
+<p><a href="">/#21楼</a><a href=""></a>[楼主]  2010-05-14 13:22  <a href="http://www.cnblogs.com/forfuture1978/">觉先</a> <a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" title="发送站内短消息" target="_blank"> </a></p>
+<p><a href="&quot;查看所回复的评论&quot;">@</a>空逸云
+谢谢啊</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u103165.jpg" target="_blank">http://pic.cnitblog.com/face/u103165.jpg</a></p>
+<p><a href="">/#22楼</a><a href=""></a>  2010-05-17 13:23  <a href="http://home.cnblogs.com/u/125713/">东山飘雨，西关情</a> <a href="http://space.cnblogs.com/msg/send/%e4%b8%9c%e5%b1%b1%e9%a3%98%e9%9b%a8%ef%bc%8c%e8%a5%bf%e5%85%b3%e6%83%85" title="发送站内短消息" target="_blank"> </a></p>
+<p>写的不错</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#23楼</a><a href=""></a>  2010-05-22 17:00  <a href="http://www.cnblogs.com/awen177/">Vincent Zhou</a> <a href="http://space.cnblogs.com/msg/send/Vincent+Zhou" title="发送站内短消息" target="_blank"> </a></p>
+<p>文章写的非常好，想问下楼主是在外企工作了多久才有这般体会的？</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#24楼</a><a href=""></a>  2010-05-22 17:27  <a href="http://www.cnblogs.com/nbjkj/">nbjkj</a> <a href="http://space.cnblogs.com/msg/send/nbjkj" title="发送站内短消息" target="_blank"> </a></p>
+<p>作为名刚入职场的程序员很高兴能拜读你的文章，很实用，理清了很多东西，谢谢！</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u102166.jpg" target="_blank">http://pic.cnitblog.com/face/u102166.jpg</a></p>
+<p><a href="">/#25楼</a><a href=""></a>  2010-05-29 22:28  <a href="http://www.cnblogs.com/ccnet/">CCNet</a> <a href="http://space.cnblogs.com/msg/send/CCNet" title="发送站内短消息" target="_blank"> </a></p>
+<p>分享昰一種美德，留言亦是！</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#26楼</a><a href=""></a>  2011-05-17 21:39  <a href="http://www.cnblogs.com/heshizhu/">Alex木头</a> <a href="http://space.cnblogs.com/msg/send/Alex%e6%9c%a8%e5%a4%b4" title="发送站内短消息" target="_blank"> </a></p>
+<p>先佩服！
+很喜欢你说得这句话：刚毕业的我们，没有经验，没有人脉，没有资金，有的不就是时间吗？珍惜刚毕业的这几年多多打实一下基础，等年纪大了，精力没这么旺盛了，很多事情要照顾了，还要靠这时候的老本啊。
+说得多好啊！年轻的时候确实应该过努力下，想楼主学习。
+谢谢您的分享精神。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#27楼</a><a href=""></a>  2011-10-23 23:46  <a href="http://www.cnblogs.com/God-froest/">牛_</a> <a href="http://space.cnblogs.com/msg/send/%e7%89%9b_" title="发送站内短消息" target="_blank"> </a></p>
+<p>作为一个即将毕业的我来说，这文章无疑是我的航标，谢谢LZ，我会学习贵文章中的宝贵经验，并且做出总结或许自己也会无处其中新的道。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u306300.jpg?id=02194424" target="_blank">http://pic.cnitblog.com/face/u306300.jpg?id=02194424</a></p>
+<p><a href="">/#28楼</a><a href=""></a>22259362011/10/23 23:51:28  2011-10-23 23:51  <a href="http://www.cnblogs.com/God-froest/">牛_</a> <a href="http://space.cnblogs.com/msg/send/%e7%89%9b_" title="发送站内短消息" target="_blank"> </a></p>
+<p>为啥我的评论这么小？</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u306300.jpg?id=02194424" target="_blank">http://pic.cnitblog.com/face/u306300.jpg?id=02194424</a></p>
+<p><a href="">刷新评论</a><a href="">刷新页面</a><a href="">返回顶部</a></p>
+<p>注册用户登录后才能发表评论，请 <a href="">登录</a> 或 <a href="">注册</a>，<a href="http://www.cnblogs.com/" target="_blank">访问</a>网站首页。
+<a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园首页</a><a href="http://q.cnblogs.com/" title="程序员问答社区" target="_blank">博问</a><a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">新闻</a><a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a><a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a><a href="http://kb.cnblogs.com/" target="_blank">知识库</a></p>
+<p><strong>最新IT新闻</strong>:
+· <a href="http://news.cnblogs.com/n/182486/" target="_blank">新硬硬整合时代</a>
+· <a href="http://news.cnblogs.com/n/182485/" target="_blank">狗血的百度91并购案啊 阿里和周鸿祎都曾掺和</a>
+· <a href="http://news.cnblogs.com/n/182483/" target="_blank">如何让搜索引擎抓取AJAX内容？</a>
+· <a href="http://news.cnblogs.com/n/182482/" target="_blank">避免代码注释的五大理由</a>
+· <a href="http://news.cnblogs.com/n/182481/" target="_blank">OpenWrt——适用于路由器的Linux系统</a>
+» <a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">更多新闻...</a></p>
+<p><strong>最新知识库文章</strong>:
+· <a href="http://kb.cnblogs.com/page/141892/" target="_blank">阿里巴巴集团去IOE运动的思考与总结</a>
+· <a href="http://kb.cnblogs.com/page/182265/" target="_blank">硅谷归来7点分享：创业者，做你自己</a>
+· <a href="http://kb.cnblogs.com/page/182200/" target="_blank">我为什么不能坚持？</a>
+· <a href="http://kb.cnblogs.com/page/168725/" target="_blank">成为高效程序员的7个重要习惯</a>
+· <a href="http://kb.cnblogs.com/page/182047/" target="_blank">谈谈对BPM的理解</a>
+» <a href="http://kb.cnblogs.com/" target="_blank">更多知识库文章...</a>
+Powered by:
+<a href="http://www.cnblogs.com/" target="_blank">博客园</a>
+Copyright © 觉先</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/zhiya/">zhiya</a></li></span><span class="breadcrumb"><li><a href="/categories/职涯/">职涯</a></li><li><a href="/categories/职涯/IT外企/">IT外企</a></li></span></span> | <span class="tags">Tagged <a href="/tags/IT外企/" class="label label-primary">IT外企</a><a href="/tags/zhiya/" class="label label-success">zhiya</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事5：像系统一样升级/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-zhiya-IT外企--IT外企那点儿事5：像系统一样升级" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事6：管理路线和技术路线/">IT外企那点儿事(6)：管理路线和技术路线</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事6：管理路线和技术路线/">feb. 2 2014</a></time></span>      
@@ -1183,6 +1358,396 @@ Copyright © 觉先</p>
 
 
 
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事4：激动人心的入职演讲/">IT外企那点儿事(4)：激动人心的入职演讲</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事4：激动人心的入职演讲/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="it-4-">IT外企那点儿事(4)：激动人心的入职演讲</h1>
+<p><a href=""></a></p>
+<h1 id="-http-www-cnblogs-com-forfuture1978-"><a href="http://www.cnblogs.com/forfuture1978/" target="_blank">觉先</a></h1>
+<p>  <a href="http://www.cnblogs.com/" target="_blank">博客园</a> :: <a href="http://www.cnblogs.com/forfuture1978/" target="_blank">首页</a> :: <a href="http://q.cnblogs.com/" target="_blank">博问</a> :: <a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a> :: <a href="http://www.cnblogs.com/forfuture1978/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a> :: <a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" target="_blank">联系</a> :: <a href="http://www.cnblogs.com/forfuture1978/rss" target="_blank">订阅</a> <a href="http://www.cnblogs.com/forfuture1978/rss" target="_blank"><img src="" alt="订阅"></a> :: <a href="http://www.cnblogs.com/forfuture1978/admin/EditPosts.aspx" target="_blank">管理</a> :: <img src="" alt="">   130 随笔 :: 0 文章 :: 544 评论 :: 0 引用
+<a href="">&lt;</a>2010年5月<a href="">&gt;</a>日一二三四五六252627282930<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/01.html" target="_blank">1</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/02.html" target="_blank">2</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/03.html" target="_blank">3</a>4<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/05.html" target="_blank">5</a>67<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/08.html" target="_blank">8</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/09.html" target="_blank">9</a>101112<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/13.html" target="_blank">13</a>1415<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/16.html" target="_blank">16</a>1718<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/19.html" target="_blank">19</a>2021<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/22.html" target="_blank">22</a>23<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/24.html" target="_blank">24</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/25.html" target="_blank">25</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/26.html" target="_blank">26</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/27.html" target="_blank">27</a>2829303112345</p>
+<h3 id="-">公告</h3>
+<p>昵称：<a href="http://home.cnblogs.com/u/forfuture1978/" target="_blank">觉先</a>
+园龄：<a href="http://home.cnblogs.com/u/forfuture1978/" title="入园时间：2009-12-10" target="_blank">3年7个月</a>
+荣誉：<a href="http://www.cnblogs.com/expert/" target="_blank">推荐博客</a>
+粉丝：<a href="http://home.cnblogs.com/u/forfuture1978/followers/" target="_blank">560</a>
+关注：<a href="http://home.cnblogs.com/u/forfuture1978/followees/" target="_blank">3</a></p>
+<p><a href="">+加关注</a></p>
+<h3 id="-">搜索</h3>
+<h3 id="-">常用链接</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/MyPosts.html" target="_blank">我的随笔</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/MyComments.html" target="_blank">我的评论</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/OtherPosts.html" title="我发表过评论的随笔" target="_blank">我的参与</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/RecentComments.html" target="_blank">最新评论</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/tag/" target="_blank">我的标签</a></li>
+</ul>
+<h3 id="-">随笔分类</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300670.html" target="_blank">Hadoop原理与代码分析(7)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300669.html" target="_blank">IT外企那点儿事(12)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345798.html" target="_blank">Java(2)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345797.html" target="_blank">Linux(14)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300665.html" target="_blank">Lucene原理与代码分析(38)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300666.html" target="_blank">长尾理论(16)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345794.html" target="_blank">管理学(10)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345800.html" target="_blank">经济学(4)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345796.html" target="_blank">算法(1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/345795.html" target="_blank">闲话IT业(3)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300667.html" target="_blank">心理学与管理学效应(9)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/category/300668.html" target="_blank">组织行为学(15)</a></li>
+</ul>
+<h3 id="-">随笔档案</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11.html" target="_blank">2012年11月 (3)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/01.html" target="_blank">2012年1月 (5)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2011/12.html" target="_blank">2011年12月 (6)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2011/10.html" target="_blank">2011年10月 (3)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2011/09.html" target="_blank">2011年9月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/11.html" target="_blank">2010年11月 (8)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/10.html" target="_blank">2010年10月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/09.html" target="_blank">2010年9月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08.html" target="_blank">2010年8月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/07.html" target="_blank">2010年7月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06.html" target="_blank">2010年6月 (6)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05.html" target="_blank">2010年5月 (22)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/04.html" target="_blank">2010年4月 (18)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/03.html" target="_blank">2010年3月 (8)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/02.html" target="_blank">2010年2月 (39)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/01.html" target="_blank">2010年1月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2009/12.html" target="_blank">2009年12月 (6)</a></li>
+</ul>
+<h3 id="-">相册</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/gallery/247104.html" target="_blank">IT外企那点儿事</a></li>
+</ul>
+<h3 id="-">最新评论</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html#2727561" target="_blank">1. Re:IT外企那点儿事(12)：也说跳槽</a></li>
+<li>楼主怎么之后没有更新hadoop的相关信息了呢？是没有再研究了吗？</li>
+<li>--lyeoswu</li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html#2713121" target="_blank">2. Re:Lucene 原理与代码分析完整版</a></li>
+<li>提个建议，你生成的pdf中没有目录，影响阅读，用office转制的过程中其实设置一下即可，方便大众嘛~，还望能发我一份，谢谢！
+sendreams@hotmail.com</li>
+<li>--sendreams</li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html#2712415" target="_blank">3. Re:IT外企那点儿事(12)：也说跳槽</a></li>
+<li><a href="&quot;查看所回复的评论&quot;">@</a>mojunbin
+现在这公司，本来做的Siverlight，我进去后没多久就转JAVA了，最近在公司折腾JAVA的一些东西，业余时间玩玩游戏，看看CLR、并折腾linux。现在观点有所转变，觉得学技术更多的是为了扩宽思维、提高眼界</li>
+<li>--峰顶飞龙</li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html#2711923" target="_blank">4. Re:IT外企那点儿事(12)：也说跳槽</a></li>
+<li><a href="&quot;查看所回复的评论&quot;">@</a>峰顶飞龙
+您的经历和我差不多，呵呵。不晓得现在兄弟在搞C/C++呢？</li>
+<li>--mojunbin</li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/11/23/1884967.html#2708814" target="_blank">5. Re:Hadoop学习总结之五：Hadoop的运行痕迹</a></li>
+<li>楼主你好，在远程调试MapReduce时，本地代码进入不了自定义的job类，而是进入到Credentials class中，此类在hadoop-core-1.0.4.jar中，请问楼主在调试过程可否遇到此问题？</li>
+<li>--彭莉珊</li>
+</ul>
+<h3 id="-">阅读排行榜</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08/04/1791660.html" target="_blank">1. IT外企那点儿事(8)：又是一年加薪时(26799)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html" target="_blank">2. Lucene 原理与代码分析完整版(25616)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/02/23/1671909.html" target="_blank">3. 从技术生命周期看IT历史(20878)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2009/12/21/1628546.html" target="_blank">4. 101个著名的管理学及心理学效应(20828)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/11/14/1877086.html" target="_blank">5. Hadoop学习总结之三：Map-Reduce入门(18681)</a></li>
+</ul>
+<h3 id="-">评论排行榜</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html" target="_blank">1. Lucene 原理与代码分析完整版(68)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/05/1727644.html" target="_blank">2. IT外企那点儿事(4)：激动人心的入职演讲(39)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/13/1734162.html" target="_blank">3. IT外企那点儿事(6)：管理路线和技术路线(37)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08/04/1791660.html" target="_blank">4. IT外企那点儿事(8)：又是一年加薪时(35)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html" target="_blank">5. IT外企那点儿事(12)：也说跳槽(33)</a></li>
+</ul>
+<h3 id="-">推荐排行榜</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html" target="_blank">1. Lucene 原理与代码分析完整版(55)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/03/1726200.html" target="_blank">2. IT外企那点儿事(3)：奇怪的面试(39)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08/04/1791660.html" target="_blank">3. IT外企那点儿事(8)：又是一年加薪时(36)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html" target="_blank">4. IT外企那点儿事(12)：也说跳槽(34)</a></li>
+<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/13/1734162.html" target="_blank">5. IT外企那点儿事(6)：管理路线和技术路线(27)</a></li>
+</ul>
+<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/05/1727644.html" target="_blank">IT外企那点儿事(4)：激动人心的入职演讲</a></p>
+<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/04/30/1725341.html" target="_blank">IT外企那点儿事(1)：外企也就那么回事</a></p>
+<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/02/1725948.html" target="_blank">IT外企那点儿事(2)：多种多样的外企</a></p>
+<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/03/1726200.html" target="_blank">IT外企那点儿事(3)：奇怪的面试</a></p>
+<p>当你千辛万苦熬过了重重难关，进入了外企的大家庭之后，第一步便是入职培训了。</p>
+<p>入职培训非常重要，尤其是对于公司来讲。当然并不是说入职培训有多大的信息量，能够学到多少技术和流程。准确的来讲，这是从心理上拿下你的一步。</p>
+<p>我们知道，心理学上有晕轮效应，所谓晕轮效应是指人们对他人的认知判断首先是根据个人的好恶得出的，然后再从这个判断推论出认知对象的其他品质的现象。如果认知对象被标明是&quot;好&quot;的，他就会被&quot;好&quot;的光圈笼罩着，并被赋予一切好的品质；如果认知对象被标明是&quot;坏&quot;的，他就会被&quot;坏&quot;的光圈笼罩着，他所有的品质都会被认为是坏的。</p>
+<p>所以面试中，好的第一印象十分的重要。自然企业也想在与员工的第一次亲密接触的时候，在员工心目中留下美丽的光环。</p>
+<p>和生产性企业不同，软件开发企业的工作量和工作成果比较难以衡量，即便有了软件工程的各种理论。所以说要想使得工程师们全心全意的工作，自然是攻心为上的。工程师们大多是很清纯的，有时候多少有些高傲，有些古代的士的气质。士可杀，不可辱，所以通过严苛的纪律逼工程师工作是行不通的，他们完全可以坐在电脑前面装作认认真真的写出bug不断的代码。然而士为知己者死，如果能够让工程师感觉到公司是他事业的摇篮，是他可以托付未来的地方，是可以&quot;明朝携剑随君去，羽扇纶巾赴征尘&quot;的刘备式主公(《卧龙吟》)，则工程师们自然会视公司为己任，加班加点也毫无怨言，为伊消得人憔悴。</p>
+<p>入职演讲所要起到的，就是这个效果。这也是很多民企和外企相比，有很大差距的地方。外国的资本主义已经十分成熟了，他们已经从马克思所批判的资本主义初级阶段中走出来，摆脱了通过延长劳动时间和提高劳动强度来榨取剩余价值的方式，而使用更加人性化的手段(如股份制，各种激励机制等，有大批大批的管理学大师在研究这个)，让员工自愿自觉的劳动。而中国大多数的民企，还处在马克思所批判的那个时代，从我评it的差评榜的各种评价就可见一斑了。</p>
+<p>为了完成上述任务，入职培训一般包括以下几个方面：老大的自我介绍，重要的位置，光明的前途，优秀的员工，企业的文化，良好的福利，学长的自白，快乐的互动。</p>
+<h2 id="-">老大的自我介绍</h2>
+<p>在入职培训的时候，老大一般是会出来露一面的，即便不是一把手，也至少是二把手，三把手。</p>
+<p>一般老大总是很和蔼的，脸上总是露出笑容的，以显示自己的平易近人。</p>
+<p>其实有一个规律，不仅是在职场中，即越是和你层次差别大的人，对你反而是越和蔼的，而对你凝眉瞪眼，怒目狰狞的人，也多是比你也强不了哪儿去的人。一方面可能是老大确有老大的气度，一方面层次差别大，你对他构不成什么威胁，谅你也翻不过天来。这可能是为什么我们敬爱的伟大领袖毛主席可能可以容忍一个兵叛逃再回来，却不能容忍彭老总给他拍桌子的原因吧。</p>
+<p>老大的名字应该是在业界早就如雷贯耳的，即便不是，当其简历摆在我们面前的时候，也足够我们五体投地。</p>
+<p>一旦使得你对他形成崇拜，这第一步的目的就达到了。</p>
+<p>其实这是任何成功学讲座的开篇的必然套路，即一拉一打，或两者兼有，或只取其一。所谓拉，就是列举出自己的一长串的title，以及自己的一系列丰功伟业；所谓打，就是提出一系列你原来没有思考过的，或者认为是显而易见却被说成错的问题。这两者的共同目的就是对其形成崇拜。崇拜可以使人们的判断力大降低，从而会减少你对他之后说的话的辨别能力。想象进入演唱会的歌迷的情绪吧，他们是如此的呐喊，以至于听不到歌手的声音，没关系，此时的歌唱质量已经无关紧要，关键是这个歌是明星唱的就可以了。其实那些造星的公司们早就摸透了这些心态，正如《长尾理论》中说的那样，“他们已经发现了制造大热门的秘密：把魅力四射的年轻男人卖给年轻的女人。成功的要点无非就是帅气的外表和打造的个性，音乐本身被外包给一小组专家，几乎成了无关紧要的事。”</p>
+<p>在一片清纯而又崇拜的目光下，老大可以进行对公司的介绍了。</p>
+<h2 id="-">重要的位置</h2>
+<p>入职培训的另一个重要目的就是要培养你对当前获得的职位的自豪感。也即使你觉得你在做一件将影响整个软件业的意义重大的事情，自然事后你会觉得十分可笑，但当时，扪心自问，你是认真的。</p>
+<p>培养自豪感的逻辑过程是这样的：</p>
+<ul>
+<li>首先强调公司在整个IT业中的位置。如果公司能够排在整个IT业的前十位，此点不必做任何修饰。如果公司不能够排整个IT业的前十位，则会划分细分市场，直到能够排到前十名为止。如果在细分市场中能够排到第一，或者并称为几大XXX，则不必再进行修饰。如果不能，则往往冠以&quot;仅次于XXX的XX企业&quot;，或者当已有并称为N大XXX的时候，称为&quot;排名第N+1的XX企业&quot;。通过此步，多能够建立员工对企业的自豪感，能够在外面理直气壮的说出企业的名称。</li>
+<li>然后强调研发在公司中的位置。IT企业中研发自然重要，然而当你和公司的市场人员接触过以后，他们却不全这么认为。因为市场人员是挣钱的，研发人员是花钱的，自然应该是经济基础决定上层建筑。然而研发人员是几乎接触不到市场人员的，所以此步需要明确的是在程序员心目中要树立只有他们做出了优秀的软件，公司才能够生存的信念。说到这里程序员们不要不服气，除了创业家作为程序员出身做公司的老大之外，还有那些企业的一把手是研发人员呢？一个统计的结果是，企业的一把手多出自两个部门：销售和财务。</li>
+<li>然后应该强调中国研发中心在整个世界所有的研发中心中的位置。由于中国有廉价的劳动力和广阔的市场，很多国际大公司还是喜欢把研发中心设到中国来的，当然是以被中国很多的优秀人才吸引的名义，而总部也是比较重视中国研发中心的。然而要说中国研发中心成为整个公司研发的核心，怕你很难相信吧。中国的研发中心自然不敢凌驾于美国的研发中心之上，所以一般的措辞是，整个世界的研发中心共有N个，而美国和中国，外加另外罗列的一个或者三个研发中心成为最重要的三大或者五大研发中心。这时候，老大也许会给你看一些公司的高层在各个场合赞誉中国研发中心的语句，所有的描述如同皇帝的谥号一样，只有正面的评价，虽然他们可能对印度研发中心也说过同样的话。但没有问题，这足以使出入职场的程序员们相信这是真的，直到在项目中，他们发现只能接受美国的指令，或者没有权限参与重要的设计的时候。</li>
+<li>最后要强调的是此一批入职者在中国研发中心中的位置。此处多会强调，此次招聘是高层早就计划好的一个长远的人才计划的一部分，你们进来参与的是具有战略意义的项目，这些项目将对公司的发展起到至关重要的作用，并处于同行业的最前沿，你们做出的产品将影响整个软件业。</li>
+</ul>
+<p>就这样，通过步步推理，层层递进，员工似乎瞬间觉得从一个乳臭未干的学生，俨然将变成在软件业举足轻重的团队中的一员。此时的员工，眼中充满激情，心中充满渴望，如果不在此时此处付出自己的青春和热血，开启自己的事业，更待何时！</p>
+<h2 id="-">光明的前途</h2>
+<p>描述光辉的现在重要，描绘光明的未来更为重要，因为年轻人大多是为希望而活着的。</p>
+<p>况且当前的社会是相对浮躁的，人们总是希望有某个机遇，通过某种捷径比别人更快的成功。记得鲁豫有约采访郭德纲的时候，他是这样描述他的北漂生活的：最初来北京，就是想找个名师拜在门下，说不定一次什么样的演出，就能够红了。不得不承认，本人当初也有这种心态，认为加入了一个无比有前途的公司，自己的事业能够得到指数级的增长。奇迹没有发生在郭德纲身上，世界上没有救世主，也不存在神仙皇帝，当自己没能够真正站立起来的时候，是不会有人怜悯你，给你捷径的。于是郭德纲开始了他长达十年的闯荡和积累，直到他成为了顶天立地的相声大腕。我自认为没有郭德纲的天赋，也是到后来才发现，一个人绝不会因为加入了某个组织从而鸡犬升天，绝不会埋头做好公司给你的每一件事情(并不一定都是有技术含量的事)从而随着公司的成功而成功，虽然加入一个好的公司是人生的催化剂，然而自己的路还是要自己来规划，自己的技术还是要靠自己一点一滴的积累，公司不会为你的前途负责，哪怕各个公司都有职业规划的系统，唯一对你前途负责的应该是你自己，所以当你前进的路上遇到阻碍，也一定是你过去的所为造成的，片面的抱怨公司和社会，是对自己的不负责任。记得看一期《中国经营者》节目采访京东CEO刘强东，当问到：如果你的企业将来面临失败，您觉得可能是什么原因？他回答：可能是因为我。不能不说，我们需要学习这种精神。</p>
+<p>不过对于公司来讲，在员工心目中画一个大大的饼，还是很重要的。所以此处大多会提及技术路线和管理路线，并强调两者同样的重要(真的吗？我们以后讨论)。也会提及公司有成熟的职业规划系统，你和你的lead会定时一同规划你的职业发展，只要你认认真真做了公司给你的每一件事，自然前途大大的。也会提及公司会全面或者局部的扩张，总会有新的团队，新的项目出现，你会有很大的成长空间。</p>
+<p>总之会使得我们相信，只要老子拼了，就能够很快升职，迅速到达成功的彼岸。</p>
+<h2 id="-">优秀的员工</h2>
+<p>任何人都愿意和优秀的人一起工作，所以必须让大家认识到，你们是最优秀的。</p>
+<p>此处多会提及你们是从多少份简历中，选出多少进入笔试，又选出多少进入面试，最后拿到offer的，这个数字之间的比例和差额会让你大吃一惊，似乎没有想到自己原来这么优秀，悠然而生了一种自豪感。</p>
+<p>用余世维讲座中的话来讲，当准入制度越严格，越能够激发员工的尊严。</p>
+<p>用《影响力》一书的第三章承诺和一致原理来解释就是：履行一个承诺所要付出的努力越多，这个承诺对许诺者的影响越大。与不费吹灰之力就能够得到的那些东西相比，人们更加珍惜那些来之不易的东西。书中举了原始部落严酷的成人仪式和兄弟会入会的&quot;地狱周&quot;都会使人们对于部落和兄弟会更加的忠诚，也明确的指出跨国企业强化进入公司过程的难度，从而使新员工一旦进入公司，会有更高的忠诚度和自豪感。</p>
+<h2 id="-">企业的文化</h2>
+<p>每个企业都有自己的文化，其实差别还是蛮大的，然而令人奇怪的是，正如高中学校的校训多包涵团结，勤奋，诚实等词一样，每个企业声称自己的文化也基本包括以下的词汇：激情，挑战，平等，开放/公开，卓越，责任，结果，创新，诚实，尊重，团队，客户。</p>
+<p>虽然不同的企业可以用同样的词汇，然而他们的文化却可以大相径庭。</p>
+<p>其实每次的入职演讲中提及企业文化，仅仅是此文化传播的第一步，却远远不够。企业文化不是知识，不是告诉你就完成了交接的，正如不是你学会了东北话，就成了东北人一样。文化需要载体，既包括死的制度，更重要的是活的人，会在员工的不断入职和离职中发生微妙的变化。文化需要传承，需要在人与人的相互作用中发扬，如果一个企业最初只有100个人，作为文化A的载体，每过1年来10个人，作为文化B的载体，这10个人足够在一年内被熏陶成文化A，再过20年，当企业变成300人的时候，仍然差不多秉承文化A，然而如果第二年一次来了200个人，作为文化B的载体，则20年后，企业可能就更接近于文化B。文化是可以推动的，如上面的例子，如果企业想一直贯彻文化A，则需要小心的干预，同过正向激励和反向激励来推动文化A。文化不是一元的，文化下面多少会有亚文化，这就是为什么同样的公司有的Team很活泼，有的Team很沉闷。</p>
+<h2 id="-">良好的福利</h2>
+<p>公司的福利是会提及的，或以大幅的图片展示，或以精彩的视频放映，甚至会带你到现场去看，无论哪种方式，都会使你激动不已。</p>
+<p>其实不过吃喝玩乐四大项，所谓吃，或是小吃，或是自助；所谓喝，无非饮料，咖啡，茶，酸奶；所谓玩，即各种各样的室内设施和五花八门的社团活动；所谓乐，则要提到每年的旅游，年会。总之slides上的每个人都是充满的快乐的笑容，预示着你将来美好的生活。</p>
+<p>这些活动永远应该是你在公司活动的一小部分(否则你就大错特错了，买椟还珠，捡了芝麻，丢了西瓜)，而这些福利真的对你的职业生涯一点都不重要。</p>
+<h2 id="-">学长的自白</h2>
+<p>当然仅老大一人的独白不足以有说服力，员工们多比较相信和他们年岁，经历差不多的人的话。</p>
+<p>所以有时候，会请你的学长现身说法，描绘他在公司里的美好生活和光明前程。</p>
+<p>人在屋檐下，不得不低头，屁股决定脑袋，人站的位置决定了他说的话，当老大还站在旁边以期待的眼神看着学长在新员工面前侃侃而谈的时候，学长说的话除了在老大的描述上锦上添花，也别无选择了。所以你尽可将学长的话打五折去听，如果想进一步了解，请留联系方式，你们可以私下交流，这样就可以打八折听了。人生其实就像一场杀人游戏，唯一大概可以相信的就是被杀后的跳警，如果想了解最真实的情况，私下去问离了职的学长，再和在职的学长的描述融合一下，就基本可以描述客观的情况了。</p>
+<h2 id="-">快乐的互动</h2>
+<p>入职培训还常有的一项就是新员工之间的互动，让你早日得融入集体，感受主人翁的精神。</p>
+<p>在被设计好的游戏中好好和大家交流，交交朋友吧，一般同一批进来的人比较容易建立更深的感情，而且当后来你们被分到不同的组里后，就很难有这种机会相互交流了，这毕竟是你在此企业中积累人脉，增加影响力的第一步，朋友将是职业生涯中最宝贵的财富。想想谁能够在一家企业待很久呢？可曾听说过跳槽的时候：一等人才找朋友，二等人才找猎头，三等人才网上搜。</p>
+<p>先写到这里吧，下一篇写啥还没想好。</p>
+<p>分类: <a href="http://www.cnblogs.com/forfuture1978/category/300669.html" target="_blank">IT外企那点儿事</a></p>
+<p>绿色通道： <a href="">好文要顶</a> <a href="">关注我</a> <a href="">收藏该文</a><a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" target="_blank">与我联系</a> <a href="&quot;分享至新浪微博&quot;"><img src="" alt=""></a>
+<a href="http://home.cnblogs.com/u/forfuture1978/" target="_blank"><img src="" alt=""></a></p>
+<p><a href="http://home.cnblogs.com/u/forfuture1978/" target="_blank">觉先</a>
+<a href="http://home.cnblogs.com/u/forfuture1978/followees" target="_blank">关注 - 3</a>
+<a href="http://home.cnblogs.com/u/forfuture1978/followers" target="_blank">粉丝 - 560</a></p>
+<p>荣誉：<a href="http://www.cnblogs.com/expert/" target="_blank">推荐博客</a>
+<a href="">+加关注</a></p>
+<p>17</p>
+<p>0
+(请您对文章做出评价)</p>
+<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/03/1726200.html" target="_blank">«</a> 上一篇：<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/03/1726200.html" title="发布于2010-05-03 01:05" target="_blank">IT外企那点儿事(3)：奇怪的面试</a>
+<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/08/1730200.html" target="_blank">»</a> 下一篇：<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/08/1730200.html" title="发布于2010-05-08 00:20" target="_blank">Lucene学习总结之八：Lucene的查询语法，JavaCC及QueryParser(1)</a>
+posted on 2010-05-05 02:35 <a href="http://www.cnblogs.com/forfuture1978/" target="_blank">觉先</a> 阅读(9573) 评论(39) <a href="http://www.cnblogs.com/forfuture1978/admin/EditPosts.aspx?postid=1727644" target="_blank">编辑</a> <a href="">收藏</a></p>
+<p><a href=""></a></p>
+<h3 id="-">评论</h3>
+<p><a href="">/#1楼</a><a href=""></a>  2010-05-05 08:19  <a href="http://www.cnblogs.com/wing011203/">李胜攀</a> <a href="http://space.cnblogs.com/msg/send/%e6%9d%8e%e8%83%9c%e6%94%80" title="发送站内短消息" target="_blank"> </a></p>
+<p>不得不说，你知道的太多了……</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/26980/20130411124002.png" target="_blank">http://pic.cnitblog.com/face/26980/20130411124002.png</a></p>
+<p><a href="">/#2楼</a><a href=""></a>  2010-05-05 08:30  <a href="http://www.cnblogs.com/XmNotes/">小城故事</a> <a href="http://space.cnblogs.com/msg/send/%e5%b0%8f%e5%9f%8e%e6%95%85%e4%ba%8b" title="发送站内短消息" target="_blank"> </a></p>
+<p>楼主在什么公司啊</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u73809.bmp" target="_blank">http://pic.cnitblog.com/face/u73809.bmp</a></p>
+<p><a href="">/#3楼</a><a href=""></a>  2010-05-05 08:32  <a href="http://www.cnblogs.com/daxianren/">卡通一下</a> <a href="http://space.cnblogs.com/msg/send/%e5%8d%a1%e9%80%9a%e4%b8%80%e4%b8%8b" title="发送站内短消息" target="_blank"> </a></p>
+<p>楼主，您能对企业文化给出一个简单的定义吗？</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#4楼</a><a href=""></a>  2010-05-05 08:42  <a href="http://www.cnblogs.com/gaotianle/">高天乐</a> <a href="http://space.cnblogs.com/msg/send/%e9%ab%98%e5%a4%a9%e4%b9%90" title="发送站内短消息" target="_blank"> </a></p>
+<p>楼主小心外企追杀令。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#5楼</a><a href=""></a>  2010-05-05 09:12  <a href="http://www.cnblogs.com/panyuan520/">恶魔的信仰</a> <a href="http://space.cnblogs.com/msg/send/%e6%81%b6%e9%ad%94%e7%9a%84%e4%bf%a1%e4%bb%b0" title="发送站内短消息" target="_blank"> </a></p>
+<p>的确 很有感触</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#6楼</a><a href=""></a>  2010-05-05 09:21  <a href="http://www.cnblogs.com/chenkai/">chenkai</a> <a href="http://space.cnblogs.com/msg/send/chenkai" title="发送站内短消息" target="_blank"> </a></p>
+<p>很写实.
+外资的光环往往给刚入这个圈子职场的人 很多迷惑的地方. 达成一件事 需要必要的手段和方法 .虽然话说的难听点 这点这些企业的做的还是不错的.</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u43680.jpg" target="_blank">http://pic.cnitblog.com/face/u43680.jpg</a></p>
+<p><a href="">/#7楼</a><a href=""></a>  2010-05-05 09:32  <a href="http://www.cnblogs.com/Tlulu/">sT.LuLu</a> <a href="http://space.cnblogs.com/msg/send/sT.LuLu" title="发送站内短消息" target="_blank"> </a></p>
+<p><a href="&quot;查看所回复的评论&quot;">@</a>李胜攀
+小心了</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u124964.jpg" target="_blank">http://pic.cnitblog.com/face/u124964.jpg</a></p>
+<p><a href="">/#8楼</a><a href=""></a>  2010-05-05 09:34  <a href="http://www.cnblogs.com/nuaalfm/">你听海是不是在笑</a> <a href="http://space.cnblogs.com/msg/send/%e4%bd%a0%e5%90%ac%e6%b5%b7%e6%98%af%e4%b8%8d%e6%98%af%e5%9c%a8%e7%ac%91" title="发送站内短消息" target="_blank"> </a></p>
+<p>哈，挺好的，挺好的</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u6998.png?id=09133001" target="_blank">http://pic.cnitblog.com/face/u6998.png?id=09133001</a></p>
+<p><a href="">/#9楼</a><a href=""></a>[楼主]  2010-05-05 09:45  <a href="http://www.cnblogs.com/forfuture1978/">觉先</a> <a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" title="发送站内短消息" target="_blank"> </a></p>
+<p><a href="&quot;查看所回复的评论&quot;">@</a>高天乐
+谢谢啊，以后会写的和谐一些</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u103165.jpg" target="_blank">http://pic.cnitblog.com/face/u103165.jpg</a></p>
+<p><a href="">/#10楼</a><a href=""></a>  2010-05-05 09:48  <a href="http://www.cnblogs.com/yyj/">杨义金</a> <a href="http://space.cnblogs.com/msg/send/%e6%9d%a8%e4%b9%89%e9%87%91" title="发送站内短消息" target="_blank"> </a></p>
+<p>好文，不顶不行！</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#11楼</a><a href=""></a>[楼主]  2010-05-05 09:50  <a href="http://www.cnblogs.com/forfuture1978/">觉先</a> <a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" title="发送站内短消息" target="_blank"> </a></p>
+<p><a href="&quot;查看所回复的评论&quot;">@</a>卡通一下
+对企业文化的定义这太难了，很多管理学大牛都在研究这个却不能给出准确的定义。我也只能写一写自己的所感罢了。谢谢关注。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u103165.jpg" target="_blank">http://pic.cnitblog.com/face/u103165.jpg</a></p>
+<p><a href="">/#12楼</a><a href=""></a>  2010-05-05 09:55  <a href="http://www.cnblogs.com/ZhengGuoQing/">OctoberOne</a> <a href="http://space.cnblogs.com/msg/send/OctoberOne" title="发送站内短消息" target="_blank"> </a></p>
+<p>写的挺好。好文章。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#13楼</a><a href=""></a>  2010-05-05 09:59  <a href="http://www.cnblogs.com/daxianren/">卡通一下</a> <a href="http://space.cnblogs.com/msg/send/%e5%8d%a1%e9%80%9a%e4%b8%80%e4%b8%8b" title="发送站内短消息" target="_blank"> </a></p>
+<p><a href="&quot;查看引用原文&quot;">引用</a>觉先：
+@卡通一下
+对企业文化的定义这太难了，很多管理学大牛都在研究这个却不能给出准确的定义。我也只能写一写自己的所感罢了。谢谢关注。
+这是也太难为楼主了，呵呵！
+我个人觉得，自从地球上有企业起，就产生了各自的企业文化，只不过那时不提这种说法。
+个人认为，企业内大家所认可的<strong>“思维方式和行事作风”，</strong>就能很好地体现出这个企业自己的企业文化。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#14楼</a><a href=""></a>  2010-05-05 10:04  <a href="http://www.cnblogs.com/wangkewei/">王克伟</a> <a href="http://space.cnblogs.com/msg/send/%e7%8e%8b%e5%85%8b%e4%bc%9f" title="发送站内短消息" target="_blank"> </a></p>
+<p>楼主讲滴很好啊</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#15楼</a><a href=""></a>  2010-05-05 10:19  <a href="http://www.cnblogs.com/huxj/">steven hu</a> <a href="http://space.cnblogs.com/msg/send/steven+hu" title="发送站内短消息" target="_blank"> </a></p>
+<p>好文，学习一下</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u34974.jpg" target="_blank">http://pic.cnitblog.com/face/u34974.jpg</a></p>
+<p><a href="">/#16楼</a><a href=""></a>  2010-05-05 11:29  <a href="http://home.cnblogs.com/u/62046/">心太</a> <a href="http://space.cnblogs.com/msg/send/%e5%bf%83%e5%a4%aa" title="发送站内短消息" target="_blank"> </a></p>
+<p>楼主知道的很多啊，很有同感</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#17楼</a><a href=""></a>  2010-05-05 11:40  <a href="http://www.cnblogs.com/Aaron_Anubis/">Aaron_Aanubis</a> <a href="http://space.cnblogs.com/msg/send/Aaron_Aanubis" title="发送站内短消息" target="_blank"> </a></p>
+<p>分析之透彻，叹为观止！佩服，佩服。遥想当年的自己也是一个懵懂无知的少年！</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#18楼</a><a href=""></a>  2010-05-05 11:59  <a href="http://www.cnblogs.com/wanzegui325/">☆用心生活☆</a> <a href="http://space.cnblogs.com/msg/send/%e2%98%86%e7%94%a8%e5%bf%83%e7%94%9f%e6%b4%bb%e2%98%86" title="发送站内短消息" target="_blank"> </a></p>
+<p>OH,MY GOD,好佩服文章的说服力...</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u26389.jpg" target="_blank">http://pic.cnitblog.com/face/u26389.jpg</a></p>
+<p><a href="">/#19楼</a><a href=""></a>  2010-05-05 13:08  <a href="http://www.cnblogs.com/sasbya/">置身珠海，学习与奋斗</a> <a href="http://space.cnblogs.com/msg/send/%e7%bd%ae%e8%ba%ab%e7%8f%a0%e6%b5%b7%ef%bc%8c%e5%ad%a6%e4%b9%a0%e4%b8%8e%e5%a5%8b%e6%96%97" title="发送站内短消息" target="_blank"> </a></p>
+<p>...
+花招被你说完了</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#20楼</a><a href=""></a>  2010-05-05 13:11  <a href="http://www.cnblogs.com/shiyangxt/">施杨</a> <a href="http://space.cnblogs.com/msg/send/%e6%96%bd%e6%9d%a8" title="发送站内短消息" target="_blank"> </a></p>
+<p>好文章。有帮助</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u34037.jpg" target="_blank">http://pic.cnitblog.com/face/u34037.jpg</a></p>
+<p><a href="">/#21楼</a><a href=""></a>  2010-05-05 13:25  <a href="http://www.cnblogs.com/window5549-accp/">window5549-accp</a> <a href="http://space.cnblogs.com/msg/send/window5549-accp" title="发送站内短消息" target="_blank"> </a></p>
+<p>有点那么回事</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u33149.bmp?id=27132141" target="_blank">http://pic.cnitblog.com/face/u33149.bmp?id=27132141</a></p>
+<p><a href="">/#22楼</a><a href=""></a>  2010-05-05 13:26  <a href="http://www.cnblogs.com/bobliu/">Bob Liu</a> <a href="http://space.cnblogs.com/msg/send/Bob+Liu" title="发送站内短消息" target="_blank"> </a></p>
+<p>分析的好详细阿
+想跳槽的人可以借鉴了</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u126058.jpg" target="_blank">http://pic.cnitblog.com/face/u126058.jpg</a></p>
+<p><a href="">/#23楼</a><a href=""></a>  2010-05-05 13:32  <a href="http://www.cnblogs.com/dooom/">clound</a> <a href="http://space.cnblogs.com/msg/send/clound" title="发送站内短消息" target="_blank"> </a></p>
+<p><a href="&quot;查看所回复的评论&quot;">@</a>卡通一下
+你说的很对。
+我觉得下定义其实不是求解问题的最好方式。
+可能是我们的教育培养了我们这种思维模式。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#24楼</a><a href=""></a>  2010-05-05 14:44  <a href="http://www.cnblogs.com/schoolers/">兔兔子</a> <a href="http://space.cnblogs.com/msg/send/%e5%85%94%e5%85%94%e5%ad%90" title="发送站内短消息" target="_blank"> </a></p>
+<p>你知道的太多了!</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u121822.jpg?id=08205343" target="_blank">http://pic.cnitblog.com/face/u121822.jpg?id=08205343</a></p>
+<p><a href="">/#25楼</a><a href=""></a>  2010-05-05 14:53  <a href="http://home.cnblogs.com/u/131030/">duyue123</a> <a href="http://space.cnblogs.com/msg/send/duyue123" title="发送站内短消息" target="_blank"> </a></p>
+<p>(/<em>^__^/</em>) 嘻嘻……，我还是学生呢？
+感觉离外企还很远呢！！！</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#26楼</a><a href=""></a>  2010-05-05 15:14  <a href="http://www.cnblogs.com/lonely_rain/">lonely_rain</a> <a href="http://space.cnblogs.com/msg/send/lonely_rain" title="发送站内短消息" target="_blank"> </a></p>
+<p>我是三等人才。
+下一篇，我帮你定主题吧，就你最后说的一等人才，二等人才，三等人才，为什么会这样分？
+怎么样？</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u105358.jpg?id=24155351" target="_blank">http://pic.cnitblog.com/face/u105358.jpg?id=24155351</a></p>
+<p><a href="">/#27楼</a><a href=""></a>  2010-05-05 15:39  <a href="http://www.cnblogs.com/facingwaller/">撞破南墙</a> <a href="http://space.cnblogs.com/msg/send/%e6%92%9e%e7%a0%b4%e5%8d%97%e5%a2%99" title="发送站内短消息" target="_blank"> </a></p>
+<p>你给我打开一个窗口，让我在一个混技术的地方了解到了更多的技术之外的或许更重要的东西！
+谢啦！</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u69696.jpg?id=16133304" target="_blank">http://pic.cnitblog.com/face/u69696.jpg?id=16133304</a></p>
+<p><a href="">/#28楼</a><a href=""></a>  2010-05-05 16:26  <a href="http://www.cnblogs.com/eugenewu0808/">pxuan</a> <a href="http://space.cnblogs.com/msg/send/pxuan" title="发送站内短消息" target="_blank"> </a></p>
+<p>关注</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#29楼</a><a href=""></a>  2010-05-05 17:18  <a href="http://home.cnblogs.com/u/87107/">清枫13</a> <a href="http://space.cnblogs.com/msg/send/%e6%b8%85%e6%9e%ab13" title="发送站内短消息" target="_blank"> </a></p>
+<p>这里有些话很有道理，领导在使用的时候，我们还不知道怎么回事呢，只知道傻乎乎的听着。。。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#30楼</a><a href=""></a>  2010-05-05 17:22  <a href="http://www.cnblogs.com/codeyu/">八一精神</a> <a href="http://space.cnblogs.com/msg/send/%e5%85%ab%e4%b8%80%e7%b2%be%e7%a5%9e" title="发送站内短消息" target="_blank"> </a></p>
+<p>虽然你这样讲，还是想进外企。英语学习中~</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u30823.jpg" target="_blank">http://pic.cnitblog.com/face/u30823.jpg</a></p>
+<p><a href="">/#31楼</a><a href=""></a>[楼主]  2010-05-05 18:10  <a href="http://www.cnblogs.com/forfuture1978/">觉先</a> <a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" title="发送站内短消息" target="_blank"> </a></p>
+<p><a href="&quot;查看所回复的评论&quot;">@</a>lonely_rain
+所谓一等人才找朋友，二等人才找猎头，三等人才网上搜。也不是把人分成三六九等的意思，而是随着年龄的增长，经验的增长，跳槽的不同境界。
+刚毕业，薪水不高，人脉不广，只能够从网上搜索职位投简历。
+等后来，薪水增加，技术积累，便成为了猎头的主要对象。
+再后来，积累了大量的人脉，如果其他公司有好的职位，兄弟推荐一下就过去了，轮不到猎头来推荐了。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u103165.jpg" target="_blank">http://pic.cnitblog.com/face/u103165.jpg</a></p>
+<p><a href="">/#32楼</a><a href=""></a>  2010-05-05 19:48  <a href="http://www.cnblogs.com/zhengjuzhuan/">天蓝-</a> <a href="http://space.cnblogs.com/msg/send/%e5%a4%a9%e8%93%9d-" title="发送站内短消息" target="_blank"> </a></p>
+<p>一等人才找朋友，二等人才找猎头，三等人才网上搜。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#33楼</a><a href=""></a>  2010-05-05 22:27  <a href="http://www.cnblogs.com/wlb/">深山老林</a> <a href="http://space.cnblogs.com/msg/send/%e6%b7%b1%e5%b1%b1%e8%80%81%e6%9e%97" title="发送站内短消息" target="_blank"> </a></p>
+<p>企业文化就是老板不在的时候员工的态度跟反应。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u29614.jpg" target="_blank">http://pic.cnitblog.com/face/u29614.jpg</a></p>
+<p><a href="">/#34楼</a><a href=""></a>  2010-05-05 23:27  <a href="http://www.cnblogs.com/sfwl_1026/">小伍</a> <a href="http://space.cnblogs.com/msg/send/%e5%b0%8f%e4%bc%8d" title="发送站内短消息" target="_blank"> </a></p>
+<p>关注。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#35楼</a><a href=""></a>  2010-05-06 01:53  <a href="http://www.cnblogs.com/sss/">傻样精英</a> <a href="http://space.cnblogs.com/msg/send/%e5%82%bb%e6%a0%b7%e7%b2%be%e8%8b%b1" title="发送站内短消息" target="_blank"> </a></p>
+<p>楼主可以出书了，我肯定买</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u33205.jpg" target="_blank">http://pic.cnitblog.com/face/u33205.jpg</a></p>
+<p><a href="">/#36楼</a><a href=""></a>  2010-05-07 22:27  <a href="http://www.cnblogs.com/shenzhoulong/">神舟龙</a> <a href="http://space.cnblogs.com/msg/send/%e7%a5%9e%e8%88%9f%e9%be%99" title="发送站内短消息" target="_blank"> </a></p>
+<p>分析的透彻</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u127258.jpg?id=04135830" target="_blank">http://pic.cnitblog.com/face/u127258.jpg?id=04135830</a></p>
+<p><a href="">/#37楼</a><a href=""></a>  2010-05-08 15:20  <a href="http://www.cnblogs.com/lonely_rain/">lonely_rain</a> <a href="http://space.cnblogs.com/msg/send/lonely_rain" title="发送站内短消息" target="_blank"> </a></p>
+<p><a href="&quot;查看所回复的评论&quot;">@</a>觉先
+明白你什么意思了，呵呵，还是中国的人情在作怪。楼主对中国的IT行业现状分析的很透彻。。。。。呵呵</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a>
+<a href="http://pic.cnitblog.com/face/u105358.jpg?id=24155351" target="_blank">http://pic.cnitblog.com/face/u105358.jpg?id=24155351</a></p>
+<p><a href="">/#38楼</a><a href=""></a>  2010-08-18 23:00  <a href="http://home.cnblogs.com/u/100736/">Zero Huang</a> <a href="http://space.cnblogs.com/msg/send/Zero+Huang" title="发送站内短消息" target="_blank"> </a></p>
+<p>LZ的知识真是渊博</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">/#39楼</a><a href=""></a>19114142010/9/8 12:20:56  2010-09-08 12:20  <a href="http://home.cnblogs.com/u/157739/">dzghttp</a> <a href="http://space.cnblogs.com/msg/send/dzghttp" title="发送站内短消息" target="_blank"> </a></p>
+<p>相当的有才，实力派IT人士。</p>
+<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
+<p><a href="">刷新评论</a><a href="">刷新页面</a><a href="">返回顶部</a></p>
+<p>注册用户登录后才能发表评论，请 <a href="">登录</a> 或 <a href="">注册</a>，<a href="http://www.cnblogs.com/" target="_blank">访问</a>网站首页。
+<a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园首页</a><a href="http://q.cnblogs.com/" title="程序员问答社区" target="_blank">博问</a><a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">新闻</a><a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a><a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a><a href="http://kb.cnblogs.com/" target="_blank">知识库</a></p>
+<p><strong>最新IT新闻</strong>:
+· <a href="http://news.cnblogs.com/n/182486/" target="_blank">新硬硬整合时代</a>
+· <a href="http://news.cnblogs.com/n/182485/" target="_blank">狗血的百度91并购案啊 阿里和周鸿祎都曾掺和</a>
+· <a href="http://news.cnblogs.com/n/182483/" target="_blank">如何让搜索引擎抓取AJAX内容？</a>
+· <a href="http://news.cnblogs.com/n/182482/" target="_blank">避免代码注释的五大理由</a>
+· <a href="http://news.cnblogs.com/n/182481/" target="_blank">OpenWrt——适用于路由器的Linux系统</a>
+» <a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">更多新闻...</a></p>
+<p><strong>最新知识库文章</strong>:
+· <a href="http://kb.cnblogs.com/page/141892/" target="_blank">阿里巴巴集团去IOE运动的思考与总结</a>
+· <a href="http://kb.cnblogs.com/page/182265/" target="_blank">硅谷归来7点分享：创业者，做你自己</a>
+· <a href="http://kb.cnblogs.com/page/182200/" target="_blank">我为什么不能坚持？</a>
+· <a href="http://kb.cnblogs.com/page/168725/" target="_blank">成为高效程序员的7个重要习惯</a>
+· <a href="http://kb.cnblogs.com/page/182047/" target="_blank">谈谈对BPM的理解</a>
+» <a href="http://kb.cnblogs.com/" target="_blank">更多知识库文章...</a>
+Powered by:
+<a href="http://www.cnblogs.com/" target="_blank">博客园</a>
+Copyright © 觉先</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/zhiya/">zhiya</a></li></span><span class="breadcrumb"><li><a href="/categories/职涯/">职涯</a></li><li><a href="/categories/职涯/IT外企/">IT外企</a></li></span></span> | <span class="tags">Tagged <a href="/tags/IT外企/" class="label label-primary">IT外企</a><a href="/tags/zhiya/" class="label label-success">zhiya</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事4：激动人心的入职演讲/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-zhiya-IT外企--IT外企那点儿事4：激动人心的入职演讲" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -1253,7 +1818,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:33:42</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:43:39</em></span></div>
 </div>
 <div class="clearfix"></div>
 
