@@ -110,124 +110,368 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/">HAProxy的独门武器：ebtree</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-linux系统信息命令--Linux系统信息查看命令大全-idv2/">Linux系统信息查看命令大全 </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-linux系统信息命令--Linux系统信息查看命令大全-idv2/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="haproxy-ebtree">HAProxy的独门武器：ebtree</h1>
-<h1 id="1-haproxy-ebtree-">1. HAProxy和ebtree简介</h1>
-<p>HAProxy是法国人Willy Tarreau个人开发的一个开源软件，目标是应对客户端10000以上的同时连接，为后端应用服务器、数据库服务器提供高性能的负载均衡服务。
-在底层数据结构方面，旧版本HAProxy曾经使用过红黑树，用于任务调度、负载均衡等方面。但是Willy Tarreau认为，在事件响应非常频繁的情况下，任务插入、删除的频率非常高，这时候使用红黑树存在性能瓶颈，尤其不能接受红黑树删除节点的时间复杂度为O(log n)。因此，他发明了一种新的数据结构，叫做<strong>弹性二叉树（elastic binary tree）</strong>，简称ebtree。
-目前新版本的HAProxy（本文编写时最新版本为1.4.23）已使用ebtree，而除了HAProxy之外，还没有其它著名的开源软件使用ebtree。可以这么说，HAProxy最有特色的地方就是ebtree，ebtree名符其实是HAProxy的独门武器。
-ebtree是不平衡的二叉搜索树（BST），而红黑树、AVL树等都是平衡的BST。传统的BST最怕的就是退化成线性搜索，因此，红黑树等BST插入、删除时都需要对树进行平衡化，而平衡化是一个从叶子节点开始，向根节点方向递归向上的过程，时间复杂度是O(log n)。
-有鉴于此，ebtree为了实现删除节点时O(1)的时间复杂度，必然放弃保持树的平衡，为了拒绝由此而来的副作用——退化成线性搜索（或者更准确地说，退化成不受限制的线性搜索），不可避免地引入了一些新的成员和新的思路，且待我慢慢道来。</p>
-<h1 id="2-ebtree-">2. ebtree节点的组成</h1>
-<p>一个ebtree的节点（以下简称ebnode）分为node部分和leaf部分（Willy Tarreau是这样描述的，但我觉得称为树干部分和叶子部分更合适一些，以下就按我的理解来叙述）。<strong>树干</strong>负责关联其它ebnode，由父指针（node_p）和分支（Willy Tarreau称之为root，包括左分支L和右分支R），以及一个控制树的高度的特殊成员（bit）组成，<strong>叶子</strong>负责携带数据（data，一般是数据的键值，所以下文都称为key），另外包含一个指向上层的指针（leaf_p）。
-一棵ebtree只有一个根节点（root），包含两个左右分支的指针（L、R）。所有的ebnode总是挂在根节点的左分支下面，根节点的右分支总是为空。在ebtree的遍历过程中，判断当前节点是否根节点就是判断其右指针是否为空。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/Ebnode.png" target="_blank"><img src="" alt="Ebnode"></a></p>
-<p>-</p>
-<h1 id="3-">3. 各个指针的附加属性</h1>
-<p>在32位平台中，一个指针占用4个字节，例如，地址值0xaabbcc00的下一个地址值是0xaabbcc04，再下一个是0xaabbcc08，也就是说，指针的值的最后两个比特不能表示一个合法地址。因此，Willy Tarreau充分利用这一点，来保存上述几个指针的特殊属性。这是一个很重要的优化，每个ebnode可以节省几个成员，整个ebtree就节省大量存储空间。
-1）L和R既可以指向其它ebnode的树干，也可以指向其它ebnode的叶子，还可以指向自己的叶子。在ebtree的遍历过程中，对树干和叶子有不同的处理逻辑，L和R有必要知道自己所指向的是树干还是叶子。
-2）可以知道node_p和leaf_p究竟挂在其它ebnode的左分支下面，还是挂在其右分支下面。
-3）根节点右分支不挂任何树干和叶子，可以把它也利用上，指示该ebtree是否允许重复键值。
-熟悉红黑树的读者都知道，红黑树也有同样的优化方法，表示红黑树节点颜色的属性并不占用内存空间。</p>
-<h1 id="4-bit-">4. bit的定义</h1>
-<p>引入bit就是为了<strong>限制树的高度</strong>，避免极端不平衡。在一棵不允许重复键值的ebtree中，key是32位的情况下，bit的取值范围是从0到31，此时，它的定义是：<strong>子树所有的键中，第一个不同的二进制位的位置</strong>。允许重复键值的ebtree稍后再详细介绍。
-例如，下图的右下角子树中只有两个键，左边叶子节点的键值为300，右边叶子节点的键值为400，300的二进制是100101100，400的二进制是110010000，从右边数起第7位起（注意，程序员都是从0开始数数的），300和400左边的位都相同，所以，bit等于7。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/bit.png" target="_blank"><img src="" alt="bit"></a></p>
-<p>这时候，读者可能会问，这样定义bit为什么能够限制树的高度呢？不用着急，马上隆重介绍bit的两个重要意义！</p>
-<h1 id="5-bit-">5. bit的第一个重要意义</h1>
-<p>这里只讨论键值大于等于零的情况，事实上，ebtree可以支持键值为负数，不过，我还没有仔细研究过这种情况，应该是对符号位进行某些转换处理。
-bit的第一个重要意义：<strong>同一个ebnode中的bit和key，联合决定该ebnode属下的子树内，所有key的取值范围</strong>。
-先看下图挂在根节点下面，key = 300的那个ebnode，bit = 8，300的二进制为100101100，从右边数起第8位是最高位那个1，参考bit的定义，也就是说，该子树所有的键，第8位左边都是0，所以，它们的取值范围是从0到511（二进制111111111）。
-再看最下面那个ebnode，bit = 5，250的二进制为11111010，从右边数起第5位是第三个1，再对照bit的定义，该子树的键，第5位左边都是11，所以，它们的取值范围是从192（二进制11000000）到255（二进制11111111）。
-同理，最右边那个ebnode，bit = 7，key = 400，取值范围是256-511。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/bit1.png" target="_blank"><img src="" alt="bit1"></a></p>
-<h1 id="6-bit-">6. bit的第二个重要意义和查找过程</h1>
-<p>bit的第二个重要意义：<strong>如果要查找的数据x在该子树的取值范围内，bit可以指示其可能会在左分支下面还是右分支下面</strong>。
-ebtree的具体查找过程是，遍历到某个ebnode时，如果key = x，返回查找结果；如果x已经超出bit规定的取值范围，返回查找失败；否则，取x的第bit位，如果bit = 0，那么从该ebnode的左分支查找，反之，从右分支查找；如果已到达叶子还是没有匹配，返回查找失败。
-还是上一节那个图，假如要找的键x = 249，二进制为11111001，从根节点左分支开始查找，bit = 8，右边数起第8位为0，于是从它的左分支继续查找，bit = 5，249右边数起第5位为1，于是从它的右分支继续查找，此时已到达叶子，且250 != 249，本次查找失败。
-假如要找的键x = 300，因为就在查找路径的节点上，直接返回结果。
-假如要找的键x = 600，已经超出该子树中bit规定的取值范围，返回查找失败。</p>
-<h1 id="7-">7. 插入不可重复的键值</h1>
-<p>首先，要介绍的是空树的情况。由前面的叙述可以得知，一棵ebtree为空树当且仅当它的根节点的左分支为空。所以，此时插入的ebnode就直接挂在根节点的左分支下面，由于新插入的ebnode不存在左右分支，也没有父节点（上层ebnode），显然也不需要bit来控制树的高度，因此，该ebnode的树干都没有使用。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert0.png" target="_blank"><img src="" alt="insert0"></a></p>
-<p>其次，介绍ebtree只有一个ebnode时，再插入一个ebnode的情况。此时，新的ebnode必定插入在根节点与旧的ebnode之间，如果新的键值大于原来的键值，旧的ebnode挂在新的ebnode的左分支下面，新的ebnode的叶子挂在自己的右分支下面，再计算bit；反之，则左右相反，再计算bit。
-下图的例子，是已有key = 200，再插入key = 300的情形。读者可以根据上面的描述画出已有key = 200，再插入key = 100的情形。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert1.png" target="_blank"><img src="" alt="insert1"></a></p>
-<p>然后，就可以介绍在ebtree中插入新的ebnode的<strong>五种基本情形</strong>。在这里，都以上图为初始状态。任何具有更多ebnode的情形，都可以通过对ebtree的遍历，递推到其中一种情形。</p>
-<p>1) <strong>新的键值可以插入子树中，而且小于子树中的最小键值。</strong></p>
-<p>假如新插入ebnode的key为100，根据bit的第二个重要意义，100应该在该子树的左分支下面，而且，100小于200，于是，该ebnode插入在原图的左分支上，自己的左分支指向自己的叶子，自己的右分支指向原来子树的左分支。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_1.png" target="_blank"><img src="" alt="insert2_1"></a></p>
-<p>键值范围[0, 200)都属于这种情形。</p>
-<p>2) <strong>新的键值可以插入子树中，该键值在确定要插入的两个ebnode的键值之间，且应该在该子树的左分支下面。</strong></p>
-<p>假如新插入ebnode的key为225，根据bit的第二个重要意义，225应该在该子树的左分支下面，而且，225大于200，于是，该ebnode插入在原图的左分支上，自己的左分支指向原来子树的左分支，自己的右分支指向自己的叶子。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_2.png" target="_blank"><img src="" alt="insert2_2"></a></p>
-<p>键值范围(200, 255]都属于这种情形。</p>
-<p>3) <strong>新的键值可以插入子树中，该键值在确定要插入的两个ebnode的键值之间，且应该在该子树的右分支下面。</strong></p>
-<p>假如新插入ebnode的key为275，根据bit的第二个重要意义，275应该在该子树的右分支下面，而且，275小于300，于是，该ebnode插入在原图的右分支上，自己的左分支指向自己的叶子，自己的右分支指向原来子树的右分支。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_3.png" target="_blank"><img src="" alt="insert2_3"></a></p>
-<p>键值范围(255, 300)都属于这种情形。</p>
-<p>4) <strong>新的键值可以插入子树中，而且大于子树中的最大键值。</strong></p>
-<p>假如新插入ebnode的key为400，根据bit的第二个重要意义，400应该在该子树的右分支下面，而且，400大于300，于是，该ebnode插入在原图的右分支上，自己的左分支指向原来子树的右分支，自己的右分支指向自己的叶子。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_4.png" target="_blank"><img src="" alt="insert2_4"></a></p>
-<p>键值范围(300, 511]都属于这种情形。</p>
-<p>5) <strong>新的键值不可以插入子树中。</strong></p>
-<p>假如新插入ebnode的key为600，根据bit的第一个重要意义，600不可插入到子树中，于是，该ebnode插入在原图的子树之上，自己的左分支指向原来的子树，自己的右分支指向自己的叶子。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_5.png" target="_blank"><img src="" alt="insert2_5"></a></p>
-<p>键值范围(511, +∞)都属于这种情形。</p>
-<h1 id="8-bit-">8. bit的第三个重要意义和插入重复的键值</h1>
-<p>ebtree是专门为任务调度而生的，同样的优先级，必须保证能够按照任务触发的次序来进行访问。所以，ebtree支持存储重复的键值，这一点并不是所有的BST都支持，可以说是ebtree的优点。而且，解决键值冲突不会退化成链表。
-bit的第三个重要意义：<strong>bit为负值表示该子树下所有的键都是重复的，而且，该值表示重复子树的层次</strong>。当然，必须要在根节点右指针允许的情况下。
-插入第一个重复键值，例如300（ebnode底纹为点点），可以参考上一节的第二种和第四种基本情形，不同的是，bit为-1。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup1.png" target="_blank"><img src="" alt="insert_dup1"></a></p>
-<p>如果再插入一个重复键值300（ebnode底纹为方格），应该在重复键值子树上插入，而且是向上生长。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup2.png" target="_blank"><img src="" alt="insert_dup2"></a></p>
-<p>上图已经有四个ebnode，信息量较大，为了后续叙述方便，把它简化，去掉几个指针域，保留bit和key，得到下图。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup2s.png" target="_blank"><img src="" alt="insert_dup2s"></a></p>
-<p>再插入一个300（ebnode底纹为斜方格），得到下面的ebtree。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup3s.png" target="_blank"><img src="" alt="insert_dup3s"></a></p>
-<p>再插入两个300（ebnode底纹分别为左斜线和右斜线），得到下面的ebtree。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup5s.png" target="_blank"><img src="" alt="insert_dup5s"></a></p>
-<p>读者可以思考一下，如果再来一个、两个、三个300，应该在哪里插入？如果插入不同于300的其它键值，应该在哪里插入？
-从上面几张图，大家可以看到，一个ebnode的树干和叶子会随着树的增长而拉长到不同的层次上，好像很有弹性的样子，这就是弹性二叉树名字的由来。</p>
-<h1 id="9-">9. 删除节点</h1>
-<p>删除一个ebnode，概括起来比较简单，就是把要删除的叶子和该叶子的父亲（树干部分）删除，然后把兄弟挂到祖父下面。因为不需要对树进行平衡化，不需要访问其它ebnode，效率很高。
-具体操作，分为两种情况：
-1）被删除的叶子直连自己的树干，可直接删除该ebnode，然后对它的兄弟重新指派原来的祖父为父亲。
-2）被删除的叶子不是直连自己的树干，以该叶子的父亲（其它ebnode的树干）替换该ebnode的树干，然后删除该ebnode，再把它的兄弟重新指派原来的祖父为父亲。</p>
-<h1 id="10-">10. 总结</h1>
-<p>没有最好的数据结构，只有最合适的数据结构。ebtree有它的优点：
-1）支持存储重复的键值，而且，在此情况下，也不会退化成线性操作。
-2）删除节点时，不需要对树进行平衡化。
-3）插入键值时，很可能不需要深入到树的叶子，当然，很多BST都这样。
-4）查询键值时，可以预知子树的取值范围，从而可以选择访问还是不访问该子树。
-缺点也很明显：
-1）逻辑比较复杂，熟悉的人不多（希望读者看完本文之后都有茅塞顿开的感觉）。
-2）ebnode占用空间比较多，如果把bit也算一个指针，相当于花了5个指针才携带1个数据。
-3）键值严重依赖于可以进行位运算的数据类型。
-总而言之，ebtree适合有高频率插入、删除操作（例如50万次/秒）的使用场合，不适合查询较多、插入、删除较少的场合，非常不适合用于缓存。</p>
-<h1 id="11-">11. 参考资料</h1>
+        <h1 id="linux-idv2">Linux系统信息查看命令大全 - idv2</h1>
+<h1 id="-idv2-http-tech-idv2-com-"><a href="http://tech.idv2.com/" target="_blank">idv2</a></h1>
+<p>关注Web开发技术，关注Internet。</p>
+<p>这里是charlee的个人技术Blog，关注Web开发，关注网页设计。在这里你可以找到有关Linux、 Apache、PHP、Perl、HTML、CSS、Photoshop的使用经验和开发技巧。 如果你想更多地了解charlee，请访问本站的<a href="http://tech.idv2.com/about/" target="_blank">关于</a>页面。</p>
 <ul>
-<li><a href="http://1wt.eu/articles/ebtree/" target="_blank"><a href="http://1wt.eu/articles/ebtree/">http://1wt.eu/articles/ebtree/</a></a></li>
-<li>Willy Tarreau个人网站对ebtree的介绍，不过存在不少误导的地方</li>
-<li><a href="http://blog.nklike.com/%E5%BC%80%E6%BA%90%E8%BD%AF%E4%BB%B6/ebtree%E4%BB%8B%E7%BB%8D/" target="_blank"><a href="http://blog.nklike.com/开源软件/ebtree介绍/">http://blog.nklike.com/开源软件/ebtree介绍/</a></a></li>
-<li>淘宝空见对上文的翻译，也有不够准确的地方</li>
-<li><a href="http://wenku.it168.com/d_000555847.shtml" target="_blank"><a href="http://wenku.it168.com/d_000555847.shtml">http://wenku.it168.com/d_000555847.shtml</a></a></li>
-<li><p>对ebtree的描述错误比较多</p>
-<h3 id="-">您可能感兴趣的文章</h3>
+<li><a href="http://tech.idv2.com/" target="_blank">首页</a></li>
+<li><a href="http://tech.idv2.com/bookmark/" title="推荐作品" target="_blank">推荐作品</a></li>
+<li><a href="http://tech.idv2.com/about/" title="关于" target="_blank">关于</a>
+<a href="http://tech.idv2.com/2008/01/09/javascript-variables-and-delete-operator/" target="_blank">上一篇：Javascript的变量与delete操作符</a> - <a href="http://tech.idv2.com/2008/01/13/install-gentoo-on-sata/" target="_blank">下一篇：在SATA硬盘上安装gentoo</a>
+2008-01</li>
+</ul>
+<p>11</p>
+<p><a href="&quot;永久链接: Linux系统信息查看命令大全&quot;">Linux系统信息查看命令大全</a></p>
+<p><strong>版权声明</strong>：可以任意转载，但转载时必须标明原作者charlee、原始链接<a href=""><a href="http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/">http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/</a></a>以及本声明。</p>
+<p>最近看了一些Linux命令行的文章，在系统信息查看方面学到不少命令。 想起以前写过的一篇<a href="http://tech.idv2.com/2007/08/25/simpler-linux/" target="_blank">其实Linux这样用更简单</a>， 发现这些系统信息查看命令也可以总结出一篇小小的东西来了。</p>
+<p>另外<a href="http://www.pixelbeat.org/cmdline.html" target="_blank">这里</a>还有非常多的命令， 可以作为参考。</p>
+<p><strong>系统</strong>
+/# uname -a /# 查看内核/操作系统/CPU信息 /# head -n 1 /etc/issue /# 查看操作系统版本 /# cat /proc/cpuinfo /# 查看CPU信息 /# hostname /# 查看计算机名 /# lspci -tv /# 列出所有PCI设备 /# lsusb -tv /# 列出所有USB设备 /# lsmod /# 列出加载的内核模块 /# env /# 查看环境变量</p>
+<p><strong>资源</strong></p>
+<p>/# free -m /# 查看内存使用量和交换区使用量 /# df -h /# 查看各分区使用情况 /# du -sh &lt;目录名&gt; /# 查看指定目录的大小 /# grep MemTotal /proc/meminfo /# 查看内存总量 /# grep MemFree /proc/meminfo /# 查看空闲内存量 /# uptime /# 查看系统运行时间、用户数、负载 /# cat /proc/loadavg /# 查看系统负载</p>
+<p><strong>磁盘和分区</strong></p>
+<p>/# mount | column -t /# 查看挂接的分区状态 /# fdisk -l /# 查看所有分区 /# swapon -s /# 查看所有交换分区 /# hdparm -i /dev/hda /# 查看磁盘参数(仅适用于IDE设备) /# dmesg | grep IDE /# 查看启动时IDE设备检测状况</p>
+<p><strong>网络</strong></p>
+<p>/# ifconfig /# 查看所有网络接口的属性 /# iptables -L /# 查看防火墙设置 /# route -n /# 查看路由表 /# netstat -lntp /# 查看所有监听端口 /# netstat -antp /# 查看所有已经建立的连接 /# netstat -s /# 查看网络统计信息</p>
+<p><strong>进程</strong></p>
+<p>/# ps -ef /# 查看所有进程 /# top /# 实时显示进程状态</p>
+<p><strong>用户</strong></p>
+<p>/# w /# 查看活动用户 /# id &lt;用户名&gt; /# 查看指定用户信息 /# last /# 查看用户登录日志 /# cut -d: -f1 /etc/passwd /# 查看系统所有用户 /# cut -d: -f1 /etc/group /# 查看系统所有组 /# crontab -l /# 查看当前用户的计划任务</p>
+<p><strong>服务</strong></p>
+<p>/# chkconfig --list /# 列出所有系统服务 /# chkconfig --list | grep on /# 列出所有启动的系统服务</p>
+<p><strong>程序</strong></p>
+<p>/# rpm -qa /# 查看所有安装的软件包</p>
+<p>标签: <a href="http://tech.idv2.com/tag/linux/" target="_blank">linux</a> | 分类: <a href="http://tech.idv2.com/category/linux/" title="查看 linux 的全部文章" target="_blank">linux</a> | <a href="http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/trackback/" title="使用本链接来引用这篇文章。" target="_blank">引用通告</a> | <a href="http://delicious.com/save?jump=yes&amp;url=http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/&amp;title=Linux%E7%B3%BB%E7%BB%9F%E4%BF%A1%E6%81%AF%E6%9F%A5%E7%9C%8B%E5%91%BD%E4%BB%A4%E5%A4%A7%E5%85%A8" target="_blank">添加到delicious</a> | 回到页面顶端
+看完这篇文章后感觉怎样？如果还需要更多的内容，可以看看下面这些，也许会对你有帮助：</p>
+<ul>
+<li><a href="http://tech.idv2.com/2009/09/28/xming-good-xserver/" title="Xming：好用的Xserver" target="_blank">Xming：好用的Xserver</a> (1)</li>
+<li><a href="http://tech.idv2.com/2009/09/23/suse-linux-install-freeze/" title="SuSE Linux安装死机" target="_blank">SuSE Linux安装死机</a> (3)</li>
+<li><a href="http://tech.idv2.com/2009/07/08/translate-with-gettext/" title="利用gettext做软件翻译" target="_blank">利用gettext做软件翻译</a> (5)</li>
+<li><a href="http://tech.idv2.com/2009/02/21/gnu-diff-tips/" title="diff命令的好用功能" target="_blank">diff命令的好用功能</a> (3)</li>
+<li><a href="http://tech.idv2.com/2009/01/13/opennms-install-memo/" title="OpenNMS配置笔记 " target="_blank">OpenNMS配置笔记</a> (6)</li>
+<li><a href="http://tech.idv2.com/2008/12/26/install-trac-on-linux/" title="Linux下Trac安装手记" target="_blank">Linux下Trac安装手记</a> (0)</li>
+<li><a href="http://tech.idv2.com/2008/12/18/rpm-i-nodeps-warning/" title="rpm -i –nodeps时出现警告的原因" target="_blank">rpm -i –nodeps时出现警告的原因</a> (0)</li>
+<li><a href="http://tech.idv2.com/2008/08/17/memcached-pdf/" title="memcached全面剖析–PDF总结篇" target="_blank">memcached全面剖析–PDF总结篇</a> (71)</li>
+<li><a href="http://tech.idv2.com/2008/08/15/apache-no-space-left-on-device/" title="Apache报告No space left on device的解决办法" target="_blank">Apache报告No space left on device的解决办法</a> (0)</li>
+<li><a href="http://tech.idv2.com/2008/07/31/memcached-005/" title="memcached全面剖析–5. memcached的应用和兼容程序 " target="_blank">memcached全面剖析–5. memcached的应用和兼容程序</a> (14)</li>
+</ul>
+<p>这篇文章有 12 条评论了，快来一起讨论讨论吧！</p>
+<p>/#1 fcicq
+2008-01-11 17:17</p>
+<p>1 不是所有的命令都需要 root 权限
+2 sata 也可用 hdparm, 同时也有 sdparm.
+3 mount 这么用的话有点太长?
+/#2 <a href="http://www.idv2.com/" target="_blank">charlee</a>
+2008-01-11 20:33</p>
+<p>@fcicq 原谅我吧，犯了点懒直接都写成/#了。sdparm倒是第一次听说，学习一下。mount是说mount column 吗？不过格式倒是好看了很多…</p>
+<p>/#3 <a href="http://www.hinn.cn/" target="_blank">jackie</a>
+2008-01-11 21:33</p>
+<p><a href="http://www.linuxguide.it/linux_commands_line_en.htm" target="_blank"><a href="http://www.linuxguide.it/linux_commands_line_en.htm">http://www.linuxguide.it/linux_commands_line_en.htm</a></a> 上面有比较详细的,我最近在翻译, <a href="http://www.hinn.cn/2008/01/linux_command_1.html" target="_blank"><a href="http://www.hinn.cn/2008/01/linux_command_1.html">http://www.hinn.cn/2008/01/linux_command_1.html</a></a> .
+/#4 <a href="http://www.idv2.com/" target="_blank">charlee</a>
+2008-01-14 10:45</p>
+<p>@jackie 谢谢说明，期待你的翻译 :D</p>
+<p>/#5 <a href="http://system.softcc.org/archives/1864.html" target="_blank">系统装机软件大全 » 在这里Linux系统信息查看命令大全</a>
+2008-07-27 04:35</p>
+<p>[...] Linux系统信息查看命令大全版权声明：可以任意转载，但转载时必须标明原作者charlee、原始链接<a href="http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/以及本声明。看Linux系统版本主要采用的方法。登录到服务器执行lsb_release" target="_blank">http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/以及本声明。看Linux系统版本主要采用的方法。登录到服务器执行lsb_release</a> -a，即可列出所有版本信息。登录到linux执行cat /etc/redhat-release，或登录到linux执行rpm -q redhat-release。 另外这里还有非常多的命令，可以作为参考。 系统/# uname -a /# 查看内核/操作系统/CPU信息/# head -n 1 /etc/issue /# 查看操作系统版本/# cat /proc/cpuinfo /# 查看CPU信息/# hostname /# 查看计算机名/# lspci -tv /# 列出所有PCI设备/# lsusb -tv /# 列出所有USB设备/# lsmod /# 列出加载的内核模块/# env /# 查看环境变量资源/# free -m /# 查看内存使用量和交换区使用量/# df -h /# 查看各分区使用情况/# du -sh &lt;目录名&gt; /# 查看指定目录的大小/# grep MemTotal /proc/meminfo /# 查看内存总量/# grep MemFree /proc/meminfo /# 查看空闲内存量/# uptime /# 查看系统运行时间、用户数、负载/# cat /proc/loadavg /# 查看系统负载磁盘和分区/# mount | column -t /# 查看挂接的分区状态/# fdisk -l /# 查看所有分区/# swapon -s /# 查看所有交换分区/# hdparm -i /dev/hda /# 查看磁盘参数(仅适用于IDE设备)/# dmesg | grep IDE /# 查看启动时IDE设备检测状况网络/# ifconfig /# 查看所有网络接口的属性/# iptables -L /# 查看防火墙设置/# route -n /# 查看路由表/# netstat -lntp /# 查看所有监听端口/# netstat -antp /# 查看所有已经建立的连接/# netstat -s /# 查看网络统计信息进程/# ps -ef /# 查看所有进程/# top /# 实时显示进程状态用户/# w /# 查看活动用户/# id &lt;用户名&gt; /# 查看指定用户信息/# last /# 查看用户登录日志/# cut -d: -f1 /etc/passwd /# 查看系统所有用户/# cut -d: -f1 /etc/group /# 查看系统所有组/# crontab -l /# 查看当前用户的计划任务服务/# chkconfig –list /# 列出所有系统服务/# chkconfig –list | grep on /# 列出所有启动的系统服务程序/# rpm -qa /# 查看所有安装的软件包&gt;&gt;&gt;KEYAUTOBLOG [...]
+/#6 <a href="http://www.5thinknet.com/blog/?p=944" target="_blank">Linux系统信息查看命令大全 at Nova’s Life</a>
+2008-12-08 20:30</p>
+<p>[...] 版权声明：可以任意转载，但转载时必须标明原作者charlee、原始链接 <a href="http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/%E4%BB%A5%E5%8F%8A%E6%9C%AC%E5%A3%B0%E6%98%8E%E3%80%82" target="_blank"><a href="http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/以及本声明。">http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/以及本声明。</a></a> [...]</p>
+<p>/#7 <a href="http://phpz.net.ru/linux_inf_cmd.html" target="_blank">Linux系统信息查看命令大全 | PHPZ 动手吧！学PHP!</a>
+2009-04-09 00:42</p>
+<p>[...] 版权声明：可以任意转载，但转载时必须标明原作者charlee、原始链接<a href="http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/以及本声明。" target="_blank">http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/以及本声明。</a> [...]
+/#8 <a href="http://silentstreet.net/archives/vps-study-notes-debian-web-server-to-set-up-articles.html" target="_blank">VPS 学习笔记 - Debian WEB服务器架设篇 - 寂静街</a>
+2009-04-09 14:38</p>
+<p>[...] <a href=""><a href="http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/">http://tech.idv2.com/2008/01/11/linux-sysinfo-cmds/</a></a> [...]</p>
+<p>/#9 <a href="http://www.936000.com/" target="_blank">阳光不锈</a>
+2011-02-27 09:51</p>
+<p>谢谢，很有帮助，特别是在现在我刚买了VPS打算学习的时候。
+/#10 generic Cymbalta
+2011-03-01 19:27</p>
+<p>Really great post, Thank you for sharing This knowledge.</p>
+<p>/#11 <a href="http://blog.linkanyway.com/linux/linux-system/linux-sysinfo-cmd.html" target="_blank">Linux下系统信息查询命令 | Linkanyway</a>
+2012-01-27 23:23</p>
+<p>[...] 命令转载自 Linux System/系统bash, Linux ← Linux-vsftpd限制用户chroot切换目录 //<em> /</em>/ [...]
+/#12 <a href="http://www.dietasmauri.com/" target="_blank">dieta online</a>
+2012-02-09 15:22</p>
+<p>Brilliant post and useful information…I think this is what I read somewhere…but
+I don’t know with your experience…</p>
+<p>添加评论</p>
+<p>姓名 (必须)</p>
+<p>电子邮件 (邮件地址不会被公开) (必须)</p>
+<p>主页</p>
+<p><a href="http://tech.idv2.com/2008/01/09/javascript-variables-and-delete-operator/" target="_blank">上一篇：Javascript的变量与delete操作符</a> - <a href="http://tech.idv2.com/2008/01/13/install-gentoo-on-sata/" target="_blank">下一篇：在SATA硬盘上安装gentoo</a></p>
+<h3 id="-">最热门内容</h3>
+<ul>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/" target="_blank">利用delegate调试Ajax应用</a> (166)</li>
+<li><a href="http://tech.idv2.com/2007/08/30/useful-excel-functions/" target="_blank">Excel常用函数扫盲</a> (88)</li>
+<li><a href="http://tech.idv2.com/2008/08/17/memcached-pdf/" target="_blank">memcached全面剖析--PDF总结篇</a> (71)</li>
+<li><a href="http://tech.idv2.com/2008/07/10/memcached-001/" target="_blank">memcached完全剖析--1. memcached的基础</a> (49)</li>
+<li><a href="http://tech.idv2.com/2008/07/24/memcached-004/" target="_blank">memcached全面剖析--4. memcached的分布式算法</a> (41)</li>
+<li><a href="http://tech.idv2.com/2008/02/21/unicode-intro/" target="_blank">Unicode详解</a> (40)</li>
+<li><a href="http://tech.idv2.com/2007/08/29/make-beautiful-excel-sheet/" target="_blank">如何制作漂亮的Excel表格</a> (38)</li>
+<li><a href="http://tech.idv2.com/2007/04/12/how-to-be-a-good-programmer/" target="_blank">如何成为一个优秀的程序员</a> (29)</li>
+<li><a href="http://tech.idv2.com/2007/09/14/servlet-basic/" target="_blank">Servlet/JSP学习笔记(4)-Servlet入门</a> (27)</li>
+<li><a href="http://tech.idv2.com/2006/11/30/the-visual-design-of-web-20-chinese/" target="_blank">Web 2.0 的视觉设计</a> (26)</li>
+<li><a href="http://tech.idv2.com/2007/09/08/blackberry-7230-tips/" target="_blank">BlackBerry 7230一周使用体验</a> (26)</li>
+<li><a href="http://tech.idv2.com/2008/01/24/how-to-recognise-a-good-programmer/" target="_blank">如何寻找优秀程序员</a> (25)</li>
+<li><a href="http://tech.idv2.com/2007/05/02/43-web-design-mistakes-you-should-avoid/" target="_blank">43个你应当避免的Web设计错误</a> (23)</li>
+<li><a href="http://tech.idv2.com/2005/02/14/how-to-calculate-hamming-code/" target="_blank">海明码的计算方法</a> (21)</li>
+<li><a href="http://tech.idv2.com/2008/07/11/memcached-002/" target="_blank">memcached全面剖析--2.理解memcached的内存存储</a> (20)</li>
+<li><a href="http://tech.idv2.com/2007/07/22/center-div-horizontally-and-vertically-with-css/" target="_blank">利用CSS使Div水平垂直居中</a> (18)</li>
+<li><a href="http://tech.idv2.com/2007/06/20/microsoft-powershell-powertoy/" target="_blank">微软powershell=powertoy</a> (16)</li>
+<li><a href="http://tech.idv2.com/2007/10/31/newtheme/" target="_blank">新主题Crystal上线</a> (16)</li>
+<li><a href="http://tech.idv2.com/2007/05/23/8-excel-tips-you-dont-know/" target="_blank">8个你未必知道的Excel技巧</a> (15)</li>
+<li><a href="http://tech.idv2.com/2007/08/25/simpler-linux/" target="_blank">其实Linux这样用更简单</a> (14)</li>
+</ul>
+<h3 id="-">最新评论</h3>
+<ul>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-455005" title="View the entire comment by Hong" target="_blank">Hong</a>: over counter Olmesartan - Hydrochlorothiazide alt...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-455004" title="View the entire comment by Augustine" target="_blank">Augustine</a>: cheap Olmesartan - Hydrochlorothiazide no script,...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-455003" title="View the entire comment by Rod" target="_blank">Rod</a>: cheapest place to buy Olmesartan - Hydrochlorothi...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-455002" title="View the entire comment by Duane" target="_blank">Duane</a>: canadian discount Olmesartan - Hydrochlorothiazid...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-455001" title="View the entire comment by Efren" target="_blank">Efren</a>: cheap Olmesartan - Hydrochlorothiazide no script,...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-455000" title="View the entire comment by Garret" target="_blank">Garret</a>: Olmesartan - Hydrochlorothiazide online consultan...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-454999" title="View the entire comment by Guadalupe" target="_blank">Guadalupe</a>: pancreatitis seroquel, seroquel buy, is seroquel ...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-454998" title="View the entire comment by Robin" target="_blank">Robin</a>: zyprexa seroquel, seroquel tiredness, seroquel do...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-454997" title="View the entire comment by Johnson" target="_blank">Johnson</a>: tapering off seroquel, how long does seroquel wit...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-454996" title="View the entire comment by Jerold" target="_blank">Jerold</a>: seroquel 150, depression seroquel, seroquel drugs...</li>
+<li><a href="http://tech.idv2.com/2008/07/24/memcached-004/#comment-454995" title="View the entire comment by commercial playground" target="_blank">commercial playground</a>: I daily watch your website because it helps me in...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-454994" title="View the entire comment by Emmitt" target="_blank">Emmitt</a>: seroquel xr coupon, celexa and seroquel, seroquel...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-454993" title="View the entire comment by Ira" target="_blank">Ira</a>: proscar for women, proscar and hair loss, hair lo...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-454992" title="View the entire comment by Timothy" target="_blank">Timothy</a>: proscar for women, avodart vs proscar, splitting ...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-454991" title="View the entire comment by Delmar" target="_blank">Delmar</a>: proscar for hair growth, proscar buy, proscar res...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-454990" title="View the entire comment by Willian" target="_blank">Willian</a>: proscar hair regrowth, proscar and hair loss, pro...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-454989" title="View the entire comment by Stanford" target="_blank">Stanford</a>: proscar indications, proscar hair loss, proscar o...</li>
+<li><a href="http://tech.idv2.com/2012/01/20/face-detection-with-python-opencv/#comment-454988" title="View the entire comment by anopos" target="_blank">anopos</a>: 精彩...</li>
+<li><a href="http://tech.idv2.com/2006/08/31/burp-suite/#comment-454987" title="View the entire comment by 失控" target="_blank">失控</a>: 为什么我打开suite.bat，没有运行...</li>
+<li><a href="http://tech.idv2.com/2007/01/30/debug-javascript-at-localhost-with-delegate/#comment-454986" title="View the entire comment by Isaac" target="_blank">Isaac</a>: nolvadex pct dosage, nolvadex only cycle, nolvade...</li>
+</ul>
+<h3 id="-">分类</h3>
+<ul>
+<li><a href="http://tech.idv2.com/category/database/" title="查看 database 下的所有文章" target="_blank">database</a> (12)</li>
+<li><a href="http://tech.idv2.com/category/hardware/" title="查看 hardware 下的所有文章" target="_blank">hardware</a> (10)</li>
+<li><a href="http://tech.idv2.com/category/linux/" title="查看 linux 下的所有文章" target="_blank">linux</a> (67)</li>
+<li><a href="http://tech.idv2.com/category/perl/" title="查看 perl 下的所有文章" target="_blank">perl</a> (39)</li>
+<li><a href="http://tech.idv2.com/category/photoshop/" title="查看 photoshop 下的所有文章" target="_blank">photoshop</a> (7)</li>
+<li><a href="http://tech.idv2.com/category/python/" title="查看 python 下的所有文章" target="_blank">python</a> (7)</li>
+<li><a href="http://tech.idv2.com/category/software/" title="查看 software 下的所有文章" target="_blank">software</a> (50)</li>
+<li><a href="http://tech.idv2.com/category/web/" title="查看 web 下的所有文章" target="_blank">web</a> (65)</li>
+<li><a href="http://tech.idv2.com/category/windows/" title="查看 windows 下的所有文章" target="_blank">windows</a> (17)</li>
+<li><a href="http://tech.idv2.com/category/wordpress/" title="查看 wordpress 下的所有文章" target="_blank">wordpress</a> (16)</li>
+<li><a href="http://tech.idv2.com/category/uncategorized/" title="查看 其他 下的所有文章" target="_blank">其他</a> (51)</li>
+<li><a href="http://tech.idv2.com/category/%e7%ae%a1%e7%90%86/" title="查看 管理 下的所有文章" target="_blank">管理</a> (8)</li>
+<li><a href="http://tech.idv2.com/category/develop/" title="开发环境配置、C语言等。" target="_blank">编程开发</a> (28)</li>
+</ul>
+<h3 id="-">随便看看</h3>
+<ul>
+<li><a href="http://tech.idv2.com/2009/11/09/delete-hidden-part/" title="
+家里有一台清华同方的品牌电脑，三年前的配置，现在有些力不从心了。最近打算给它升级，于是加了一条1G内存，然后整理好C盘，杀毒升级装软件，一切都弄好了。最后打算用一键还原精灵给它做个备份，但忽然发现，系统预装了清华同方的“同方急救中心”——一般来说，这种软件都会在硬盘上...  9.11.2009">如何删除品牌电脑中的隐藏分区</a></li>
+<li>[数据安全：备份，备份，再备份](<a href="http://tech.idv2.com/2007/09/27/backup-your-blog/" target="_blank">http://tech.idv2.com/2007/09/27/backup-your-blog/</a> &quot;</li>
+</ul>
+<p>最近看到一个[[Tag丢失事件&gt;<a href="http://blog.okevin.net/20070926/bang.html]]，想到最近随着Wordpress的不断升级，" target="_blank">http://blog.okevin.net/20070926/bang.html]]，想到最近随着Wordpress的不断升级，</a>
+各位blogger或许都在考虑着将自己的blog升级吧。但是又有几人考虑到自己数据的安全性呢？</p>
+<p>相信[[okevin&gt;<a href="http://blog.okevin.net]]就是因为太过于自信而直接在正式服务器上运行升级程序而造成的惨剧吧。" target="_blank">http://blog.okevin.net]]就是因为太过于自信而直接在正式服务器上运行升级程序而造成的惨剧吧。</a>
+插...  27.09.2007&quot;)</p>
+<ul>
+<li>[并行口针脚定义](<a href="http://tech.idv2.com/2004/06/06/parallel/" target="_blank">http://tech.idv2.com/2004/06/06/parallel/</a> &quot;</li>
+</ul>
+<h1 id="ref-2009-04-o_parallel-gif-nolink-">ref(2009/04/o_parallel.gif,nolink)</h1>
+<p>|  脚    |    名称     |   I/O  |   有效 | 描述    |
+|  1     |   STROBE    |   O    |   L    | 指示数据准备好  |
+|  2     |   DATA0     |   I/O  |   H    | 数据最低位  |
+|  3     |   DATA1     |   I/O  |   H    |      |
+|  4     |   DATA2     |   I/O  |   H    |      |
+|  5     |   DATA3     |   I/O  |   H    |      |
+|  6     |...  6.06.2004&quot;)</p>
+<ul>
+<li><a href="http://tech.idv2.com/2011/04/27/mysql_connect_no_such_file/ &quot;
+今天在MacBookPro上安装wordpress时，安装程序一直报错说连不上数据库。mysql客户端可以正常使用，可以确定不是服务器的问题。写了个php脚本单独执行mysql_connect(">mysql_connect报告&quot;No such file or directory&quot;错误的解决方法</a>，发现错误信息居然是“No such file or directory！这里应该没涉及到文件啊？</li>
+</ul>
+<p>在网上搜了一下，找到了这篇文章：[[mysql_connect and No such file or d...  27.04.2011&quot;)</p>
+<ul>
+<li><a href="http://tech.idv2.com/2007/02/16/godaddy-domain-redirect-diy/" title="
+最近好多人都在问我GoDaddy的域名转向设置方法。其实我没用过GoDaddy的域名转向，
+而且据说在中国国内无法访问域名转发服务。幸好GoDaddy对每个域名都提供了免费的虚拟主机，
+虽然是带广告的，不过我们可以用它来做自己的域名重定向。
+方法么，自然是用[[mod_rewrite&gt;http://tech.inspiremedia.org/archives/304...  16.02.2007">GoDaddy域名重定向DIY</a></li>
+<li>[通过免费的VMware Server充分利用你的服务器资源](<a href="http://tech.idv2.com/2007/05/22/vmware-server/" target="_blank">http://tech.idv2.com/2007/05/22/vmware-server/</a> &quot;</li>
+</ul>
+<p>VMware相信大家都耳熟能详，不过估计大家用的都是价值200多刀的VMware Workstation版。
+而VMware公司的另一个产品——VMware Server，不收取一分钱费用却能让你实现真正的虚拟服务器。</p>
+<p>有关VMware Workstation版和VMware Server版的详细区别请参见
+[[smalldust的这篇文章&gt;<a href="http://www.codesoil.net/2007/05/19/vmware-features-compari" target="_blank">http://www.codesoil.net/2007/05/19/vmware-features-compari</a>...  22.05.2007&quot;)</p>
+<ul>
+<li>[如何在下载文件名中使用UTF-8编码](<a href="http://tech.idv2.com/2009/03/05/use-utf8-in-download-filename/" target="_blank">http://tech.idv2.com/2009/03/05/use-utf8-in-download-filename/</a> &quot;</li>
+</ul>
+<p>通过把Content-Type设置为application/octet-stream，
+可以把动态生成的内容当作文件来下载，相信这个大家都会。
+那么用Content-Disposition设置下载的文件名，
+这个也有不少人知道吧。
+基本上，下载程序都是这么写的：</p>
+<p>这样用浏览器打开之后，就可以下载document.doc。</p>
+<p>但是，如果$filename是UTF-8编码...  5.03.2009&quot;)</p>
+<ul>
+<li>[关闭VMware的PC喇叭](<a href="http://tech.idv2.com/2010/02/26/disable-pc-speaker-in-vmware/" target="_blank">http://tech.idv2.com/2010/02/26/disable-pc-speaker-in-vmware/</a> &quot;
+在VMWare中运行一些Linux上的软件如vi，出错时PC喇叭会不停地叫，很烦人。
+其实只要在 c:Documents and Settings用户名Application DataVMwareconfig.ini （如不存在请自行建立）中加入这样一行：
+mks.noBeep = TRUE
+就可以从虚拟硬件上关闭VMWare的PC喇叭。</li>
+</ul>
+<p>我用的VMware是 VMware Workstation 5.5.1版。</p>
+<p>...  26.02.2010&quot;)</p>
+<ul>
+<li>[跨站脚本攻击(XSS)FAQ](<a href="http://tech.idv2.com/2006/08/30/xss-faq/" target="_blank">http://tech.idv2.com/2006/08/30/xss-faq/</a> &quot;
+该文章简单地介绍了XSS的基础知识及其危害和预防方法。Web开发人员的必读。译自 <a href="http://www.cgisecurity.com/articles/xss-faq.shtml。" target="_blank">http://www.cgisecurity.com/articles/xss-faq.shtml。</a></li>
+</ul>
+<h1 id="contents">contents</h1>
+<hr>
+<ul>
+<li>简介</li>
+</ul>
+<p>现在的网站包含大量的动态内容以提高用户体验，比过去要复杂得多。
+所谓动态内容，就是根据用户环境和需要，Web应用程序能够输出...  30.08.2006&quot;)</p>
+<ul>
+<li>[[Perl]使用DProf测定程序执行效率](<a href="http://tech.idv2.com/2008/10/30/perl-dprof/" target="_blank">http://tech.idv2.com/2008/10/30/perl-dprof/</a> &quot;</li>
+</ul>
+<p>代码写多了，程序就会变得臃肿；程序臃肿了，就会变慢。
+这时提高代码执行效率就非常重要了。
+但是，代码优化并不是几条best practice就能完成的。
+那些无关痛痒的空间分配、减少复制等优化措施，虽然有效，但却微乎其微。
+优化的关键，是要&#39;&#39;找出瓶颈并解决之&#39;&#39;，这样才能以最小的代价获...  30.10.2008&quot;)</p>
+<ul>
+<li>[opqcp:C语言混淆器](<a href="http://tech.idv2.com/2006/04/10/opqcp-c-scrambler/" target="_blank">http://tech.idv2.com/2006/04/10/opqcp-c-scrambler/</a> &quot;
+从C FAQ上看到的一个程序，可以将C语言源文件变成难以识别的代码。文件从<a href="http://www.faqs.org/ftp/usenet/comp.sources.misc/packages/opqcp/下载得到。" target="_blank">http://www.faqs.org/ftp/usenet/comp.sources.misc/packages/opqcp/下载得到。</a></li>
+</ul>
+<h1 id="ref-2006-09-opqcp-zip-">ref(2006/09/opqcp.zip)</h1>
+<p>...  10.04.2006&quot;)</p>
+<ul>
+<li>[BlackBerry 7230刷机后的三篇欢迎邮件](<a href="http://tech.idv2.com/2007/09/20/blackberry-7230-welcome-mail/" target="_blank">http://tech.idv2.com/2007/09/20/blackberry-7230-welcome-mail/</a> &quot;BlackBerry 7230刷机之后第一次开机，短信收件箱里面会有三封初始邮件，标题分别是《Welcome》、《Top 20 Tips》、《Top 10 Phone Tips》。其中后两篇提到了很多连老手都不知道的应用技巧。可是又有谁真正认真地读过呢？</li>
+</ul>
+<p>刚刚刷完ROM，准备删除这三封邮件，立此存照。</p>
+<p>From: BlackBerry
+Subject: Welcome
+-------...  20.09.2007&quot;)</p>
+<ul>
+<li>[PostScript入门(1)-基本知识](<a href="http://tech.idv2.com/2010/07/25/postscript-tuturial-1/" target="_blank">http://tech.idv2.com/2010/07/25/postscript-tuturial-1/</a> &quot;</li>
+</ul>
+<p>最近由于项目需要，一直在研究PostScript语言。由于这个语言通常用在打印机上，
+一般用户接触不到，因此网上的资料也十分罕见。所以，我想把这段时间的心得
+整理成一篇入门文章，与大家分享，希望能对想研究打印机的朋友们有所帮助。</p>
+<p>这篇文章计划分成七个部分，分别是：</p>
+<ul>
+<li>基本知识(...  25.07.2010&quot;)</li>
+</ul>
+<ul>
+<li>[项目经理和技术主管的分工](<a href="http://tech.idv2.com/2008/06/05/pm-and-tech-leader/" target="_blank">http://tech.idv2.com/2008/06/05/pm-and-tech-leader/</a> &quot;</li>
+</ul>
+<p>本文是日经BP上的一篇关于项目管理方法的实践的文章。对于短期的Web小型项目，
+无论是开发周期、成本，还是技术上都有很大的风险。然而许多人对此认识不足，
+导致项目失败，或是产品发布日期一拖再拖、成本大幅上升，或是匆忙发布后漏洞百出。
+本文从项目管理的角度说明，即使在小型项...  5.06.2008&quot;)</p>
+<ul>
+<li>[Oracle常用SQL语句](<a href="http://tech.idv2.com/2006/06/13/useful-oracle-sql/" target="_blank">http://tech.idv2.com/2006/06/13/useful-oracle-sql/</a> &quot;Oracle使用过程中经常会用到的SQL语句。</li>
+</ul>
+<h1 id="contents">contents</h1>
+<hr>
+<p>** 表</p>
+<p>创建表。
+ CREATE TABLE [schema.]t_employees (
+     employee_id NUMBER(2),                  -- 长度=2的整数
+     hire_date DATE DEFAULT SYSDATE,         -- default的例子
+     ...
+ ) AS 子查询;                                -- 利用子查询建立表</p>
+<p>确认表...  13.06.2006&quot;)</p>
+<ul>
+<li><a href="http://tech.idv2.com/2007/10/08/php-getdate-timezone/" title="这两天一直被一个问题所困扰。同样的一段程序，在自己的机器上调试完全没有问题，放到服务器上时间显示就快了8个小时。显然这8个小时就差在时区设置上。我在自己的机器上写代码时，对timestamp进行了时区调整（$now += 8 * 3600）之后再进行getdate()转换，结果完全正确；放到服务器上执行，就要将时...  8.10.2007" target="_blank">[PHP]getdate()等时间函数的时区问题</a></li>
+<li>[使用Apache做负载均衡](<a href="http://tech.idv2.com/2009/07/22/loadbalancer-with-apache/" target="_blank">http://tech.idv2.com/2009/07/22/loadbalancer-with-apache/</a> &quot;</li>
+</ul>
+<p>第一次看到这个标题时我也很惊讶，Apache居然还能做负载均衡？真是太强大了。
+经过一番调查后发现的确可以，而且功能一点都不差。
+这都归功于 mod_proxy 这个模块。
+不愧是强大的Apache啊。</p>
+<p>废话少说，下面就来解释一下负载均衡的设置方法。</p>
+<p>一般来说，负载均衡就是将客户端的请求...  22.07.2009&quot;)</p>
+<ul>
+<li><a href="http://tech.idv2.com/2006/11/03/ubuntu-610-edgy-upgrade-howto/ &quot;
+&amp;color(red">Ubuntu 6.10 edgy升级指南</a>{[[这里&gt;<a href="http://tech.idv2.com/2006/09/10/ubuntu-install-memo/]]有一篇关于如何安装" target="_blank">http://tech.idv2.com/2006/09/10/ubuntu-install-memo/]]有一篇关于如何安装</a> Ubuntu 6.06 的文章，虽然有些老了，但是本文是在这篇文章的基础上写成的，看看也许能有些参考。};</li>
+</ul>
+<p>修改 /etc/source.list，将其中的所有 dapper 替换成 edgy。</p>
+<p>如果你使用了 <a href="http://packages.freecontrib.org/ubuntu/plf/" target="_blank">http://packages.freecontrib.org/ubuntu/plf/</a> 的源，则要将这...  3.11.2006&quot;)</p>
+<ul>
+<li>[使用nc快速传送文件](<a href="http://tech.idv2.com/2005/03/30/use-nc-to-send-file/" target="_blank">http://tech.idv2.com/2005/03/30/use-nc-to-send-file/</a> &quot;
+如果两台计算机之间突然需要传送一个文件，而一时又没有什么好用的通讯工具，也来不及开服务器的时候，那么可以使用nc来传送文件。方法如下：
+接收者:  $ nc -l -p 12345 &gt; save_filename    ; 12345为1024-65535的任意端口号
+发送者： $ nc  12345 &lt; send_file</li>
+</ul>
+<p>...  30.03.2005&quot;)</p>
+<ul>
+<li>[Servlet/JSP学习笔记(6)-从配置文件获取参数](<a href="http://tech.idv2.com/2007/09/20/get-init-params/" target="_blank">http://tech.idv2.com/2007/09/20/get-init-params/</a> &quot;</li>
+</ul>
+<p>前两节([[1&gt;<a href="http://tech.idv2.com/2007/09/14/servlet-basic/" target="_blank">http://tech.idv2.com/2007/09/14/servlet-basic/</a>]], [[2&gt;<a href="http://tech.idv2.com/2007/09/16/httpservlet/" target="_blank">http://tech.idv2.com/2007/09/16/httpservlet/</a>]])
+分别介绍了 GenericServlet 和 HttpServlet 的用法。
+这一节将介绍 ServletContext 和 ServletConfig 这两个接口。
+通过这两个接口，我们可以在web.xml中设置一些参数，如数据库地址、用户名密码等，供 Servlet 使用，
+这样每...  20.09.2007&quot;)</p>
+<h3 id="-">其他</h3>
+<ul>
+<li><a href="http://tech.idv2.com/wp-login.php" target="_blank">登录</a><h3 id="-">搜索</h3>
 </li>
-<li><p><a href="http://tech.uc.cn/?p=696" target="_blank">使用搜索技术实现URL智能匹配</a></p>
-</li>
-<li><a href="http://tech.uc.cn/?p=1738" target="_blank">HAProxy几个重要的结构体</a></li>
-<li><a href="http://tech.uc.cn/?p=300" target="_blank">Nginx的http配置结构体的组织结构</a></li>
 </ul>
-<p>来源： <a href="[http://tech.uc.cn/?p=1031](http://tech.uc.cn/?p=1031)">[http://tech.uc.cn/?p=1031](http://tech.uc.cn/?p=1031)</a></p>
+<h3 id="-blog">订阅这个Blog</h3>
+<ul>
+<li><a href="http://fusion.google.com/add?feedurl=http://tech.idv2.com/feed/" target="_blank">订阅到Google</a></li>
+<li><a href="http://www.zhuaxia.com/add_channel.php?url=http://tech.idv2.com/feed/" target="_blank">订阅到抓虾</a></li>
+<li><a href="http://www.xianguo.com/subscribe.php?url=http://tech.idv2.com/feed/" target="_blank">订阅到鲜果</a></li>
+<li><a href="http://www.bloglines.com/sub/http://tech.idv2.com/feed/" target="_blank">订阅到Bloglines</a></li>
+</ul>
+<h3 id="blogger-">Blogger们</h3>
+<ul>
+<li><a href="http://www.awflasher.com/blog/" target="_blank">awflasher</a></li>
+<li><a href="http://cutecool.me/" target="_blank">cutecool is me</a></li>
+<li><a href="http://www.dbanotes.net/" target="_blank">DBA notes</a></li>
+<li><a href="http://blog.devep.net/virushuo/" target="_blank">demo@virushuo</a></li>
+<li><a href="http://www.fcicq.net/wp/" target="_blank">fcicq’s blog-beta</a></li>
+<li><a href="http://www.osxcn.com/" target="_blank">Nicky’s blog</a></li>
+<li><a href="http://nings.cn/" target="_blank">Nings blog</a></li>
+<li><a href="http://realazy.org/blog" title="许多Javascript开发文章" target="_blank">Realazy</a></li>
+<li><a href="http://aboutrss.cn/" title="RSS知识普及" target="_blank">RSS相关</a></li>
+<li><a href="http://tiny4.org/prog/diary/diary.htm" target="_blank">Tinyfool的开发日记</a></li>
+<li><a href="http://blog.yangyc.com/" target="_blank">三秒改变世界</a></li>
+<li><a href="http://www.luanxiang.org/blog/" target="_blank">乱象，印迹</a></li>
+<li><a href="http://www.xyzlove.com/" target="_blank">午夜兰花手札</a></li>
+<li><a href="http://www.xuchi.name/blog" target="_blank">抽筋</a></li>
+<li><a href="http://blog.linjian.org/" target="_blank">林健的BLOG</a></li>
+<li><a href="http://tiny4.org/jsjy/sxl/sxl.htm" target="_blank">红尘的尘–Tinyfool的随想录</a></li>
+<li><a href="http://blog.zhaojie.me/" target="_blank">老赵点滴</a></li>
+<li><a href="http://www.chedong.com/blog/" target="_blank">车东</a></li>
+</ul>
+<h3 id="-">我的其他网站</h3>
+<ul>
+<li><a href="http://www.idv2.com/ideapool" target="_blank">ideapool</a></li>
+<li><a href="http://www.idv2.com/" target="_blank">主页</a></li>
+</ul>
+<h3 id="-">我的朋友</h3>
+<ul>
+<li><a href="http://nand.me/" target="_blank">&amp;Zz的主页</a></li>
+<li><a href="http://www.codesoil.net/" target="_blank">Code Soil</a></li>
+<li><a href="http://wuyizhou.spaces.live.com/" target="_blank">Frank&#39;s MSN Site</a></li>
+<li><a href="http://mykernelspace.com/" target="_blank">Kernel Space</a></li>
+</ul>
+<h3 id="-">推荐书籍</h3>
+<p><a href="http://book.douban.com/subject/3142173/" target="_blank"><img src="" alt=""></a> <a href="http://book.douban.com/subject/3598757/" target="_blank"><img src="" alt=""></a>  <a href="http://book.douban.com/subject/3590787/" target="_blank"><img src="" alt=""></a> <a href="http://book.douban.com/subject/4827960/" target="_blank"><img src="" alt=""></a>  <a href="http://book.douban.com/subject/6758780/" target="_blank"><img src="" alt=""></a> <a href="http://book.douban.com/subject/6799412/" target="_blank"><img src="" alt=""></a></p>
+<p><a href="http://creativecommons.org/licenses/by-nc-sa/2.5/" target="_blank"><img src="" alt="Creative Commons License"></a>
+本网站作品采用<a href="http://creativecommons.org/licenses/by-nc-sa/2.5/" target="_blank">知识共享署名-非商业性使用-相同方式共享 2.5 许可协议</a>进行许可。
+由 <a href="http://wordpress.org/" title="基于 WordPress，优美的个人信息发布平台。" target="_blank"><strong>WordPress</strong></a> 所驱动
+网站主题<a href="http://tech.idv2.com/" target="_blank">Crystal</a>由<a href="http://www.idv2.com/" target="_blank">charlee</a>设计制作</p>
 
       
     </div>
@@ -237,8 +481,8 @@ bit的第三个重要意义：<strong>bit为负值表示该子树下所有的键
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/linux系统信息命令/">linux系统信息命令</a></li></span></span> | <span class="tags">Tagged <a href="/tags/linux系统信息命令/" class="label label-primary">linux系统信息命令</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-linux系统信息命令--Linux系统信息查看命令大全-idv2/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-linux系统信息命令--Linux系统信息查看命令大全-idv2" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -253,375 +497,111 @@ bit的第三个重要意义：<strong>bit为负值表示该子树下所有的键
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/">基于tomcat7 web开发中的一点小东西</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--LinearSearch/">LinearSearch</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--LinearSearch/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-tomcat7-web-">基于tomcat7 web开发中的一点小东西</h1>
-<p><a href="http://blog.csdn.net/benyuxy/article/details/7568386" target="_blank">基于tomcat7 web开发中的一点小东西</a></p>
-<h3 id="-">控制台：</h3>
-<p>org.apache.jasper.compiler.TldLocationsCache tldScanJar</p>
-<p>信息: At least one JAR was scanned for TLDs yet contained no TLDs. Enable debug logging for this logger for a complete list of JARs that were scanned but no TLDs were found in them. Skipping unneeded JARs during scanning can improve startup time and JSP compilation time.
-这样的问题是你的页面中含有<!---->的注释 去掉就好了，tomcat7.0.20.</p>
-<p>tomcat 7对EL表达式的语法要求比较严格，例如&quot;${owner.new}&quot;因包含关键字new就会导致解析出错。 
-问题是出来了，怎么解决呢？有三种，如下： 
-第一种：严格遵守java规范，修改对象的属性名称，要求不包含java关键字; 
-第二种：修改EL表达式，例如&quot;${owner.new}&quot;可以修改为&quot;${owner[&#39;new&#39;]}&quot;; 
-第三种：修改tomcat属性，忽略对EL表达式的关键字检查。修改$CATALINA_BASE/conf/catalina.properties文件，添加org.apache.el.parser.SKIP_IDENTIFIER_CHECK=true选项。</p>
-<p>来源： <a href="[http://blog.csdn.net/benyuxy/article/details/7568386](http://blog.csdn.net/benyuxy/article/details/7568386)">[http://blog.csdn.net/benyuxy/article/details/7568386](http://blog.csdn.net/benyuxy/article/details/7568386)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--基于tomcat7web开发中的一点小东西" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava/">tomcat中的context.xml元素详解 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="tomcat-context-xml-pasha-blogjava">tomcat中的context.xml元素详解 - pasha - BlogJava</h1>
-<h1 id="-pasha-http-www-blogjava-net-pasha-"><a href="http://www.blogjava.net/pasha/" target="_blank">pasha</a></h1>
-<h2 id="-tomcat-context-xml-"><a href="">tomcat中的context.xml元素详解</a></h2>
-<p><strong>tomcat中的context.xml元素详解小人物，大博客 Q&#39;e ^ L0J/*J4h
-</strong> <strong>元素名</strong> <strong>属性</strong> <strong>解释</strong> server port 指定一个端口，这个端口负责监听关闭tomcat的请求 shutdown 指定向端口发送的命令字符串 service name 指定service的名字 Connector(表示客户端和service之间的连接) port 指定服务器端要创建的端口号，并在这个端口监听来自客户端的请求 minProcessors 服务器启动时创建的处理请求的线程数 maxProcessors 最大可以创建的处理请求的线程数 enableLookups 如果为true，则可以通过调用request.getRemoteHost()进行DNS查询来得到远程客户端的实际主机名，若为false则不进行DNS查询，而是返回其ip地址 redirectPort 指定服务器正在处理http请求时收到了一个SSL传输请求后重定向的端口号 acceptCount 指定当所有可以使用的处理请求的线程数都被使用时，可以放到处理队列中的请求数，超过这个数的请求将不予处理 connectionTimeout 指定超时的时间数(以毫秒为单位) Engine(表示指定service中的请求处理机，接收和处理来自Connector的请求) defaultHost 指定缺省的处理请求的主机名，它至少与其中的一个host元素的name属性值是一样的 Context(表示一个web应用程序，通常为WAR文件，关于WAR的具体信息见servlet规范) docBase 应用程序的路径或者是WAR文件存放的路径 path 表示此web应用程序的url的前缀，这样请求的url为<a href="http://localhost:8080/path//*/*/*/*" target="_blank">http://localhost:8080/path//*/*/*/*</a> reloadable 这个属性非常重要，如果为true，则tomcat会自动检测应用程序的/WEB-INF/lib 和/WEB-INF/classes目录的变化，自动装载新的应用程序，我们可以在不重起tomcat的情况下改变应用程序 host(表示一个虚拟主机) name 指定主机名 appBase 应用程序基本目录，即存放应用程序的目录 unpackWARs 如果为true，则tomcat会自动将WAR文件解压，否则不解压，直接从WAR文件中运行应用程序 Logger(表示日志，调试和错误信息) className 指定logger使用的类名，此类必须实现org.apache.catalina.Logger 接口 prefix 指定log文件的前缀 suffix 指定log文件的后缀 timestamp 如果为true，则log文件名中要加入时间，如下例:localhost_log.2001-10-04.txt Realm(表示存放用户名，密码及role的数据库) className 指定Realm使用的类名，此类必须实现org.apache.catalina.Realm接口 Valve(功能与Logger差不多，其prefix和suffix属性解释和Logger 中的一样) className 指定Valve使用的类名，如用org.apache.catalina.valves.AccessLogValve类可以记录应用程序的访问信息 directory 指定log文件存放的位置 pattern 有两个值，common方式记录远程主机名或ip地址，用户名，日期，第一行请求的字符串，HTTP响应代码，发送的字节数。combined方式比common方式记录的值更多</p>
-<p>posted on 2008-09-21 11:14 <a href="http://www.blogjava.net/pasha/" target="_blank">pasha</a> 阅读(2524) <a href="http://www.blogjava.net/pasha/articles/230241.html#Post" target="_blank">评论(0)</a>  <a href="http://www.blogjava.net/pasha/admin/EditArticles.aspx?postid=230241" target="_blank">编辑</a>  <a href="http://www.blogjava.net/pasha/AddToFavorite.aspx?id=230241" target="_blank">收藏</a></p>
-<p> <img src="" alt=""></p>
-<p><a href="http://www.blogjava.net/RequireRegister.aspx" target="_blank">新用户注册</a>  <a href="">刷新评论列表</a>  </p>
-<p><a href=""></a> <a href="http://www.cnblogs.com/cmt/archive/2012/10/31/vmware_vforum_2012.html">开发者的云计算盛会，期待您的参与（11月20日~21日，北京，免费）</a>   <a href="http://www.cnblogs.com/" target="_blank">博客园</a>  <a href="http://q.cnblogs.com/" target="_blank">博问</a>  <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://job.cnblogs.com/cate-java_programmer/" target="_blank">Java程序员招聘</a> 标题  请输入标题 姓名  请输入你的姓名 主页 请输入验证码 验证码 /*  <img src="" alt=""> 内容(请不要发表任何与政治相关的内容) 请输入评论内容 Remember Me?   <a href="http://www.blogjava.net/login.aspx?ReturnURL=http://www.blogjava.net/pasha/articles/230241.html&amp;SourceURL=/pasha/articles/230241.html" target="_blank">登录</a>       [使用Ctrl+Enter键可以直接提交]    IT新闻：
-· <a href="http://news.cnblogs.com/n/163329/" target="_blank">让你的iPhone 5变身小电视</a>
-· <a href="http://news.cnblogs.com/n/163348/" target="_blank">流言终结者 /#19 –「我只要专心把产品做好…」</a>
-· <a href="http://news.cnblogs.com/n/163347/" target="_blank">来看看1399元的Lumia究竟如何</a>
-· <a href="http://news.cnblogs.com/n/163346/" target="_blank">周鸿祎给李彦宏一个支点</a>
-· <a href="http://news.cnblogs.com/n/163345/" target="_blank">Twitter HOLD 住大选：少点 Ruby，多些 Java</a></p>
-<p>博客园首页随笔：
-· <a href="http://www.cnblogs.com/bjzhanghao/archive/2012/11/09/2762550.html" target="_blank">[Android问答] 如何实现“退出应用”功能？</a>
-· <a href="http://www.cnblogs.com/vamei/archive/2012/11/09/2762224.html" target="_blank">Python内置函数清单</a>
-· <a href="http://www.cnblogs.com/manuosex/archive/2012/11/09/2762405.html" target="_blank">C/#数据结构与算法揭秘13</a>
-· <a href="http://www.cnblogs.com/ldcsaa/archive/2012/11/09/2762373.html" target="_blank">Portal-Basic Java Web 应用开发框架：应用篇（八） —— Freemarker 整合</a>
-· <a href="http://www.cnblogs.com/nnhy/archive/2012/11/09/Money.html" target="_blank">如何找到并完成兼职项目</a>
-知识库：
-· <a href="http://kb.cnblogs.com/page/157087/" target="_blank">项目管理心得：一个项目经理的个人体会、经验总结</a>
-· <a href="http://kb.cnblogs.com/page/162480/" target="_blank">十天内掌握线性代数：惊人的超速学习实验</a>
-· <a href="http://kb.cnblogs.com/page/157745/" target="_blank">可伸缩性最佳实践：来自eBay的经验</a>
-· <a href="http://kb.cnblogs.com/page/160526/" target="_blank">一堂如何提高代码质量的培训课</a>
-· <a href="http://kb.cnblogs.com/page/161182/" target="_blank">程序江湖</a>  网站导航:</p>
-<p><a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园</a>   <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>   <a href="http://kb.cnblogs.com/" target="_blank">知识库</a>   <a href="http://www.cppblog.com/" target="_blank">C++博客</a>   <a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a>   <a href="http://www.blogjava.net/pasha/articles/230241.html?opt=admin" target="_blank">管理</a>   </p>
-<h3 id="-">导航</h3>
-<ul>
-<li><a href="http://www.blogjava.net/" target="_blank">BlogJava</a></li>
-<li><a href="http://www.blogjava.net/pasha/" target="_blank">首页</a></li>
-<li><a href="http://www.blogjava.net/pasha/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a></li>
-<li><a href="http://www.blogjava.net/pasha/contact.aspx?id=1" target="_blank">联系</a></li>
-<li><a href="http://www.blogjava.net/pasha/rss" target="_blank">聚合</a><a href="http://www.blogjava.net/pasha/rss" target="_blank"><img src="" alt=""></a></li>
-<li><a href="http://www.blogjava.net/pasha/admin/EditPosts.aspx" target="_blank">管理</a></li>
-</ul>
-<h3 id="-">统计</h3>
-<ul>
-<li>随笔 - 7</li>
-<li>文章 - 10</li>
-<li>评论 - 1</li>
-<li>引用 - 0</li>
-</ul>
-<h3 id="-">常用链接</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/MyPosts.html" target="_blank">我的随笔</a></li>
-<li><a href="http://www.blogjava.net/pasha/MyArticles.html" target="_blank">我的文章</a></li>
-<li><a href="http://www.blogjava.net/pasha/MyComments.html" target="_blank">我的评论</a></li>
-<li><a href="http://www.blogjava.net/pasha/OtherPosts.html" target="_blank">我的参与</a></li>
-<li><a href="http://www.blogjava.net/pasha/RecentComments.html" target="_blank">最新评论</a></li>
-</ul>
-<h3 id="-2-">留言簿(2)</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/Contact.aspx?id=1" target="_blank">给我留言</a></li>
-<li><a href="http://www.blogjava.net/pasha/default.aspx?opt=msg" target="_blank">查看公开留言</a></li>
-<li><a href="http://www.blogjava.net/pasha/admin/MyMessages.aspx" target="_blank">查看私人留言</a></li>
-</ul>
-<h3 id="-">随笔分类</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/category/33818.html" target="_blank">ajax</a> <a href="http://www.blogjava.net/pasha/category/33818.html/rss" title="Subscribe to ajax" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/34754.html" target="_blank">database</a> <a href="http://www.blogjava.net/pasha/category/34754.html/rss" title="Subscribe to database" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/33817.html" target="_blank">struts2(1)</a> <a href="http://www.blogjava.net/pasha/category/33817.html/rss" title="Subscribe to struts2(1)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/34753.html" target="_blank">tomcat(2)</a> <a href="http://www.blogjava.net/pasha/category/34753.html/rss" title="Subscribe to tomcat(2)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/35370.html" target="_blank">其他(2)</a> <a href="http://www.blogjava.net/pasha/category/35370.html/rss" title="Subscribe to 其他(2)" target="_blank">(rss)</a></li>
-</ul>
-<h3 id="-">随笔档案</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10.html" target="_blank">2008年10月 (2)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09.html" target="_blank">2008年9月 (3)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/06.html" target="_blank">2008年6月 (1)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/04.html" target="_blank">2008年4月 (1)</a></li>
-</ul>
-<h3 id="-">文章分类</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/category/35369.html" target="_blank">其它</a> <a href="http://www.blogjava.net/pasha/category/35369.html/rss" title="Subscribe to 其它" target="_blank">(rss)</a></li>
-</ul>
-<h3 id="-">文章档案</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/09.html" target="_blank">2008年9月 (4)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/08.html" target="_blank">2008年8月 (2)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/07.html" target="_blank">2008年7月 (1)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/06.html" target="_blank">2008年6月 (2)</a></li>
-</ul>
-<h3 id="-css-">最常用和实用的CSS技巧</h3>
-<h3 id="-">最新随笔</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235638.html" target="_blank">1. Ubuntu Linux与Windows系统多启动的配置(Webmaster )</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235617.html" target="_blank">2. Bcdedit命令详解</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/230555.html" target="_blank">3. JQuery Ajax 方法说明</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/230458.html" target="_blank">4. EditPlus技巧(Liangjhrn)</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/230372.html" target="_blank">5. 转载：《关于JSP页面中的pageEncoding和contentType两种属性的区别》</a></li>
-<li><a href="">6. tomcat中的context.xml元素详解</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230237.html" target="_blank">7. Tomcat6数据源配置（转）</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230227.html" target="_blank">8. tomcat 6.18 设置</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/09/227881.html" target="_blank">9. struts2UI td 的问题</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/222926.html" target="_blank">10. 几款MYSQL管理工具</a></li>
-</ul>
-<h3 id="-">搜索</h3>
-<p>*</p>
-<ul>
-<li></li>
-</ul>
-<h3 id="-http-www-blogjava-net-pasha-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/pasha/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/24/208536.html#230938" target="_blank">1. re: SESSION</a></li>
-<li>啊！！原来是这样啊 终于明白了 谢了！！</li>
-<li>--ndj</li>
-</ul>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230227.html" target="_blank">1. tomcat 6.18 设置(711)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/04/08/191507.html" target="_blank">2. SSO (转)(613)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235617.html" target="_blank">3. Bcdedit命令详解(407)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230237.html" target="_blank">4. Tomcat6数据源配置（转）(338)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/06/17/208536.html" target="_blank">5. SESSION(181)</a></li>
-</ul>
-<h3 id="-">评论排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/06/17/208536.html" target="_blank">1. SESSION(1)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/04/08/191507.html" target="_blank">2. SSO (转)(0)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235638.html" target="_blank">3. Ubuntu Linux与Windows系统多启动的配置(Webmaster )(0)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235617.html" target="_blank">4. Bcdedit命令详解(0)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230237.html" target="_blank">5. Tomcat6数据源配置（转）(0)</a></li>
-</ul>
-<p>Powered by:
-<a href="http://www.blogjava.net/" target="_blank">BlogJava</a>
-Copyright © pasha</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">How Does Google Work  Learn How Google Works  Sear</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="how-does-google-work-learn-how-google-works-search-engine-adwords">How Does Google Work Learn How Google Works Search Engine + AdWords</h1>
-<ul>
-<li><a href="http://ppcblog.com/blog" target="_blank">Blog</a></li>
-<li><a href="http://ppcblog.com/ppc-assets" target="_blank">Free PPC Assets</a></li>
-<li><a href="http://ppcblog.com/about" target="_blank">About Us</a></li>
-<li><a href="http://ppcblog.com/member-tour-new-users-1" target="_blank">PPC Training Tour</a></li>
-<li><a href="https://ppcblog.com/amember/member.php" target="_blank">Member Login »</a></li>
-</ul>
-<h1 id="-ppc-blog-http-ppcblog-com-"><a href="http://ppcblog.com/" target="_blank">PPC Blog</a></h1>
-<h1 id="learn-how-google-works-in-gory-detail">Learn How Google Works: in Gory Detail</h1>
-<p><a href="http://pinterest.com/pin/create/button/?url=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2F&amp;media=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2Fhow-google-works.jpg&amp;description=How%20Google%20Works" target="_blank">888</a>  <a href="http://twitter.com/share" target="_blank">Tweet</a> 388
-<a href="">inShare</a>  <a href="">digg</a></p>
-<p><img src="" alt="How Google Works."></p>
-<p><a href="http://news.ycombinator.com/item?id=1472981" target="_blank">Vote on Hacker News</a>, or <img src="http://static.delicious.com/img/delicious.small.gif" alt="Delicious"> <a href="http://delicious.com/save" target="_blank">Bookmark this on Delicious</a></p>
-<h2 id="free-add-this-infographic-to-your-website-">FREE: add this infographic to your website!</h2>
-<h3 id="600-pixel-wide-version">600 Pixel Wide Version</h3>
-<p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/600.jpg" border="0" alt="How Google Works." /></a></p><p>Infographic by the <a href="http://ppcblog.com/" target="_blank">Pay Per Click Blog</a></p>
-
-<h3 id="large-version">Large Version</h3>
-<p><p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/how-google-works.jpg" border="0" alt="How Does Google Work?" /></a></p><p>Infographic by <a href="http://ppcblog.com/" target="_blank">PPCBlog</a></p>
-Copyright 2011 - 2013 PPC Training Inc. - All Rights Reserved</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--GrayCode/">GrayCode</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--GrayCode/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="graycode">GrayCode</h1>
-<h1 id="-algorithm-gossip-gray-code-"><a href="">Algorithm Gossip: 格雷码（Gray Code）</a></h1>
+        <h1 id="linearsearch">LinearSearch</h1>
+<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 循序搜寻法（使用卫兵）</a></h1>
 <h2 id="-">说明</h2>
-<p>Gray Code是一个数列集合，每个数使用二进位来表示，假设使用n位元来表示每个数好了，任两个数之间只有一个位元值不同，例如以下为3位元的Gray Code：
-000 001 011 010 110 111 101 100
-由定义可以知道，Gray Code的顺序并不是唯一的，例如将上面的数列反过来写，也是一组Gray Code：
-100 101 111 110 010 011 001 000
-Gray Code是由贝尔实验室的Frank Gray在1940年代提出的，用来在使用PCM（Pusle Code Modulation）方法传送讯号时避免出错，并于1953年三月十七日取得美国专利。</p>
+<p>搜寻的目的，是在“已排序的资料”中寻找指定的资料，而当中循序搜寻是最基本的搜寻法，只要从资料开头寻找到最后，看看是否找到资料即可。</p>
 <h2 id="-">解法</h2>
-<p>由于Gray Code相邻两数之间只改变一个位元，所以可观 察Gray Code从1变0或从0变1时的位置，假设有4位元的Gray Code如下：
-0000 0001 0011 0010 0110 0111 0101 0100
-1100 1101 1111 1110 1010 1011 1001 1000
-观察奇数项的变化时，我们发现无论它是第几个Gray Code，永远只改变最右边的位元，如果是1就改为0，如果是0就改为1。
-观察偶数项的变化时，我们发现所改变的位元，是由右边算来第一个1的左边位元。
-以上两个变化规则是固定的，无论位元数为何；所以只要判断位元的位置是奇数还是偶数，就可以决定要改变哪一个位元的值，为了程式撰写方便，将阵列索引 0当作最右边的值，而在列印结果时，是由索引数字大的开始反向列印。
-将2位元的Gray Code当作平面座标来看，可以构成一个四边形，您可以发现从任一顶点出发，绕四边形周长绕一圈，所经过的顶点座标就是一组Gray Code，所以您可以得到四组Gray Code。
-同样的将3位元的Gray Code当作平面座标来看的话，可以构成一个正立方体，如果您可以从任一顶点出发，将所有的边长走过，并不重复经过顶点的话，所经过的顶点座标顺序之组合也就是一组Gray Code。</p>
+<p>初学者看到循序搜寻，多数都会使用以下的方式来进行搜寻：
+while(i &lt; MAX) {
+    if(number[i] == k) {
+        printf(&quot;找到指定值&quot;);
+        break;
+    }
+    i++;
+}</p>
+<p>这个方法基本上没有错，但是可以加以改善，可以利用设定卫兵的方式，省去if判断式，卫兵通常设定在数列最后或是最前方，假设设定在列前方好了（索引0的 位置），我们从数列后方向前找，如果找到指定的资料时，其索引值不是0，表示在数列走访完之前就找到了，在程式的撰写上，只要使用一个while回圈就可 以了。
+下面的程式为了配合卫兵的设置，自行使用快速排序法先将产生的数列排序，然后才进行搜寻，若只是数字的话，通常您可以使用程式语言函式库所提供的搜寻函式。</p>
 <h2 id="-">实作</h2>
 <ul>
 <li><p>C
 /#include <stdio.h>
 /#include <stdlib.h>
-/#define MAXBIT 20
-/#define TRUE 1
-/#define CHANGE_BIT(x) x = ((x) == &#39;0&#39; ? &#39;1&#39; : &#39;0&#39;)
-/#define NEXT(x) x = (1 - (x))
+/#include <time.h>
+/#define MAX 10
+/#define SWAP(x,y) {int t; t = x; x = y; y = t;}
+int search(int[]);
+int partition(int[], int, int);
+void quicksort(int[], int, int);
 int main(void) {
-char digit[MAXBIT];
-int i, bits, odd;
-printf(&quot;输入位元数：&quot;);
-scanf(&quot;%d&quot;, &amp;bits);
-for(i = 0; i &lt; bits; i++) {
-digit[i] = &#39;0&#39;;
-printf(&quot;0&quot;);
-}
+int number[MAX+1] = {0};
+int i, find;
+srand(time(NULL));
+for(i = 1; i &lt;= MAX; i++)
+number[i] = rand() % 100;
+quicksort(number, 1, MAX);
+printf(&quot;数列：&quot;);
+for(i = 1; i &lt;= MAX; i++)
+printf(&quot;%d &quot;, number[i]);
+printf(&quot;\n输入搜寻值：&quot;);
+scanf(&quot;%d&quot;, &amp;number[0]);
+if(find = search(number))
+printf(&quot;\n找到数值于索引 %d &quot;, find);
+else
+printf(&quot;\n找不到数值&quot;);
 printf(&quot;\n&quot;);
-odd = TRUE;
-while(1) {
-if(odd)
-CHANGE_BIT(digit[0]);
-else {
-// 计算第一个1的位置
-for(i = 0; i &lt; bits &amp;&amp; digit[i] == &#39;0&#39;; i++) ;
-if(i == bits - 1) // 最后一个Gray Code
-break;
-CHANGE_BIT(digit[i+1]);
-}
-for(i = bits - 1; i &gt;= 0; i--)
-printf(&quot;%c&quot;, digit[i]);
-printf(&quot;\n&quot;);
-NEXT(odd);
-}
 return 0;
+}
+int search(int number[]) {
+int i, k;
+k = number[0];
+i = MAX;
+while(number[i] != k)
+i--;
+return i;
+}
+int partition(int number[], int left, int right) {
+int i, j, s;
+s = number[right];
+i = left - 1;
+for(j = left; j &lt; right; j++) {
+if(number[j] &lt;= s) {
+i++;
+SWAP(number[i], number[j]);
+}
+}
+SWAP(number[i+1], number[right]);
+return i+1;
+}
+void quicksort(int number[], int left, int right) {
+int q;
+if(left &lt; right) {
+q = partition(number, left, right);
+quicksort(number, left, q-1);
+quicksort(number, q+1, right);
+}
 }</p>
 </li>
 <li><p>Java
-public class GrayCode {
-private char[] digit;
-private boolean first;
-private boolean odd;
-private int count;
-public GrayCode(int length) {
-digit = new char[length];
-for(int i = 0; i &lt; length; i++) {
-digit[i] = &#39;0&#39;;
+public class LinearSearch {
+public static int search(int[] number, int des) {
+int[] tmp = new int[number.length + 1];
+for(int i = 1; i &lt; tmp.length; i++) {
+tmp[i] = number[i-1];
 }
-first = true;
-odd = true;
-}
-public boolean hasNext() {
-// 计算第一个1的位置
-for(count = 0;
-(count &lt; digit.length) &amp;&amp; (digit[count] == &#39;0&#39;);
-count++) ;
-return count != digit.length - 1;
-}
-public char[] next() {
-if(first) {
-first = false;
-return digit;
-}
-if(odd)
-chargeBit(digit, 0);
-else {
-// 最后一个Gray Code 吗
-if(hasNext())
-chargeBit(digit, count+1);
-}
-odd = ((odd == true) ? false : true);
-return digit;
-}
-private void chargeBit(char[] digit, int i) {
-digit[i] = ((digit[i] == &#39;0&#39;) ? &#39;1&#39; : &#39;0&#39;);
+tmp[0] = des;
+int k = tmp[0];
+int i = number.length;
+while(tmp[i] != k)
+i--;
+return i - 1;
 }
 public static void main(String[] args) {
-GrayCode code = new GrayCode(4);
-while(code.hasNext()) {
-char[] digit = code.next();
-for(int i = digit.length - 1; i &gt;= 0; i--)
-System.out.print(digit[i]);
-System.out.println();
-}
+int[] number = {1, 4, 2, 6, 7, 3, 9, 8};
+QuickSort.sort(number);
+int find = LinearSearch.search(number, 3);
+if(find != 0)
+System.out.println(&quot;找到数值于索引&quot; + find);
+else
+System.out.println(&quot;找不到数值&quot;);
 }
 }</p>
 </li>
@@ -635,8 +615,703 @@ System.out.println();
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:37:44"datetime="2014-03-07 10:37:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--GrayCode/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--GrayCode" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:37:05"datetime="2014-03-07 10:37:05"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--LinearSearch/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--LinearSearch" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-xml-jdom--JDOM-XPATH编程指南/">JDOM</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-xml-jdom--JDOM-XPATH编程指南/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="jdom-xpath-">JDOM-XPATH编程指南</h1>
+<p><a href="http://www.ibm.com/cn/" target="_blank"><img src="" alt="IBM®"></a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#main" target="_blank"><img src="" alt="跳转到主要内容"></a>     <strong>中国</strong> [<a href="http://www.ibm.com/developerworks/cn/country/" target="_blank">选择</a>]      <a href="http://www.ibm.com/legal/cn/" target="_blank">使用条款</a>   <img src="" alt=""> <img src="" alt="">   <img src="" alt="Select a scope:"> dW 全部内容 -----------------   AIX and UNIX   Information management   Lotus   Rational   WebSphere -----------------   Architecture   Grid computing   Java 技术   Linux   Multicore acceleration   Open source   Security   SOA &amp; Web services   Web development   XML ----------------- IBM 全部内容 <img src="" alt="Search for:">      <a href=""></a>        <a href="http://www.ibm.com/cn/">首页</a>      <a href="http://www.ibm.com/products/cn/" target="_blank">产品</a>      <a href="http://www.ibm.com/servicessolutions/cn/" target="_blank">服务与解决方案</a>      <a href="http://www.ibm.com/support/cn/" target="_blank">支持与下载</a>      <a href="http://www.ibm.com/account/cn/" target="_blank">个性化服务</a>      <a href="http://www.ibm.com/developerworks/cn/" target="_blank"> </a> <a href="http://www.ibm.com/developerworks/cn/">developerWorks
+中国</a> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#" target="_blank">本文内容包括：</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#0" target="_blank">前言</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#1" target="_blank">XPATH速成篇</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#2" target="_blank">JDOM修炼篇</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#3" target="_blank">获得并安装JDOM</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#4" target="_blank">用JDOM解析XML</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#5" target="_blank">JDOM+XPATH进阶篇</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#6" target="_blank">结语</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#resources" target="_blank">参考资料</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#author" target="_blank">关于作者</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#rate" target="_blank">对本文的评价</a> <img src="" alt=""> <img src="" alt="">
+<strong>相关链接：</strong> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/views/xml/libraryview.jsp" target="_blank">XML 技术文档库</a> <img src="" alt=""> <img src="" alt=""> <a href=""><img src="" alt="跳转到主要内容"></a> <img src="" alt=""> <img src="" alt="">
+<a href="http://www.ibm.com/developerworks/cn/" target="_blank">developerWorks 中国</a>  &gt;  <a href="http://www.ibm.com/developerworks/cn/xml/" target="_blank">XML</a>  &gt;<img src="" alt=""></p>
+<h1 id="jdom-xpath-">JDOM/XPATH编程指南</h1>
+<p><img src="" alt=""> <img src="" alt="developerWorks"> <img src="" alt=""> <img src="" alt=""> 文档选项 <img src="" alt=""> <img src="" alt=""> 
+未显示需要 JavaScript 的文档选项</p>
+<p>级别： 初级</p>
+<p><a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#author" target="_blank">薛谷雨</a> (<a href="mailto:rainight@126.com?subject=JDOM/XPATH编程指南">mailto:rainight@126.com?subject=JDOM/XPATH编程指南</a>), 高级JAVA工程师, NORDSAN信息科技开发有限公司</p>
+<p>2004 年 5 月 01 日
+本文分别介绍了 JDOM 和 XPATH，以及结合两者进行 XML 编程带来的好处。</p>
+<p><a href="">前言</a></p>
+<p>XML是一种优秀的数据打包和数据交换的形式，在当今XML大行于天下，如果没有听说过它的大名，那可真是孤陋寡闻了。用XML描述数据的优势显而易见，它具有结构简单，便于人和机器阅读的双重功效，并弥补了关系型数据对客观世界中真实数据描述能力的不足。W3C组织根据技术领域的需要，制定出了XML的格式规范，并相应的建立了描述模型，简称DOM。各种流行的程序设计语言都纷纷根据这一模型推出了自己的XML解析器，在JAVA世界里，APACHE组织开发的XERCES应该是流行最广功能最为强大的XML解析器之一。但是由于W3C在设计DOM模型时，并不是针对某一种语言而设计，因此为了通用性，加入了许多繁琐而不必要的细节 ，使JAVA程序员在开发XML的应用程序过程中感到不甚方便，因此JDOM作为一种新型的XML解析器横空出世，它不遵循DOM模型，建立了自己独立的一套JDOM模型(注意JDOM决不是DOM扩展，虽然名字差不多，但两者是平行的关系)，并提供功能强大使用方便的类库，使JAVA程序员可以更为高效的开发自己的XML应用程序，并极大的减少了代码量，因此它很快得到了业内的认可，如JBUILDER这样的航空母舰级的重磅产品都以JDOM为XML解析引擎，足见其名不虚传。</p>
+<p>有了XML数据的描述标准，人们自然就会想到应该有一种查询语言可以在XML中查找任意节点的数据，就像SQL语句可以在关系性数据库中执行查询操作一样，于是XQUERY和XPATH顺应潮流，应运而生。由于XQUERY较为复杂，使用不甚方便，XPATH渐渐成为主流，我们只需对XPATH进行学习，便可以应付所有的查询要求。在JDOM发布的最新的V1.0bata10版中，已经加入了对XPATH的支持，这无疑是令开发者十分激动的。</p>
+<p>学会JDOM和XPATH，你便不再是XML的入门者，在未来的开发生涯中，就像特种兵的多用匕首，为你披荆斩棘，助你勇往直前。闲言少叙，学习还要脚踏实地，从头开始。
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">XPATH速成篇</a></p>
+<p>XPATH遵循文档对象模型(DOM)的路径格式，由于每个XML文档都可以看成是一棵拥有许多结点的树，每个结点可以是以下七个类型之一：根（root）、元素（element）、属性（attribute）、正文（text）、命名空间（namespace）、处理指令（processing instruction）和注释（comment）。XPATH的基本语法由表达式构成。在计算表达式的值之后产生一个对象，这种对象有以下四种基本类型：节点集合、布尔型、数字型和字符串型 。XPATH基本上和在文件系统中寻找文件类似，如果路径是以&quot;/&quot;开头的，就表明该路径表示的是一个绝对路径，这和在UNIX系统中关于文件路径的定义是一致的。以&quot;//&quot;开头则表示在文档中的任意位置查找。</p>
+<p>不谈泛泛的理论，学习XPATH还要从实例学起最为快捷，并有助于你举一反三。</p>
+<p>下面的样例XML文档，描述了某台电脑中硬盘的基本信息(根节点<HD>代表硬盘，<disk>标签代表硬盘分区，从它的name属性可以看出有两个盘符名称为&quot;C&quot;和&quot;D&quot;的分区；每个分区下都包含<capacity>,<directories><files>三个节点，分别代表了分区的空间大小、目录数量、所含文件个数):
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt; <HD> <disk name="C"> <capacity>8G</capacity> <directories>200</directories> <files>1580</files> </disk> <disk name="D"> <capacity>10G</capacity> <directories>500</directories> <files>3000</files> </disk> </HD></p>
+<p>你在XML文档中使用位置路径表达式来查找信息，这些表达式有很多种组成方式。</p>
+<p>结点元素的查找是你将要碰到的最频繁的查找方式。在上面这个XML文档例子中，根HD包含disk结点。你可以使用路径来查找这些结点，用正斜杠（/）来分隔子结点，返回所有与模式相匹配的元素。下面的XPATH 语句返回所有的disk元素：</p>
+<p>/HD/disk</p>
+<p>&quot;/<em>&quot;代表&quot;全部&quot;的意思。/HD//</em> 代表HD下的全部节点。</p>
+<p>下面的XPATH将返回任意节点下的名称为disk的全部节点：</p>
+<p>//disk</p>
+<p>下面的XPATH将返回名称为disk，name属性为&#39;C&#39;的全部节点：</p>
+<p>/HD/disk[@name=&#39;C&#39;]</p>
+<p>节点的附加元素，比如属性，函数等都要用方括号扩起来，属性前面要加上@号</p>
+<p>下面的XPATH将返回文件个数为1580的files节点：</p>
+<p>/HD/disk/files[text()=&#39;1580&#39;]</p>
+<p>大家注意到上面包含一个text()，这就是XPATH的一个函数，它的功能是取出当前节点的文本。</p>
+<p>下面的XPATH将返回文件个数为1580的分区：</p>
+<p>/HD/disk/files[text()=&#39;1580&#39;]/parent::/*</p>
+<p>最后的parent::/*表示这个元素的所有的父节点的集合。</p>
+<p>XPATH中一些有用的函数：
+string <strong>concat</strong> (string, string, string/<em>) 联接两个字符串 boolean <strong>starts-with</strong> (string, string) 判断某字符串是否以另一字符串开头 boolean <strong>contains</strong> (string, string) 判断某字符串是否包含另一字符串 string <strong>substring</strong> (string, number, number) 取子字符串 number <strong>string-length</strong> (string) 测字符串长度 number <strong>sum</strong> (node-set) 求和 number <strong>floor</strong> (number) 求小于此数的最大整数值 number <em>*ceiling</em></em> (number) 求大于此数最小整数值</p>
+<p>XPATH具有丰富的表达功能，上面这些已经基本够用，在你做项目中就会发现根据实际情况有许多查询需求，你应该参考本文最后提供的W3C发布的关于XAPH的官方资料进行查阅，我在这里只起一个抛砖引玉的作用，在下面的章节中，我们的应用范例将不会超出上面提到的这些内容，如果你对XPATH感兴趣，应该在读完本文后，查找相关资料和书籍进行深入学习。</p>
+<p><img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">JDOM修炼篇</a></p>
+<p>用过XERCES的程序员都会感到，有时候用一句话就可以说清楚的事，当用XERCES的API来实现时，要三四行程序。
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">获得并安装JDOM</a></p>
+<p>在 <a href="http://www.jdom.org/" target="_blank"><a href="http://www.jdom.org/">http://www.jdom.org/</a></a>可以下载JDOM的最新版本，将压缩包中的jdom.jar及lib目录下的全部jar包加入到classpath就可以了。
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">用JDOM解析XML</a></p>
+<p>JDOM模型的全部类都在org.jdom./<em>这个包里，org.jdom.input./</em>这个包里包含了JDOM的解析器，其中的DOMBuilder的功能是将DOM模型的Document解析成JDOM模型的Document；SAXBuilder的功能是从文件或流中解析出符合JDOM模型的XML树。由于我们的上面提到的XML样例存储在一个名称为sample.xml的文件中，很显然我们应该采用后者作为解析工具。下面程序演示了jdom的基本功能，即解析一个xml文档，并挑选一些内容输出到屏幕上。
+import java.util./<em>; import org.jdom./</em>; import org.jdom.input.SAXBuilder; public class Sample1 { public static void main(String[] args) throws Exception{ SAXBuilder sb=new SAXBuilder(); Document doc=sb.build(&quot;sample.xml&quot;); Element root=doc.getRootElement(); List list=root.getChildren(&quot;disk&quot;); for(int i=0;i&lt;list.size();i++){ Element element=(Element)list.get(i); String name=element.getAttributeValue(&quot;name&quot;); String capacity=element.getChildText(&quot;capacity&quot;); String directories=element.getChildText(&quot;directories&quot;); String files=element.getChildText(&quot;files&quot;); System.out.println(&quot;磁盘信息:&quot;); System.out.println(&quot;分区盘符:&quot;+name); System.out.println(&quot;分区容量:&quot;+capacity); System.out.println(&quot;目录数:&quot;+directories); System.out.println(&quot;文件数:&quot;+files); System.out.println(&quot;-----------------------------------&quot;); } } }</p>
+<p>程序的输出结果：
+磁盘信息: 分区盘符:C 分区容量:8G 目录数:200 文件数:1580 ----------------------------------- 磁盘信息: 分区盘符:D 分区容量:10G 目录数:500 文件数:3000 -----------------------------------</p>
+<p>这段程序采用了传统的解析方式，一级一级的从根节点到子节点逐个采集我们所需要的数据，中规中矩。试想如果这个树足够深，我们想取第5 0层第三个节点的数据（夸张了点，呵呵），那将是一场噩梦！下面的内容将轻松化解你的这一痛苦。
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">JDOM+XPATH进阶篇</a></p>
+<p>说了那么多JDOM和XPATH的好处，终于到了英雄有用武之地的时候了。</p>
+<p>JDOM的关于XPATH的api在org.jdom.xpath这个包里。看看这个包下，只有一个类，JDOM就是如此简洁，什么事都不故弄玄虚的搞得那么复杂。这个类中的核心的api主要是两个selectNodes()和selectSingleNode()。前者根据一个xpath语句返回一组节点；后者根据一个xpath语句返回符合条件的第一个节点。</p>
+<p>下面的程序我们用JDOM+XPATH实现了上一个程序同样的功能，你可以从中学到不少运用XPATH 的知识：
+import java.util./<em>; import org.jdom./</em>; import org.jdom.input.SAXBuilder; import org.jdom.xpath.XPath; public class Sample2 { public static void main(String[] args) throws Exception { SAXBuilder sb = new SAXBuilder(); Document doc = sb.build(&quot;sample.xml&quot;); Element root = doc.getRootElement(); List list = XPath.selectNodes(root, &quot;/HD/disk&quot;); for (int i = 0; i &gt; list.size(); i++) { Element disk_element = (Element) list.get(i); String name = disk_element.getAttributeValue(&quot;name&quot;); String capacity = ( (Text) XPath.selectSingleNode(disk_element, &quot;//disk[@name=&#39;&quot; + name + &quot;&#39;]/capacity/text()&quot;)).getTextNormalize(); String directories = ( (Text) XPath.selectSingleNode(disk_element, &quot;//disk[@name=&#39;&quot; + name + &quot;&#39;]/directories/text()&quot;)).getTextNormalize(); String files = ( (Text) XPath.selectSingleNode(disk_element, &quot;//disk[@name=&#39;&quot; + name + &quot;&#39;]/files/text()&quot;)).getTextNormalize(); System.out.println(&quot;磁盘信息:&quot;); System.out.println(&quot;分区盘符:&quot; + name); System.out.println(&quot;分区容量:&quot; + capacity); System.out.println(&quot;目录数:&quot; + directories); System.out.println(&quot;文件数:&quot; + files); System.out.println(&quot;-----------------------------------&quot;); } } }</p>
+<p>输出结果：
+磁盘信息: 分区盘符:C 分区容量:8G 目录数:200 文件数:1580 ----------------------------------- 磁盘信息: 分区盘符:D 分区容量:10G 目录数:500 文件数:3000 -----------------------------------
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">结语</a></p>
+<p>技术在日新月异的发展。永远没有学过后，便可以一劳永逸的技术。XML的发展一日千里。W3C作为INTERNET方面的权威组织指导着互联网技术的发展方向。新技术的出现大都围绕着W3C制订的标准，但往往有些“旁门左道”的另类功法却能产生惊人的杀伤力。JDOM就是这众多旁门中的一朵奇葩。就像J2EE大行其道的今天，有许多开源组织仍旧在默默的打造着自己的独家兵器，谁又能说在不久的将来，他们不会成为划时代的创造呢? 君不见Hibernate的兴起正在有力的震撼着J2EE中EJB架构的基石。只要是成型的框架，必然有薄弱的软肋。新的技术只要能攻入对方这一弱点，便可在业界站一席之地。本文只起抛砖引玉的作用，相信读者在吃过这道快餐之后，一定会发现窗外有更美丽的风景等待我们去游历。</p>
+<p><a href="">参考资料</a></p>
+<ul>
+<li>W3C发布的关于XPATH的权威文档请访问 <a href="http://www.w3.org/TR/2002/WD-DOM-Level-3-XPath-20020328" target="_blank"><a href="http://www.w3.org/TR/2002/WD-DOM-Level-3-XPath-20020328">http://www.w3.org/TR/2002/WD-DOM-Level-3-XPath-20020328</a></a></li>
+<li>JDOM官方网站可以下载最新JDOM类库 <a href="http://www.jdom.org/" target="_blank"><a href="http://www.jdom.org/">http://www.jdom.org/</a></a></li>
+</ul>
+<p><a href="">关于作者</a>
+<img src="" alt=""> <img src="" alt=""> 
+薛谷雨是NORDSAN(北京)信息科技开发有限公司高级JAVA研发工程师，正致力于企业级异构数据交换的服务器产品的研发，在J2EE和WEB SERVICE方面有较为丰富的开发经验，你可以通过 <a href="mailto:rainight@126.com?cc=">mailto:rainight@126.com?cc=</a>与他取得联系。</p>
+<p><a href="">对本文的评价</a>
+<img src="" alt=""> 太差！ (1) 需提高 (2) 一般；尚可 (3) 好文章 (4) 真棒！(5)
+<strong>建议？</strong>
+  <img src="" alt=""></p>
+<p><img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/xml/x-jdom/#main" target="_blank"><strong>回页首</strong></a>
+ <img src="" alt="">IBM 公司保留在 developerWorks 网站上发表的内容的著作权。未经IBM公司或原始作者的书面明确许可，请勿转载。如果您希望转载，请通过 <a href="https://www.ibm.com/developerworks/secure/reprintreq.jsp?domain=dwchina" target="_blank">提交转载请求表单</a> 联系我们的编辑团队。     <a href="http://www.ibm.com/cn/ibm/index.shtml" target="_blank">关于 IBM</a>      <a href="http://www.ibm.com/cn/ibm/privacy/index.shtml" target="_blank">隐私条约</a>      <a href="http://www.ibm.com/contact/cn/" target="_blank">联系 IBM</a>      <a href="http://www.ibm.com/legal/cn/zh/" target="_blank">使用条款</a>  <img src="" alt=""></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/xml/">xml</a></li></span><span class="breadcrumb"><li><a href="/categories/xml/">xml</a></li><li><a href="/categories/xml/jdom/">jdom</a></li></span></span> | <span class="tags">Tagged <a href="/tags/jdom/" class="label label-primary">jdom</a><a href="/tags/xml/" class="label label-success">xml</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-xml-jdom--JDOM-XPATH编程指南/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-xml-jdom--JDOM-XPATH编程指南" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-xml-xstream--JAVA中Stringformat的用法-xytop-博客园/">JAVA中String.format的用法 </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-xml-xstream--JAVA中Stringformat的用法-xytop-博客园/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-string-format-xytop-">JAVA中String.format的用法 - xytop - 博客园</h1>
+<p><a href=""></a>    <img src="" alt=""></p>
+<p><a href="http://www.cnblogs.com/xytop/" target="_blank">xytop</a>
+随笔- 2  文章- 0  评论- 0 </p>
+<p><a href="http://www.cnblogs.com/" target="_blank">博客园</a>  <a href="http://www.cnblogs.com/xytop/" target="_blank">首页</a>  <a href="http://www.cnblogs.com/xytop/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a>  <a href="http://space.cnblogs.com/msg/send/xytop" target="_blank">联系</a>  <a href="http://www.cnblogs.com/xytop/admin/EditPosts.aspx" target="_blank">管理</a>  <a href="http://www.cnblogs.com/xytop/rss" target="_blank">订阅</a> <a href="http://www.cnblogs.com/xytop/rss" target="_blank"><img src="" alt="订阅"></a></p>
+<h1 id="-java-string-format-"><a href="">JAVA中String.format的用法</a></h1>
+<h2 id="java-string-format-">JAVA String.format 方法使用介绍</h2>
+<p>1.对整数进行格式化：%[index$][标识][最小宽度]转换方式
+        我们可以看到，格式化字符串由4部分组成，其中%[index$]的含义我们上面已经讲过，[最小宽度]的含义也很好理解，就是最终该整数转化的字符串最少包含多少位数字。我们来看看剩下2个部分的含义吧：
+<img src="" alt="">标识： 
+<img src="" alt="">&#39;-&#39;    在最小宽度内左对齐，不可以与“用0填充”同时使用
+<img src="" alt="">&#39;/#&#39;    只适用于8进制和16进制，8进制时在结果前面增加一个0，16进制时在结果前面增加0x
+<img src="" alt="">&#39;+&#39;    结果总是包括一个符号（一般情况下只适用于10进制，若对象为BigInteger才可以用于8进制和16进制）
+<img src="" alt="">&#39;  &#39;    正值前加空格，负值前加负号（一般情况下只适用于10进制，若对象为BigInteger才可以用于8进制和16进制）
+<img src="" alt="">&#39;0&#39;    结果将用零来填充
+<img src="" alt="">&#39;,&#39;    只适用于10进制，每3位数字之间用“，”分隔
+<img src="" alt="">&#39;(&#39;    若参数是负数，则结果中不添加负号而是用圆括号把数字括起来（同‘+’具有同样的限制）
+<img src="" alt="">
+<img src="" alt="">转换方式：
+<img src="" alt="">d-十进制   o-八进制   x或X-十六进制</p>
+<pre><code>    上面的说明过于枯燥，我们来看几个具体的例子。需要特别注意的一点是：大部分标识字符可以同时使用。
+</code></pre><p><img src="" alt="">        System.out.println(String.format(&quot;%1$,09d&quot;, -3123));
+<img src="" alt="">        System.out.println(String.format(&quot;%1$9d&quot;, -31));
+<img src="" alt="">        System.out.println(String.format(&quot;%1$-9d&quot;, -31));
+<img src="" alt="">        System.out.println(String.format(&quot;%1$(9d&quot;, -31));
+<img src="" alt="">        System.out.println(String.format(&quot;%1$/#9x&quot;, 5689));
+<img src="" alt="">
+<img src="" alt="">//结果为：
+<img src="" alt="">//-0003,123
+<img src="" alt="">//      -31
+<img src="" alt="">//-31<br><img src="" alt="">//     (31)
+<img src="" alt="">//   0x1639</p>
+<p>2.对浮点数进行格式化：%[index$][标识][最少宽度][.精度]转换方式
+        我们可以看到，浮点数的转换多了一个“精度”选项，可以控制小数点后面的位数。</p>
+<p><img src="" alt="">标识： 
+<img src="" alt="">&#39;-&#39;    在最小宽度内左对齐，不可以与“用0填充”同时使用
+<img src="" alt="">&#39;+&#39;    结果总是包括一个符号
+<img src="" alt="">&#39;  &#39;    正值前加空格，负值前加负号
+<img src="" alt="">&#39;0&#39;    结果将用零来填充
+<img src="" alt="">&#39;,&#39;    每3位数字之间用“，”分隔（只适用于fgG的转换）
+<img src="" alt="">&#39;(&#39;    若参数是负数，则结果中不添加负号而是用圆括号把数字括起来（只适用于eEfgG的转换）
+<img src="" alt="">
+<img src="" alt="">转换方式：
+<img src="" alt="">&#39;e&#39;, &#39;E&#39;  --  结果被格式化为用计算机科学记数法表示的十进制数
+<img src="" alt="">&#39;f&#39;          --  结果被格式化为十进制普通表示方式
+<img src="" alt="">&#39;g&#39;, &#39;G&#39;    --  根据具体情况，自动选择用普通表示方式还是科学计数法方式
+<img src="" alt="">&#39;a&#39;, &#39;A&#39;    --   结果被格式化为带有效位数和指数的十六进制浮点数</p>
+<p>3.对字符进行格式化：
+        对字符进行格式化是非常简单的，c表示字符，标识中&#39;-&#39;表示左对齐，其他就没什么了。
+4.对百分比符号进行格式化：
+        看了上面的说明，大家会发现百分比符号“%”是特殊格式的一个前缀。那么我们要输入一个百分比符号该怎么办呢？肯定是需要转义字符的,但是要注意的是，在这里转义字符不是“\”，而是“%”。换句话说，下面这条语句可以输出一个“12%”：
+System.out.println(String.format(&quot;%1$d%%&quot;, 12));
+5.取得平台独立的行分隔符：
+        System.getProperty(&quot;line.separator&quot;)可以取得平台独立的行分隔符，但是用在format中间未免显得过于烦琐了。于是format函数自带了一个平台独立的行分隔符那就是String.format(&quot;%n&quot;)。
+6.对日期类型进行格式化：
+         以下日期和时间转换的后缀字符是为 &#39;t&#39; 和 &#39;T&#39; 转换定义的。这些类型相似于但不完全等同于那些由 GNU date 和 POSIX strftime(3c) 定义的类型。提供其他转换类型是为了访问特定于 Java 的功能（如将 &#39;L&#39; 用作秒中的毫秒）。
+以下转换字符用来格式化时间：
+&#39;H&#39;     24 小时制的小时，被格式化为必要时带前导零的两位数，即 00 - 23。
+&#39;I&#39;     12 小时制的小时，被格式化为必要时带前导零的两位数，即 01 - 12。
+&#39;k&#39;     24 小时制的小时，即 0 - 23。
+&#39;l&#39;     12 小时制的小时，即 1 - 12。
+&#39;M&#39;     小时中的分钟，被格式化为必要时带前导零的两位数，即 00 - 59。
+&#39;S&#39;     分钟中的秒，被格式化为必要时带前导零的两位数，即 00 - 60 （&quot;60&quot; 是支持闰秒所需的一个特殊值）。
+&#39;L&#39;     秒中的毫秒，被格式化为必要时带前导零的三位数，即 000 - 999。
+&#39;N&#39;     秒中的毫微秒，被格式化为必要时带前导零的九位数，即 000000000 - 999999999。
+&#39;p&#39;     特定于语言环境的 上午或下午 标记以小写形式表示，例如 &quot;am&quot; 或 &quot;pm&quot;。使用转换前缀 &#39;T&#39; 可以强行将此输出转换为大写形式。
+&#39;z&#39;     相对于 GMT 的 RFC 822 格式的数字时区偏移量，例如 -0800。
+&#39;Z&#39;     表示时区缩写形式的字符串。Formatter 的语言环境将取代参数的语言环境（如果有）。
+&#39;s&#39;     自协调世界时 (UTC) 1970 年 1 月 1 日 00:00:00 至现在所经过的秒数，即 Long.MIN_VALUE/1000 与 Long.MAX_VALUE/1000 之间的差值。
+&#39;Q&#39;     自协调世界时 (UTC) 1970 年 1 月 1 日 00:00:00 至现在所经过的毫秒数，即 Long.MIN_VALUE 与 Long.MAX_VALUE 之间的差值。
+以下转换字符用来格式化日期：
+&#39;B&#39;     特定于语言环境的月份全称，例如 &quot;January&quot; 和 &quot;February&quot;。
+&#39;b&#39;     特定于语言环境的月份简称，例如 &quot;Jan&quot; 和 &quot;Feb&quot;。
+&#39;h&#39;     与 &#39;b&#39; 相同。
+&#39;A&#39;     特定于语言环境的星期几全称，例如 &quot;Sunday&quot; 和 &quot;Monday&quot;
+&#39;a&#39;     特定于语言环境的星期几简称，例如 &quot;Sun&quot; 和 &quot;Mon&quot;
+&#39;C&#39;     除以 100 的四位数表示的年份，被格式化为必要时带前导零的两位数，即 00 - 99
+&#39;Y&#39;     年份，被格式化为必要时带前导零的四位数（至少），例如，0092 等于格里高利历的 92 CE。
+&#39;y&#39;     年份的最后两位数，被格式化为必要时带前导零的两位数，即 00 - 99。
+&#39;j&#39;     一年中的天数，被格式化为必要时带前导零的三位数，例如，对于格里高利历是 001 - 366。
+&#39;m&#39;     月份，被格式化为必要时带前导零的两位数，即 01 - 13。
+&#39;d&#39;     一个月中的天数，被格式化为必要时带前导零两位数，即 01 - 31
+&#39;e&#39;     一个月中的天数，被格式化为两位数，即 1 - 31。
+以下转换字符用于格式化常见的日期/时间组合。
+&#39;R&#39;     24 小时制的时间，被格式化为 &quot;%tH:%tM&quot;
+&#39;T&#39;     24 小时制的时间，被格式化为 &quot;%tH:%tM:%tS&quot;。
+&#39;r&#39;     12 小时制的时间，被格式化为 &quot;%tI:%tM:%tS %Tp&quot;。上午或下午标记 (&#39;%Tp&#39;) 的位置可能与语言环境有关。
+&#39;D&#39;     日期，被格式化为 &quot;%tm/%td/%ty&quot;。
+&#39;F&#39;     ISO 8601 格式的完整日期，被格式化为 &quot;%tY-%tm-%td&quot;。
+&#39;c&#39;     日期和时间，被格式化为 &quot;%ta %tb %td %tT %tZ %tY&quot;，例如 &quot;Sun Jul 20 16:17:00 EDT 1969&quot;。</p>
+<p>分类: <a href="http://www.cnblogs.com/xytop/category/152381.html" target="_blank">JAVA</a></p>
+<p>绿色通道：<a href="">好文要顶</a><a href="">关注我</a><a href="">收藏该文</a><a href="http://space.cnblogs.com/msg/send/xytop" target="_blank">与我联系</a>
+<a href="http://home.cnblogs.com/u/xytop/" target="_blank">xytop</a>
+<a href="http://home.cnblogs.com/u/xytop/followees" target="_blank">关注 - 3</a>
+<a href="http://home.cnblogs.com/u/xytop/followers" target="_blank">粉丝 - 0</a></p>
+<p><a href="">+加关注</a></p>
+<p>0</p>
+<p>0
+(请您对文章做出评价)</p>
+<p><a href="http://www.cnblogs.com/xytop/archive/2010/09/16/1827865.html" target="_blank">»</a> 下一篇：<a href="http://www.cnblogs.com/xytop/archive/2010/09/16/1827865.html" title="发布于2010-09-16 10:30" target="_blank">IIS无法启动</a></p>
+<p>posted @ 2008-08-26 23:57 <a href="http://www.cnblogs.com/xytop/" target="_blank">xytop</a> 阅读(1680) <a href="http://www.cnblogs.com/xytop/archive/2008/08/26/1277125.html#commentform" target="_blank">评论(0)</a> <a href="http://www.cnblogs.com/xytop/archive/2008/08/26/1277125.html#" target="_blank">编辑</a> <a href="http://www.cnblogs.com/xytop/archive/2008/08/26/1277125.html#" target="_blank">收藏</a>
+ <img src="" alt=""></p>
+<p>注册用户登录后才能发表评论，请 <a href="http://passport.cnblogs.com/login.aspx?ReturnUrl=http%3a%2f%2fwww.cnblogs.com%2fxytop%2farchive%2f2008%2f08%2f26%2f1277125.html%3flogin%3d1%23commentform" target="_blank">登录</a> 或 <a href="http://passport.cnblogs.com/register.aspx?ReturnUrl=http%3a%2f%2fwww.cnblogs.com%2fxytop%2farchive%2f2008%2f08%2f26%2f1277125.html%23Bottom2" target="_blank">注册</a>，<a href="http://www.cnblogs.com/" target="_blank">返回博客园首页</a>。</p>
+<p><strong>最新IT新闻</strong>:
+· <a href="http://news.cnblogs.com/n/103808/" target="_blank">MSN 中文网大改版，附介绍</a>
+· <a href="http://news.cnblogs.com/n/103807/" target="_blank">英特尔宣布Ultrabook</a>
+· <a href="http://news.cnblogs.com/n/103806/" target="_blank">Win8集成Xbox 360传言再起 或采用会员制</a>
+· <a href="http://news.cnblogs.com/n/103805/" target="_blank">京东自种大米上市销售 刘强东称绝对无毒</a>
+· <a href="http://news.cnblogs.com/n/103804/" target="_blank">2011上半年电商务10大事件盘点</a>
+» <a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">更多新闻...</a>
+<strong>知识库最新文章</strong>:
+<a href="http://kb.cnblogs.com/page/100785/" target="_blank">从一个职校走出来的高级程序员</a>
+<a href="http://kb.cnblogs.com/page/100521/" target="_blank">MySQL与NoSQL - SQL与NoSQL的融合</a>
+<a href="http://kb.cnblogs.com/page/100594/" target="_blank">分布式系统部署、监控与进程管理的几重境界</a>
+<a href="http://kb.cnblogs.com/page/100991/" target="_blank">谁做了程序员眼中的程序员</a>
+<a href="http://kb.cnblogs.com/page/100468/" target="_blank">复杂是大敌</a>
+ » <a href="http://news.cnblogs.com/" target="_blank">更多知识库文章...</a></p>
+<p>网站导航: <a href="http://www.cnblogs.com/" target="_blank">博客园首页</a>  <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://home.cnblogs.com/" target="_blank">我的园子</a>  <a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a>  <a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a>  <a href="http://home.cnblogs.com/q/" target="_blank">博问</a>
+<a href="http://www.china-pub.com/STATIC07/1104/jsj_bangding_110421.asp?ref=bky" target="_blank"><img src="" alt=""></a>
+<a href="http://www.china-pub.com/itbook/" target="_blank">China-pub 计算机图书网上专卖店！6.5万品种2-8折！</a>
+<a href="http://www.china-pub.com/static07/0901/zh_jueba_090121.asp" target="_blank">China-Pub 计算机绝版图书按需印刷服务</a></p>
+<p>简洁版式：<a href="http://archive.cnblogs.com/a/1277125/" target="_blank">JAVA中String.format的用法</a></p>
+<p>Copyright ©2011 xytop</p>
+<p>昵称：<a href="http://www.cnblogs.com/xytop/" target="_blank">xytop</a>
+粉丝：<a href="http://home.cnblogs.com/u/xytop/followers/" target="_blank">0</a>
+关注：<a href="http://home.cnblogs.com/u/xytop/followees/" target="_blank">3</a>
+<a href="">+加关注</a></p>
+<p><a href="&quot;Go to the previous month&quot;">&lt;</a>2008年8月<a href="&quot;Go to the next month&quot;">&gt;</a>日一二三四五六272829303112345678910111213141516171819202122232425<a href="http://www.cnblogs.com/xytop/archive/2008/8/26.html" target="_blank">26</a>2728293031123456</p>
+<h3 id="-">搜索</h3>
+<h3 id="-">常用链接</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/xytop/MyPosts.html" target="_blank">我的随笔</a></li>
+<li><a href="http://home.cnblogs.com/xytop/" target="_blank">我的空间</a></li>
+<li><a href="http://space.cnblogs.com/msg/recent" target="_blank">我的短信</a></li>
+<li><a href="http://www.cnblogs.com/xytop/MyComments.html" target="_blank">我的评论</a></li>
+<li><a href="http://www.cnblogs.com/xytop/archive/2008/08/26/1277125.html#" target="_blank">更多链接</a></li>
+<li><a href="http://www.cnblogs.com/xytop/OtherPosts.html" title="我发表过评论的随笔" target="_blank">我的参与</a></li>
+<li><a href="http://www.cnblogs.com/xytop/MyNews.html" target="_blank">我的新闻</a></li>
+<li><p><a href="http://www.cnblogs.com/xytop/tag/" target="_blank">我的标签</a></p>
+<h3 id="-">我的标签</h3>
+</li>
+<li><p><a href="http://www.cnblogs.com/xytop/tag/iis%E6%97%A0%E6%B3%95%E5%90%AF%E5%8A%A8/" target="_blank">iis无法启动</a>(1)</p>
+</li>
+<li><a href="http://www.cnblogs.com/xytop/tag/IIS%E5%90%AF%E5%8A%A8%E6%8A%A5%E9%94%99/" target="_blank">IIS启动报错</a>(1)</li>
+</ul>
+<h1 id="-">随笔分类</h1>
+<ul>
+<li><a href="http://www.cnblogs.com/xytop/category/152382.html" target="_blank">C/#(1)</a><a href="http://www.cnblogs.com/xytop/archive/2008/08/26/1277125.html#" target="_blank"><img src="" alt=""></a></li>
+<li><a href="http://www.cnblogs.com/xytop/category/152381.html" target="_blank">JAVA(1)</a><a href="http://www.cnblogs.com/xytop/archive/2008/08/26/1277125.html#" target="_blank"><img src="" alt=""></a></li>
+<li><a href="http://www.cnblogs.com/xytop/category/152383.html" target="_blank">JSP</a><a href="http://www.cnblogs.com/xytop/archive/2008/08/26/1277125.html#" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<h1 id="-">随笔档案</h1>
+<ul>
+<li><a href="http://www.cnblogs.com/xytop/archive/2010/09.html" target="_blank">2010年9月 (1)</a></li>
+<li><a href="http://www.cnblogs.com/xytop/archive/2008/08.html" target="_blank">2008年8月 (1)</a><h3 id="-rss-http-www-cnblogs-com-xytop-commentsrss-aspx-rss-">最新评论<a href="http://www.cnblogs.com/xytop/CommentsRSS.aspx" title="RSS订阅最最新评论" target="_blank"><img src="&quot;RSS订阅最最新评论&quot;" alt=""></a></h3>
+</li>
+</ul>
+<h3 id="-">阅读排行榜</h3>
+<ul>
+<li><a href="">1. JAVA中String.format的用法(1680)</a></li>
+<li><p><a href="http://www.cnblogs.com/xytop/archive/2010/09/16/1827865.html" target="_blank">2. IIS无法启动(64)</a></p>
+<h3 id="-">评论排行榜</h3>
+</li>
+<li><p><a href="http://www.cnblogs.com/xytop/archive/2010/09/16/1827865.html" target="_blank">1. IIS无法启动(0)</a></p>
+</li>
+<li><a href="">2. JAVA中String.format的用法(0)</a></li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/xml/">xml</a></li></span><span class="breadcrumb"><li><a href="/categories/xml/">xml</a></li><li><a href="/categories/xml/xstream/">xstream</a></li></span></span> | <span class="tags">Tagged <a href="/tags/xml/" class="label label-primary">xml</a><a href="/tags/xstream/" class="label label-success">xstream</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-xml-xstream--JAVA中Stringformat的用法-xytop-博客园/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-xml-xstream--JAVA中Stringformat的用法-xytop-博客园" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-集群--ApacheTomcat2集群负载平衡Linux环境/">Apache + Tomcat 2集群 负载平衡(Linux环境) </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-集群--ApacheTomcat2集群负载平衡Linux环境/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="apache-tomcat-2-linux-derek-guo-blog-blogjava">Apache + Tomcat 2集群 负载平衡(Linux环境) - Derek.Guo BLOG - BlogJava</h1>
+<p><a href="http://www.blogjava.net/envoydada/" target="_blank"><strong>Derek.Guo BLOG</strong></a></p>
+<p><a href="http://www.blogjava.net/" target="_blank">BlogJava</a>   <a href="http://www.blogjava.net/envoydada/" target="_blank">首页</a>   <a href="http://www.blogjava.net/envoydada/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a> <a href="http://www.blogjava.net/envoydada/contact.aspx?id=1" target="_blank">联系</a>   <a href="http://www.blogjava.net/envoydada/rss" target="_blank">聚合</a><a href="http://www.blogjava.net/envoydada/rss" target="_blank"><img src="" alt=""></a>   <a href="http://www.blogjava.net/envoydada/admin/EditPosts.aspx" target="_blank">管理</a></p>
+<p>随笔-82  评论-31  文章-0  trackbacks-0
+<a href="">Apache + Tomcat/*2集群 负载平衡(Linux环境)</a></p>
+<p>Apache + Tomcat/*2集群 负载平衡（Linux环境）</p>
+<p>说明：一台apache主机，两台tomcat主机</p>
+<p>安装JDK、安装Apache、安装Tomcat、配置Apache代理、配置Tomcat集群</p>
+<p>一、安装JDK（所有运行Tomcat主机，即web服务器）
+  1.下载JDK的bin包，如jdk-1_5_0_02-linux-i586.rpm.bin ，给其添加执行权限，执行/#./jdk-1_5_0_02-linux-i586.rpm.bin , 在</p>
+<p>当前目录生成rpm安装包，同样给其添加执行权限。 再执行 /#rpm -ivh jdk-1_5_0_02-linux-i586.rpm 出现安装协议 按<Enter>接受</p>
+<p>即可。
+  2.设置环境变量 /#vi /etc/profile  在其最后加入
+        JAVA_HOME =/ usr / java / jdk1. 5 .0_02
+        CLASSPATH = .:$JAVA_HOME / lib:$JAVA_HOME / jre / lib
+        PATH = $PATH:$JAVA_HOME / bin:$JAVA_HOME / jre / bin
+        export JAVA_HOME CLASSPATH PATH</p>
+<pre><code> 保存退出
+</code></pre><p>  3.要使JDK在所有的用户中使用，可以这样：vi /etc/profile.d/java.sh在新的java.sh中输入以下内容：
+        /#set java environment
+        JAVA_HOME=/usr/java/jdk1.5.0_02
+        CLASSPATH=.:$JAVA_HOME/lib:$JAVA_HOME/jre/lib
+        PATH=$PATH:$JAVA_HOME/bin:$JAVA_HOME/jre/bin
+        export JAVA_HOME CLASSPATH PATH
+     保存退出，然后给java.sh分配权限：chmod 755 /etc/profile.d/java.sh</p>
+<p>二、安装Apache（访问代理主机）
+  1.下载apache源代码 <a href="http://archive.apache.org/dist/httpd/httpd-2.2.2.tar.gz" target="_blank"><a href="http://archive.apache.org/dist/httpd/httpd-2.2.2.tar.gz">http://archive.apache.org/dist/httpd/httpd-2.2.2.tar.gz</a></a></p>
+<p> 解压缩 tar fvxz httpd-2.2.2.tar.gz</p>
+<p>  2.进入解压后的目录。进行配置：
+. / configure  -- prefix =/ usr / apache  -- enable - module = most  -- enable - proxy  -- enable - proxy - ajp  -- enable - forward  -- enable - proxy - connect  -- enable - proxy - http  -- enable - so  -- enable - deflate  -- enable - headers  -- enable - include</p>
+<p>上面的配置，用到了其他一些模块，说不定以后会用到，如支持ssi的include模块。</p>
+<p>  3.编译（编译如果不成功，确认一下你的linux是否安装有编译所需要的c环境和其他需要的类库）
+    make</p>
+<p>  4.安装 make install</p>
+<p>  5.进入/usr/apache目录，运行apache  ./apachectl -k start</p>
+<pre><code>  运行apache后，浏览一下是否运行正常。
+
+关闭apache ./apachectl -k stop
+</code></pre><p>   6.把apache作为linux的启动就运行服务程序
+     执行如下操作：cp /usr/apache/bin/apachectl /etc/rc.d/init.d/httpd
+     确认linux以前安装的httpd（apache）不需要了，你可覆盖掉以前apache的httpd文件。
+     chkconfig --add httpd
+     运行linux的setup，把httpd服务默认设定为自动运行。
+     到现在，你就可用另一种方式来启动、关闭apache了。如service httpd start</p>
+<p>三、安装tomcat（Web服务器）
+    1.下载jakarta-tomcat-5.5.20.tar.gz
+      tar zxf jakarta-tomcat-5.5.20.tar.gz 解压文件 （如解压到/usr/local/）
+    2.设置环境变量 /#vi /etc/profile  添加
+  CATALINA_HOME=/usr/local/jakarta-tomcat-5.5.30
+  export CATALINA_HOME
+      保存退出</p>
+<pre><code>3.修改JVM内存：/bin/catalina.sh 文件
+    在下/# ----- Execute The Requested Command -----------------
+        /# Bugzilla 37848: only output this if we have a TTY
+          if [ $have_tty -eq 1 ]; then
+             echo &quot;Using CATALINA_BASE:   $CATALINA_BASE&quot;
+             echo &quot;Using CATALINA_HOME:   $CATALINA_HOME&quot;
+             echo &quot;Using CATALINA_TMPDIR: $CATALINA_TMPDIR&quot;
+            if [ &quot;$1&quot; = &quot;debug&quot; -o &quot;$1&quot; = &quot;javac&quot; ] ; then
+                echo &quot;Using JAVA_HOME:       $JAVA_HOME&quot;
+            else
+               echo &quot;Using JRE_HOME:       $JRE_HOME&quot;
+            fi
+           fi
+        添加以下内容：
+            CATALINA_OPTS = &quot; $CATALINA_OPTS -Xms256m -Xmx512m -XX:PermSize=32m  -XX:MaxPermSize=128m $JPDA_OPTS &quot;
+            JAVA_OPTS = &quot; $JAVA_OPTS -Djava.awt.headless=true &quot;
+            echo  &quot; Using CATALINA_OPTS: $CATALINA_OPTS &quot;
+            echo  &quot; Using JAVA_OPTS: $JAVA_OPTS &quot;
+
+4.运行/usr/local/jakarta-tomcat-5.5.30/bin/startup.sh 启动tomcat服务器 测试是否正常
+</code></pre><p>四、配置apache代理(适用mod_proxy_ajp.so)
+    编辑apache配置文件 /#vi /usr/apache/conf/httpd.conf
+    1.配置proxy_ajp
+ /#加载解析模块（windows下，或linux采用动态加载模式下需配置。前面我们的linux编译时把下面的模块嵌入到了apache中 </p>
+<pre><code>   ，所以不用再加载）
+</code></pre><p> LoadModule proxy_module modules/mod_proxy.so
+ LoadModule proxy_ajp_module modules/mod_proxy_ajp.so
+    2.配置文件添加
+ ProxyPass  /  balancer: // tomcatcluster/ lbmethod=byrequests stickysession=JSESSIONID nofailover=on timeout=5  maxattempts = 3
+ ProxyPassReverse  /  balancer: // tomcatcluster/
+  &lt; Proxy balancer: // tomcatcluster &gt;
+    BalancerMember ajp: // 192.168.40.15:8009 smax=2 loadfactor=1  route=tomca t1
+    BalancerMember ajp: // 192.168.71.106:8009 smax=2 loadfactor=2  route=tomc at2
+  &lt;/ Proxy &gt;</p>
+<pre><code>    以上说明请参见mod_proxy中文手册 [http://www.6bee.com/tech/ApacheMenu/mod/mod_proxy.html](http://www.6bee.com/tech/ApacheMenu/mod/mod_proxy.html)
+3.其他说明
+</code></pre><p> 1、apache对tomcat的支持历史：apache第2.1版本后，内置了proxy_ajp，而jk2已经没人开发了，jk则支持到apache的</p>
+<p>2.0.58版本。
+proxy_ajp配置较简单，但可配置性还不如jk2，主要表现在proxy_ajp目前只支持配置到目录，还不支持对文件名称的pattern模式匹</p>
+<p>配（即还不能定义到只对jsp文件起作用）。</p>
+<p> 2、因为proxy_ajp的配置，还不支持对文件名称的pattern模式匹配，所以你要特别注意：
+——尽量把jsp和静态文件和图片路径分不同的目录来管理；
+——对于静态文件和图片路径，如/images，你可用“ProxyPass /images !”来禁止ProxyPass，从而来让apache来直接处理图片的请</p>
+<p>求。
+——关于apache的ssi（即shtml，include）与tomcat的集成时，shtml文件不能处于ProxyPass的控制下（即不能在ProxyPass目录）</p>
+<p>，而shtml调用的jsp须在ProxyPass有效控制下；</p>
+<p>五、配置Tomcat负载均衡、集群
+    1.修改tomcat 的 conf/server.xml 的<Engine><br>    去掉注释<Engine name="Standalone" defaultHost="localhost" jvmRoute="tomcat1">
+        jvmRoute是tomcat路由标示，由此区分两台tomcat主机，那么第二台就改为
+            <Engine name="Standalone" defaultHost="localhost" jvmRoute="tomcat2">
+    加上注释<Engine name="Catalina" defaultHost="localhost"></p>
+<pre><code>2.修改tomcat 的 conf/server.xml 的&lt;Connector&gt; 
+去掉注释&lt;Connector port=&quot;8009&quot;
+           enableLookups=&quot;false&quot; redirectPort=&quot;8443&quot; debug=&quot;0&quot;
+           protocol=&quot;AJP/1.3&quot; /&gt;   
+
+3.修改tomcat 的 conf/server.xml 的&lt;Cluster&gt;   
+&lt;!--  
+     &lt; Cluster className = &quot; org.apache.catalina.cluster.tcp.SimpleTcpCluster &quot;
+             managerClassName = &quot; org.apache.catalina.cluster.session.DeltaManager &quot;
+             expireSessionsOnShutdown = &quot; false &quot;
+             useDirtyFlag = &quot; true &quot;
+             notifyListenersOnReplication = &quot; true &quot; &gt;
+         &lt; Membership 
+            className = &quot; org.apache.catalina.cluster.mcast.McastService &quot;
+            mcastAddr = &quot; 228.0.0.4 &quot;
+            mcastPort = &quot; 45564 &quot;
+            mcastFrequency = &quot; 500 &quot;
+            mcastDropTime = &quot; 3000 &quot; /&gt;
+         &lt; Receiver 
+            className = &quot; org.apache.catalina.cluster.tcp.ReplicationListener &quot;
+            tcpListenAddress = &quot; auto &quot;
+            tcpListenPort = &quot; 4001 &quot;
+            tcpSelectorTimeout = &quot; 100 &quot;
+            tcpThreadCount = &quot; 6 &quot; /&gt;
+         &lt; Sender
+            className = &quot; org.apache.catalina.cluster.tcp.ReplicationTransmitter &quot;
+            replicationMode = &quot; pooled &quot;
+            ackTimeout = &quot; 5000 &quot; /&gt;
+         &lt; Valve className = &quot; org.apache.catalina.cluster.tcp.ReplicationValve &quot;
+               filter = &quot; ./*\.gif;./*\.js;./*\.jpg;./*\.png;./*\.htm;./*\.html;./*\.css;./*\.txt; &quot; /&gt;
+
+         &lt; Deployer className = &quot; org.apache.catalina.cluster.deploy.FarmWarDeployer &quot;
+                  tempDir = &quot; /tmp/war-temp/ &quot;
+                  deployDir = &quot; /tmp/war-deploy/ &quot;
+                  watchDir = &quot; /tmp/war-listen/ &quot;
+                  watchEnabled = &quot; false &quot; /&gt;
+
+         &lt; ClusterListener className = &quot; org.apache.catalina.cluster.session.ClusterSessionListener &quot; /&gt;
+     &lt;/ Cluster &gt;
+     --&gt;
+</code></pre><p>把上面的注释拿掉 就ok 了！</p>
+<p>4.在每个webapps应用中,修改web.xml文件 添加元素<distributable/>
+最后完工，重启tomcat,apahce测试平衡负载，新建jsp页面
+&lt;%
+Runtime lRuntime = Runtime.getRuntime();
+out.println(&quot;/<em>/</em>/<em> BEGIN MEMORY STATISTICS /</em>/<em>/</em><br/>&quot;);
+out.println(&quot;Free  Memory: &quot;+lRuntime.freeMemory()/1024/1024+&quot;M<br/>&quot;);
+out.println(&quot;Max   Memory: &quot;+lRuntime.maxMemory()/1024/1024+&quot;M<br/>&quot;);
+out.println(&quot;Total Memory: &quot;+lRuntime.totalMemory()/1024/1024+&quot;M<br/>&quot;);
+out.println(&quot;Available Processors : &quot;+lRuntime.availableProcessors()+&quot;<br/>&quot;);
+out.println(&quot;/<em>/</em>/<em> END MEMORY STATISTICS /</em>/<em>/</em>&quot;);
+%&gt;
+<br>
+&lt;%= request.getSession().getId() %&gt;
+放入到两台tomcat的ROOT目录中测试
+再测试集群(session复制)
+posted on 2006-11-15 11:06 <a href="http://www.blogjava.net/envoydada/" target="_blank">Derek.Guo</a> 阅读(3196) <a href="http://www.blogjava.net/envoydada/archive/2006/11/15/81196.html#Post" target="_blank">评论(0)</a>  <a href="http://www.blogjava.net/envoydada/admin/EditPosts.aspx?postid=81196" target="_blank">编辑</a>  <a href="http://www.blogjava.net/envoydada/AddToFavorite.aspx?id=81196" target="_blank">收藏</a> 所属分类: <a href="http://www.blogjava.net/envoydada/category/32100.html" target="_blank">Linux/Unix</a> <img src="" alt=""></p>
+<p><a href="http://www.blogjava.net/RequireRegister.aspx" target="_blank">新用户注册</a>  <a href="">刷新评论列表</a>  </p>
+<p><a href=""></a> <a href="http://job.cnblogs.com/">找优秀程序员，就在博客园</a>
+IT新闻：
+· <a href="http://news.cnblogs.com/n/128015/" target="_blank">开源Tizen系统视频泄露 外观似诺基亚MeeGo</a>
+· <a href="http://news.cnblogs.com/n/128014/" target="_blank">Opera推出电视应用商店 提供HTML5应用</a>
+· <a href="http://news.cnblogs.com/n/128013/" target="_blank">CES 2012 开展前演讲：电子设备消费将达 1 万亿美元</a>
+· <a href="http://news.cnblogs.com/n/128012/" target="_blank">分析师称苹果借转售NAND闪存获数十亿美元利润</a>
+· <a href="http://news.cnblogs.com/n/128011/" target="_blank">爱创会：火花，火焰，火光</a>   <a href="http://www.cnblogs.com/" target="_blank">博客园</a>  <a href="http://q.cnblogs.com/" target="_blank">博问</a>  <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://job.cnblogs.com/cate-java_programmer/" target="_blank">Java程序员招聘</a> 标题  请输入标题 姓名  请输入你的姓名 主页 请输入验证码 验证码 /*  <img src="" alt=""> 内容(请不要发表任何与政治相关的内容) 请输入评论内容 Remember Me?   <a href="http://www.blogjava.net/login.aspx?ReturnURL=http://www.blogjava.net/envoydada/archive/2006/11/15/81196.html&amp;SourceURL=/envoydada/archive/2006/11/15/81196.html" target="_blank">登录</a>       [使用Ctrl+Enter键可以直接提交]    推荐职位：
+· <a href="http://job.cnblogs.com/Offer/18582/" target="_blank">北京C++游戏服务端研发工程师(武神世纪网络)</a>
+· <a href="http://job.cnblogs.com/offer/16502/" target="_blank">知识库技术编辑(博客园)</a>
+· <a href="http://job.cnblogs.com/offer/18594/" target="_blank">北京Web系统工程师(嘉康利中国)</a>
+· <a href="http://job.cnblogs.com/offer/13272/" target="_blank">.NET 高级软件开发工程师(5173.com)</a>
+· <a href="http://job.cnblogs.com/offer/10223/" target="_blank">中高级.NET程序员(沪江网)</a>
+· <a href="http://job.cnblogs.com/Offer/13754/" target="_blank">石家庄高级.NET工程师（月薪6K-8K）(盛安德科技)</a></p>
+<p>博客园首页随笔：
+· <a href="http://www.cnblogs.com/ralphjzhang/archive/2012/01/09/2317463.html" target="_blank">再论 Time stamp counter</a>
+· <a href="http://www.cnblogs.com/default/archive/2012/01/09/2317506.html" target="_blank">我在ZZ这八年</a>
+· <a href="http://www.cnblogs.com/phphuaibei/archive/2012/01/09/2317484.html" target="_blank">写在2012里的2011总结</a>
+· <a href="http://www.cnblogs.com/west-link/archive/2012/01/09/2317477.html" target="_blank">高效程序员秘籍（8）：养成使用网络笔记本、网络文件同步工具的习惯</a>
+· <a href="http://www.cnblogs.com/judgelee/archive/2012/01/09/2317474.html" target="_blank">Ext.get()与Ext.fly()之区别</a>
+知识库：
+· <a href="http://kb.cnblogs.com/page/127846/" target="_blank">持续集成之“Everything is code”</a>
+· <a href="http://kb.cnblogs.com/page/127845/" target="_blank">持续集成之“软件自我识别”</a>
+· <a href="http://kb.cnblogs.com/page/127843/" target="_blank">持续集成之戏说Check-in Dance</a>
+· <a href="http://kb.cnblogs.com/page/111014/" target="_blank">什么是闭包，我的理解</a>
+· <a href="http://kb.cnblogs.com/page/111780/" target="_blank">什么是闭包(Closure)？</a>  网站导航:</p>
+<p><a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园</a>   <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>   <a href="http://kb.cnblogs.com/" target="_blank">知识库</a>   <a href="http://www.cppblog.com/" target="_blank">C++博客</a>   <a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a>   <a href="http://www.blogjava.net/envoydada/archive/2006/11/15/81196.html?opt=admin" target="_blank">管理</a> 相关文章:</p>
+<ul>
+<li><a href="http://www.blogjava.net/envoydada/archive/2011/12/29/367529.html" target="_blank">使用 sendfile() 提升网络文件发送性能</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2011/03/15/346300.html" target="_blank">Web服务器性能/压力测试工具http_load、webbench、ab、Siege(转)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/08/317711.html" target="_blank">liunx下安装Subversion</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/07/29/218323.html" target="_blank">Window下配置SVN服务器与客户端(转)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/11/207028.html" target="_blank">Solaris系统进程的查看和管理</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/09/29/149640.html" target="_blank">Solaris 操作系统的动态跟踪工具Dtrace</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/08/01/133838.html" target="_blank">Linux自启Tomcat,Solaris自启glassfish</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/30/133285.html" target="_blank">JProfiler远程监控Tomcat</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/24/132080.html" target="_blank">Glassfish的安装</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/10/129316.html" target="_blank">启动Solaris10-webmin</a>  </li>
+</ul>
+<p><a href="&quot;Go to the previous month&quot;">&lt;</a>2006年11月<a href="&quot;Go to the next month&quot;">&gt;</a>日一二三四五六293031123456<a href="http://www.blogjava.net/envoydada/archive/2006/11/07.html" target="_blank">7</a><a href="http://www.blogjava.net/envoydada/archive/2006/11/08.html" target="_blank">8</a>9<a href="http://www.blogjava.net/envoydada/archive/2006/11/10.html" target="_blank">10</a>11121314<a href="http://www.blogjava.net/envoydada/archive/2006/11/15.html" target="_blank">15</a><a href="http://www.blogjava.net/envoydada/archive/2006/11/16.html" target="_blank">16</a>1718192021222324252627282930123456789</p>
+<h3 id="-7-">留言簿(7)</h3>
+<ul>
+<li><a href="http://www.blogjava.net/envoydada/Contact.aspx?id=1" target="_blank">给我留言</a></li>
+<li><a href="http://www.blogjava.net/envoydada/default.aspx?opt=msg" target="_blank">查看公开留言</a></li>
+<li><a href="http://www.blogjava.net/envoydada/admin/MyMessages.aspx" target="_blank">查看私人留言</a></li>
+</ul>
+<h1 id="-80-">随笔分类(80)</h1>
+<ul>
+<li><a href="http://www.blogjava.net/envoydada/category/45572.html" target="_blank">Cache(2)</a><a href="http://www.blogjava.net/envoydada/category/45572.html/rss" title="Subscribe to Cache(2)" target="_blank"><img src="&quot;Subscribe to Cache(2" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/category/32101.html" target="_blank">Database(9)</a><a href="http://www.blogjava.net/envoydada/category/32101.html/rss" title="Subscribe to Database(9)" target="_blank"><img src="&quot;Subscribe to Database(9" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/category/32099.html" target="_blank">Java(51)</a><a href="http://www.blogjava.net/envoydada/category/32099.html/rss" title="Subscribe to Java(51)" target="_blank"><img src="&quot;Subscribe to Java(51" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/category/32100.html" target="_blank">Linux/Unix(14)</a><a href="http://www.blogjava.net/envoydada/category/32100.html/rss" title="Subscribe to Linux/Unix(14)" target="_blank"><img src="&quot;Subscribe to Linux/Unix(14" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/category/45571.html" target="_blank">NoSqlDB(4)</a><a href="http://www.blogjava.net/envoydada/category/45571.html/rss" title="Subscribe to NoSqlDB(4)" target="_blank"><img src="&quot;Subscribe to NoSqlDB(4" alt="">&quot;)</a></li>
+</ul>
+<h1 id="-">技术网站</h1>
+<ul>
+<li><a href="http://www.54chen.com/" target="_blank">54chen</a></li>
+<li><a href="http://www.coreseek.com/" target="_blank">Coreseek中文全文检索</a></li>
+<li><a href="http://dominic.blog.chinaunix.net/" target="_blank">Dominic-Blog</a></li>
+<li><a href="http://code.google.com/p/gflot/" target="_blank">GFlot</a></li>
+<li>GWT charting library <a href="http://repository.jboss.org/maven2/ca/nanometrics/gflot/1.0.0/" target="_blank">http://repository.jboss.org/maven2/ca/nanometrics/gflot/1.0.0/</a></li>
+<li><a href="http://gwt.google.com/samples/Showcase/Showcase.html" target="_blank">GWT Showcase</a></li>
+<li><a href="http://www.ibm.com/developerworks/cn/xml/x-javacc/part1/" target="_blank">JavaCC、解析树和 XQuery 语法</a></li>
+<li><a href="http://www.mongodb.org/display/DOCS/Manual" target="_blank">Mongodb手册</a></li>
+<li><a href="http://doc.mysql.cn/mysql5/refman-5.1-zh.html-chapter/" target="_blank">MySQL 5.1参考手册</a></li>
+<li><a href="http://www.mysqlsystems.com/" target="_blank">Mysql部落</a></li>
+<li><a href="http://wiki.nginx.org/NginxChs" target="_blank">Nginx 的中文维基</a></li>
+<li><a href="http://redis.io/" target="_blank">Redis</a></li>
+<li><a href="http://sphinxsearch.com/" target="_blank">Sphinxsearch</a></li>
+<li><a href="http://code.google.com/p/spymemcached/" target="_blank">spymemcached</a></li>
+<li>A simple, asynchronous, single-threaded memcached client written in java.</li>
+<li><a href="http://code.google.com/p/spymemcached/" target="_blank">Spymemcached</a></li>
+<li><a href="http://www.tigase.org/" target="_blank">Tigase</a></li>
+<li>轻量高性能JABBER/XMPP服务器，带GWT开发的客户端</li>
+<li><a href="http://www.ibm.com/developerworks/cn/java/j-lo-tomcat1/index.html" target="_blank">Tomcat 系统架构与设计模式</a></li>
+<li><a href="http://code.google.com/p/xmemcached/" target="_blank">xmemcached</a></li>
+<li>Extreme performance modern memcached client for java</li>
+<li><a href="http://www.boobooke.com/bbs/index.php" target="_blank">播布客</a></li>
+<li><a href="http://blog.csdn.net/chinull/archive/2010/03/17/5390830.aspx" target="_blank">百度文库浏览器分析及实现</a></li>
+<li><a href="http://www.linuxdiyf.com/" target="_blank">红联Linux</a></li>
+</ul>
+<h3 id="-">积分与排名</h3>
+<ul>
+<li>积分 - 107622</li>
+<li>排名 - 186</li>
+</ul>
+<h3 id="-">最新随笔</h3>
+<ul>
+<li><a href="http://www.blogjava.net/envoydada/archive/2011/12/29/367529.html" target="_blank">1. 使用 sendfile() 提升网络文件发送性能</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2011/03/15/346300.html" target="_blank">2. Web服务器性能/压力测试工具http_load、webbench、ab、Siege(转)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/07/13/325947.html" target="_blank">3. Magent：Memcached集群代理</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/07/05/325305.html" target="_blank">4. Mongodb Import Export Tools</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/07/05/325266.html" target="_blank">5. Mongodb dbshell Reference</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/06/23/324266.html" target="_blank">6. 转mongodb入门</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/06/23/324255.html" target="_blank">7. Mongodb Dynamic querys select</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/08/317718.html" target="_blank">8. mysql常用的hint</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/08/317716.html" target="_blank">9. Mysql innodb引擎优化</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/08/317713.html" target="_blank">10. J2SE6 分析工具</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/08/317711.html" target="_blank">11. liunx下安装Subversion</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2009/02/07/253698.html" target="_blank">12. ORACLE 中dbms_stats的使用</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/09/28/231708.html" target="_blank">13. Memcached 剖析(转)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/07/29/218323.html" target="_blank">14. Window下配置SVN服务器与客户端(转)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/18/208808.html" target="_blank">15. Oracle 10g Recycle Bin</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/16/208221.html" target="_blank">16. Oracle中分区表的使用</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/12/207472.html" target="_blank">17. ORACLE CTXCAT-CATSEARCH</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/12/207288.html" target="_blank">18. ORACLE JOBS</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/11/207090.html" target="_blank">19. Oracle 分区表(Partition)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/11/207028.html" target="_blank">20. Solaris系统进程的查看和管理</a></li>
+</ul>
+<h3 id="-http-www-blogjava-net-envoydada-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/envoydada/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
+<ul>
+<li><a href="http://www.blogjava.net/envoydada/archive/2011/07/13/106322.html#354291" target="_blank">1. re: Hibernate 本地SQL查询SQLQuery</a></li>
+<li>不错,很受用</li>
+<li>--happytjn</li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/05/21/46964.html#321538" target="_blank">2. re: DES加密</a></li>
+<li>评论内容较长,点击标题查看</li>
+<li>--woxiangbo</li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/07/138549.html#317660" target="_blank">3. re: JAVA缩放图片（转贴）</a></li>
+<li>希望能用</li>
+<li>--moguji</li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2009/10/20/106322.html#299083" target="_blank">4. re: Hibernate 本地SQL查询SQLQuery[未登录]</a></li>
+<li>很好，谢谢啦</li>
+<li>--xx</li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2009/09/30/106322.html#296990" target="_blank">5. re: Hibernate 本地SQL查询SQLQuery</a></li>
+<li>很不错啊， 谢谢。。</li>
+<li>--carvin</li>
+</ul>
+<h3 id="-">阅读排行榜</h3>
+<ul>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/03/26/106322.html" target="_blank">1. Hibernate 本地SQL查询SQLQuery(11576)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2005/09/13/12894.html" target="_blank">2. Hibernate批量更新和批量删除(8941)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/05/10/45438.html" target="_blank">3. Spring+Hibernate+Struts(4960)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/30/133285.html" target="_blank">4. JProfiler远程监控Tomcat(4646)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/11/07/79516.html" target="_blank">5. Spring DataSource注入(3902)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/03/06/102152.html" target="_blank">6. Spring+hibernate分页查询(3677)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/08/28/66182.html" target="_blank">7. Spring Hibernate 模板实现分页(3500)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/05/08/115877.html" target="_blank">8. Java调用Linux命令(3496)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/09/07/68308.html" target="_blank">9. Hibernate one-to-many学习笔记(3431)</a></li>
+<li><a href="">10. Apache + Tomcat/*2集群 负载平衡(Linux环境)(3196)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2009/02/07/253698.html" target="_blank">11. ORACLE 中dbms_stats的使用(3084)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/23/131803.html" target="_blank">12. java虚拟机参数详解(3009)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/04/26/43355.html" target="_blank">13. WEB定时器-Timer(2151)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/30/133329.html" target="_blank">14. 工具分析GC日志(2014)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2005/09/11/12654.html" target="_blank">15. Struts中logic:iterate标记的使用(1871)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/11/10/80309.html" target="_blank">16. Tomcat内存配置(1823)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/05/09/116195.html" target="_blank">17. JAVA访问LDAP(1709)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2005/09/11/12655.html" target="_blank">18. Tomcat5.0连接池(1697)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2005/09/11/12679.html" target="_blank">19. Hibernate-Extension和Middlegen-Hibernate(1692)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/20/131410.html" target="_blank">20. Spring配置总结(1663)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/08/30/66559.html" target="_blank">21. EL表达式(1341)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/08/22/138549.html" target="_blank">22. JAVA缩放图片（转贴）(1326)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/04/20/42153.html" target="_blank">23. Hibernate主键生成方式(1285)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/08/15/63743.html" target="_blank">24. JAVA的RSS阅读器(1276)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/11/07/79585.html" target="_blank">25. Tomcat 通过数据库验证的配置方法(BASIC,FORM).(1274)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/12/15/87862.html" target="_blank">26. hibernate二级缓存攻略 Ehcache(转贴)(1224)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/16/208221.html" target="_blank">27. Oracle中分区表的使用(1180)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/03/15/35434.html" target="_blank">28. Hibernate3.0批量更新和批量删除(1175)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/20/131433.html" target="_blank">29. GC调优(1162)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/09/20/146797.html" target="_blank">30. Hibernate属性延迟加载(1122)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/03/28/37791.html" target="_blank">31. Struts常用标签(1120)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/10/12/74758.html" target="_blank">32. RedHat终端中文乱码解决(1077)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/12/27/170920.html" target="_blank">33. 数据库性能 常用SQL(1070)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/06/05/50423.html" target="_blank">34. Spring 定时器(927)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/05/19/46964.html" target="_blank">35. DES加密(869)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/01/18/28446.html" target="_blank">36. Log4j配置(849)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/24/132080.html" target="_blank">37. Glassfish的安装(785)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2006/05/11/45645.html" target="_blank">38. Java调用windows程序(747)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2007/06/08/122881.html" target="_blank">39. Hibernate3支持DetachedCriteria(转贴)(718)</a></li>
+<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/11/207090.html" target="_blank">40. Oracle 分区表(Partition)(705)</a>
+Powered by: <a href="http://www.cnblogs.com/" target="_blank">博客园</a> 模板提供：<a href="http://blog.hjenglish.com/" target="_blank">沪江博客</a> Copyright ©2012 Derek.Guo</li>
+</ul>
+<p>MSN:envoydada@hotmail.com QQ:34935442</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/集群/">集群</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a><a href="/tags/集群/" class="label label-success">集群</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-集群--ApacheTomcat2集群负载平衡Linux环境/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-集群--ApacheTomcat2集群负载平衡Linux环境" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -716,7 +1391,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:55:36</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:28:49</em></span></div>
 </div>
 <div class="clearfix"></div>
 

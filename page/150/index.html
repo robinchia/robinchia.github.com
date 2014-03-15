@@ -110,6 +110,666 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-框架汇总-ORM-ibatis--IbatisSqlExecutorexecuteQuery/">Ibatis SqlExecutor.executeQuery</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:29.000Z"> <a href="/2014/02/02/2014-02-02-框架汇总-ORM-ibatis--IbatisSqlExecutorexecuteQuery/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="ibatis-sqlexecutor-executequery">Ibatis SqlExecutor.executeQuery</h1>
+<h1 id="-"><a href="">小猫的窝棚</a></h1>
+<h1 id="-">#</h1>
+<ul>
+<li><a href=""><img src="" alt="">目录视图</a></li>
+<li><a href=""><img src="" alt="">摘要视图</a></li>
+<li><a href=""><img src="" alt="">订阅</a>
+<a href="http://blog.csdn.net/csdnproduct/article/details/6692206" target="_blank">公告：新版下载频道介绍之二——上传和下载资源页面介绍</a>                 <a href="http://g.csdn.net/5193964" target="_blank">bShare分享，迅速提升10倍流量</a></li>
+</ul>
+<h3 id="-ibatis-sqlexecutor-executequery-zz-ibatis-sqlexecutor-executequery-zz-"><a href="&quot;Ibatis SqlExecutor.executeQuery(ZZ">Ibatis SqlExecutor.executeQuery(ZZ)</a>&quot;)</h3>
+<p>分类： <a href="">Java</a>  2008-07-28 10:37 688人阅读 <a href="">评论</a>(1) <a href="&quot;收藏&quot;">收藏</a> <a href="&quot;举报&quot;">举报</a></p>
+<p>一直以来ibatis的分页都是通过滚动ResultSet实现的，应该算是逻辑分页吧。逻辑分页虽然能很干净地独立于特定数据库，但效率在多数情况下不及特定数据库支持的物理分页，而hibernate的分页则是直接组装sql，充分利用了特定数据库的分页机制，效率相对较高。本文讲述的就是如何在不重新编译ibatis源码的前提下，为ibatis引入hibernate式的物理分页机制。 基本思路就是找到ibatis执行sql的地方，截获sql并重新组装sql。通过分析ibatis源码知道，最终负责执行sql的类是com.ibatis.sqlmap.engine.execution.SqlExecutor，此类没有实现任何接口，这多少有点遗憾，因为接口是相对稳定契约，非大的版本更新，接口一般是不会变的，而类就相对易变一些，所以这里的代码只能保证对当前版本（2.1.7）的ibatis有效。下面是SqlExecutor执行查询的方法： //<em>/</em> /<em> Long form of the method to execute a query /</em> /<em> @param request - the request scope /</em> @param conn - the database connection /<em> @param sql - the SQL statement to execute /</em> @param parameters - the parameters for the statement /<em> @param skipResults - the number of results to skip /</em> @param maxResults - the maximum number of results to return /<em> @param callback - the row handler for the query /</em> /<em> @throws SQLException - if the query fails /</em>/ public void executeQuery(RequestScope request, Connection conn, String sql, Object[] parameters, int skipResults, int maxResults, RowHandlerCallback callback) throws SQLException { ErrorContext errorContext = request.getErrorContext(); errorContext.setActivity(&quot;executing query&quot;); errorContext.setObjectId(sql); PreparedStatement ps = null; ResultSet rs = null; try { errorContext.setMoreInfo(&quot;Check the SQL Statement (preparation failed).&quot;); Integer rsType = request.getStatement().getResultSetType(); if (rsType != null) { ps = conn.prepareStatement(sql, rsType.intValue(), ResultSet.CONCUR_READ_ONLY); } else { ps = conn.prepareStatement(sql); } Integer fetchSize = request.getStatement().getFetchSize(); if (fetchSize != null) { ps.setFetchSize(fetchSize.intValue()); } errorContext.setMoreInfo(&quot;Check the parameters (set parameters failed).&quot;); request.getParameterMap().setParameters(request, ps, parameters); errorContext.setMoreInfo(&quot;Check the statement (query failed).&quot;); ps.execute(); rs = getFirstResultSet(ps); if (rs != null) { errorContext.setMoreInfo(&quot;Check the results (failed to retrieve results).&quot;); handleResults(request, rs, skipResults, maxResults, callback); } // clear out remaining results while (ps.getMoreResults()); } finally { try { closeResultSet(rs); } finally { closeStatement(ps); } } } 其中handleResults(request, rs, skipResults, maxResults, callback)一句用于处理分页，其实此时查询已经执行完毕，可以不必关心handleResults方法，但为清楚起见，下面来看看handleResults的实现： private void handleResults(RequestScope request, ResultSet rs, int skipResults, int maxResults, RowHandlerCallback callback) throws SQLException { try { request.setResultSet(rs); ResultMap resultMap = request.getResultMap(); if (resultMap != null) { // Skip Results if (rs.getType() != ResultSet.TYPE_FORWARD_ONLY) { if (skipResults &gt; 0) { rs.absolute(skipResults); } } else { for (int i = 0; i &lt; skipResults; i++) { if (!rs.next()) { break; } } } // Get Results int resultsFetched = 0; while ((maxResults == SqlExecutor.NO_MAXIMUM_RESULTS || resultsFetched &lt; maxResults) &amp;&amp; rs.next()) { Object[] columnValues = resultMap.resolveSubMap(request, rs).getResults(request, rs); callback.handleResultObject(request, columnValues, rs); resultsFetched++; } } } finally { request.setResultSet(null); } } 此处优先使用的是ResultSet的absolute方法定位记录，是否支持absolute取决于具体数据库驱动，但一般当前版本的数据库都支持该方法，如果不支持则逐条跳过前面的记录。由此可以看出如果数据库支持absolute，则ibatis内置的分页策略与特定数据库的物理分页效率差距就在于物理分页查询与不分页查询在数据库中的执行效率的差距了。因为查询执行后读取数据前数据库并未把结果全部返回到内存，所以本身在存储占用上应该差距不大，如果都使用索引，估计执行速度也差不太多。 继续我们的话题。其实只要在executeQuery执行前组装sql，然后将其传给executeQuery，并告诉handleResults我们不需要逻辑分页即可。拦截executeQuery可以采用aop动态实现，也可直接继承SqlExecutor覆盖executeQuery来静态地实现，相比之下后者要简单许多，而且由于SqlExecutor没有实现任何接口，比较易变，动态拦截反到增加了维护的工作量，所以我们下面来覆盖executeQuery： package com.aladdin.dao.ibatis.ext; import java.sql.Connection; import java.sql.SQLException; import org.apache.commons.logging.Log; import org.apache.commons.logging.LogFactory; import com.aladdin.dao.dialect.Dialect; import com.ibatis.sqlmap.engine.execution.SqlExecutor; import com.ibatis.sqlmap.engine.mapping.statement.RowHandlerCallback; import com.ibatis.sqlmap.engine.scope.RequestScope; public class LimitSqlExecutor extends SqlExecutor { private static final Log logger = LogFactory.getLog(LimitSqlExecutor.class); private Dialect dialect; private boolean enableLimit = true; public Dialect getDialect() { return dialect; } public void setDialect(Dialect dialect) { this.dialect = dialect; } public boolean isEnableLimit() { return enableLimit; } public void setEnableLimit(boolean enableLimit) { this.enableLimit = enableLimit; } @Override public void executeQuery(RequestScope request, Connection conn, String sql, Object[] parameters, int skipResults, int maxResults, RowHandlerCallback callback) throws SQLException { if ((skipResults != NO_SKIPPED_RESULTS || maxResults != NO_MAXIMUM_RESULTS) &amp;&amp; supportsLimit()) { sql = dialect.getLimitString(sql, skipResults, maxResults); if(logger.isDebugEnabled()){ logger.debug(sql); } skipResults = NO_SKIPPED_RESULTS; maxResults = NO_MAXIMUM_RESULTS; } super.executeQuery(request, conn, sql, parameters, skipResults, maxResults, callback); } public boolean supportsLimit() { if (enableLimit &amp;&amp; dialect != null) { return dialect.supportsLimit(); } return false; } } 其中： skipResults = NO_SKIPPED_RESULTS; maxResults = NO_MAXIMUM_RESULTS; 告诉handleResults不分页（我们组装的sql已经使查询结果是分页后的结果了），此处引入了类似hibenate中的数据库方言接口Dialect，其代码如下： package com.aladdin.dao.dialect; public interface Dialect { public boolean supportsLimit(); public String getLimitString(String sql, boolean hasOffset); public String getLimitString(String sql, int offset, int limit); } 下面为Dialect接口的MySQL实现： package com.aladdin.dao.dialect; public class MySQLDialect implements Dialect { protected static final String SQL_END_DELIMITER = &quot;;&quot;; public String getLimitString(String sql, boolean hasOffset) { return new StringBuffer(sql.length() + 20).append(trim(sql)).append( hasOffset ? &quot; limit ?,?&quot; : &quot; limit ?&quot;) .append(SQL_END_DELIMITER).toString(); } public String getLimitString(String sql, int offset, int limit) { sql = trim(sql); StringBuffer sb = new StringBuffer(sql.length() + 20); sb.append(sql); if (offset &gt; 0) { sb.append(&quot; limit &quot;).append(offset).append(&#39;,&#39;).append(limit) .append(SQL_END_DELIMITER); } else { sb.append(&quot; limit &quot;).append(limit).append(SQL_END_DELIMITER); } return sb.toString(); } public boolean supportsLimit() { return true; } private String trim(String sql) { sql = sql.trim(); if (sql.endsWith(SQL_END_DELIMITER)) { sql = sql.substring(0, sql.length() - 1 - SQL_END_DELIMITER.length()); } return sql; } } 接下来的工作就是把LimitSqlExecutor注入ibatis中。我们是通过spring来使用ibatis的，所以在我们的dao基类中执行注入，代码如下： package com.aladdin.dao.ibatis; import java.io.Serializable; import java.util.List; import org.springframework.orm.ObjectRetrievalFailureException; import org.springframework.orm.ibatis.support.SqlMapClientDaoSupport; import com.aladdin.dao.ibatis.ext.LimitSqlExecutor; import com.aladdin.domain.BaseObject; import com.aladdin.util.ReflectUtil; import com.ibatis.sqlmap.client.SqlMapClient; import com.ibatis.sqlmap.engine.execution.SqlExecutor; import com.ibatis.sqlmap.engine.impl.ExtendedSqlMapClient; public abstract class BaseDaoiBatis extends SqlMapClientDaoSupport { private SqlExecutor sqlExecutor; public SqlExecutor getSqlExecutor() { return sqlExecutor; } public void setSqlExecutor(SqlExecutor sqlExecutor) { this.sqlExecutor = sqlExecutor; } public void setEnableLimit(boolean enableLimit) { if (sqlExecutor instanceof LimitSqlExecutor) { ((LimitSqlExecutor) sqlExecutor).setEnableLimit(enableLimit); } } public void initialize() throws Exception { if (sqlExecutor != null) { SqlMapClient sqlMapClient = getSqlMapClientTemplate() .getSqlMapClient(); if (sqlMapClient instanceof ExtendedSqlMapClient) { ReflectUtil.setFieldValue(((ExtendedSqlMapClient) sqlMapClient) .getDelegate(), &quot;sqlExecutor&quot;, SqlExecutor.class, sqlExecutor); } } } ... } 其中的initialize方法执行注入，稍后会看到此方法在spring Beans 配置中指定为init-method。由于sqlExecutor是com.ibatis.sqlmap.engine.impl.ExtendedSqlMapClient的私有成员，且没有公开的set方法，所以此处通过反射绕过java的访问控制，下面是ReflectUtil的实现代码： package com.aladdin.util; import java.lang.reflect.Field; import java.lang.reflect.Method; import java.lang.reflect.Modifier; import org.apache.commons.logging.Log; import org.apache.commons.logging.LogFactory; public class ReflectUtil { private static final Log logger = LogFactory.getLog(ReflectUtil.class); public static void setFieldValue(Object target, String fname, Class ftype, Object fvalue) { if (target == null || fname == null || &quot;&quot;.equals(fname) || (fvalue != null &amp;&amp; !ftype.isAssignableFrom(fvalue.getClass()))) { return; } Class clazz = target.getClass(); try { Method method = clazz.getDeclaredMethod(&quot;set&quot; + Character.toUpperCase(fname.charAt(0)) + fname.substring(1), ftype); if (!Modifier.isPublic(method.getModifiers())) { method.setAccessible(true); } method.invoke(target, fvalue); } catch (Exception me) { if (logger.isDebugEnabled()) { logger.debug(me); } try { Field field = clazz.getDeclaredField(fname); if (!Modifier.isPublic(field.getModifiers())) { field.setAccessible(true); } field.set(target, fvalue); } catch (Exception fe) { if (logger.isDebugEnabled()) { logger.debug(fe); } } } } }<PRE></p>
+<p>到此剩下的就是通过Spring将sqlExecutor注入BaseDaoiBatis中了，下面是Spring Beans配置文件： &lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt; <BEANS> <!-- Transaction manager for a single JDBC DataSource --> <BEAN class=org.springframework.jdbc.datasource.DataSourceTransactionManager id=transactionManager> <property name="dataSource"> <REF bean="dataSource" /> </property> </bEAN> <!-- SqlMap setup for iBATIS Database Layer --> <BEAN class=org.springframework.orm.ibatis.SqlMapClientFactoryBean id=sqlMapClient> <property name="configLocation"> <VALUE>classpath:/com/aladdin/dao/ibatis/sql-map-config.xml</vALUE> </property> <property name="dataSource"> <REF bean="dataSource" /> </property> </bEAN> <BEAN class=com.aladdin.dao.ibatis.ext.LimitSqlExecutor id=sqlExecutor> <property name="dialect"> <BEAN class=com.aladdin.dao.dialect.MySQLDialect /> </property> </bEAN> <BEAN class=com.aladdin.dao.ibatis.BaseDaoiBatis id=baseDao init-method="initialize" abstract="true"> <property name="dataSource"> <REF bean="dataSource" /> </property> <property name="sqlMapClient"> <REF bean="sqlMapClient" /> </property> <property name="sqlExecutor"> <REF bean="sqlExecutor" /> </property> </bEAN> <BEAN class=com.aladdin.dao.ibatis.UserDaoiBatis id=userDao parent="baseDao" /> <BEAN class=com.aladdin.dao.ibatis.RoleDaoiBatis id=roleDao parent="baseDao" /> <BEAN class=com.aladdin.dao.ibatis.ResourceDaoiBatis id=resourceDao parent="baseDao" /> </bEANS><PRE></p>
+<p>此后就可以通过调用org.springframework.orm.ibatis.SqlMapClientTemplate的 public List queryForList(final String statementName, final Object parameterObject, final int skipResults, final int maxResults) throws DataAccessException 或 public PaginatedList queryForPaginatedList(final String statementName, final Object parameterObject, final int pageSize) throws DataAccessException 得到分页结果了。建议使用第一个方法，第二个方法返回的是PaginatedList，虽然使用简单，但是其获得指定页的数据是跨过我们的dao直接访问ibatis的，不方便统一管理。 <PRE></p>
+<ul>
+<li>上一篇：<a href="http://blog.csdn.net/fulianglove/article/details/2708480" target="_blank">Table的一些不常用的属性(ZZ)</a></li>
+<li>下一篇：<a href="http://blog.csdn.net/fulianglove/article/details/2722784" target="_blank">海量数据库的查询优化(ZZ)</a>
+查看评论<a href=""></a></li>
+</ul>
+<p>/* 以上用户言论只代表其个人观点，不代表CSDN网站的观点或立场</p>
+<p>个人资料</p>
+<p><a href="&quot;我的博客主页&quot;"><img src="" alt=""></a>
+fulianglove</p>
+<ul>
+<li>访问：19467次</li>
+<li>积分：496分</li>
+<li><p>排名：第13741名</p>
+</li>
+<li><p>原创：22篇</p>
+</li>
+<li>转载：32篇</li>
+<li>译文：0篇</li>
+<li>评论：24条</li>
+</ul>
+<p>文章搜索</p>
+<p><a href=""></a>
+文章分类</p>
+<ul>
+<li><a href="http://blog.csdn.net/fulianglove/article/category/404780" target="_blank">.NET</a>(3)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/category/400749" target="_blank">Java</a>(24)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/category/417945" target="_blank">JavaScript</a>(9)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/category/403582" target="_blank">Rails/Ruby</a>(0)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/category/403569" target="_blank">Spring</a>(1)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/category/400748" target="_blank">sql</a>(5)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/category/440985" target="_blank">数据库</a>(1)</li>
+</ul>
+<p>文章存档</p>
+<ul>
+<li><a href="http://blog.csdn.net/fulianglove/article/month/2009/02" target="_blank">2009年02月</a>(1)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/month/2009/01" target="_blank">2009年01月</a>(2)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/month/2008/12" target="_blank">2008年12月</a>(2)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/month/2008/10" target="_blank">2008年10月</a>(6)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/month/2008/09" target="_blank">2008年09月</a>(5)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/month/2008/08" target="_blank">2008年08月</a>(9)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/month/2008/07" target="_blank">2008年07月</a>(10)</li>
+<li><a href="http://blog.csdn.net/fulianglove/article/month/2008/06" target="_blank">2008年06月</a>(14)</li>
+<li><p><a href="http://blog.csdn.net/fulianglove/article/month/2008/05" target="_blank">2008年05月</a>(5)
+阅读排行</p>
+</li>
+<li><p><a href="&quot;sqlserver中判断表是否存在&quot;">sqlserver中判断表是否存在</a> (2489)</p>
+</li>
+<li><a href="&quot;js获取鼠标点击位置(很旧很旧。。。">js获取鼠标点击位置(很旧很旧。。。)</a>&quot;) (1487)</li>
+<li><a href="&quot;Response下载Content－type：HTTP相应的Content类型(转贴">Response下载Content－ty...</a>&quot;) (1330)</li>
+<li><a href="&quot;js利用object标签显示动态图片&quot;">js利用object标签显示动态图片</a> (1089)</li>
+<li><a href="&quot;Spring+Ibatis集成 &quot;">Spring+Ibatis集成</a> (910)</li>
+<li><a href="&quot;EHCache使用(收集ZZ">EHCache使用(收集ZZ)</a>&quot;) (894)</li>
+<li><a href="&quot;window.print(">window.print()使用</a>使用&quot;) (808)</li>
+<li><a href="&quot;JSP中文件下载(转贴">JSP中文件下载(转贴)</a> &quot;) (745)</li>
+<li><a href="&quot;java LinkedList分析(ZZ">java LinkedList分析(ZZ...</a>&quot;) (690)</li>
+<li><a href="&quot;Ibatis SqlExecutor.executeQuery(ZZ">Ibatis SqlExecutor.e...</a>&quot;) (687)</li>
+</ul>
+<p>评论排行</p>
+<ul>
+<li><a href="&quot;如何正确的使用Java序列化技术(转贴">如何正确的使用Java序列化技术(转贴)</a>&quot;) (5)</li>
+<li><a href="&quot;Oracle,Sql Server, MySql, DB2使用sql分页(ZZ">Oracle,Sql Server, M...</a>&quot;) (4)</li>
+<li><a href="&quot;js获取鼠标点击位置(很旧很旧。。。">js获取鼠标点击位置(很旧很旧。。。)</a>&quot;) (3)</li>
+<li><a href="&quot;js利用object标签显示动态图片&quot;">js利用object标签显示动态图片</a> (2)</li>
+<li><a href="&quot;sqlserver中判断表是否存在&quot;">sqlserver中判断表是否存在</a> (2)</li>
+<li><a href="&quot;JSP中文件下载(转贴">JSP中文件下载(转贴)</a> &quot;) (2)</li>
+<li><a href="&quot;重复提交解决办法&quot;">重复提交解决办法</a> (1)</li>
+<li><a href="&quot;动态为表格添加行&quot;">动态为表格添加行</a> (1)</li>
+<li><a href="&quot;JS 事件注册&quot;">JS 事件注册</a> (1)</li>
+<li><p><a href="&quot;EHCache使用(收集ZZ">EHCache使用(收集ZZ)</a>&quot;) (1)
+最新评论</p>
+</li>
+<li><p><a href=""></a></p>
+</li>
+<li><a href=""></a></li>
+<li><a href=""></a></li>
+<li><a href=""></a></li>
+<li><a href="">不错，</a></li>
+<li><a href=""></a></li>
+<li><a href=""></a></li>
+<li><a href=""></a></li>
+<li><a href="">怎么不写了？</a></li>
+<li><a href="&quot;SELECT *FROM person WHERE uid LIKE ? OR name LIKE ? limit" title=" (currentPage-1)*lineSize &quot;,&quot; lineSizemysql这样，sql2005该怎样表示啊？？？">SELECT /*FROM pe...</a></li>
+</ul>
+<p>.NET</p>
+<ul>
+<li><p><a href="http://www.cnblogs.com/abei108/archive/2006/09/12/422125.html" target="_blank">AjaxPage--Asp.Net2.0中的Callback机制</a>
+JavaScript</p>
+</li>
+<li><p><a href="http://www.ajaxjs.com/docs/docs/" target="_blank">ExtJs</a></p>
+</li>
+</ul>
+<p>java技术链接</p>
+<ul>
+<li><a href="http://scottding.blog.chinajavaworld.com/entry.jspa?id=2992" target="_blank">[Java原型数据类型在分布式Cache中的同步处理]</a></li>
+<li><a href="https://www6.software.ibm.com/developerworks/cn/education/java/j-nio/tutorial/index.html" target="_blank">JAVA NIO入门</a></li>
+<li><a href="http://www.w3school.com.cn/htmldom/dom_obj_object.asp" target="_blank">HTML DOM Object 对象</a></li>
+<li><a href="http://dotnet.aspx.cc/ShowList.aspx?id=1&amp;page=1" target="_blank">孟宪会之精彩世界[.Net版]</a></li>
+<li><a href="http://hbcui1984.javaeye.com/blog/56496" target="_blank">java读取配置文件的几种方法</a></li>
+<li><a href="http://hi.baidu.com/fanyouan/blog/item/b1743e2e2e2bc5504fc226dd.html" target="_blank">HTML DOM Object 对象(2)</a></li>
+<li><a href="http://www.infomall.cn/cgi-bin/mallgate/20040514/http://hedong.3322.org/archives/000333.html" target="_blank">Digester学习笔记(一)BY竹笋炒肉</a></li>
+<li><a href="http://www.infomall.cn/cgi-bin/mallgate/20040514/http://hedong.3322.org/archives/000336.html" target="_blank">Digester学习笔记(二)BY竹笋炒肉</a></li>
+<li><a href="http://www.infomall.cn/cgi-bin/mallgate/20040514/http://hedong.3322.org/archives/000337.html" target="_blank">Digester学习笔记(三)BY竹笋炒肉</a></li>
+<li><a href="http://www.infomall.cn/cgi-bin/mallgate/20040514/http://hedong.3322.org/archives.html" target="_blank">博客文章BY竹笋炒肉</a></li>
+<li><a href="http://gemini.javaeye.com/blog/163747" target="_blank">Struts处理请求全过程</a></li>
+<li><a href="http://www-128.ibm.com/developerworks/cn/" target="_blank">IBM developerWorks 中国</a></li>
+<li><a href="http://www.javaeye.com/topic/55844" target="_blank">利用java操作Excel文件</a></li>
+<li><a href="http://www.blogjava.net/i369/articles/182041.html" target="_blank">获取Java文件路径</a></li>
+<li><p><a href="http://blog.csdn.net/apicescn/archive/2007/12/04/1916551.aspx" target="_blank">Spring+Ibatis集成开发实例</a>
+Protocol Buffers</p>
+</li>
+<li><p><a href="http://hellobmw.com/archives/protocol-buffers-based-addressbook.html" target="_blank">北极冰仔部落格--[第一个 Protocol Buffers 小程序：电话本]</a></p>
+</li>
+<li><a href="http://code.google.com/apis/protocolbuffers/docs/javatutorial.html" target="_blank">Protocol Buffer Basics: Java</a></li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/框架汇总/">框架汇总</a></li></span><span class="breadcrumb"><li><a href="/categories/框架汇总/">框架汇总</a></li><li><a href="/categories/框架汇总/ORM/">ORM</a></li><li><a href="/categories/框架汇总/ORM/ibatis/">ibatis</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ORM/" class="label label-primary">ORM</a><a href="/tags/ibatis/" class="label label-success">ibatis</a><a href="/tags/框架汇总/" class="label label-info">框架汇总</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:29"datetime="2014-03-07 09:54:29"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-框架汇总-ORM-ibatis--IbatisSqlExecutorexecuteQuery/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-框架汇总-ORM-ibatis--IbatisSqlExecutorexecuteQuery" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-架构师-架构--Twitter架构图cache篇–Tim后端技术/">Twitter架构图(cache篇) – Tim[后端技术]</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:29.000Z"> <a href="/2014/02/02/2014-02-02-架构师-架构--Twitter架构图cache篇–Tim后端技术/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="twitter-cache-tim-">Twitter架构图(cache篇) – Tim[后端技术]</h1>
+<h1 id="-tim-http-timyang-net-home-"><a href="http://timyang.net/" title="Home" target="_blank">Tim[后端技术]</a></h1>
+<p>Tim&#39;s blog, 关于后端架构、互联网技术、分布式、大型网络应用、NoSQL、技术感悟等</p>
+<p><a href="http://timyang.net/" target="_blank">Home</a> | <a href="http://timyang.net/about/" target="_blank">About</a> | <a href="http://timyang.net/tag/English/" target="_blank">English version</a> | <a href="http://timyang.net/about/#comment" target="_blank">留言(Guestbook)</a> | <a href="http://timyang.net/feed/" target="_blank"><img src="" alt=""></a><a href="http://timyang.net/feed/" target="_blank">订阅RSS</a> <a href="http://fusion.google.com/add?source=atgs&amp;feedurl=http%3A//timyang.net/feed/" target="_blank"><img src="" alt="Add to Google"></a></p>
+<ul>
+<li></li>
+<li><p>Email: <img src="" alt=""></p>
+</li>
+<li><h3 id="similar-posts">Similar Posts</h3>
+</li>
+<li><p><a href="http://timyang.net/architecture/notes-timelines-twitter/" title="May 3, 2012" target="_blank">Notes about Timelines @ Twitter</a></p>
+</li>
+<li><a href="http://timyang.net/tech/twitter-whale/" title="March 8, 2010" target="_blank">Twitter“鲸鱼”故障技术剖析</a></li>
+<li><a href="http://timyang.net/data/mcdb-tt-redis/" title="August 11, 2009" target="_blank">MemcacheDB, Tokyo Tyrant, Redis performance test</a></li>
+<li><a href="http://timyang.net/architecture/farmville/" title="March 8, 2010" target="_blank">FarmVille(美版开心农场)谈架构:所有模块都是一个可降级的服务</a></li>
+<li><p><a href="http://timyang.net/tech/twitter-operations/" title="November 2, 2009" target="_blank">Twitter系统运维经验</a></p>
+</li>
+<li><h3 id="most-commented">Most Commented</h3>
+</li>
+<li><p><a href="http://timyang.net/data/mcdb-tt-redis/" title="MemcacheDB, Tokyo Tyrant, Redis performance test" target="_blank">MemcacheDB, Tokyo Tyrant, Redis performance test</a> (101)</p>
+</li>
+<li><a href="http://timyang.net/programming/c-erlang-java-performance/" title="C, Erlang, Java and Go Web Server performance test" target="_blank">C, Erlang, Java and Go Web Server performance test</a> (85)</li>
+<li><a href="http://timyang.net/about/" title="About Tim Yang" target="_blank">About Tim Yang</a> (83)</li>
+<li><a href="http://timyang.net/data/redis-misunderstanding/" title="Redis几个认识误区" target="_blank">Redis几个认识误区</a> (62)</li>
+<li><a href="http://timyang.net/programming/memcache-mutex/" title="Memcache mutex设计模式" target="_blank">Memcache mutex设计模式</a> (47)</li>
+<li><a href="http://timyang.net/architecture/microblog-design-qcon-beijing/" title="构建可扩展的微博架构(qcon beijing 2010演讲)" target="_blank">构建可扩展的微博架构(qcon beijing 2010演讲)</a> (39)</li>
+<li><a href="http://timyang.net/architecture/consistent-hashing-practice/" title="某分布式应用实践一致性哈希的一些问题" target="_blank">某分布式应用实践一致性哈希的一些问题</a> (38)</li>
+<li><a href="http://timyang.net/google/open-source/" title="为什么优秀开发者进入Google后就不参与开源了" target="_blank">为什么优秀开发者进入Google后就不参与开源了</a> (33)</li>
+<li><a href="http://timyang.net/misc/macbook-air-productive/" title="MacBook Air与工作效率" target="_blank">MacBook Air与工作效率</a> (32)</li>
+<li><p><a href="http://timyang.net/data/memcached-lru-evictions/" title="Memcached数据被踢(evictions&gt;0)现象分析" target="_blank">Memcached数据被踢(evictions&gt;0)现象分析</a> (30)</p>
+</li>
+<li><h3 id="recent-posts">Recent Posts</h3>
+</li>
+<li><p><a href="http://timyang.net/tao/speech-practice/" title="演讲小组的第一次活动" target="_blank">演讲小组的第一次活动</a></p>
+</li>
+<li><a href="http://timyang.net/tao/connect-the-dots/" title="“connect the dots” 随想" target="_blank">“connect the dots” 随想</a></li>
+<li><a href="http://timyang.net/tao/talents/" title="跨领域人才" target="_blank">跨领域人才</a></li>
+<li><a href="http://timyang.net/product/discontinued-servic/" title="产品下线杂谈" target="_blank">产品下线杂谈</a></li>
+<li><a href="http://timyang.net/misc/speech/" title="当我谈演讲时候，我谈些什么" target="_blank">当我谈演讲时候，我谈些什么</a></li>
+<li><a href="http://timyang.net/architecture/k/" title="案例与故障的知识库" target="_blank">案例与故障的知识库</a></li>
+<li><a href="http://timyang.net/management/learning-tao/" title="团队中的为师之道" target="_blank">团队中的为师之道</a></li>
+<li><a href="http://timyang.net/google/hybrid-research/" title="有感Google的混合研究方法" target="_blank">有感Google的混合研究方法</a></li>
+<li><a href="http://timyang.net/management/probation/" title="谈技术人员“转正”" target="_blank">谈技术人员“转正”</a></li>
+<li><a href="http://timyang.net/architecture/notes-weixin/" title="微信架构的启示" target="_blank">微信架构的启示</a></li>
+<li><a href="http://timyang.net/misc/macbook-air-productive/" title="MacBook Air与工作效率" target="_blank">MacBook Air与工作效率</a></li>
+<li><a href="http://timyang.net/architecture/notes-timelines-twitter/" title="Notes about Timelines @ Twitter" target="_blank">Notes about Timelines @ Twitter</a></li>
+<li><a href="http://timyang.net/management/engineer-performance/" title="技术工程师的能力与目标" target="_blank">技术工程师的能力与目标</a></li>
+<li><a href="http://timyang.net/management/design-review/" title="技术方案评审" target="_blank">技术方案评审</a></li>
+<li><p><a href="http://timyang.net/management/planning/" title="谈技术团队目标" target="_blank">谈技术团队目标</a></p>
+</li>
+<li><h3 id="recent-comments">Recent Comments</h3>
+</li>
+<li><p><a href="http://emake.info/the-redis-several-misunderstandings.html" target="_blank">Redis几个认识误区 | 创造</a> on <a href="http://timyang.net/data/redis-misunderstanding/comment-page-2/#comment-224409" target="_blank">Redis几个认识误区</a></p>
+</li>
+<li><a href="http://emake.info/the-redis-several-misunderstandings.html" target="_blank">Redis几个认识误区 | 创造</a> on <a href="http://timyang.net/data/mcdb-tt-redis/comment-page-3/#comment-224408" target="_blank">MemcacheDB, Tokyo Tyrant, Redis performance test</a></li>
+<li><a href="http://outofmemory.cn/" target="_blank">甄码农</a> on <a href="http://timyang.net/management/learning-tao/comment-page-1/#comment-224161" target="_blank">团队中的为师之道</a></li>
+<li><a href="http://outofmemory.cn/" target="_blank">甄码农</a> on <a href="http://timyang.net/tao/talents/comment-page-1/#comment-224158" target="_blank">跨领域人才</a></li>
+<li><p>阿秀 on <a href="http://timyang.net/about/comment-page-2/#comment-223584" target="_blank">About Tim Yang</a></p>
+</li>
+<li><h3 id="categories">Categories</h3>
+</li>
+<li><p><a href="http://timyang.net/category/data/" title="View all posts filed under data" target="_blank">data</a></p>
+</li>
+<li><a href="http://timyang.net/category/erlang/" title="Erlang语言" target="_blank">Erlang</a></li>
+<li><a href="http://timyang.net/category/google/" title="View all posts filed under Google" target="_blank">Google</a></li>
+<li><a href="http://timyang.net/category/java/" title="View all posts filed under Java" target="_blank">Java</a></li>
+<li><a href="http://timyang.net/category/linux/" title="View all posts filed under Linux" target="_blank">Linux</a></li>
+<li><a href="http://timyang.net/category/lua/" title="View all posts filed under Lua" target="_blank">Lua</a></li>
+<li><a href="http://timyang.net/category/python/" title="View all posts filed under Python" target="_blank">Python</a></li>
+<li><a href="http://timyang.net/category/sns/" title="View all posts filed under SNS" target="_blank">SNS</a></li>
+<li><a href="http://timyang.net/category/tech/" title="View all posts filed under tech" target="_blank">tech</a></li>
+<li><a href="http://timyang.net/category/web/" title="View all posts filed under Web" target="_blank">Web</a></li>
+<li><a href="http://timyang.net/category/product/" title="View all posts filed under 产品" target="_blank">产品</a></li>
+<li><a href="http://timyang.net/category/distributed/" title="分布式算法及思想" target="_blank">分布式</a></li>
+<li><a href="http://timyang.net/category/management/" title="View all posts filed under 技术管理" target="_blank">技术管理</a></li>
+<li><a href="http://timyang.net/category/architecture/" title="后端架构" target="_blank">架构</a></li>
+<li><a href="http://timyang.net/category/programming/" title="View all posts filed under 编程" target="_blank">编程</a></li>
+<li><a href="http://timyang.net/category/tao/" title="View all posts filed under 随想" target="_blank">随想</a></li>
+<li><p><a href="http://timyang.net/category/misc/" title="非技术话题" target="_blank">非技术</a></p>
+</li>
+<li><h3 id="archives">Archives</h3>
+</li>
+<li><p><a href="http://timyang.net/2012/10/" title="October 2012" target="_blank">October 2012</a> (5)</p>
+</li>
+<li><a href="http://timyang.net/2012/09/" title="September 2012" target="_blank">September 2012</a> (4)</li>
+<li><a href="http://timyang.net/2012/05/" title="May 2012" target="_blank">May 2012</a> (3)</li>
+<li><a href="http://timyang.net/2012/02/" title="February 2012" target="_blank">February 2012</a> (3)</li>
+<li><a href="http://timyang.net/2012/01/" title="January 2012" target="_blank">January 2012</a> (2)</li>
+<li><a href="http://timyang.net/2011/12/" title="December 2011" target="_blank">December 2011</a> (1)</li>
+<li><a href="http://timyang.net/2011/08/" title="August 2011" target="_blank">August 2011</a> (1)</li>
+<li><a href="http://timyang.net/2011/07/" title="July 2011" target="_blank">July 2011</a> (1)</li>
+<li><a href="http://timyang.net/2011/04/" title="April 2011" target="_blank">April 2011</a> (2)</li>
+<li><a href="http://timyang.net/2011/02/" title="February 2011" target="_blank">February 2011</a> (1)</li>
+<li><a href="http://timyang.net/2011/01/" title="January 2011" target="_blank">January 2011</a> (2)</li>
+<li><a href="http://timyang.net/2010/12/" title="December 2010" target="_blank">December 2010</a> (2)</li>
+<li><a href="http://timyang.net/2010/11/" title="November 2010" target="_blank">November 2010</a> (2)</li>
+<li><a href="http://timyang.net/2010/09/" title="September 2010" target="_blank">September 2010</a> (1)</li>
+<li><a href="http://timyang.net/2010/08/" title="August 2010" target="_blank">August 2010</a> (1)</li>
+<li><a href="http://timyang.net/2010/07/" title="July 2010" target="_blank">July 2010</a> (3)</li>
+<li><a href="http://timyang.net/2010/06/" title="June 2010" target="_blank">June 2010</a> (2)</li>
+<li><a href="http://timyang.net/2010/05/" title="May 2010" target="_blank">May 2010</a> (2)</li>
+<li><a href="http://timyang.net/2010/04/" title="April 2010" target="_blank">April 2010</a> (1)</li>
+<li><a href="http://timyang.net/2010/03/" title="March 2010" target="_blank">March 2010</a> (4)</li>
+<li><a href="http://timyang.net/2010/02/" title="February 2010" target="_blank">February 2010</a> (1)</li>
+<li><a href="http://timyang.net/2010/01/" title="January 2010" target="_blank">January 2010</a> (1)</li>
+<li><a href="http://timyang.net/2009/12/" title="December 2009" target="_blank">December 2009</a> (3)</li>
+<li><a href="http://timyang.net/2009/11/" title="November 2009" target="_blank">November 2009</a> (3)</li>
+<li><a href="http://timyang.net/2009/10/" title="October 2009" target="_blank">October 2009</a> (3)</li>
+<li><a href="http://timyang.net/2009/09/" title="September 2009" target="_blank">September 2009</a> (4)</li>
+<li><a href="http://timyang.net/2009/08/" title="August 2009" target="_blank">August 2009</a> (5)</li>
+<li><a href="http://timyang.net/2009/07/" title="July 2009" target="_blank">July 2009</a> (6)</li>
+<li><a href="http://timyang.net/2009/06/" title="June 2009" target="_blank">June 2009</a> (5)</li>
+<li><a href="http://timyang.net/2009/05/" title="May 2009" target="_blank">May 2009</a> (11)</li>
+<li><a href="http://timyang.net/2009/04/" title="April 2009" target="_blank">April 2009</a> (7)</li>
+<li><a href="http://timyang.net/2009/03/" title="March 2009" target="_blank">March 2009</a> (3)</li>
+<li><a href="http://timyang.net/2009/02/" title="February 2009" target="_blank">February 2009</a> (2)</li>
+<li><a href="http://timyang.net/2009/01/" title="January 2009" target="_blank">January 2009</a> (2)</li>
+<li><a href="http://timyang.net/2008/12/" title="December 2008" target="_blank">December 2008</a> (2)</li>
+<li><h3 id="feeds">Feeds</h3>
+</li>
+<li><p><a href="http://timyang.net/feed/" target="_blank">Entries (RSS)</a></p>
+</li>
+<li><a href="http://timyang.net/comments/feed/" target="_blank">Comments (RSS)</a>
+*</li>
+</ul>
+<h2 id="-twitter-cache-http-timyang-net-architecture-twitter-cache-architecture-permanent-link-to-twitter-cache-"><a href="http://timyang.net/architecture/twitter-cache-architecture/" title="Permanent Link to Twitter架构图(cache篇)" target="_blank">Twitter架构图(cache篇)</a></h2>
+<p>Wednesday, Oct 28th, 2009 by Tim | Tags: <a href="http://timyang.net/tag/twitter/" target="_blank">twitter</a></p>
+<p>根据网上公开资料整理的Twitter架构，主要是cache方面，加了作者自己的补充，跟实际的架构未必完全一致。
+<img src="&quot;twitter cache&quot;" alt="twitter cache">
+一些数据：</p>
+<ul>
+<li>Cache分Page cache, fragment cache, row cache, vector Cache, cache命中率见图。</li>
+<li>Fragment cache存放了API各种请求格式的数据，包括XML, JSON, RSS, ATOM。</li>
+<li>发表Tweets是先放入Kestrel, 再异步处理，Kestrel用的也是memcached协议。</li>
+<li>API requests: 550 r/s。</li>
+<li>POST tweets: 峰值：平时 80tweets/s, 奥巴马就任时达到 350tweets/s。</li>
+<li>Aggregator模块需要访问memcached multi get  数百个/s。</li>
+<li>Ruby on Rails前面还用了Varnish作前端反向代理。</li>
+</ul>
+<p>参考资料：</p>
+<ul>
+<li><a href="http://gojko.net/2009/03/16/qcon-london-2009-upgrading-twitter-without-service-disruptions/" target="_blank">QCon London 2009: Upgrading Twitter without service disruptions</a></li>
+<li><a href="http://qconlondon.com/london-2009/file?path=/qcon-london-2009/slides/EvanWeaver_ImprovingRunningComponentsAtTwitter.pdf" target="_blank">Improving Running Components at Twitter</a> (PDF slide)</li>
+</ul>
+<h3 id="9-comments-http-timyang-net-architecture-twitter-cache-architecture-postcomment-jump-to-the-comments-form-">9 Comments <a href="http://timyang.net/architecture/twitter-cache-architecture/#postcomment" title="Jump to the comments form" target="_blank">»</a></h3>
+<ol>
+<li><img src="" alt="">Lee Su Min says:</li>
+</ol>
+<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-2070" target="_blank">Nov 1st 2009 at 17:15</a></p>
+<p>Is a blue print same as a jia gou tu?</p>
+<ol>
+<li><img src="" alt=""><a href="http://hi.baidu.com/crazy_computer" target="_blank">王潇</a> says:</li>
+</ol>
+<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-3405" target="_blank">Mar 8th 2010 at 18:10</a></p>
+<p>我是一个大三的学生，现在在学习PHP！看了您的博客，学习一下，也就只是看看表面，现在对整个的WEB体系有了一定的了解了，但是我还是不太清晰！请您指点一下，我还不清楚现在所做的东西处于什么地方，对整个系统有什么影响？我开发网站时也都没用到您所做的东西啊，究竟何时用！还有就是究竟应该按照什么线路来学习技术，请您务必指教！！！</p>
+<ol>
+<li><img src="" alt=""><a href="http://blog.chinaunix.net/u2/84280" target="_blank">遥方</a> says:</li>
+</ol>
+<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-4367" target="_blank">Jun 25th 2010 at 16:42</a></p>
+<p>博主能力很强。向你学习</p>
+<ol>
+<li><img src="" alt=""><a href="http://www.wangdacuo.com/" target="_blank">小黑</a> says:</li>
+</ol>
+<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-4940" target="_blank">Sep 11th 2010 at 22:25</a></p>
+<p>请问像这样实时性强、数据量巨大的数据库应该做哪些优化和处理？</p>
+<ol>
+<li><img src="" alt=""><a href="http://apan.me/" target="_blank">Pan</a> says:</li>
+</ol>
+<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-29611" target="_blank">May 21st 2011 at 12:50</a></p>
+<p>Row Cache是否有些出入？图中Row Cache似乎是用来存储关系链的，而Evan Weaver在2009 London Qcon上的ppt中，显示Row Cache应该是用来缓存tweet正文内容的吧。<a href="http://qconlondon.com/dl/qcon-london-2009/slides/EvanWeaver_ImprovingRunningComponentsAtTwitter.pdf" target="_blank">http://qconlondon.com/dl/qcon-london-2009/slides/EvanWeaver_ImprovingRunningComponentsAtTwitter.pdf</a></p>
+<ol>
+<li><img src="" alt=""><a href="http://tsingroo.sinaapp.com/" target="_blank">罗青</a> says:</li>
+</ol>
+<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-124260" target="_blank">Jan 17th 2012 at 12:53</a></p>
+<p>我觉得除了缓存之外，数据库的表设计是最关键的部分。架构这些什么的都要依据数据库结构来设计。</p>
+<ol>
+<li><img src="" alt="">段见尼宜 says:</li>
+</ol>
+<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-220186" target="_blank">Nov 7th 2012 at 06:43</a></p>
+<p>(网站打不开请点百度快照}手机号码任意显示|号码任意显示|去电号码任意显示|来电号码任意显示|号码随意显|电话号码任意显示|手机号码随意显|电话号码随意显|
+手机号码任意显示 (可以免费测试一次)
+鹏诚通讯科技有限公司
+24小时客服QQ：13417527</p>
+<p>24小时免费咨询电话：18268787444</p>
+<p>公司网址：<a href="http://www.pcwltx.com/" target="_blank">http://www.pcwltx.com/</a>
+朋友,想不想让你的手机很有个性? 明明你在深圳,而你跟朋友聊天的时候,你朋友的电话上显示你在广州(上 海/天津/武汉/兰州等)以至香港. 明明你在跟朋友玩,而你打电话给你家人,让家人以为你在外地出差. 明天你不是刘德华,而你总是你用刘德华的电话号在打电话 明明你现在在内地,而你非要在你朋友面前说你在香港. 想不想拥有了?</p>
+<p>专业手机，座机，小灵通等打电话发短信可以任意显示电话号码的, 此产品不需要下载任何软件,只需要绑定您的号码即可实现显示.您要对方显示什么号码!我这里免费给您测试,让您亲眼所见！不想让别人知道自己在哪里的时候，被人追踪讨债不接您电话的时候很有用出的！您只需花上几百元钱就能买到您想要的任何靓号，吉祥号！以及港澳台和国际号码，任意显示您的电话号码，随时隐藏您的号码！
+本业务不会影响你本手机的使用，想使用改号业务时就拨一下我们系统的预约号码，不想使用时就直接用你手机打出还是原来的号，不会改变你手机原来的实际号码，互不干扰.</p>
+<p>为防止各种违法乱纪,本软件特定设置号码规范如下：
+1、出于安全考虑国家特殊号码 110 120 119等号码，不可以随意设置，
+一经发现删除该帐户！
+2、不可以设置各种银行，移动的客服号码（95599 10086等）一经发现删除该帐户！</p>
+<p>交易方式：支持各大银行和淘宝交易.</p>
+<p>1， 无须在电话（手机，小灵通，座机）上下载任何软件
+2， 无月租，无长途漫游费，全国号码任意设置，任意拨打，任意显示。0.2元/分钟
+3， 绑定号码无次数限制，设置显示号码无次数限制。自行操作，自己做主，
+4， 开通后没有时效限制，有话费即可使用。
+5， 话费没了，续费继续使用。
+6， 不影响你本机号码的话费，和正常使用，两者互不干扰。
+7， 双方都为接电话型式，不扣通话双方的电话（手机，小灵通，座机）话费。
+8，不想使用时就直接用你手机打出还是原来的号，不会改变你手机原来的实际号码，互不干扰.
+显示号码自己设置，操作方法可以手机直接操作也可以网页上操作最后都是通过自己的手机打出，
+让对方显示你要的号码，本机是接回拨所以免费,显示号码自由设置
+可以让你亲自测试，自己打出一个任意显示的电话。
+交易方式：支持各大银行和淘宝交易.</p>
+<p>24小时客服QQ：13417527</p>
+<p>24小时免费咨询电话：18268781444</p>
+<p>公司网址：<a href="http://www.pcwltx.com/" target="_blank">http://www.pcwltx.com/</a>
+骗子各种手法介绍：不允许测试，让你直接汇款，汇款后开通。</p>
+<p><a href="http://timyang.net/architecture/twitter-cache-architecture/feed/" target="_blank">RSS feed for comments on this post</a>, <a href="http://timyang.net/architecture/twitter-cache-architecture/trackback/" target="_blank">TrackBack URI</a>
+<a href="http://timyang.net/architecture/twitter-cache-architecture/#respond" target="_blank">Cancel Reply</a></p>
+<h3 id="leave-a-comment">Leave a Comment</h3>
+<p>Name (required)</p>
+<p>E-mail (required, never displayed)</p>
+<p>URI</p>
+<p>Except where otherwise noted, content on this site is licensed under a <a href="http://creativecommons.org/licenses/by/3.0/" target="_blank">Creative Commons Attribution 3.0</a> License</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/架构师/">架构师</a></li></span><span class="breadcrumb"><li><a href="/categories/架构师/">架构师</a></li><li><a href="/categories/架构师/架构/">架构</a></li></span></span> | <span class="tags">Tagged <a href="/tags/架构/" class="label label-primary">架构</a><a href="/tags/架构师/" class="label label-success">架构师</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:29"datetime="2014-03-07 09:54:29"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-架构师-架构--Twitter架构图cache篇–Tim后端技术/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-架构师-架构--Twitter架构图cache篇–Tim后端技术" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-架构师-架构--多IDC的数据分布设计一/">多IDC的数据分布设计(一)</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:29.000Z"> <a href="/2014/02/02/2014-02-02-架构师-架构--多IDC的数据分布设计一/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-idc-">多IDC的数据分布设计(一)</h1>
+<h1 id="-tim-http-timyang-net-home-"><a href="http://timyang.net/" title="Home" target="_blank">Tim[后端技术]</a></h1>
+<p>Tim&#39;s blog, 关于后端架构、互联网技术、分布式、大型网络应用、NoSQL、技术感悟等</p>
+<p><a href="http://timyang.net/" target="_blank">Home</a> | <a href="http://timyang.net/about/" target="_blank">About</a> | <a href="http://timyang.net/tag/English/" target="_blank">English version</a> | <a href="http://timyang.net/about/#comment" target="_blank">留言(Guestbook)</a> | <a href="http://timyang.net/feed/" target="_blank"><img src="" alt=""></a><a href="http://timyang.net/feed/" target="_blank">订阅RSS</a> <a href="http://fusion.google.com/add?source=atgs&amp;feedurl=http%3A//timyang.net/feed/" target="_blank"><img src="" alt="Add to Google"></a></p>
+<ol>
+<li></li>
+</ol>
+<ul>
+<li><p>Email: <img src="" alt=""></p>
+</li>
+<li><h3 id="most-commented">Most Commented</h3>
+</li>
+<li><p><a href="http://timyang.net/data/mcdb-tt-redis/" title="MemcacheDB, Tokyo Tyrant, Redis performance test" target="_blank">MemcacheDB, Tokyo Tyrant, Redis performance test</a> (101)</p>
+</li>
+<li><a href="http://timyang.net/programming/c-erlang-java-performance/" title="C, Erlang, Java and Go Web Server performance test" target="_blank">C, Erlang, Java and Go Web Server performance test</a> (85)</li>
+<li><a href="http://timyang.net/about/" title="About Tim Yang" target="_blank">About Tim Yang</a> (83)</li>
+<li><a href="http://timyang.net/data/redis-misunderstanding/" title="Redis几个认识误区" target="_blank">Redis几个认识误区</a> (62)</li>
+<li><a href="http://timyang.net/programming/memcache-mutex/" title="Memcache mutex设计模式" target="_blank">Memcache mutex设计模式</a> (47)</li>
+<li><a href="http://timyang.net/architecture/microblog-design-qcon-beijing/" title="构建可扩展的微博架构(qcon beijing 2010演讲)" target="_blank">构建可扩展的微博架构(qcon beijing 2010演讲)</a> (39)</li>
+<li><a href="http://timyang.net/architecture/consistent-hashing-practice/" title="某分布式应用实践一致性哈希的一些问题" target="_blank">某分布式应用实践一致性哈希的一些问题</a> (38)</li>
+<li><a href="http://timyang.net/google/open-source/" title="为什么优秀开发者进入Google后就不参与开源了" target="_blank">为什么优秀开发者进入Google后就不参与开源了</a> (33)</li>
+<li><a href="http://timyang.net/misc/macbook-air-productive/" title="MacBook Air与工作效率" target="_blank">MacBook Air与工作效率</a> (32)</li>
+<li><p><a href="http://timyang.net/data/memcached-lru-evictions/" title="Memcached数据被踢(evictions&gt;0)现象分析" target="_blank">Memcached数据被踢(evictions&gt;0)现象分析</a> (30)</p>
+</li>
+<li><h3 id="recent-posts">Recent Posts</h3>
+</li>
+<li><p><a href="http://timyang.net/tao/speech-practice/" title="演讲小组的第一次活动" target="_blank">演讲小组的第一次活动</a></p>
+</li>
+<li><a href="http://timyang.net/tao/connect-the-dots/" title="“connect the dots” 随想" target="_blank">“connect the dots” 随想</a></li>
+<li><a href="http://timyang.net/tao/talents/" title="跨领域人才" target="_blank">跨领域人才</a></li>
+<li><a href="http://timyang.net/product/discontinued-servic/" title="产品下线杂谈" target="_blank">产品下线杂谈</a></li>
+<li><a href="http://timyang.net/misc/speech/" title="当我谈演讲时候，我谈些什么" target="_blank">当我谈演讲时候，我谈些什么</a></li>
+<li><a href="http://timyang.net/architecture/k/" title="案例与故障的知识库" target="_blank">案例与故障的知识库</a></li>
+<li><a href="http://timyang.net/management/learning-tao/" title="团队中的为师之道" target="_blank">团队中的为师之道</a></li>
+<li><a href="http://timyang.net/google/hybrid-research/" title="有感Google的混合研究方法" target="_blank">有感Google的混合研究方法</a></li>
+<li><a href="http://timyang.net/management/probation/" title="谈技术人员“转正”" target="_blank">谈技术人员“转正”</a></li>
+<li><a href="http://timyang.net/architecture/notes-weixin/" title="微信架构的启示" target="_blank">微信架构的启示</a></li>
+<li><a href="http://timyang.net/misc/macbook-air-productive/" title="MacBook Air与工作效率" target="_blank">MacBook Air与工作效率</a></li>
+<li><a href="http://timyang.net/architecture/notes-timelines-twitter/" title="Notes about Timelines @ Twitter" target="_blank">Notes about Timelines @ Twitter</a></li>
+<li><a href="http://timyang.net/management/engineer-performance/" title="技术工程师的能力与目标" target="_blank">技术工程师的能力与目标</a></li>
+<li><a href="http://timyang.net/management/design-review/" title="技术方案评审" target="_blank">技术方案评审</a></li>
+<li><p><a href="http://timyang.net/management/planning/" title="谈技术团队目标" target="_blank">谈技术团队目标</a></p>
+</li>
+<li><h3 id="recent-comments">Recent Comments</h3>
+</li>
+<li><p><a href="http://emake.info/the-redis-several-misunderstandings.html" target="_blank">Redis几个认识误区 | 创造</a> on <a href="http://timyang.net/data/redis-misunderstanding/comment-page-2/#comment-224409" target="_blank">Redis几个认识误区</a></p>
+</li>
+<li><a href="http://emake.info/the-redis-several-misunderstandings.html" target="_blank">Redis几个认识误区 | 创造</a> on <a href="http://timyang.net/data/mcdb-tt-redis/comment-page-3/#comment-224408" target="_blank">MemcacheDB, Tokyo Tyrant, Redis performance test</a></li>
+<li><a href="http://outofmemory.cn/" target="_blank">甄码农</a> on <a href="http://timyang.net/management/learning-tao/comment-page-1/#comment-224161" target="_blank">团队中的为师之道</a></li>
+<li><a href="http://outofmemory.cn/" target="_blank">甄码农</a> on <a href="http://timyang.net/tao/talents/comment-page-1/#comment-224158" target="_blank">跨领域人才</a></li>
+<li><p>阿秀 on <a href="http://timyang.net/about/comment-page-2/#comment-223584" target="_blank">About Tim Yang</a></p>
+</li>
+<li><h3 id="categories">Categories</h3>
+</li>
+<li><p><a href="http://timyang.net/category/data/" title="View all posts filed under data" target="_blank">data</a></p>
+</li>
+<li><a href="http://timyang.net/category/erlang/" title="Erlang语言" target="_blank">Erlang</a></li>
+<li><a href="http://timyang.net/category/google/" title="View all posts filed under Google" target="_blank">Google</a></li>
+<li><a href="http://timyang.net/category/java/" title="View all posts filed under Java" target="_blank">Java</a></li>
+<li><a href="http://timyang.net/category/linux/" title="View all posts filed under Linux" target="_blank">Linux</a></li>
+<li><a href="http://timyang.net/category/lua/" title="View all posts filed under Lua" target="_blank">Lua</a></li>
+<li><a href="http://timyang.net/category/python/" title="View all posts filed under Python" target="_blank">Python</a></li>
+<li><a href="http://timyang.net/category/sns/" title="View all posts filed under SNS" target="_blank">SNS</a></li>
+<li><a href="http://timyang.net/category/tech/" title="View all posts filed under tech" target="_blank">tech</a></li>
+<li><a href="http://timyang.net/category/web/" title="View all posts filed under Web" target="_blank">Web</a></li>
+<li><a href="http://timyang.net/category/product/" title="View all posts filed under 产品" target="_blank">产品</a></li>
+<li><a href="http://timyang.net/category/distributed/" title="分布式算法及思想" target="_blank">分布式</a></li>
+<li><a href="http://timyang.net/category/management/" title="View all posts filed under 技术管理" target="_blank">技术管理</a></li>
+<li><a href="http://timyang.net/category/architecture/" title="后端架构" target="_blank">架构</a></li>
+<li><a href="http://timyang.net/category/programming/" title="View all posts filed under 编程" target="_blank">编程</a></li>
+<li><a href="http://timyang.net/category/tao/" title="View all posts filed under 随想" target="_blank">随想</a></li>
+<li><p><a href="http://timyang.net/category/misc/" title="非技术话题" target="_blank">非技术</a></p>
+</li>
+<li><h3 id="archives">Archives</h3>
+</li>
+<li><p><a href="http://timyang.net/2012/10/" title="October 2012" target="_blank">October 2012</a> (5)</p>
+</li>
+<li><a href="http://timyang.net/2012/09/" title="September 2012" target="_blank">September 2012</a> (4)</li>
+<li><a href="http://timyang.net/2012/05/" title="May 2012" target="_blank">May 2012</a> (3)</li>
+<li><a href="http://timyang.net/2012/02/" title="February 2012" target="_blank">February 2012</a> (3)</li>
+<li><a href="http://timyang.net/2012/01/" title="January 2012" target="_blank">January 2012</a> (2)</li>
+<li><a href="http://timyang.net/2011/12/" title="December 2011" target="_blank">December 2011</a> (1)</li>
+<li><a href="http://timyang.net/2011/08/" title="August 2011" target="_blank">August 2011</a> (1)</li>
+<li><a href="http://timyang.net/2011/07/" title="July 2011" target="_blank">July 2011</a> (1)</li>
+<li><a href="http://timyang.net/2011/04/" title="April 2011" target="_blank">April 2011</a> (2)</li>
+<li><a href="http://timyang.net/2011/02/" title="February 2011" target="_blank">February 2011</a> (1)</li>
+<li><a href="http://timyang.net/2011/01/" title="January 2011" target="_blank">January 2011</a> (2)</li>
+<li><a href="http://timyang.net/2010/12/" title="December 2010" target="_blank">December 2010</a> (2)</li>
+<li><a href="http://timyang.net/2010/11/" title="November 2010" target="_blank">November 2010</a> (2)</li>
+<li><a href="http://timyang.net/2010/09/" title="September 2010" target="_blank">September 2010</a> (1)</li>
+<li><a href="http://timyang.net/2010/08/" title="August 2010" target="_blank">August 2010</a> (1)</li>
+<li><a href="http://timyang.net/2010/07/" title="July 2010" target="_blank">July 2010</a> (3)</li>
+<li><a href="http://timyang.net/2010/06/" title="June 2010" target="_blank">June 2010</a> (2)</li>
+<li><a href="http://timyang.net/2010/05/" title="May 2010" target="_blank">May 2010</a> (2)</li>
+<li><a href="http://timyang.net/2010/04/" title="April 2010" target="_blank">April 2010</a> (1)</li>
+<li><a href="http://timyang.net/2010/03/" title="March 2010" target="_blank">March 2010</a> (4)</li>
+<li><a href="http://timyang.net/2010/02/" title="February 2010" target="_blank">February 2010</a> (1)</li>
+<li><a href="http://timyang.net/2010/01/" title="January 2010" target="_blank">January 2010</a> (1)</li>
+<li><a href="http://timyang.net/2009/12/" title="December 2009" target="_blank">December 2009</a> (3)</li>
+<li><a href="http://timyang.net/2009/11/" title="November 2009" target="_blank">November 2009</a> (3)</li>
+<li><a href="http://timyang.net/2009/10/" title="October 2009" target="_blank">October 2009</a> (3)</li>
+<li><a href="http://timyang.net/2009/09/" title="September 2009" target="_blank">September 2009</a> (4)</li>
+<li><a href="http://timyang.net/2009/08/" title="August 2009" target="_blank">August 2009</a> (5)</li>
+<li><a href="http://timyang.net/2009/07/" title="July 2009" target="_blank">July 2009</a> (6)</li>
+<li><a href="http://timyang.net/2009/06/" title="June 2009" target="_blank">June 2009</a> (5)</li>
+<li><a href="http://timyang.net/2009/05/" title="May 2009" target="_blank">May 2009</a> (11)</li>
+<li><a href="http://timyang.net/2009/04/" title="April 2009" target="_blank">April 2009</a> (7)</li>
+<li><a href="http://timyang.net/2009/03/" title="March 2009" target="_blank">March 2009</a> (3)</li>
+<li><a href="http://timyang.net/2009/02/" title="February 2009" target="_blank">February 2009</a> (2)</li>
+<li><a href="http://timyang.net/2009/01/" title="January 2009" target="_blank">January 2009</a> (2)</li>
+<li><a href="http://timyang.net/2008/12/" title="December 2008" target="_blank">December 2008</a> (2)</li>
+<li><h3 id="feeds">Feeds</h3>
+</li>
+<li><p><a href="http://timyang.net/feed/" target="_blank">Entries (RSS)</a></p>
+</li>
+<li><a href="http://timyang.net/comments/feed/" target="_blank">Comments (RSS)</a>
+*</li>
+</ul>
+<h2 id="archive-for-the-category">Archive for the ‘分布式’ Category</h2>
+<h2 id="-idc-http-timyang-net-distributed-multi-idc-consensus-permanent-link-to-idc-"><a href="http://timyang.net/distributed/multi-idc-consensus/" title="Permanent Link to 多IDC的数据分布设计(一)" target="_blank">多IDC的数据分布设计(一)</a></h2>
+<p>Tuesday, Feb 2nd, 2010 by Tim | <strong><a href="http://timyang.net/distributed/multi-idc-consensus/#comments" target="_blank">13 Comments</a></strong>
+Filed under: <a href="http://timyang.net/category/distributed/" title="View all posts in 分布式" target="_blank">分布式</a> | Tags: <a href="http://timyang.net/tag/2pc/" target="_blank">2PC</a>, <a href="http://timyang.net/tag/3pc/" target="_blank">3PC</a>, <a href="http://timyang.net/tag/consensus/" target="_blank">consensus</a>, <a href="http://timyang.net/tag/paxos/" target="_blank">paxos</a>, <a href="http://timyang.net/tag/three-phase-commit/" target="_blank">Three-phase commit</a>, <a href="http://timyang.net/tag/two-phase-commit/" target="_blank">Two-phase commit</a></p>
+<p>上个月跟某个朋友谈及多IDC数据同时读写访问的问题(<a href="http://twitter.com/xmpp/status/7625866165" target="_blank">tweet</a>)，当时觉得有不少解决方案，但觉得思路还不够清晰。最近看了Google App Engine工程师Ryan Barrett介绍GAE后端数据服务的演讲稿<a href="http://snarfed.org/space/transactions_across_datacenters_io.html" target="_blank">Transactions Across Datacenters</a>(<a href="http://www.youtube.com/watch?v=srOgpXECblk" target="_blank">视频</a>)，用Ryan的方法来分析这个问题后就豁然开朗。</p>
+<p>按Ryan的方法，多IDC实现有以下几种思路。</p>
+<h2 id="-master-slave">一、Master/slave</h2>
+<p>这个是多机房数据访问最常用的方案，一般的需求用此方案即可。因此大家也经常提到“premature optimization is the root of all evil”。
+<strong>优点：</strong>利用mysql replication即可实现，成熟稳定。
+<strong>缺点：</strong>写操作存在单点故障，master坏掉之后slave不能写。另外slave的延迟也是个困扰人的小问题。</p>
+<h2 id="-multi-master">二、Multi-master</h2>
+<p><a href="http://en.wikipedia.org/wiki/Multi-master_replication" target="_blank">Multi-master</a>指一个系统存在多个master, 每个master都具有read-write能力，需根据时间戳或业务逻辑合并版本。比如分布式版本管理系统git可以理解成multi-master模式。具备最终一致性。多版本数据修改可以借鉴Dynamo的vector clock等方法。</p>
+<p><strong>优点：</strong>解决了单点故障。
+<strong>缺点：</strong>不易实现一致性，合并版本的逻辑复杂。</p>
+<h2 id="-two-phase-commit-2pc-">三、Two-phase commit(2PC)</h2>
+<p><a href="http://en.wikipedia.org/wiki/Two-phase_commit_protocol" target="_blank">Two-phase commit</a>是一个比较简单的一致性算法。由于一致性算法通常用神话(如Paxos的The Part-Time Parliament论文)来比喻容易理解，下面也举个类似神话的例子。</p>
+<p>某班要组织一个同学聚会，前提条件是所有参与者同意则活动举行，任意一人拒绝则活动取消。用2PC算法来执行过程如下</p>
+<h3 id="phase-1">Phase 1</h3>
+<p><strong>Prepare:</strong>组织者(coordinator)打电话给所有参与者(participant) ，同时告知参与者列表。
+<strong>Proposal:</strong> 提出周六2pm-5pm举办活动。
+<strong>Vote:</strong> participant需vote结果给coordinator：accept or reject。
+<strong>Block:</strong> 如果accept, participant锁住周六2pm-5pm的时间，不再接受其他请求。</p>
+<h3 id="phase-2">Phase 2</h3>
+<p><strong>Commit:</strong> 如果所有参与者都同意，组织者coodinator通知所有参与者commit, 否则通知abort，participant解除锁定。</p>
+<h3 id="failure-">Failure 典型失败情况分析</h3>
+<p><strong>Participant failure:</strong>
+任一参与者无响应，coordinator直接执行abort
+<strong>Coordinator failure:</strong>
+<strong>Takeover:</strong> 如果participant一段时间没收到cooridnator确认(commit/abort)，则认为coordinator不在了。这时候可自动成为Coordinator备份(watchdog)
+<strong>Query:</strong> watchdog根据phase 1接收的participant列表发起query
+<strong>Vote:</strong> 所有participant回复vote结果给watchdog, accept or reject
+<strong>Commit:</strong> 如果所有都同意，则commit, 否则abort。</p>
+<p><strong>优点：</strong>实现简单。
+<strong>缺点：</strong>所有参与者需要阻塞(block)，throughput低；无容错机制，一节点失败则整个事务失败。</p>
+<h2 id="-three-phase-commit-3pc-">四、Three-phase commit (3PC)</h2>
+<p><a href="http://en.wikipedia.org/wiki/Three-phase_commit_protocol" target="_blank">Three-phase commit</a>是一个2PC的改进版。2PC有一些很明显的缺点，比如在coordinator做出commit决策并开始发送commit之后，某个participant突然crash，这时候没法abort transaction, 这时候集群内实际上就存在不一致的情况，crash恢复后的节点跟其他节点数据是不同的。因此3PC将2PC的commit的过程1分为2,分成preCommit及commit, 如图。
+<img src="&quot;3PC&quot;" alt="">
+(图片来源：<a href="http://en.wikipedia.org/wiki/File:Three-phase_commit_diagram.png" target="_blank"><a href="http://en.wikipedia.org/wiki/File:Three-phase_commit_diagram.png">http://en.wikipedia.org/wiki/File:Three-phase_commit_diagram.png</a></a>)</p>
+<p>从图来看，cohorts(participant)收到preCommit之后，如果没收到commit, 默认也执行commit, 即图上的timeout cause commit。</p>
+<p>如果coodinator发送了一半preCommit crash, watchdog接管之后通过query, 如果有任一节点收到commit, 或者全部节点收到preCommit, 则可继续commit, 否则abort。</p>
+<p><strong>优点：</strong>允许发生单点故障后继续达成一致。
+<strong>缺点：</strong>网络分离问题，比如preCommit消息发送后突然两个机房断开，这时候coodinator所在机房会abort, 另外剩余replicas机房会commit。</p>
+<h2 id="-paxos">五、Paxos</h2>
+<p>Google Chubby的作者Mike Burrows说过， “there is only one consensus protocol, and that’s Paxos” – all other approaches are just broken versions of Paxos. 意即“世上只有一种一致性算法，那就是Paxos”，所有其他一致性算法都是Paxos算法的不完整版。相比2PC/3PC, Paxos算法的改进</p>
+<ul>
+<li>P1a. 每次Paxos实例执行都分配一个编号，编号需要递增，每个replica不接受比当前最大编号小的提案</li>
+<li>P2. 一旦一个 value v 被replica通过，那么之后任何再批准的 value 必须是 v，即没有拜占庭将军(Byzantine)问题。拿上面请客的比喻来说，就是一个参与者一旦accept周六2pm-5pm的proposal, 就不能改变主意。以后不管谁来问都是accept这个value。</li>
+<li>一个proposal只需要多数派同意即可通过。因此比2PC/3PC更灵活，在一个2f+1个节点的集群中，允许有f个节点不可用。</li>
+</ul>
+<p>另外Paxos还有很多约束的细节，特别是Google的chubby从工程实现的角度将Paxos的细节补充得非常完整。比如如何避免Byzantine问题，由于节点的持久存储可能会发生故障，Byzantine问题会导致Paxos算法P2约束失效。</p>
+<p>以上几种方式原理比较如下</p>
+<p><a href=""><img src="&quot;idc-transaction&quot;" alt=""></a></p>
+<p>(图片来源：<a href="http://snarfed.org/space/transactions_across_datacenters_io.html" target="_blank"><a href="http://snarfed.org/space/transactions_across_datacenters_io.html">http://snarfed.org/space/transactions_across_datacenters_io.html</a></a>)</p>
+<p>后文会继续比较实践环境选取何种策略合适。</p>
+<p>（PS: 写完后在Google Reader上发现本文跟王建硕最近发表的《<a href="http://home.wangjianshuo.com/cn/20100201_aeaeaecee.htm" target="_blank">关于两个机房的讨论</a>》文章有点类似，特别是本文一、二方式。不过他的文章偏MySQL的实现，我的重点是一致性算法，大家可以有选择性的阅读。）</p>
+<h2 id="-paxos-http-timyang-net-distributed-paxos-scenarios-permanent-link-to-paxos-"><a href="http://timyang.net/distributed/paxos-scenarios/" title="Permanent Link to Paxos在大型系统中常见的应用场景" target="_blank">Paxos在大型系统中常见的应用场景</a></h2>
+<p>Wednesday, Sep 23rd, 2009 by Tim | <strong><a href="http://timyang.net/distributed/paxos-scenarios/#comments" target="_blank">5 Comments</a></strong>
+Filed under: <a href="http://timyang.net/category/distributed/" title="View all posts in 分布式" target="_blank">分布式</a> | Tags: <a href="http://timyang.net/tag/chubby/" target="_blank">chubby</a>, <a href="http://timyang.net/tag/paxos/" target="_blank">paxos</a>, <a href="http://timyang.net/tag/zookeeper/" target="_blank">zookeeper</a></p>
+<p>在分布式算法领域，有个非常重要的算法叫Paxos, 它的重要性有多高呢，Google的Chubby [1]中提到
+all working protocols for asynchronous consensus we have so far encountered have Paxos at their core.</p>
+<p>关于Paxos算法的详述在维基百科中有更多介绍，中文版介绍的是choose value的规则[2]，英文版介绍的是Paxos 3 phase commit的流程[3]，中文版不是从英文版翻译而是独立写的，所以非常具有互补性。Paxos算法是由Leslie Lamport提出的，他在Paxos Made Simple[4]中写道</p>
+<p>The Paxos algorithm, when presented in plain English, is very simple.</p>
+<p>当你研究了很长一段时间Paxos算法还是有点迷糊的时候，看到上面这句话可能会有点沮丧。但是公认的它的算法还是比较繁琐的，尤其是要用程序员严谨的思维将所有细节理清的时候，你的脑袋里更是会充满了问号。Leslie Lamport也是用了长达9年的时间来完善这个算法的理论。</p>
+<p>实际上对于一般的开发人员，我们并不需要了解Paxos所有细节及如何实现，只需要知道Paxos是一个分布式选举算法就够了。本文主要介绍一下Paxos常用的应用场合，或许有一天当你的系统增大到一定规模，你知道有这样一个技术，可以帮助你正确及优雅的解决技术架构上一些难题。</p>
+<ol>
+<li><p>database replication, log replication等， 如bdb的数据复制就是使用paxos兼容的算法。Paxos最大的用途就是保持多个节点数据的一致性。</p>
+</li>
+<li><p>naming service, 如大型系统内部通常存在多个接口服务相互调用。
+1) 通常的实现是将服务的ip/hostname写死在配置中，当service发生故障时候，通过手工更改配置文件或者修改DNS指向的方法来解决。缺点是可维护性差，内部的单元越多，故障率越大。
+2) LVS双机冗余的方式，缺点是所有单元需要双倍的资源投入。
+通过Paxos算法来管理所有的naming服务，则可保证high available分配可用的service给client。象ZooKeeper还提供watch功能，即watch的对象发生了改变会自动发notification, 这样所有的client就可以使用一致的，高可用的接口。</p>
+</li>
+</ol>
+<p>3.config配置管理
+1) 通常手工修改配置文件的方法，这样容易出错，也需要人工干预才能生效，所以节点的状态无法同时达到一致。
+2) 大规模的应用都会实现自己的配置服务，比如用http web服务来实现配置中心化。它的缺点是更新后所有client无法立即得知，各节点加载的顺序无法保证，造成系统中的配置不是同一状态。</p>
+<p>4.membership用户角色/access control list, 比如在权限设置中，用户一旦设置某项权限比如由管理员变成普通身份，这时应在所有的服务器上所有远程CDN立即生效，否则就会导致不能接受的后果。</p>
+<ol>
+<li>号码分配。通常简单的解决方法是用数据库自增ID, 这导致数据库切分困难，或程序生成GUID, 这通常导致ID过长。更优雅的做法是利用paxos算法在多台replicas之间选择一个作为master, 通过master来分配号码。当master发生故障时，再用paxos选择另外一个master。</li>
+</ol>
+<p>这里列举了一些常见的Paxos应用场合，对于类似上述的场合，如果用其它解决方案，一方面不能提供自动的高可用性方案，同时也远远没有Paxos实现简单及优雅。</p>
+<p>Yahoo!开源的ZooKeeper [5]是一个开源的类Paxos实现。它的编程接口看起来很像一个可提供强一致性保证的分布式小文件系统。对上面所有的场合都可以适用。但可惜的是，ZooKeeper并不是遵循Paxos协议，而是基于自身设计并优化的一个2 phase commit的协议，因此它的理论[6]并未经过完全证明。但由于ZooKeeper在Yahoo!内部已经成功应用在HBase, Yahoo! Message Broker, Fetch Service of Yahoo! crawler等系统上，因此完全可以放心采用。</p>
+<p>另外选择Paxos made live [7]中一段实现体会作为结尾。
+/<em>  There are significant gaps between the description of the Paxos algorithm and the needs of a real-world system. In order to build a real-world system, an expert needs to use numerous ideas scattered in the literature and make several relatively small protocol extensions. The cumulative effort will be substantial and the final system will be based on an unproven protocol.
+/</em> 由于chubby填补了Paxos论文中未提及的一些细节，所以最终的实现系统不是一个理论上完全经过验证的系统</p>
+<p>/<em> The fault-tolerance computing community has not developed the tools to make it easy to implement their algorithms.
+/</em> 分布式容错算法领域缺乏帮助算法实现的的配套工具, 比如编译领域尽管复杂，但是yacc, ANTLR等工具已经将这个领域的难度降到最低。</p>
+<p>/<em> The fault-tolerance computing community has not paid enough attention to testing, a key ingredient for building fault-tolerant systems.
+/</em> 分布式容错算法领域缺乏测试手段</p>
+<p>这里要补充一个背景，就是要证明分布式容错算法的正确性通常比实现算法还困难，Google没法证明Chubby是可靠的，Yahoo!也不敢保证它的ZooKeeper理论正确性。大部分系统都是靠在实践中运行很长一段时间才能谨慎的表示，目前系统已经基本没有发现大的问题了。</p>
+<p><strong>Resources</strong>
+[1] <a href="http://labs.google.com/papers/chubby-osdi06.pdf" target="_blank">The Chubby lock service for loosely-coupled distributed systems</a> (PDF)
+[2] <a href="http://zh.wikipedia.org/wiki/Paxos%E7%AE%97%E6%B3%95" target="_blank"><a href="http://zh.wikipedia.org/wiki/Paxos%E7%AE%97%E6%B3%95">http://zh.wikipedia.org/wiki/Paxos%E7%AE%97%E6%B3%95</a></a>
+[3] <a href="http://en.wikipedia.org/wiki/Paxos_algorithm" target="_blank"><a href="http://en.wikipedia.org/wiki/Paxos_algorithm">http://en.wikipedia.org/wiki/Paxos_algorithm</a></a>
+[4] <a href="http://research.microsoft.com/en-us/um/people/lamport/pubs/paxos-simple.pdf" target="_blank">Paxos Made Simple</a> (PDF)
+[5] <a href="http://hadoop.apache.org/zookeeper/" target="_blank">ZooKeeper</a>
+[6] <a href="http://portal.acm.org/citation.cfm?id=1583991.1584007" target="_blank">The life and times of a zookeeper</a>
+[7] <a href="http://labs.google.com/papers/paxos_made_live.pdf" target="_blank">Paxos Made Live – An Engineering Perspective</a> (PDF)</p>
+<p>Except where otherwise noted, content on this site is licensed under a <a href="http://creativecommons.org/licenses/by/3.0/" target="_blank">Creative Commons Attribution 3.0</a> License</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/架构师/">架构师</a></li></span><span class="breadcrumb"><li><a href="/categories/架构师/">架构师</a></li><li><a href="/categories/架构师/架构/">架构</a></li></span></span> | <span class="tags">Tagged <a href="/tags/架构/" class="label label-primary">架构</a><a href="/tags/架构师/" class="label label-success">架构师</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:29"datetime="2014-03-07 09:54:29"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-架构师-架构--多IDC的数据分布设计一/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-架构师-架构--多IDC的数据分布设计一" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-架构师-架构--YouTube架构学习体会-IT青藤屋-青藤园/">YouTube架构学习体会 </a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:29.000Z"> <a href="/2014/02/02/2014-02-02-架构师-架构--YouTube架构学习体会-IT青藤屋-青藤园/">feb. 2 2014</a></time></span>      
@@ -486,230 +1146,260 @@ Courtesy of <a href="http://www.openwebdesign.org/" target="_blank">Open Web Des
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-架构师-架构--Twitter架构图cache篇–Tim后端技术/">Twitter架构图(cache篇) – Tim[后端技术]</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JS用法-jquery-cookie--Documentation/">Documentation</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:29.000Z"> <a href="/2014/02/02/2014-02-02-架构师-架构--Twitter架构图cache篇–Tim后端技术/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:28.000Z"> <a href="/2014/02/02/2014-02-02-JS用法-jquery-cookie--Documentation/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="twitter-cache-tim-">Twitter架构图(cache篇) – Tim[后端技术]</h1>
-<h1 id="-tim-http-timyang-net-home-"><a href="http://timyang.net/" title="Home" target="_blank">Tim[后端技术]</a></h1>
-<p>Tim&#39;s blog, 关于后端架构、互联网技术、分布式、大型网络应用、NoSQL、技术感悟等</p>
-<p><a href="http://timyang.net/" target="_blank">Home</a> | <a href="http://timyang.net/about/" target="_blank">About</a> | <a href="http://timyang.net/tag/English/" target="_blank">English version</a> | <a href="http://timyang.net/about/#comment" target="_blank">留言(Guestbook)</a> | <a href="http://timyang.net/feed/" target="_blank"><img src="" alt=""></a><a href="http://timyang.net/feed/" target="_blank">订阅RSS</a> <a href="http://fusion.google.com/add?source=atgs&amp;feedurl=http%3A//timyang.net/feed/" target="_blank"><img src="" alt="Add to Google"></a></p>
+        <h1 id="documentation">Documentation</h1>
+<p><a href="http://code.google.com/p/cookies/" target="_blank">JavaScript Cookie Handling Library and jQuery plugin</a></p>
+<p><a href="http://code.google.com/p/cookies/" target="_blank">Project Home</a> <a href="http://code.google.com/p/cookies/downloads/list" target="_blank">Downloads</a> <a href="http://code.google.com/p/cookies/w/list" target="_blank">Wiki</a> <a href="http://code.google.com/p/cookies/issues/list" target="_blank">Issues</a> <a href="http://code.google.com/p/cookies/source/checkout" target="_blank">Source</a>
+Search   Search within:  All wiki pages  Featured pages  Current pages  Deprecated pages  for</p>
+<p>Documentation  </p>
+<p>How to use jquery.cookies.js
+<a href="http://code.google.com/p/cookies/w/list?q=label:Featured" title="Listed on project home page" target="_blank">Featured</a></p>
+<p>Updated  Jan 13, 2010 by <a href="http://code.google.com/u/112722706555317592631/" target="_blank">auldrid...@gmail.com</a></p>
+<h1 id="-how-to-use-jquery-cookies-js-"><a href=""></a>How to use jquery.cookies.js<a href=""></a></h1>
 <ul>
-<li></li>
-<li><p>Email: <img src="" alt=""></p>
+<li><a href="">Without jQuery</a></li>
+<li><a href="">With jQuery</a></li>
+<li><p><a href="http://code.google.com/p/cookies/wiki/JSON" target="_blank">JSON Support</a></p>
 </li>
-<li><h3 id="similar-posts">Similar Posts</h3>
+<li><p><a href="">Get a cookie</a></p>
 </li>
-<li><p><a href="http://timyang.net/architecture/notes-timelines-twitter/" title="May 3, 2012" target="_blank">Notes about Timelines @ Twitter</a></p>
+<li><a href="">Get Filtered list of cookies</a></li>
+<li><a href="">Set a cookie</a></li>
+<li><a href="">Delete a cookie</a></li>
+<li><a href="">Test if browser is accepting cookies</a></li>
+<li><p><a href="">Set default options to use when none are specified</a></p>
 </li>
-<li><a href="http://timyang.net/tech/twitter-whale/" title="March 8, 2010" target="_blank">Twitter“鲸鱼”故障技术剖析</a></li>
-<li><a href="http://timyang.net/data/mcdb-tt-redis/" title="August 11, 2009" target="_blank">MemcacheDB, Tokyo Tyrant, Redis performance test</a></li>
-<li><a href="http://timyang.net/architecture/farmville/" title="March 8, 2010" target="_blank">FarmVille(美版开心农场)谈架构:所有模块都是一个可降级的服务</a></li>
-<li><p><a href="http://timyang.net/tech/twitter-operations/" title="November 2, 2009" target="_blank">Twitter系统运维经验</a></p>
+<li><p><a href="">Options object</a></p>
 </li>
-<li><h3 id="most-commented">Most Commented</h3>
-</li>
-<li><p><a href="http://timyang.net/data/mcdb-tt-redis/" title="MemcacheDB, Tokyo Tyrant, Redis performance test" target="_blank">MemcacheDB, Tokyo Tyrant, Redis performance test</a> (101)</p>
-</li>
-<li><a href="http://timyang.net/programming/c-erlang-java-performance/" title="C, Erlang, Java and Go Web Server performance test" target="_blank">C, Erlang, Java and Go Web Server performance test</a> (85)</li>
-<li><a href="http://timyang.net/about/" title="About Tim Yang" target="_blank">About Tim Yang</a> (83)</li>
-<li><a href="http://timyang.net/data/redis-misunderstanding/" title="Redis几个认识误区" target="_blank">Redis几个认识误区</a> (62)</li>
-<li><a href="http://timyang.net/programming/memcache-mutex/" title="Memcache mutex设计模式" target="_blank">Memcache mutex设计模式</a> (47)</li>
-<li><a href="http://timyang.net/architecture/microblog-design-qcon-beijing/" title="构建可扩展的微博架构(qcon beijing 2010演讲)" target="_blank">构建可扩展的微博架构(qcon beijing 2010演讲)</a> (39)</li>
-<li><a href="http://timyang.net/architecture/consistent-hashing-practice/" title="某分布式应用实践一致性哈希的一些问题" target="_blank">某分布式应用实践一致性哈希的一些问题</a> (38)</li>
-<li><a href="http://timyang.net/google/open-source/" title="为什么优秀开发者进入Google后就不参与开源了" target="_blank">为什么优秀开发者进入Google后就不参与开源了</a> (33)</li>
-<li><a href="http://timyang.net/misc/macbook-air-productive/" title="MacBook Air与工作效率" target="_blank">MacBook Air与工作效率</a> (32)</li>
-<li><p><a href="http://timyang.net/data/memcached-lru-evictions/" title="Memcached数据被踢(evictions&gt;0)现象分析" target="_blank">Memcached数据被踢(evictions&gt;0)现象分析</a> (30)</p>
-</li>
-<li><h3 id="recent-posts">Recent Posts</h3>
-</li>
-<li><p><a href="http://timyang.net/tao/speech-practice/" title="演讲小组的第一次活动" target="_blank">演讲小组的第一次活动</a></p>
-</li>
-<li><a href="http://timyang.net/tao/connect-the-dots/" title="“connect the dots” 随想" target="_blank">“connect the dots” 随想</a></li>
-<li><a href="http://timyang.net/tao/talents/" title="跨领域人才" target="_blank">跨领域人才</a></li>
-<li><a href="http://timyang.net/product/discontinued-servic/" title="产品下线杂谈" target="_blank">产品下线杂谈</a></li>
-<li><a href="http://timyang.net/misc/speech/" title="当我谈演讲时候，我谈些什么" target="_blank">当我谈演讲时候，我谈些什么</a></li>
-<li><a href="http://timyang.net/architecture/k/" title="案例与故障的知识库" target="_blank">案例与故障的知识库</a></li>
-<li><a href="http://timyang.net/management/learning-tao/" title="团队中的为师之道" target="_blank">团队中的为师之道</a></li>
-<li><a href="http://timyang.net/google/hybrid-research/" title="有感Google的混合研究方法" target="_blank">有感Google的混合研究方法</a></li>
-<li><a href="http://timyang.net/management/probation/" title="谈技术人员“转正”" target="_blank">谈技术人员“转正”</a></li>
-<li><a href="http://timyang.net/architecture/notes-weixin/" title="微信架构的启示" target="_blank">微信架构的启示</a></li>
-<li><a href="http://timyang.net/misc/macbook-air-productive/" title="MacBook Air与工作效率" target="_blank">MacBook Air与工作效率</a></li>
-<li><a href="http://timyang.net/architecture/notes-timelines-twitter/" title="Notes about Timelines @ Twitter" target="_blank">Notes about Timelines @ Twitter</a></li>
-<li><a href="http://timyang.net/management/engineer-performance/" title="技术工程师的能力与目标" target="_blank">技术工程师的能力与目标</a></li>
-<li><a href="http://timyang.net/management/design-review/" title="技术方案评审" target="_blank">技术方案评审</a></li>
-<li><p><a href="http://timyang.net/management/planning/" title="谈技术团队目标" target="_blank">谈技术团队目标</a></p>
-</li>
-<li><h3 id="recent-comments">Recent Comments</h3>
-</li>
-<li><p><a href="http://emake.info/the-redis-several-misunderstandings.html" target="_blank">Redis几个认识误区 | 创造</a> on <a href="http://timyang.net/data/redis-misunderstanding/comment-page-2/#comment-224409" target="_blank">Redis几个认识误区</a></p>
-</li>
-<li><a href="http://emake.info/the-redis-several-misunderstandings.html" target="_blank">Redis几个认识误区 | 创造</a> on <a href="http://timyang.net/data/mcdb-tt-redis/comment-page-3/#comment-224408" target="_blank">MemcacheDB, Tokyo Tyrant, Redis performance test</a></li>
-<li><a href="http://outofmemory.cn/" target="_blank">甄码农</a> on <a href="http://timyang.net/management/learning-tao/comment-page-1/#comment-224161" target="_blank">团队中的为师之道</a></li>
-<li><a href="http://outofmemory.cn/" target="_blank">甄码农</a> on <a href="http://timyang.net/tao/talents/comment-page-1/#comment-224158" target="_blank">跨领域人才</a></li>
-<li><p>阿秀 on <a href="http://timyang.net/about/comment-page-2/#comment-223584" target="_blank">About Tim Yang</a></p>
-</li>
-<li><h3 id="categories">Categories</h3>
-</li>
-<li><p><a href="http://timyang.net/category/data/" title="View all posts filed under data" target="_blank">data</a></p>
-</li>
-<li><a href="http://timyang.net/category/erlang/" title="Erlang语言" target="_blank">Erlang</a></li>
-<li><a href="http://timyang.net/category/google/" title="View all posts filed under Google" target="_blank">Google</a></li>
-<li><a href="http://timyang.net/category/java/" title="View all posts filed under Java" target="_blank">Java</a></li>
-<li><a href="http://timyang.net/category/linux/" title="View all posts filed under Linux" target="_blank">Linux</a></li>
-<li><a href="http://timyang.net/category/lua/" title="View all posts filed under Lua" target="_blank">Lua</a></li>
-<li><a href="http://timyang.net/category/python/" title="View all posts filed under Python" target="_blank">Python</a></li>
-<li><a href="http://timyang.net/category/sns/" title="View all posts filed under SNS" target="_blank">SNS</a></li>
-<li><a href="http://timyang.net/category/tech/" title="View all posts filed under tech" target="_blank">tech</a></li>
-<li><a href="http://timyang.net/category/web/" title="View all posts filed under Web" target="_blank">Web</a></li>
-<li><a href="http://timyang.net/category/product/" title="View all posts filed under 产品" target="_blank">产品</a></li>
-<li><a href="http://timyang.net/category/distributed/" title="分布式算法及思想" target="_blank">分布式</a></li>
-<li><a href="http://timyang.net/category/management/" title="View all posts filed under 技术管理" target="_blank">技术管理</a></li>
-<li><a href="http://timyang.net/category/architecture/" title="后端架构" target="_blank">架构</a></li>
-<li><a href="http://timyang.net/category/programming/" title="View all posts filed under 编程" target="_blank">编程</a></li>
-<li><a href="http://timyang.net/category/tao/" title="View all posts filed under 随想" target="_blank">随想</a></li>
-<li><p><a href="http://timyang.net/category/misc/" title="非技术话题" target="_blank">非技术</a></p>
-</li>
-<li><h3 id="archives">Archives</h3>
-</li>
-<li><p><a href="http://timyang.net/2012/10/" title="October 2012" target="_blank">October 2012</a> (5)</p>
-</li>
-<li><a href="http://timyang.net/2012/09/" title="September 2012" target="_blank">September 2012</a> (4)</li>
-<li><a href="http://timyang.net/2012/05/" title="May 2012" target="_blank">May 2012</a> (3)</li>
-<li><a href="http://timyang.net/2012/02/" title="February 2012" target="_blank">February 2012</a> (3)</li>
-<li><a href="http://timyang.net/2012/01/" title="January 2012" target="_blank">January 2012</a> (2)</li>
-<li><a href="http://timyang.net/2011/12/" title="December 2011" target="_blank">December 2011</a> (1)</li>
-<li><a href="http://timyang.net/2011/08/" title="August 2011" target="_blank">August 2011</a> (1)</li>
-<li><a href="http://timyang.net/2011/07/" title="July 2011" target="_blank">July 2011</a> (1)</li>
-<li><a href="http://timyang.net/2011/04/" title="April 2011" target="_blank">April 2011</a> (2)</li>
-<li><a href="http://timyang.net/2011/02/" title="February 2011" target="_blank">February 2011</a> (1)</li>
-<li><a href="http://timyang.net/2011/01/" title="January 2011" target="_blank">January 2011</a> (2)</li>
-<li><a href="http://timyang.net/2010/12/" title="December 2010" target="_blank">December 2010</a> (2)</li>
-<li><a href="http://timyang.net/2010/11/" title="November 2010" target="_blank">November 2010</a> (2)</li>
-<li><a href="http://timyang.net/2010/09/" title="September 2010" target="_blank">September 2010</a> (1)</li>
-<li><a href="http://timyang.net/2010/08/" title="August 2010" target="_blank">August 2010</a> (1)</li>
-<li><a href="http://timyang.net/2010/07/" title="July 2010" target="_blank">July 2010</a> (3)</li>
-<li><a href="http://timyang.net/2010/06/" title="June 2010" target="_blank">June 2010</a> (2)</li>
-<li><a href="http://timyang.net/2010/05/" title="May 2010" target="_blank">May 2010</a> (2)</li>
-<li><a href="http://timyang.net/2010/04/" title="April 2010" target="_blank">April 2010</a> (1)</li>
-<li><a href="http://timyang.net/2010/03/" title="March 2010" target="_blank">March 2010</a> (4)</li>
-<li><a href="http://timyang.net/2010/02/" title="February 2010" target="_blank">February 2010</a> (1)</li>
-<li><a href="http://timyang.net/2010/01/" title="January 2010" target="_blank">January 2010</a> (1)</li>
-<li><a href="http://timyang.net/2009/12/" title="December 2009" target="_blank">December 2009</a> (3)</li>
-<li><a href="http://timyang.net/2009/11/" title="November 2009" target="_blank">November 2009</a> (3)</li>
-<li><a href="http://timyang.net/2009/10/" title="October 2009" target="_blank">October 2009</a> (3)</li>
-<li><a href="http://timyang.net/2009/09/" title="September 2009" target="_blank">September 2009</a> (4)</li>
-<li><a href="http://timyang.net/2009/08/" title="August 2009" target="_blank">August 2009</a> (5)</li>
-<li><a href="http://timyang.net/2009/07/" title="July 2009" target="_blank">July 2009</a> (6)</li>
-<li><a href="http://timyang.net/2009/06/" title="June 2009" target="_blank">June 2009</a> (5)</li>
-<li><a href="http://timyang.net/2009/05/" title="May 2009" target="_blank">May 2009</a> (11)</li>
-<li><a href="http://timyang.net/2009/04/" title="April 2009" target="_blank">April 2009</a> (7)</li>
-<li><a href="http://timyang.net/2009/03/" title="March 2009" target="_blank">March 2009</a> (3)</li>
-<li><a href="http://timyang.net/2009/02/" title="February 2009" target="_blank">February 2009</a> (2)</li>
-<li><a href="http://timyang.net/2009/01/" title="January 2009" target="_blank">January 2009</a> (2)</li>
-<li><a href="http://timyang.net/2008/12/" title="December 2008" target="_blank">December 2008</a> (2)</li>
-<li><h3 id="feeds">Feeds</h3>
-</li>
-<li><p><a href="http://timyang.net/feed/" target="_blank">Entries (RSS)</a></p>
-</li>
-<li><a href="http://timyang.net/comments/feed/" target="_blank">Comments (RSS)</a>
-*</li>
 </ul>
-<h2 id="-twitter-cache-http-timyang-net-architecture-twitter-cache-architecture-permanent-link-to-twitter-cache-"><a href="http://timyang.net/architecture/twitter-cache-architecture/" title="Permanent Link to Twitter架构图(cache篇)" target="_blank">Twitter架构图(cache篇)</a></h2>
-<p>Wednesday, Oct 28th, 2009 by Tim | Tags: <a href="http://timyang.net/tag/twitter/" target="_blank">twitter</a></p>
-<p>根据网上公开资料整理的Twitter架构，主要是cache方面，加了作者自己的补充，跟实际的架构未必完全一致。
-<img src="&quot;twitter cache&quot;" alt="twitter cache">
-一些数据：</p>
+<h2 id="-without-jquery-"><a href=""></a>Without jQuery<a href=""></a></h2>
+<p>If jQuery is not available in your page, the core cookies library is available to you under the jaaulde.utils namespace:</p>
+<h3 id="-get-a-cookie-"><a href=""></a>Get a cookie<a href=""></a></h3>
+<p>//<em>/</em>
+ /<em> get - get one, several, or all cookies
+ /</em>
+ /<em> @access public
+ /</em> @paramater Mixed cookieName - String:name of single cookie; Array:list of multiple cookie names; Void (no param):if you want all cookies
+ /<em> @return Mixed - Value of cookie as set; Null:if only one cookie is requested and is not found; Object:hash of multiple or all cookies (if multiple or all requested);
+ /</em>/
+get = function(cookieName)</p>
+<h3 id="-example-"><a href=""></a>Example:<a href=""></a></h3>
 <ul>
-<li>Cache分Page cache, fragment cache, row cache, vector Cache, cache命中率见图。</li>
-<li>Fragment cache存放了API各种请求格式的数据，包括XML, JSON, RSS, ATOM。</li>
-<li>发表Tweets是先放入Kestrel, 再异步处理，Kestrel用的也是memcached协议。</li>
-<li>API requests: 550 r/s。</li>
-<li>POST tweets: 峰值：平时 80tweets/s, 奥巴马就任时达到 350tweets/s。</li>
-<li>Aggregator模块需要访问memcached multi get  数百个/s。</li>
-<li>Ruby on Rails前面还用了Varnish作前端反向代理。</li>
+<li><p>jaaulde.utils.cookies.get(&#39;myCookie&#39;);</p>
+</li>
+<li><p>returns value of myCookie if it is present, null if not</p>
+</li>
+<li><p>jaaulde.utils.cookies.get([&#39;myCookie&#39;, &#39;myOtherCookie&#39;]);</p>
+</li>
+<li><p>returns array containing value of each requested cookie if it is present, null if not</p>
+</li>
+<li><p>jaaulde.utils.cookies.get();</p>
+</li>
+<li><p>returns array of all cookies from your site</p>
+</li>
 </ul>
-<p>参考资料：</p>
+<h3 id="-get-filtered-list-of-cookies-"><a href=""></a>Get Filtered list of cookies<a href=""></a></h3>
+<p>//<em>/</em>
+ /<em> filter - get array of cookies whose names match the provided RegExp
+ /</em>
+ /<em> @access public
+ /</em> @paramater Object RegExp - The regular expression to match against cookie names
+ /<em> @return Mixed - Object:hash of cookies whose names match the RegExp
+ /</em>/
+filter = function( cookieNameRegExp )</p>
+<h3 id="-example-"><a href=""></a>Example:<a href=""></a></h3>
 <ul>
-<li><a href="http://gojko.net/2009/03/16/qcon-london-2009-upgrading-twitter-without-service-disruptions/" target="_blank">QCon London 2009: Upgrading Twitter without service disruptions</a></li>
-<li><a href="http://qconlondon.com/london-2009/file?path=/qcon-london-2009/slides/EvanWeaver_ImprovingRunningComponentsAtTwitter.pdf" target="_blank">Improving Running Components at Twitter</a> (PDF slide)</li>
+<li><p>jaaulde.utils.cookies.filter( /^site/ );</p>
+</li>
+<li><p>returns list of cookies whose names start with &quot;site&quot;</p>
+</li>
 </ul>
-<h3 id="9-comments-http-timyang-net-architecture-twitter-cache-architecture-postcomment-jump-to-the-comments-form-">9 Comments <a href="http://timyang.net/architecture/twitter-cache-architecture/#postcomment" title="Jump to the comments form" target="_blank">»</a></h3>
-<ol>
-<li><img src="" alt="">Lee Su Min says:</li>
-</ol>
-<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-2070" target="_blank">Nov 1st 2009 at 17:15</a></p>
-<p>Is a blue print same as a jia gou tu?</p>
-<ol>
-<li><img src="" alt=""><a href="http://hi.baidu.com/crazy_computer" target="_blank">王潇</a> says:</li>
-</ol>
-<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-3405" target="_blank">Mar 8th 2010 at 18:10</a></p>
-<p>我是一个大三的学生，现在在学习PHP！看了您的博客，学习一下，也就只是看看表面，现在对整个的WEB体系有了一定的了解了，但是我还是不太清晰！请您指点一下，我还不清楚现在所做的东西处于什么地方，对整个系统有什么影响？我开发网站时也都没用到您所做的东西啊，究竟何时用！还有就是究竟应该按照什么线路来学习技术，请您务必指教！！！</p>
-<ol>
-<li><img src="" alt=""><a href="http://blog.chinaunix.net/u2/84280" target="_blank">遥方</a> says:</li>
-</ol>
-<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-4367" target="_blank">Jun 25th 2010 at 16:42</a></p>
-<p>博主能力很强。向你学习</p>
-<ol>
-<li><img src="" alt=""><a href="http://www.wangdacuo.com/" target="_blank">小黑</a> says:</li>
-</ol>
-<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-4940" target="_blank">Sep 11th 2010 at 22:25</a></p>
-<p>请问像这样实时性强、数据量巨大的数据库应该做哪些优化和处理？</p>
-<ol>
-<li><img src="" alt=""><a href="http://apan.me/" target="_blank">Pan</a> says:</li>
-</ol>
-<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-29611" target="_blank">May 21st 2011 at 12:50</a></p>
-<p>Row Cache是否有些出入？图中Row Cache似乎是用来存储关系链的，而Evan Weaver在2009 London Qcon上的ppt中，显示Row Cache应该是用来缓存tweet正文内容的吧。<a href="http://qconlondon.com/dl/qcon-london-2009/slides/EvanWeaver_ImprovingRunningComponentsAtTwitter.pdf" target="_blank">http://qconlondon.com/dl/qcon-london-2009/slides/EvanWeaver_ImprovingRunningComponentsAtTwitter.pdf</a></p>
-<ol>
-<li><img src="" alt=""><a href="http://tsingroo.sinaapp.com/" target="_blank">罗青</a> says:</li>
-</ol>
-<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-124260" target="_blank">Jan 17th 2012 at 12:53</a></p>
-<p>我觉得除了缓存之外，数据库的表设计是最关键的部分。架构这些什么的都要依据数据库结构来设计。</p>
-<ol>
-<li><img src="" alt="">段见尼宜 says:</li>
-</ol>
-<p><a href="http://timyang.net/architecture/twitter-cache-architecture/comment-page-1/#comment-220186" target="_blank">Nov 7th 2012 at 06:43</a></p>
-<p>(网站打不开请点百度快照}手机号码任意显示|号码任意显示|去电号码任意显示|来电号码任意显示|号码随意显|电话号码任意显示|手机号码随意显|电话号码随意显|
-手机号码任意显示 (可以免费测试一次)
-鹏诚通讯科技有限公司
-24小时客服QQ：13417527</p>
-<p>24小时免费咨询电话：18268787444</p>
-<p>公司网址：<a href="http://www.pcwltx.com/" target="_blank">http://www.pcwltx.com/</a>
-朋友,想不想让你的手机很有个性? 明明你在深圳,而你跟朋友聊天的时候,你朋友的电话上显示你在广州(上 海/天津/武汉/兰州等)以至香港. 明明你在跟朋友玩,而你打电话给你家人,让家人以为你在外地出差. 明天你不是刘德华,而你总是你用刘德华的电话号在打电话 明明你现在在内地,而你非要在你朋友面前说你在香港. 想不想拥有了?</p>
-<p>专业手机，座机，小灵通等打电话发短信可以任意显示电话号码的, 此产品不需要下载任何软件,只需要绑定您的号码即可实现显示.您要对方显示什么号码!我这里免费给您测试,让您亲眼所见！不想让别人知道自己在哪里的时候，被人追踪讨债不接您电话的时候很有用出的！您只需花上几百元钱就能买到您想要的任何靓号，吉祥号！以及港澳台和国际号码，任意显示您的电话号码，随时隐藏您的号码！
-本业务不会影响你本手机的使用，想使用改号业务时就拨一下我们系统的预约号码，不想使用时就直接用你手机打出还是原来的号，不会改变你手机原来的实际号码，互不干扰.</p>
-<p>为防止各种违法乱纪,本软件特定设置号码规范如下：
-1、出于安全考虑国家特殊号码 110 120 119等号码，不可以随意设置，
-一经发现删除该帐户！
-2、不可以设置各种银行，移动的客服号码（95599 10086等）一经发现删除该帐户！</p>
-<p>交易方式：支持各大银行和淘宝交易.</p>
-<p>1， 无须在电话（手机，小灵通，座机）上下载任何软件
-2， 无月租，无长途漫游费，全国号码任意设置，任意拨打，任意显示。0.2元/分钟
-3， 绑定号码无次数限制，设置显示号码无次数限制。自行操作，自己做主，
-4， 开通后没有时效限制，有话费即可使用。
-5， 话费没了，续费继续使用。
-6， 不影响你本机号码的话费，和正常使用，两者互不干扰。
-7， 双方都为接电话型式，不扣通话双方的电话（手机，小灵通，座机）话费。
-8，不想使用时就直接用你手机打出还是原来的号，不会改变你手机原来的实际号码，互不干扰.
-显示号码自己设置，操作方法可以手机直接操作也可以网页上操作最后都是通过自己的手机打出，
-让对方显示你要的号码，本机是接回拨所以免费,显示号码自由设置
-可以让你亲自测试，自己打出一个任意显示的电话。
-交易方式：支持各大银行和淘宝交易.</p>
-<p>24小时客服QQ：13417527</p>
-<p>24小时免费咨询电话：18268781444</p>
-<p>公司网址：<a href="http://www.pcwltx.com/" target="_blank">http://www.pcwltx.com/</a>
-骗子各种手法介绍：不允许测试，让你直接汇款，汇款后开通。</p>
-<p><a href="http://timyang.net/architecture/twitter-cache-architecture/feed/" target="_blank">RSS feed for comments on this post</a>, <a href="http://timyang.net/architecture/twitter-cache-architecture/trackback/" target="_blank">TrackBack URI</a>
-<a href="http://timyang.net/architecture/twitter-cache-architecture/#respond" target="_blank">Cancel Reply</a></p>
-<h3 id="leave-a-comment">Leave a Comment</h3>
-<p>Name (required)</p>
-<p>E-mail (required, never displayed)</p>
-<p>URI</p>
-<p>Except where otherwise noted, content on this site is licensed under a <a href="http://creativecommons.org/licenses/by/3.0/" target="_blank">Creative Commons Attribution 3.0</a> License</p>
+<h3 id="-set-a-cookie-"><a href=""></a>Set a cookie<a href=""></a></h3>
+<p>//<em>/</em>
+ /<em> set - set or delete a cookie with desired options
+ /</em>
+ /<em> @access public
+ /</em> @paramater String cookieName - name of cookie to set
+ /<em> @paramater Mixed value - Any JS value. If not a string, will be JSON encoded (<a href="http://code.google.com/p/cookies/wiki/JSON" target="_blank">http://code.google.com/p/cookies/wiki/JSON</a>); NULL to delete
+ /</em> @paramater Object options - optional list of cookie options to specify
+ /<em> @return void
+ /</em>/
+set = function(cookieName, value, options)</p>
+<h3 id="-example-"><a href=""></a>Example:<a href=""></a></h3>
+<ul>
+<li><p>jaaulde.utils.cookies.set(&#39;myCookie&#39;, &#39;myValue&#39;);</p>
+</li>
+<li><p>sets cookie by the name of &#39;myCookie&#39; to value of &#39;myValue&#39; with default options</p>
+</li>
+<li><p>jaaulde.utils.cookies.set(&#39;myCookie&#39;, &#39;myValue&#39;, {path: &#39;/somedir&#39;});</p>
+</li>
+<li><p>sets cookie by the name of &#39;myCookie&#39; to value of &#39;myValue&#39; with path of &#39;/somedir&#39;</p>
+</li>
+<li><p><strong>See information on options object below</strong></p>
+</li>
+</ul>
+<h3 id="-delete-a-cookie-"><a href=""></a>Delete a cookie<a href=""></a></h3>
+<p>//<em>/</em>
+ /<em> del - delete a cookie (domain and path options must match those with which the cookie was set; this is really an alias for set() with parameters simplified for this use)
+ /</em>
+ /<em> @access public
+ /</em> @paramater MIxed cookieName - String name of cookie to delete, or Bool true to delete all
+ /<em> @paramater Object options - optional list of cookie options to specify ( path, domain )
+ /</em> @return void
+ /*/
+del = function(cookieName, options)</p>
+<h3 id="-example-"><a href=""></a>Example:<a href=""></a></h3>
+<ul>
+<li><p>jaaulde.utils.cookies.del(&#39;myCookie&#39;);</p>
+</li>
+<li><p>deletes a cookie, &#39;myCookie&#39;, with default options</p>
+</li>
+<li><p>jaaulde.utils.cookies.del(&#39;myCookie&#39;, {path: &#39;/somedir&#39;});</p>
+</li>
+<li><p>deletes a cookie by the name of &#39;myCookie&#39; which had been set with a path of &#39;/somedir&#39;</p>
+</li>
+<li><p>jaaulde.utils.cookies.del(true);</p>
+</li>
+<li><p>deletes all cookies</p>
+</li>
+<li><p>A cookie can only be deleted using the same options with which it was set</p>
+</li>
+<li><strong>See information on options object below</strong></li>
+</ul>
+<h3 id="-test-if-browser-is-accepting-cookies-"><a href=""></a>Test if browser is accepting cookies<a href=""></a></h3>
+<p>//<em>/</em>
+ /<em> test - test whether the browser is accepting cookies
+ /</em>
+ /<em> @access public
+ /</em> @return Boolean
+ /*/
+test = function()</p>
+<h3 id="-example-"><a href=""></a>Example:<a href=""></a></h3>
+<ul>
+<li><p>jaaulde.utils.cookies.test();</p>
+</li>
+<li><p>attempts to set a cookie and returns true or false upon success or failure</p>
+</li>
+</ul>
+<h3 id="-set-default-options-to-use-when-none-are-specified-"><a href=""></a>Set default options to use when none are specified<a href=""></a></h3>
+<p>//<em>/</em>
+ /<em> setOptions - set default options for calls to cookie methods
+ /</em>
+ /<em> @access public
+ /</em> @param Object options - list of cookie options to specify
+ /<em> @return void
+ /</em>/
+setOptions = function(options)</p>
+<h3 id="-example-"><a href=""></a>Example:<a href=""></a></h3>
+<ul>
+<li><p>jaaulde.utils.cookies.setOptions({path: &#39;/somedir&#39;});</p>
+</li>
+<li><p>all cookies will be set or deleted with the path , &#39;/somedir&#39;, unless it is explicitly provided in a passed options object</p>
+</li>
+<li><p><strong>See information on options object below</strong></p>
+</li>
+</ul>
+<h2 id="-with-jquery-"><a href=""></a>With jQuery<a href=""></a></h2>
+<p>If jQuery is available, then all of the <a href="http://code.google.com/p/cookies/wiki/Documentation#Without_jQuery" target="_blank">above methods</a> are available to you under the jQuery.cookies (or $.cookies ) namespace:</p>
+<ul>
+<li>$.cookies.get()</li>
+<li>$.cookies.filter()</li>
+<li>$.cookies.set()</li>
+<li>$.cookies.del()</li>
+<li>$.cookies.test()</li>
+<li>$.cookies.setOptions()</li>
+</ul>
+<p>In addition, there are some jQuery function additions for helping automate some cookie tasks:</p>
+<ul>
+<li><p><strong>Set the value of a form field or the HTML of an element to a cookie named after the field&#39;s/element&#39;s name or id attribute</strong></p>
+</li>
+<li><p>$(&#39;/#username&#39;).cookify();</p>
+</li>
+<li><p>The value of the field, or HTML of the element, with id &quot;username&quot; is set to a cookie named after the name or id attribute of that field/element. If a radio or checkbox and it&#39;s checked, the value will be set.</p>
+</li>
+<li><p><strong>Fill a field&#39;s value, or an element&#39;s innerHTML with the value of a cookie</strong></p>
+</li>
+<li><p>$(&#39;/#username&#39;).cookieFill();</p>
+</li>
+<li><p>Set the value of the input, or HTML of the element, with id, &#39;username&#39;, to the value of a cookie by the same name. If a radio or checkbox and it is checked, the cookie will be set. If not checked, the cookie will be deleted.</p>
+</li>
+<li><p><strong>Bind an input to the cookies library</strong></p>
+</li>
+<li><p>$(&#39;/#username&#39;).cookieBind();</p>
+</li>
+<li><p>Fills the field or element with id, &#39;username&#39;, with the cookie named the same and sets the field&#39;s/element&#39;s change event to fire cookify() to update the cookie when the input value changes</p>
+</li>
+</ul>
+<h2 id="-options-object-"><a href=""></a>Options object<a href=""></a></h2>
+<p>Using the options object, cookies can be set with several options such as the domain and or path for which the cookie should be available, expiration date for the cookie, and whether the cookie should be sent over HTTPS only.</p>
+<p>The options object has four properties:</p>
+<ul>
+<li><p><strong>domain</strong></p>
+</li>
+<li><p>STRING</p>
+</li>
+<li><p>For which domain should the cookie be available</p>
+</li>
+<li><p><strong>path</strong></p>
+</li>
+<li><p>STRING</p>
+</li>
+<li><p>For which path should the cookie be available</p>
+</li>
+<li><p><strong>hoursToLive (DEPRECATED for expiresAt)</strong></p>
+</li>
+<li><p>NUMBER</p>
+</li>
+<li><p>For how many hours should the cookie be valid? (Passing 0 means to delete the cookie at the end of the browser session--this is default. Negative values will delete the cookie, but you should use the del() method instead.)</p>
+</li>
+<li><p><strong>expiresAt</strong></p>
+</li>
+<li><p>Date OBJECT</p>
+</li>
+<li><p>Date object representing expiration date/time of cookie</p>
+</li>
+<li><p><strong>secure</strong></p>
+</li>
+<li><p>BOOL</p>
+</li>
+<li>Should cookie be sent to server via HTTPS only?</li>
+</ul>
+<p>The structure of the object is as follows:
+  var newOptions = {
+    domain: &#39;/*.mydomain.com&#39;,
+    path: &#39;/somedir&#39;,
+    expiresAt: new Date( 2011, 1, 1 ),
+    secure: true
+  }</p>
+<p>You need only set those options which you desire to override.</p>
+<p>The default options when not overridden are:</p>
+<ul>
+<li><p><strong>domain</strong></p>
+</li>
+<li><p>no value - will cause current domain of current page to be used</p>
+</li>
+<li><p><strong>path</strong></p>
+</li>
+<li><p>/</p>
+</li>
+<li><p><strong>expiration</strong></p>
+</li>
+<li><p>no value--causes cookie to be deleted at end of browser session</p>
+</li>
+<li><p><strong>secure</strong> (send over HTTPS only)</p>
+</li>
+<li><p>false</p>
+</li>
+</ul>
+<p>An options object can be passed with set(), del(), cookify(), and cookieBind() to override the defaults on a case by case basis. You can also pass an options object to setOptions() to override the defaults for all calls.</p>
+<p><strong>IMPORTANT NOTE:</strong> Cookies must be deleted using the same domain and path options with which they were set. Else the cookie will not delete. This is just how cookies work.</p>
 
       
     </div>
@@ -719,866 +1409,8 @@ Courtesy of <a href="http://www.openwebdesign.org/" target="_blank">Open Web Des
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/架构师/">架构师</a></li></span><span class="breadcrumb"><li><a href="/categories/架构师/">架构师</a></li><li><a href="/categories/架构师/架构/">架构</a></li></span></span> | <span class="tags">Tagged <a href="/tags/架构/" class="label label-primary">架构</a><a href="/tags/架构师/" class="label label-success">架构师</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:29"datetime="2014-03-07 09:54:29"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-架构师-架构--Twitter架构图cache篇–Tim后端技术/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-架构师-架构--Twitter架构图cache篇–Tim后端技术" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-框架汇总-ORM-ibatis--对ibatis分页功能的改进/">对ibatis分页功能的改进</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:29.000Z"> <a href="/2014/02/02/2014-02-02-框架汇总-ORM-ibatis--对ibatis分页功能的改进/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-ibatis-">对ibatis分页功能的改进</h1>
-<p><strong>对ibatis**</strong>分页功能的改进**</p>
-<p>2008-05-26 14:45
-今天无意间看到了一篇关于这方面的文章，觉得是网上改进ibatis分页方面比较好的文章，这里转摘一下，希望能让更多的人用的到，也希望别人能把更好的解决方案贡献出来！</p>
-<p>使ibatis支持hibernate式的物理分页</p>
-<p>一直以来ibatis的分页都是通过滚动ResultSet实现的，应该算是逻辑分页吧。逻辑分页虽然能很干净地独立于特定数据库，但效率在多数情 况下不及特定数据库支持的物理分页，而hibernate的分页则是直接组装sql，充分利用了特定数据库的分页机制，效率相对较高。本文讲述的就是如何 在不重新编译ibatis源码的前提下，为ibatis引入hibernate式的物理分页机制。</p>
-<p>基本思路就是找到ibatis执行sql的地方，截获sql并重新组装sql。通过分析ibatis源码知道，最终负责执行sql的类是 com.ibatis.sqlmap.engine.execution.SqlExecutor，此类没有实现任何接口，这多少有点遗憾，因为接口是相 对稳定契约，非大的版本更新，接口一般是不会变的，而类就相对易变一些，所以这里的代码只能保证对当前版本（2.1.7）的ibatis有效。下面是 SqlExecutor执行查询的方法：</p>
-<p>  //<em>/</em>
-    /<em> Long form of the method to execute a query
-    /</em>
-    /<em> @param request - the request scope
-    /</em> @param conn - the database connection
-    /<em> @param sql - the SQL statement to execute
-    /</em> @param parameters - the parameters for the statement
-    /<em> @param skipResults - the number of results to skip
-    /</em> @param maxResults - the maximum number of results to return
-    /<em> @param callback - the row handler for the query
-    /</em>
-    /<em> @throws SQLException - if the query fails
-   /</em>/
-  public void executeQuery(RequestScope request, Connection conn, String sql, Object[] parameters,
-                           int skipResults, int maxResults, RowHandlerCallback callback)
-      throws SQLException {
-     ErrorContext errorContext = request.getErrorContext();
-     errorContext.setActivity(&quot;executing query&quot;);
-     errorContext.setObjectId(sql);
-     PreparedStatement ps = null;
-     ResultSet rs = null;
-    try {
-       errorContext.setMoreInfo(&quot;Check the SQL Statement (preparation failed).&quot;);
-       Integer rsType = request.getStatement().getResultSetType();
-      if (rsType != null) {
-         ps = conn.prepareStatement(sql, rsType.intValue(), ResultSet.CONCUR_READ_ONLY);
-       } else {
-         ps = conn.prepareStatement(sql);
-       }
-       Integer fetchSize = request.getStatement().getFetchSize();
-      if (fetchSize != null) {
-         ps.setFetchSize(fetchSize.intValue());
-       }
-       errorContext.setMoreInfo(&quot;Check the parameters (set parameters failed).&quot;);
-       request.getParameterMap().setParameters(request, ps, parameters);
-       errorContext.setMoreInfo(&quot;Check the statement (query failed).&quot;);
-       ps.execute();
-       rs = getFirstResultSet(ps);
-      if (rs != null) {
-         errorContext.setMoreInfo(&quot;Check the results (failed to retrieve results).&quot;);
-         handleResults(request, rs, skipResults, maxResults, callback);
-       }
-      // clear out remaining results
-      while (ps.getMoreResults());
-     } finally {
-      try {
-         closeResultSet(rs);
-       } finally {
-         closeStatement(ps);
-       }
-     }
-   }</p>
-<p>其中handleResults(request, rs, skipResults, maxResults, callback)一句用于处理分页，其实此时查询已经执行完毕，可以不必关心handleResults方法，但为清楚起见，下面来看看 handleResults的实现：</p>
-<p>private void handleResults(RequestScope request, ResultSet rs, int skipResults, int maxResults, RowHandlerCallback callback) throws SQLException {
-    try {
-       request.setResultSet(rs);
-       ResultMap resultMap = request.getResultMap();
-      if (resultMap != null) {
-        // Skip Results
-        if (rs.getType() != ResultSet.TYPE_FORWARD_ONLY) {
-          if (skipResults &gt; 0) {
-             rs.absolute(skipResults);
-           }
-         } else {
-          for (int i = 0; i &lt; skipResults; i++) {
-            if (!rs.next()) {
-              break;
-             }
-           }
-         }
-        // Get Results
-        int resultsFetched = 0;
-        while ((maxResults == SqlExecutor.NO_MAXIMUM_RESULTS || resultsFetched &lt; maxResults) &amp;&amp; rs.next()) {
-           Object[] columnValues = resultMap.resolveSubMap(request, rs).getResults(request, rs);
-           callback.handleResultObject(request, columnValues, rs);
-           resultsFetched++;
-         }
-       }
-     } finally {
-       request.setResultSet(null);
-     }
-   }</p>
-<p>此处优先使用的是ResultSet的absolute方法定位记录，是否支持absolute取决于具体数据库驱动，但一般当前版本的数据库都支 持该方法，如果不支持则逐条跳过前面的记录。由此可以看出如果数据库支持absolute，则ibatis内置的分页策略与特定数据库的物理分页效率差距 就在于物理分页查询与不分页查询在数据库中的执行效率的差距了。因为查询执行后读取数据前数据库并未把结果全部返回到内存，所以本身在存储占用上应该差距 不大，如果都使用索引，估计执行速度也差不太多。</p>
-<p>继续我们的话题。其实只要在executeQuery执行前组装sql，然后将其传给executeQuery，并告诉handleResults 我们不需要逻辑分页即可。拦截executeQuery可以采用aop动态实现，也可直接继承SqlExecutor覆盖executeQuery来静态 地实现，相比之下后者要简单许多，而且由于SqlExecutor没有实现任何接口，比较易变，动态拦截反到增加了维护的工作量，所以我们下面来覆盖 executeQuery：</p>
-<p>package com.aladdin.dao.ibatis.ext;
-import java.sql.Connection;
-import java.sql.SQLException;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import com.aladdin.dao.dialect.Dialect;
-import com.ibatis.sqlmap.engine.execution.SqlExecutor;
-import com.ibatis.sqlmap.engine.mapping.statement.RowHandlerCallback;
-import com.ibatis.sqlmap.engine.scope.RequestScope;
-public class LimitSqlExecutor extends SqlExecutor {
-    private static final Log logger = LogFactory.getLog(LimitSqlExecutor.class);</p>
-<pre><code>private Dialect dialect;
-private boolean enableLimit = true;
-public Dialect getDialect() {
-    return dialect;
- }
-public void setDialect(Dialect dialect) {
-    this.dialect = dialect;
- }
-public boolean isEnableLimit() {
-    return enableLimit;
- }
-public void setEnableLimit(boolean enableLimit) {
-    this.enableLimit = enableLimit;
- }
- @Override
-public void executeQuery(RequestScope request, Connection conn, String sql,
-         Object[] parameters, int skipResults, int maxResults,
-         RowHandlerCallback callback) throws SQLException {
-    if ((skipResults != NO_SKIPPED_RESULTS || maxResults != NO_MAXIMUM_RESULTS)
-            &amp;&amp; supportsLimit()) {
-         sql = dialect.getLimitString(sql, skipResults, maxResults);
-        if(logger.isDebugEnabled()){
-             logger.debug(sql);
-         }
-         skipResults = NO_SKIPPED_RESULTS;
-         maxResults = NO_MAXIMUM_RESULTS;            
-     }
-    super.executeQuery(request, conn, sql, parameters, skipResults,
-             maxResults, callback);
- }
-public boolean supportsLimit() {
-    if (enableLimit &amp;&amp; dialect != null) {
-        return dialect.supportsLimit();
-     }
-    return false;
- }
-</code></pre><p>}</p>
-<p>其中：</p>
-<p>skipResults = NO_SKIPPED_RESULTS;
-maxResults = NO_MAXIMUM_RESULTS;</p>
-<p>告诉handleResults不分页（我们组装的sql已经使查询结果是分页后的结果了），此处引入了类似hibenate中的数据库方言接口Dialect，其代码如下：</p>
-<p>package com.aladdin.dao.dialect;
-public interface Dialect {</p>
-<pre><code>public boolean supportsLimit();
-public String getLimitString(String sql, boolean hasOffset);
-public String getLimitString(String sql, int offset, int limit);
-</code></pre><p>}</p>
-<p>下面为Dialect接口的MySQL实现：</p>
-<p>package com.aladdin.dao.dialect;
-public class MySQLDialect implements Dialect {
-    protected static final String SQL_END_DELIMITER = &quot;;&quot;;
-    public String getLimitString(String sql, boolean hasOffset) {
-        return new StringBuffer(sql.length() + 20).append(trim(sql)).append(
-                 hasOffset ? &quot; limit ?,?&quot; : &quot; limit ?&quot;)
-                 .append(SQL_END_DELIMITER).toString();
-     }
-    public String getLimitString(String sql, int offset, int limit) {
-         sql = trim(sql);
-         StringBuffer sb = new StringBuffer(sql.length() + 20);
-         sb.append(sql);
-        if (offset &gt; 0) {
-             sb.append(&quot; limit &quot;).append(offset).append(&#39;,&#39;).append(limit)
-                     .append(SQL_END_DELIMITER);
-         } else {
-             sb.append(&quot; limit &quot;).append(limit).append(SQL_END_DELIMITER);
-         }
-        return sb.toString();
-     }
-    public boolean supportsLimit() {
-        return true;
-     }
-    private String trim(String sql) {
-         sql = sql.trim();
-        if (sql.endsWith(SQL_END_DELIMITER)) {
-             sql = sql.substring(0, sql.length() - 1</p>
-<pre><code>                - SQL_END_DELIMITER.length());
-     }
-    return sql;
- }
-</code></pre><p>}</p>
-<p>接下来的工作就是把LimitSqlExecutor注入ibatis中。我们是通过spring来使用ibatis的，所以在我们的dao基类中执行注入，代码如下：</p>
-<p>package com.aladdin.dao.ibatis;
-import java.io.Serializable;
-import java.util.List;
-import org.springframework.orm.ObjectRetrievalFailureException;
-import org.springframework.orm.ibatis.support.SqlMapClientDaoSupport;
-import com.aladdin.dao.ibatis.ext.LimitSqlExecutor;
-import com.aladdin.domain.BaseObject;
-import com.aladdin.util.ReflectUtil;
-import com.ibatis.sqlmap.client.SqlMapClient;
-import com.ibatis.sqlmap.engine.execution.SqlExecutor;
-import com.ibatis.sqlmap.engine.impl.ExtendedSqlMapClient;
-public abstract class BaseDaoiBatis extends SqlMapClientDaoSupport {
-    private SqlExecutor sqlExecutor;
-    public SqlExecutor getSqlExecutor() {
-        return sqlExecutor;
-     }
-    public void setSqlExecutor(SqlExecutor sqlExecutor) {
-        this.sqlExecutor = sqlExecutor;
-     }
-    public void setEnableLimit(boolean enableLimit) {
-        if (sqlExecutor instanceof LimitSqlExecutor) {
-             ((LimitSqlExecutor) sqlExecutor).setEnableLimit(enableLimit);
-         }
-     }
-    public void initialize() throws Exception {
-        if (sqlExecutor != null) {
-             SqlMapClient sqlMapClient = getSqlMapClientTemplate()
-                     .getSqlMapClient();
-            if (sqlMapClient instanceof ExtendedSqlMapClient) {
-                 ReflectUtil.setFieldValue(((ExtendedSqlMapClient) sqlMapClient)
-                         .getDelegate(), &quot;sqlExecutor&quot;, SqlExecutor.class,
-                         sqlExecutor);
-             }
-         }
-     }
-     ...
-}</p>
-<hr>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/框架汇总/">框架汇总</a></li></span><span class="breadcrumb"><li><a href="/categories/框架汇总/">框架汇总</a></li><li><a href="/categories/框架汇总/ORM/">ORM</a></li><li><a href="/categories/框架汇总/ORM/ibatis/">ibatis</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ORM/" class="label label-primary">ORM</a><a href="/tags/ibatis/" class="label label-success">ibatis</a><a href="/tags/框架汇总/" class="label label-info">框架汇总</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:29"datetime="2014-03-07 09:54:29"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-框架汇总-ORM-ibatis--对ibatis分页功能的改进/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-框架汇总-ORM-ibatis--对ibatis分页功能的改进" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-eclipse--Eclipse调优及使用小细节/">Eclipse 调优及使用小细节</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:29.000Z"> <a href="/2014/02/02/2014-02-02-eclipse--Eclipse调优及使用小细节/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="eclipse-">Eclipse 调优及使用小细节</h1>
-<h3 id="eclipse-">Eclipse 调优及使用小细节</h3>
-<p>下了个eclipse JUNO，界面有了很大改变，感觉更小清新了。不啰嗦了，直接上干货。</p>
-<p>eclipse4.2的界面：</p>
-<p> <img src="" alt="eclipse调优及使用小细节"></p>
-<p>elicpse是我新装的，所以照着以前的内容一起实践了一下</p>
-<p><strong>装插件，现在eclipse的插件安装很方便，从网上下载下来直接扔到dropin文件夹就行</strong></p>
-<p>├─findbugs</p>
-<p>├─jadeclipse</p>
-<p>├─m2eclipse</p>
-<p>├─site-1.8.7</p>
-<p>├─spket-1.6.18</p>
-<p>├─tomcat_3.3.0
-findbug是很好用的一个代码检查工具</p>
-<p>jad是用来反编译的工具
-m2eclipse是mvn的一个插件工具</p>
-<p>site是svn的插件工具
-spket是用来搞extjs</p>
-<p>tomcat顾名思义就是tomcat的集成工具
-还有一个umlet是用来画uml图的工具</p>
-<p><strong>调整内存和启动项</strong>
-加大JVM非堆内存</p>
-<p>-vmargs -Xms128M -Xmx512M -XX:PermSize=64M -XX:MaxPermSize=128M</p>
-<p>A 各个参数的含义</p>
-<p>JVM初始分配的内存由-Xms指定，默认是物理内存的1/64；</p>
-<p>JVM最大分配的内存由-Xmx指定，默认是物理内存的1/4。默认空余堆内存小于40%时，JVM就会增大堆直到-Xmx的最大限制；空余堆内 存大于70%时，JVM会减少堆直到-Xms的最小限制。因此服务器一般设置-Xms、-Xmx相等以避免在每次GC 后调整堆的大小</p>
-<p>JVM使用-XX:PermSize设置非堆内存初始值，默认是物理内存的1/64；由XX:MaxPermSize设置最大非堆内存的大小，默认是物理内存的1/4。</p>
-<p>B  Eclipse.ini文件的配置</p>
-<p>-vmargs</p>
-<p>-Xms128M</p>
-<p>-Xmx512M</p>
-<p>-XX:PermSize=64M</p>
-<p>-XX:MaxPermSize=128M</p>
-<p>实际运行的结果可以通过Eclipse中“Help”-“About Eclipse SDK”窗口里面的“Configuration Details”按钮进行查看。
-参考： <a href="http://hi.baidu.com/injava/item/9dee73d67f77fd94270ae777" target="_blank"><a href="http://hi.baidu.com/injava/item/9dee73d67f77fd94270ae777">http://hi.baidu.com/injava/item/9dee73d67f77fd94270ae777</a></a></p>
-<hr>
-<p><strong>取消不需要加载的模块及自动验证的配置文件</strong></p>
-<p>一个系统20%的功能往往能够满足80%的需求，MyEclipse也不例外，我们在大多数时候只需要20%的系统功能，所以可以将一些不使用的模 块禁止加载启动。通过Windows - Preferences打开配置窗口，依次选择左侧的General - Startup and Shutdown，这个时候在右侧就显示出了Eclipse启动时加载的模块，可以根据自己的实际情况去除一些模块。</p>
-<p>默认情况下MyEclipse在启动的时候会自动验证每个项目的配置文件，这是一个非常耗时的过程，可以在Preferences窗口依次选择 MyEclipse - Validation，然后在右侧的Validator列表中只保留 Manual 项就可以了。如果需要验证的时候只需要选中文件，然后右键选择 MyEclipse - Run Validation就可以了。</p>
-<p><strong> eclipse设置自动提示</strong></p>
-<p>默认是输入&quot;.&quot;后出现自动提示，用于类成员的自动提示，可是有时候我们希望它能在我们输入类的首字母后就出现自动提示，可以节省大量的输入时间（虽然按alt + /会出现提示，但还是要多按一次按键，太麻烦了）。</p>
-<p> 从Window -&gt; preferences -&gt; Java -&gt; Editor -&gt; Content assist -&gt; Auto-Activation下，我们可以在&quot;.&quot;号后面加入我们需要自动提示的首字幕，比如&quot;ahiz&quot;。</p>
-<p>然后我们回到Eclipse的开发环境，输入&quot;a&quot;，提示就出现了。但是我们可以发现，这个Auto-Activation下的输入框里最多只能输 入5个字母，也许是Eclipse的开发人员担心我们输入的太多会影响性能，但计算机的性能不用白不用，所以我们要打破这个限制。</p>
-<p>在&quot;.&quot;后面随便输入几个字符，比如&quot;abij&quot;，然后回到开发环境，File -&gt; export -&gt; general -&gt; preferences -&gt; 选一个地方保存你的首选项，比如C:\a.epf</p>
-<p>用任何文本编辑器打开a.epf，查找字符串“abij”，找到以后，替换成“abcdefghijklmnopqrstuvwxyz”，总之就是 你想怎样就怎样！！然后回到Eclipse，File -&gt; import -&gt; general -&gt; preferences -&gt; 导入刚才的a.epf文件。此时你会发现输入任何字幕都可以得到自动提示了。爽！！！</p>
-<p>最后：自动提示弹出的时间最好改成100毫秒以下，这样会比较爽一点，不然你都完事了，自动提示才弹出来:)，不过也要看机器性能。</p>
-<p>参考 ：<a href="http://www.whhpaccp.com/hpaccp/studyjava_08243792.html#" target="_blank"><a href="http://www.whhpaccp.com/hpaccp/studyjava_08243792.html/#">http://www.whhpaccp.com/hpaccp/studyjava_08243792.html/#</a></a></p>
-<p><strong>设置java的环境变量及其配置</strong></p>
-<p>这个内容本来是最开始就应该操作的，这里算是插播一下，位置在 我的电脑-属性-高级-系统变量-</p>
-<p>JAVA_HOME ：JAVA的JDK安装的目录C:\Program Files\Java\jdk1.6.0_21</p>
-<p>PATH:最前面追加 .;%JAVA_HOME%\bin;</p>
-<p><strong>myeclipse启动tomcat console中没有信息提示的情况</strong></p>
-<p>这个应该是最开始用eclipse犯的错误，各种system.out，但是tomcat的console一直没有内容，其实你只要检查一下将Console中的“Open Console”切换成“Java Stack Trace Console”试试。</p>
-<p>参考：<a href="http://menglimengwai.iteye.com/blog/370043" target="_blank"><a href="http://menglimengwai.iteye.com/blog/370043">http://menglimengwai.iteye.com/blog/370043</a></a></p>
-<p><strong>eclipse常用的快捷键</strong>
-【ALT+/】此快捷键为用户编辑的好帮手，能为用户提供内容的辅助，不要为记不全方法和属性名称犯愁，当记不全类、方法和属性的名字时，多体验一下【ALT+/】快捷键带来的好处吧。</p>
-<p>【Ctrl+O】显示类中方法和属性的大纲，能快速定位类的方法和属性，在查找Bug时非常有用。</p>
-<p>【Ctrl+/】快速添加注释，能为光标所在行或所选定行快速添加注释或取消注释，在调试的时候可能总会需要注释一些东西或取消注释，现在好了，不需要每行进行重复的注释。</p>
-<p>【Ctrl+D】删除当前行，这也是笔者的最爱之一，不用为删除一行而按那么多次的删除键。</p>
-<p>【Ctrl+M】窗口最大化和还原，用户在窗口中进行操作时，总会觉得当前窗口小（尤其在编写代码时），现在好了，试试【Ctrl+M】快捷键。</p>
-<p>【Ctrl+K】、【Ctrl++Shift+K】快速向下和向上查找选定的内容，从此不再需要用鼠标单击查找对话框了。</p>
-<p>【Ctrl+Shift+T】查找工作空间（Workspace）构建路径中的可找到Java类文件，不要为找不到类而痛苦，而且可以使用“/*”、“？”等通配符。</p>
-<p>【Ctrl+Shift+R】和【Ctrl+Shift+T】对应，查找工作空间（Workspace）中的所有文件（包括Java文件），也可以使用通配符。</p>
-<p>【Ctrl+Shift+G】查找类、方法和属性的引用。这是一个非常实用的快捷键，例如要修改引用某个方法的代码，可以通过【Ctrl+Shift+G】快捷键迅速定位所有引用此方法的位置。</p>
-<p>【Ctrl+Shift+O】快速生成import，当从网上拷贝一段程序后，不知道如何import进所调用的类，试试【Ctrl+Shift+O】快捷键，一定会有惊喜。</p>
-<p>【Ctrl+Shift+F】格式化代码，书写格式规范的代码是每一个程序员的必修之课，当看见某段代码极不顺眼时，选定后按【Ctrl+Shift+F】快捷键可以格式化这段代码，如果不选定代码则默认格式化当前文件（Java文件）。</p>
-<p>【ALT+Shift+W】查找当前文件所在项目中的路径，可以快速定位浏览器视图的位置，如果想查找某个文件所在的包时，此快捷键非常有用（特别在比较大的项目中）。</p>
-<p>【Ctrl+L】定位到当前编辑器的某一行，对非Java文件也有效。</p>
-<p>【Alt+←】、【Alt+→】后退历史记录和前进历史记录，在跟踪代码时非常有用，用户可能查找了几个有关联的地方，但可能记不清楚了，可以通过这两个快捷键定位查找的顺序。</p>
-<p>【F3】快速定位光标位置的某个类、方法和属性。</p>
-<p>【F4】显示类的继承关系，并打开类继承视图。</p>
-<p>【Ctrl+Shift+B】：在当前行设置断点或取消设置的断点。</p>
-<p>【F11】：调试最后一次执行的程序。</p>
-<p>【Ctrl+F11】：运行最后一次执行的程序。</p>
-<p>【F5】：跟踪到方法中，当程序执行到某方法时，可以按【F5】键跟踪到方法中。</p>
-<p>【F6】：单步执行程序。</p>
-<p>【F7】：执行完方法，返回到调用此方法的后一条语句。</p>
-<p>【F8】：继续执行，到下一个断点或程序结束。</p>
-<p>【Ctrl+C】：复制。</p>
-<p>【Ctrl+X】：剪切。</p>
-<p>【Ctrl+V】：粘贴。</p>
-<p>【Ctrl+S】：保存文件。</p>
-<p>【Ctrl+Z】：撤销。</p>
-<p>【Ctrl+Y】：重复。</p>
-<p>【Ctrl+F】：查找。</p>
-<p>【Ctrl+F6】：切换到下一个编辑器。</p>
-<p>【Ctrl+Shift+F6】：切换到上一个编辑器。</p>
-<p>【Ctrl+F7】：切换到下一个视图。</p>
-<p>【Ctrl+Shift+F7】：切换到上一个视图。</p>
-<p>【Ctrl+F8】：切换到下一个透视图。</p>
-<p>【Ctrl+Shift+F8】：切换到上一个透视图。</p>
-<hr>
-<ol>
-<li><p>edit-&gt;content Assist - &gt; add      Alt+/ 代码关联</p>
-</li>
-<li><p>Window -&gt; Next Editor -&gt; add    Ctrl+Tab 切换窗口</p>
-</li>
-<li><p>Run/Debug Toggle Line Breakpoint -&gt; add Ctrl+` 在调试的时候 增删断点</p>
-</li>
-<li><p>Source-&gt; Surround with try/catch Block -&gt; Ctrl+Shift+v 增加try catch 框框</p>
-</li>
-<li><p>Source -&gt; Generate Getters and Setters -&gt; Ctrl+Shift+. 增加get set 方法</p>
-</li>
-</ol>
-<hr>
-<p>Alt+/ 代码助手完成一些代码的插入(但一般和输入法有冲突,可以修改输入法的热键,也可以暂用Alt+/来代替)</p>
-<p>Ctrl+1:光标停在某变量上，按Ctrl+1键，可以提供快速重构方案。选中若干行，按Ctrl+1键可将此段代码放入for、while、if、do或try等代码块中。</p>
-<p>双击左括号（小括号、中括号、大括号），将选择括号内的所有内容。</p>
-<p>Alt+Enter 显示当前选择资源(工程,or 文件 or文件)的属性</p>
-<p>Ctrl+K:将光标停留在变量上，按Ctrl+K键可以查找到下一个同样的变量</p>
-<p>Ctrl+Shift+K:和Ctrl+K查找的方向相反</p>
-<p>Ctrl+E 快速显示当前Editer的下拉列表(如果当前页面没有显示的用黑体表示)</p>
-<p>Ctrl+Shift+E 显示管理当前打开的所有的View的管理器(可以选择关闭,激活等操作)</p>
-<p>Ctrl+Q 定位到最后编辑的地方</p>
-<p>Ctrl+L 定位在某行 (对于程序超过100的人就有福音了)</p>
-<p>Ctrl+M 最大化当前的Edit或View (再按则反之)</p>
-<p>Ctrl+/ 注释当前行,再按则取消注释</p>
-<p>Ctrl+T 快速显示当前类的继承结构</p>
-<p>Ctrl+Shift-T: 打开类型（Open type）。如果你不是有意磨洋工，还是忘记通过源码树（source tree）打开的方式吧。</p>
-<p>Ctrl+O:在代码中打开类似大纲视图的小窗口</p>
-<p>Ctrl+鼠标停留:可以显示类和方法的源码</p>
-<p>Ctrl+H:打开搜索窗口</p>
-<p>Ctrl+/(小键盘) 折叠当前类中的所有代码</p>
-<p>Ctrl+×(小键盘) 展开当前类中的所有代码</p>
-<p>-----------Ctrl+Shift 系列-----------</p>
-<p>Ctrl+Shift+F 格式化当前代码</p>
-<p>Ctrl+Shift+X 把当前选中的文本全部变味小写</p>
-<p>Ctrl+Shift+Y 把当前选中的文本全部变为小写</p>
-<p>Ctrl+Shift+O:快速地导入import</p>
-<p>Ctrl+Shift+R:打开资源 open Resource</p>
-<p>F3:打开声明该引用的文件</p>
-<p>F4:打开类型层次结构</p>
-<p>F5:单步跳入</p>
-<p>F6:单步跳过</p>
-<p>F7:单步跳出</p>
-<p>F8:继续，如果后面没有断点，程序将运行完</p>
-<p>Ctrl+D: 删除当前行</p>
-<p>Ctrl+Alt+↓ 复制当前行到下一行(复制增加)</p>
-<p>Ctrl+Alt+↑ 复制当前行到上一行(复制增加)</p>
-<p>Alt+↓ 当前行和下面一行交互位置(特别实用,可以省去先剪切,再粘贴了)</p>
-<p>Alt+↑ 当前行和上面一行交互位置(同上)</p>
-<p>Shift+Enter 在当前行的下一行插入空行(这时鼠标可以在当前行的任一位置,不一定是最后)</p>
-<p>Ctrl+Shift+Enter 在当前行插入空行(原理同上条)</p>
-<p>Alt+← 前一个编辑的页面</p>
-<p>Alt+→ 下一个编辑的页面(当然是针对上面那条来说了)</p>
-<p>Ctrl+Shift+S:保存全部</p>
-<p>Ctrl+W 关闭当前Editer</p>
-<p>Ctrl+Shift+F4 关闭所有打开的Editer</p>
-<p>Ctrl+Shift+G: 在workspace中搜索引用</p>
-<p>Ctrl+Shift+P 定位到对于的匹配符(譬如{}) (从前面定位后面时,光标要在匹配符里面,后面到前面,则反之)</p>
-<p>Ctrl+J 正向增量查找(按下Ctrl+J后,你所输入的每个字母编辑器都提供快速匹配定位到某个单词,如果没有,则在stutes line中显示没有找到了,查一个单词时,特别实用,这个功能Idea两年前就有了)</p>
-<p>Ctrl+Shift+J 反向增量查找(和上条相同,只不过是从后往前查)
-来源： <a href="[http://www.open-open.com/lib/view/open1348033080365.html](http://www.open-open.com/lib/view/open1348033080365.html)">[http://www.open-open.com/lib/view/open1348033080365.html](http://www.open-open.com/lib/view/open1348033080365.html)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/eclipse/">eclipse</a></li></span></span> | <span class="tags">Tagged <a href="/tags/eclipse/" class="label label-primary">eclipse</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:29"datetime="2014-03-07 09:54:29"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-eclipse--Eclipse调优及使用小细节/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-eclipse--Eclipse调优及使用小细节" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-架构师-架构--网站架构相关PPT、文章整理（更新于2009-7-15）/">网站架构相关PPT、文章整理（更新于2009</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:28.000Z"> <a href="/2014/02/02/2014-02-02-架构师-架构--网站架构相关PPT、文章整理（更新于2009-7-15）/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-ppt-2009-7-15-">网站架构相关PPT、文章整理（更新于2009-7-15）</h1>
-<h1 id="-bluedavy-blog-http-www-blogjava-net-bluedavy-"><a href="http://www.blogjava.net/BlueDavy/" target="_blank">BlueDavy之技术Blog</a></h1>
-<p>理论不懂就实践，实践不会就学理论！</p>
-<h2 id="-ppt-2009-7-15-http-www-blogjava-net-bluedavy-archive-2009-04-28-267970-html-"><a href="http://www.blogjava.net/BlueDavy/archive/2009/04/28/267970.html" target="_blank">网站架构相关PPT、文章整理（更新于2009-7-15）</a></h2>
-<p>在这篇blog中放置了我收集的一些网站架构相关的PPT和文章，提供给大家下载，如果大家有相关的好的PPT、文章的话，也欢迎推荐给我，非常感谢，:)，这篇blog的内容也会随着我收集的东西增加而变化，同时也会增加我对于这些PPT、文章的看法和评价。
-1、amazon
-<a href="http://www.bluedavy.com/iarch/amazon/amazon_dynamo_sosp2007.pdf" target="_blank">Amazon的分布式key-value存储系统(dynamo)的论文</a>
-2、ebay（我对于eBay这几个PPT的一些看法和评价：<a href="http://www.blogjava.net/BlueDavy/archive/2009/07/24/288055.html" target="_blank"><a href="http://www.blogjava.net/BlueDavy/archive/2009/07/24/288055.html">http://www.blogjava.net/BlueDavy/archive/2009/07/24/288055.html</a></a>）
-<a href="http://www.bluedavy.com/iarch/ebay/ebay_architecture.pdf" target="_blank">ebay架构演变历程（The eBay Architecture）</a>
-<a href="http://www.bluedavy.com/iarch/ebay/ebay_arch_principles.pdf" target="_blank">ebay架构原则（eBay architecture principles）</a>
-<a href="http://www.bluedavy.com/iarch/ebay/teaching_machines_to_fish.pdf" target="_blank">ebay的自动化（Teaching machines to fish）</a>
-3、facebook
-<a href="http://www.bluedavy.com/iarch/facebook/facebook_performance_caching-dc.pdf" target="_blank">facebook的缓存系统</a>
-<a href="http://www.bluedavy.com/iarch/facebook/facebook_architecture.pdf" target="_blank">facebook的架构</a>
-<a href="http://www.facebook.com/note.php?note_id=76191543919" target="_blank">facebook百亿相片的高效存储</a>
-4、fotolog
-<a href="http://www.bluedavy.com/iarch/fotolog/scaling.ppt" target="_blank">扩展世界上最大的图片blog社区</a>
-5、google
-<a href="http://www.bluedavy.com/iarch/google/gfs.ppt" target="_blank">GFS介绍</a>
-<a href="http://www.bluedavy.com/iarch/google/gfs.pdf" target="_blank">GFS论文</a>
-<a href="http://www.bluedavy.com/iarch/google/mapreduce.ppt" target="_blank">Mapreduce介绍</a>
-<a href="http://www.bluedavy.com/iarch/google/mapreduce.pdf" target="_blank">Mapreduce论文</a>
-<a href="http://www.bluedavy.com/iarch/google/even_faster_websites.ppt" target="_blank">Google在web前端方面的经验（even faster websites）</a>
-<a href="http://www.bluedavy.com/iarch/google/challenges_in_building_large-scale_irs.pdf" target="_blank">建设大型可扩展的IRS系统的挑战（challenges in building large-scale IRS）</a>
-<a href="http://www.bluedavy.com/iarch/google/lock_service_for_loosely-coupled_distributed_systems.pdf" target="_blank">松耦合分布式系统中的锁服务（lock service for loosly-coupled distributed system）</a>
-<a href="http://www.bluedavy.com/iarch/google/modular_software_upgrades_for_distributed_program.pdf" target="_blank">“滚木移石”不停机升级策略论文（modular software upgrades for distributed program）</a>
-<a href="http://www.infoq.com/news/2009/06/wave" target="_blank">Google wave的架构</a>
-6、linkedin
-<a href="http://www.bluedavy.com/iarch/linkedin/linkedin_communication_architecture.pdf" target="_blank">linkedin远程通讯架构</a>
-7、livejournal
-<a href="http://www.bluedavy.com/iarch/livejournal/livejournal_backend_2005.pdf" target="_blank">livejournal架构演变历程</a>
-8、myspace
-<a href="http://www.bluedavy.com/iarch/myspace/behind_the_scenes_at_myspace.pdf" target="_blank">myspace架构</a>
-9、wikipedia
-<a href="http://www.bluedavy.com/iarch/wikipedia/wikipedia_arch.pdf" target="_blank">wikipedia架构</a>
-10、yahoo
-<a href="http://www.bluedavy.com/iarch/yahoo/yapache_oscon2006.pdf" target="_blank">yahoo定制的apache--yapache</a>
-11、youtube
-<a href="http://www.bluedavy.com/iarch/youtube/scaling_youtube.pdf" target="_blank">scaling youtube</a>
-12、Twitter
-<a href="http://natishalom.typepad.com/nati_shaloms_blog/2009/04/writing-your-own-scalable-twitter.html" target="_blank">Designing a Scalable Twitter</a>
-13、豆瓣
-<a href="http://www.bluedavy.com/iarch/douban/douban_qcon2009_beijing.pdf" target="_blank">技术演变历程（QCon 2009北京）</a>
-14、freewheel
-<a href="http://www.bluedavy.com/iarch/freewheel/hadoop_qcon2009_beijing.pdf" target="_blank">架构（QCon 2009北京）</a>
-15、优酷
-<a href="http://www.bluedavy.com/iarch/youku/youku_arch_qcon2009_beijing.pdf" target="_blank">架构（QCon 2009北京）</a>
-16、淘宝
-<a href="http://www.bluedavy.com/iarch/taobao/taobao_arch_qcon_2009.pdf" target="_blank">技术演变历程（QCon 2009北京）</a>
-17、twitter
-<a href="http://www.bluedavy.com/iarch/twitter/Improving_the_Performance_and_Scalability_of_Twitter.pdf" target="_blank">Improving the Performance and Scalability of Twitter</a></p>
-<p>posted on 2009-04-28 20:29 <a href="http://www.blogjava.net/BlueDavy/" target="_blank">BlueDavy</a> 阅读(38737) <a href="">评论(66)</a>  <a href="http://www.blogjava.net/BlueDavy/admin/EditPosts.aspx?postid=267970" target="_blank">编辑</a>  <a href="http://www.blogjava.net/BlueDavy/AddToFavorite.aspx?id=267970" target="_blank">收藏</a> 所属分类: <a href="http://www.blogjava.net/BlueDavy/category/32839.html" target="_blank">Internet</a></p>
-<p> <img src="" alt=""></p>
-<p><a href=""></a> <a href=""></a></p>
-<p>[</p>
-<h3 id="-">评论</h3>
-<p>]()</p>
-<h3 id="-permalink-re-ppt-re-ppt-2009-04-28-21-20-ronghao-http-www-blogjava-net-ronghao-"><a href=""></a><a href="&quot;permalink: re: 网站架构相关PPT、文章整理&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理  2009-04-28 21:20  <a href="http://www.blogjava.net/RongHao/">ronghao</a></h3>
-<p>非常想听到你的看法：）  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=ronghao" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-re-ppt-2009-04-28-21-58-ericfan-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理[未登录]&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理[未登录]  2009-04-28 21:58  <a href="">EricFan</a></h3>
-<p>跪谢分享，全部下来贪婪地阅读  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=EricFan" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-re-ppt-2009-04-28-22-12-xiaochong-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理  2009-04-28 22:12  <a href="">xiaochong</a></h3>
-<p>Good,非常感谢分享！  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=xiaochong" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-re-ppt-2009-04-29-10-47-java-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理[未登录]&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理[未登录]  2009-04-29 10:47  <a href="">java</a></h3>
-<p>太感谢了，正在学习呢，！大家可以相互交流weiwu86@gmail.com  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=java+" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-re-ppt-2009-04-29-18-33-beansoft-http-www-blogjava-net-beansoft-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理  2009-04-29 18:33  <a href="http://www.blogjava.net/beansoft/">BeanSoft</a></h3>
-<p>...... 等哪天负载上去了再学习.  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=BeanSoft" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-re-ppt-2009-05-03-15-57-http-www-blogjava-net-wenhl5656-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理  2009-05-03 15:57  <a href="http://www.blogjava.net/wenhl5656/">爱吃鱼头</a></h3>
-<p>Good!!
-现在正在看关于Google的MapReduce和Bigtable呢，谢谢！  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e7%88%b1%e5%90%83%e9%b1%bc%e5%a4%b4" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-re-ppt-2009-05-05-13-36-tin-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理[未登录]&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理[未登录]  2009-05-05 13:36  <a href="">Tin</a></h3>
-<p>谢谢BlueDavy，这些资料非常有用，而且大都是PDF，查阅很方便。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=Tin" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-re-ppt-2009-05-05-17-39-zzh-http-tphotosgallery-blogspot-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理[未登录]&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理[未登录]  2009-05-05 17:39  <a href="http://tphotosgallery.blogspot.com/">zzh</a></h3>
-<p>非常感谢，有点儿激动。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=zzh" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-5-14-re-ppt-2009-5-14-2009-05-14-17-18-haha-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-5-14）[未登录]&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-5-14）[未登录]  2009-05-14 17:18  <a href="">haha</a></h3>
-<p>哇塞，太谢谢了.  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=haha" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-5-14-re-ppt-2009-5-14-2009-05-25-00-16-milk-mouse-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-5-14）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-5-14）  2009-05-25 00:16  <a href="">milk-mouse</a></h3>
-<p><a href="http://www.riawork.org/" target="_blank"><a href="http://www.riawork.org/">http://www.riawork.org/</a></a>
-怎么打不开  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=milk-mouse" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-5-14-re-ppt-2009-5-14-2009-05-25-09-13-cowrie-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-5-14）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-5-14）  2009-05-25 09:13  <a href="">cowrie</a></h3>
-<p>下不了啊，怎么回事啊  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=cowrie" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-5-14-re-ppt-2009-5-14-2009-05-25-11-41-bluedavy-http-www-blogjava-net-bluedavy-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-5-14）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-5-14）  2009-05-25 11:41  <a href="http://www.blogjava.net/BlueDavy/">BlueDavy</a></h3>
-<p>@cowrie
-...服务器坏了，好了后我再通知大家。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=BlueDavy" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-5-14-re-ppt-2009-5-14-2009-05-26-21-30-mellon-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-5-14）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-5-14）  2009-05-26 21:30  <a href="">mellon</a></h3>
-<p>下不了哦。
-早点看到这个blog文章就好了，面试的事后很多问题也就有更多想法了。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=mellon" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-5-14-re-ppt-2009-5-14-2009-05-31-17-50-bluedavy-http-www-blogjava-net-bluedavy-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-5-14）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-5-14）  2009-05-31 17:50  <a href="http://www.blogjava.net/BlueDavy/">BlueDavy</a></h3>
-<p>服务器恢复了，需要的同学们可以继续下载了。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=BlueDavy" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-6-9-re-ppt-2009-6-9-2009-06-16-15-44-http-www-flyjie-com-about-asp-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-6-9）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-6-9）  2009-06-16 15:44  <a href="http://www.flyjie.com/about.asp">覆膜</a></h3>
-<p>有没有具体一点的介绍！  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e8%a6%86%e8%86%9c" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-6-9-re-ppt-2009-6-9-2009-06-29-13-41-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-6-9）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-6-9）  2009-06-29 13:41  <a href="">外语不好</a></h3>
-<p>望洋兴叹啊。。。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e5%a4%96%e8%af%ad%e4%b8%8d%e5%a5%bd" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-6-9-re-ppt-2009-6-9-2009-06-29-17-39-walter-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-6-9）[未登录]&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-6-9）[未登录]  2009-06-29 17:39  <a href="">walter</a></h3>
-<p>very useful, thanks very very much.  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=walter+" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-6-9-re-ppt-2009-6-9-2009-06-30-09-35-pumaboyd-http-www-pumaboyd-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-6-9）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-6-9）  2009-06-30 09:35  <a href="http://www.pumaboyd.com/">pumaboyd</a></h3>
-<p>非常实用的东西  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=pumaboyd" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-07-24-10-31-zppan-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-07-24 10:31  <a href="">zppan</a></h3>
-<p>15、优酷
-架构（QCon 2009北京）
-16、淘宝
-技术演变历程（QCon 2009北京）
-无法下载。。。。。
-请老大更新一下咯~~~  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=zppan" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-07-24-12-36-bluedavy-http-www-blogjava-net-bluedavy-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-07-24 12:36  <a href="http://www.blogjava.net/BlueDavy/">BlueDavy</a></h3>
-<p>@zppan
-恩？我这看到可以下载的  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=BlueDavy" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-07-31-19-35-asuka4j-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-07-31 19:35  <a href="">Asuka4J</a></h3>
-<p>收集了这么多，实属罕见，非常感谢~  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=Asuka4J" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-08-14-09-56-http-blog-sina-com-cn-egoservice-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-08-14 09:56  <a href="http://blog.sina.com.cn/egoservice">于堡舰</a></h3>
-<p>恩！ 谢谢朋友了,共享这么多,有个问题请教,在看了淘宝构架后发现设计很巧妙,按照淘宝构架的来看200台服务器70亿个点击每天,那么高峰时候如果全是前段服务器也要至少x000+/s的请求,的确成为高海量java程序的代表,不知道osgi在这里扮演个什么样的角色,还有不知分布式系统结构中采用什么样的底层技术RMI?web-service?osgi分布?CORBA?或者其他,才能承受如此多的请求.还希望朋友多多赐教  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e4%ba%8e%e5%a0%a1%e8%88%b0" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-08-28-17-51-http-www-blogjava-net-chgaowei-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-08-28 17:51  <a href="http://www.blogjava.net/chgaowei/">常高伟</a></h3>
-<p>全部下载了，非常感谢你的分享！  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e5%b8%b8%e9%ab%98%e4%bc%9f" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-09-11-16-12-unmatched1m-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-09-11 16:12  <a href="">unmatched1m</a></h3>
-<p>谢谢兄台了，全部下载，  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=unmatched1m" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-09-22-15-19-http-www-juziku-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-09-22 15:19  <a href="http://www.juziku.com/">聚资库</a></h3>
-<p>全部下载了,谢谢分享!!  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e8%81%9a%e8%b5%84%e5%ba%93" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-10-18-11-54-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-10-18 11:54  <a href="">求发展</a></h3>
-<p>谢谢  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e6%b1%82%e5%8f%91%e5%b1%95" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-10-26-16-46-zhyiwww-http-www-blogjava-net-zhyiwww-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-10-26 16:46  <a href="http://www.blogjava.net/zhyiwww/">zhyiwww</a></h3>
-<p>谢谢!!!  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=zhyiwww" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-11-21-03-23-vpsee-http-www-vpsee-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-11-21 03:23  <a href="http://www.vpsee.com/">vpsee</a></h3>
-<p>这里还有一些架构介绍：
-Ravelry 的 Rails 架构
-<a href="http://www.vpsee.com/2009/09/ravelry-rails-arch/" target="_blank"><a href="http://www.vpsee.com/2009/09/ravelry-rails-arch/">http://www.vpsee.com/2009/09/ravelry-rails-arch/</a></a>
-Craigslist 的 LAMP 架构
-<a href="http://www.vpsee.com/2009/09/craigslist-lamp-arch/" target="_blank"><a href="http://www.vpsee.com/2009/09/craigslist-lamp-arch/">http://www.vpsee.com/2009/09/craigslist-lamp-arch/</a></a>
-GitHub 的 Rails/Git 架构
-<a href="http://www.vpsee.com/2009/10/github-rails-arch/" target="_blank"><a href="http://www.vpsee.com/2009/10/github-rails-arch/">http://www.vpsee.com/2009/10/github-rails-arch/</a></a>
-Netlog 的数据库及 LAMP 架构
-<a href="http://www.vpsee.com/2009/07/netlog-db-lamp-arch/" target="_blank"><a href="http://www.vpsee.com/2009/07/netlog-db-lamp-arch/">http://www.vpsee.com/2009/07/netlog-db-lamp-arch/</a></a>  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=vpsee" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-11-23-13-48-cloudward-http-www-cloudward-cn-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-11-23 13:48  <a href="http://www.cloudward.cn/">cloudward</a></h3>
-<p>做好事了！有机会可以把这些内容组织起来进行一下讨论，在交流中带来更多认识。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=cloudward" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-11-27-16-11-john-wang-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-11-27 16:11  <a href="">John Wang</a></h3>
-<p>非常感谢。。。分享。。。让世界自由联通  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=John+Wang" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-12-08-15-08-rs-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-12-08 15:08  <a href="">Rs</a></h3>
-<p>对不起，下载链接全部不能用了，能发送一份给我么？
-severe (at) sina.com  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=Rs" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2009-12-08-22-24-bluedavy-http-www-blogjava-net-bluedavy-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2009-12-08 22:24  <a href="http://www.blogjava.net/BlueDavy/">BlueDavy</a></h3>
-<p>@Rs
-不好意思，那个网站被...了，等挪好地方后再来这里通知。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=BlueDavy" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2010-01-26-10-38-osgiai-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2010-01-26 10:38  <a href="">OSGiai爱好者</a></h3>
-<p>请教一个关于OSGi问题，使用SpringDM+ibatis时，加载oralce驱动(ojdbc5.jar)老不行，这个怎么解决；）  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=OSGiai%e7%88%b1%e5%a5%bd%e8%80%85" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2010-02-02-10-23-lovvver-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2010-02-02 10:23  <a href="">lovvver</a></h3>
-<p>老哥，网站什么时候搬好啊，早先没有下载，后来发现不能下载了，后悔中。。。啊~  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=lovvver" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2010-02-02-15-38-bluedavy-http-www-blogjava-net-bluedavy-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2010-02-02 15:38  <a href="http://www.blogjava.net/BlueDavy/">BlueDavy</a></h3>
-<p>@lovvver
-这些东西争取这周末前搬好，:)  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=BlueDavy" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2010-02-24-23-56-bluedavy-http-www-blogjava-net-bluedavy-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2010-02-24 23:56  <a href="http://www.blogjava.net/BlueDavy/">BlueDavy</a></h3>
-<p>@lovvver
-文档已挪至新的网站，可以重新下载了。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=BlueDavy" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2010-03-01-09-32-lovvver-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2010-03-01 09:32  <a href="">lovvver</a></h3>
-<p>@BlueDavy
-谢谢谢谢，一直关注你的网站架构方面的内容，继续向你学习。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=lovvver" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2010-03-26-14-25-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2010-03-26 14:25  <a href="">路人</a></h3>
-<p>相当感谢
-有好东西一定告诉你  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e8%b7%af%e4%ba%ba" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2010-04-27-14-32-zuozhengfeng-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2010-04-27 14:32  <a href="">zuozhengfeng</a></h3>
-<p>感谢提供这么好的东西  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=zuozhengfeng" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2010-08-12-11-59-someone-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2010-08-12 11:59  <a href="">someone</a></h3>
-<p>非常感谢，都是很好的资料  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=someone" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2010-10-15-12-27-http-www-lansine-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2010-10-15 12:27  <a href="http://www.lansine.com/">互联网产品研究</a></h3>
-<p>很有用的资料，赞。
-我也搜集了很多图像搜索的资讯呢。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e4%ba%92%e8%81%94%e7%bd%91%e4%ba%a7%e5%93%81%e7%a0%94%e7%a9%b6" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2010-12-10-20-07-http-www-blogjava-net-heyang-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2010-12-10 20:07  <a href="http://www.blogjava.net/heyang/">何杨</a></h3>
-<p>NB啊！  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e4%bd%95%e6%9d%a8" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2011-03-02-10-32-liqfirst-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2011-03-02 10:32  <a href="">liqfirst</a></h3>
-<p>谢谢 分享，学习了。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=liqfirst" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2011-12-11-12-17-tbw-http-www-100mbuy-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2011-12-11 12:17  <a href="http://www.100mbuy.com/">tbw淘宝商城</a></h3>
-<p>高超技术啊。。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=tbw%e6%b7%98%e5%ae%9d%e5%95%86%e5%9f%8e" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2012-06-02-20-57-tommy-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）[未登录]&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）[未登录]  2012-06-02 20:57  <a href="">Tommy</a></h3>
-<p>资料不能下载了，能帮忙check一下吗？  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=Tommy" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-bluedavy-com-bluedavy-com-2012-06-07-16-55-"><a href="&quot;permalink: bluedavy.com怎么访问不了&quot;">/#</a> <a href=""></a>bluedavy.com怎么访问不了  2012-06-07 16:55  <a href="">游客</a></h3>
-<p>bluedavy.com怎么访问不了  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e6%b8%b8%e5%ae%a2" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2012-08-10-11-05-5yeste-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2012-08-10 11:05  <a href="">5yeste</a></h3>
-<p>好像下不下来呢！可以发到我的邮箱吗，非常谢谢哦！634001201@qq.com  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=5yeste" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2012-10-10-23-07-anic-http-www-cnblogs-com-anic-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2012-10-10 23:07  <a href="http://www.cnblogs.com/anic/">anic</a></h3>
-<p>谢谢分享，回去看  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=anic" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2012-10-11-09-37-abc-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）[未登录]&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）[未登录]  2012-10-11 09:37  <a href="">abc</a></h3>
-<p>不错  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=abc" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2012-10-11-14-35-buyy-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2012-10-11 14:35  <a href="">buyy</a></h3>
-<p>很多都无法下载了？？？？  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=buyy" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2012-10-16-09-46-bruno-http-blog-brunoxu-info-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2012-10-16 09:46  <a href="http://blog.brunoxu.info/">Bruno</a></h3>
-<p>不错的文章，投下贪婪的目光  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=Bruno" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2012-10-16-11-11-ddou-http-imdou-sinaap-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2012-10-16 11:11  <a href="http://imdou.sinaap.com/">ddou</a></h3>
-<p>收集的很全面，多谢分享！  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=ddou" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2012-10-18-23-27-blue7wings-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2012-10-18 23:27  <a href="">blue7wings</a></h3>
-<p>下载链接挂了哦,希望主人能够补上  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=blue7wings" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2012-11-01-09-04-xiaofen-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2012-11-01 09:04  <a href="">xiaofen</a></h3>
-<p>打不开啊。。。这么好的文章打不开啊。。怎么办？  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=xiaofen" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-2012-11-30-12-20-2925808821-qq-com-http-www-dlsvvxn-com-"><a href="&quot;permalink: 寮步婚纱摄影&quot;">/#</a> <a href=""></a>寮步婚纱摄影  2012-11-30 12:20  <a href="http://www.dlsvvxn.com/">2925808821@qq.com</a></h3>
-<p>文章不错哦！给力支持哈！  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=2925808821%40qq.com" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2013-01-20-13-42-http-16688-6000y-net-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2013-01-20 13:42  <a href="http://16688.6000y.net/">軟件下載</a></h3>
-<p>大牛！！  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e8%bb%9f%e4%bb%b6%e4%b8%8b%e8%bc%89" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2013-01-20-13-43-http-buy-shop168-net-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2013-01-20 13:43  <a href="http://buy.shop168.net/">香港購物返利</a></h3>
-<p>文章不错  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e9%a6%99%e6%b8%af%e8%b3%bc%e7%89%a9%e8%bf%94%e5%88%a9" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2013-01-22-11-46-http-www-mybabycastle-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2013-01-22 11:46  <a href="http://www.mybabycastle.com/">龙三公子</a></h3>
-<p>评论蛮多的嘛，可惜文章太久不更新了  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e9%be%99%e4%b8%89%e5%85%ac%e5%ad%90" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2013-02-01-08-48-vpn-http-www-920vpn-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2013-02-01 08:48  <a href="http://www.920vpn.com/">vpn</a></h3>
-<p>我看下对我是否有帮助，我也用用  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=vpn" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2013-03-08-14-27-http-www-rumenla-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2013-03-08 14:27  <a href="http://www.rumenla.com/">英语入门</a></h3>
-<p>谢谢博主的分享，学习了，会经常关注博主的文章的  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e8%8b%b1%e8%af%ad%e5%85%a5%e9%97%a8" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2013-03-21-18-44-http-www-sldhw-net-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2013-03-21 18:44  <a href="http://www.sldhw.net/">男士最佳礼品</a></h3>
-<p>顶起 支持博主  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e7%94%b7%e5%a3%ab%e6%9c%80%e4%bd%b3%e7%a4%bc%e5%93%81" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2013-03-30-20-14-yyg-http-d-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2013-03-30 20:14  <a href="http://d/">yyg</a></h3>
-<p>gfddgdsdfgsfdsgfd  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=yyg" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2013-03-30-20-15-yyg-http-d-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2013-03-30 20:15  <a href="http://d/">yyg</a></h3>
-<p>全是极好的东东，可是下载不了，能不能发到我邮箱？yyguang1@163.com  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=yyg" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2013-04-10-11-06-http-www-qianzhan-com-report-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2013-04-10 11:06  <a href="http://www.qianzhan.com/report">市场调研</a></h3>
-<p>很好的文章,支持下，继续努力，关注中。。。  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e5%b8%82%e5%9c%ba%e8%b0%83%e7%a0%94" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2013-04-19-13-27-http-www-ishowtu-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）  2013-04-19 13:27  <a href="http://www.ishowtu.com/">发型设计</a></h3>
-<p>写的还是不错的<a href="http://www.ishowtu.com/" target="_blank"><a href="http://www.ishowtu.com/">http://www.ishowtu.com/</a></a>  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e5%8f%91%e5%9e%8b%e8%ae%be%e8%ae%a1" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a></p>
-<h3 id="-permalink-re-ppt-2009-7-15-re-ppt-2009-7-15-2013-07-11-11-44-http-www-dugoogle-com-"><a href="&quot;permalink: re: 网站架构相关PPT、文章整理（更新于2009-7-15）&quot;">/#</a> <a href=""></a>re: 网站架构相关PPT、文章整理（更新于2009-7-15）<a href=""></a>  2013-07-11 11:44  <a href="http://www.dugoogle.com/" target="_blank">度哥网</a></h3>
-<p>这个文章很有用，收藏  <a href="">回复</a>  <a href="http://www.blogjava.net/comment?author=%e5%ba%a6%e5%93%a5%e7%bd%91" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href=""></a>
-<a href="http://www.blogjava.net/RequireRegister.aspx" target="_blank">新用户注册</a>  <a href="">刷新评论列表</a>  </p>
-<p><a href=""></a> <a href="http://www.aliyun.com/cps/channel?channel_id=1306&amp;user=0&amp;lv=1">推荐购买云服务器（15%返利+最高千元奖金）</a>   <a href="http://www.cnblogs.com/" target="_blank">博客园</a>  <a href="http://q.cnblogs.com/" target="_blank">博问</a>  <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://job.cnblogs.com/cate-java_programmer/" target="_blank">Java程序员招聘</a> 标题  请输入标题 姓名  请输入你的姓名 主页 请输入验证码 验证码 /*  <img src="http://www.blogjava.net/Modules/CaptchaImage/JpegImage.aspx?cacheid=20130727230733" alt=""> 内容(请不要发表任何与政治相关的内容) 请输入评论内容 Remember Me?   <a href="http://www.blogjava.net/login.aspx?ReturnURL=http://www.blogjava.net/BlueDavy/archive/2009/04/28/267970.html&amp;SourceURL=/BlueDavy/archive/2009/04/28/267970.html" target="_blank">登录</a>       [使用Ctrl+Enter键可以直接提交]      网站导航:</p>
-<p><a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园</a>   <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>   <a href="http://kb.cnblogs.com/" target="_blank">知识库</a>   <a href="http://www.cppblog.com/" target="_blank">C++博客</a>   <a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a>   <a href="http://www.blogjava.net/BlueDavy/archive/2009/04/28/267970.html?opt=admin" target="_blank">管理</a> 相关文章:</p>
-<ul>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/05/04/320080.html" target="_blank">code show: 网络访问超时优化</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/04/16/318503.html" target="_blank">大型应用与SOA</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/04/14/318234.html" target="_blank">《Web容量规划的艺术》书评</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/04/10/317903.html" target="_blank">Unicorn给Twitter带来的效果</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/03/29/316806.html" target="_blank">从超市收银故事看互联网技术</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/03/19/315989.html" target="_blank">杭州程序员圆桌交流第一期–并发编程PPT</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/02/23/313701.html" target="_blank">SOA@eBay读后感</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/01/28/311148.html" target="_blank">在Java中使用协程（Coroutine）</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/11/16/302585.html" target="_blank">继续观看eBay的技术发展</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/09/06/294045.html" target="_blank">【转】王速瑜和我参加架构师接龙的对话</a><br>Powered by: <a href="http://www.blogjava.net/" target="_blank">BlogJava</a> Copyright © BlueDavy<h3 id="-">公告</h3>
-</li>
-</ul>
-<p><a href="http://www.douban.com/subject/3843896/" target="_blank"><img src="" alt=""></a> 
-<a href="http://china.osgiusers.org/" target="_blank"><img src="" alt=""></a>
-<a href="http://feed.feedsky.com/bluedavy" title="BlogJava-BlueDavy之技术Blog" target="_blank"><img src="" alt=""></a> <a href="http://feed.feedsky.com/bluedavy" target="_blank"><img src="" alt="feedsky"></a>
-<a href="http://www.zhuaxia.com/add_channel.php?url=http://feed.feedsky.com/bluedavy" target="_blank"><img src="" alt="抓虾"></a>
-<a href="http://fusion.google.com/add?feedurl=http://feed.feedsky.com/bluedavy" target="_blank"><img src="" alt="google reader"></a>
-<a href="http://www.xianguo.com/subscribe.php?url=http://feed.feedsky.com/bluedavy" target="_blank"><img src="" alt="鲜果"></a></p>
-<h3 id="-">导航</h3>
-<ul>
-<li><a href="http://www.blogjava.net/" target="_blank">BlogJava</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/" target="_blank">首页</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/contact.aspx?id=1" target="_blank">联系</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/rss" target="_blank">聚合</a><a href="http://www.blogjava.net/BlueDavy/rss" target="_blank"><img src="" alt=""></a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/admin/EditPosts.aspx" target="_blank">管理</a>
-<a href="&quot;转到上一个月&quot;">&lt;</a>2009年4月<a href="&quot;转到下一个月&quot;">&gt;</a>日一二三四五六293031123456789<a href="http://www.blogjava.net/BlueDavy/archive/2009/04/10.html" target="_blank">10</a>11121314151617181920212223<a href="http://www.blogjava.net/BlueDavy/archive/2009/04/24.html" target="_blank">24</a>252627<a href="http://www.blogjava.net/BlueDavy/archive/2009/04/28.html" target="_blank">28</a><a href="http://www.blogjava.net/BlueDavy/archive/2009/04/29.html" target="_blank">29</a>30123456789</li>
-</ul>
-<h3 id="-">统计</h3>
-<ul>
-<li>随笔 - 294</li>
-<li>文章 - 2</li>
-<li>评论 - 2068</li>
-<li>引用 - 1</li>
-</ul>
-<h3 id="-">随笔分类</h3>
-<ul>
-<li><a href="http://www.blogjava.net/BlueDavy/category/10609.html" target="_blank">@RIAWork(10)</a> <a href="http://www.blogjava.net/BlueDavy/category/10609.html/rss" title="Subscribe to @RIAWork(10)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/category/32839.html" target="_blank">Internet(20)</a> <a href="http://www.blogjava.net/BlueDavy/category/32839.html/rss" title="Subscribe to Internet(20)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/category/1366.html" target="_blank">Java(82)</a> <a href="http://www.blogjava.net/BlueDavy/category/1366.html/rss" title="Subscribe to Java(82)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/category/8127.html" target="_blank">Javascript(7)</a> <a href="http://www.blogjava.net/BlueDavy/category/8127.html/rss" title="Subscribe to Javascript(7)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/category/18356.html" target="_blank">OSGi、SOA、SCA(81)</a> <a href="http://www.blogjava.net/BlueDavy/category/18356.html/rss" title="Subscribe to OSGi、SOA、SCA(81)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/category/1514.html" target="_blank">Plugin Architecture(10)</a> <a href="http://www.blogjava.net/BlueDavy/category/1514.html/rss" title="Subscribe to Plugin Architecture(10)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/category/1513.html" target="_blank">Workflow(4)</a> <a href="http://www.blogjava.net/BlueDavy/category/1513.html/rss" title="Subscribe to Workflow(4)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/category/11559.html" target="_blank">业界随想(28)</a> <a href="http://www.blogjava.net/BlueDavy/category/11559.html/rss" title="Subscribe to 业界随想(28)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/category/22527.html" target="_blank">数据集成(8)</a> <a href="http://www.blogjava.net/BlueDavy/category/22527.html/rss" title="Subscribe to 数据集成(8)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/category/1911.html" target="_blank">系统设计(38)</a> <a href="http://www.blogjava.net/BlueDavy/category/1911.html/rss" title="Subscribe to 系统设计(38)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/category/1367.html" target="_blank">软件工程(22)</a> <a href="http://www.blogjava.net/BlueDavy/category/1367.html/rss" title="Subscribe to 软件工程(22)" target="_blank">(rss)</a></li>
-</ul>
-<h3 id="-">随笔档案</h3>
-<ul>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/05.html" target="_blank">2010年5月 (3)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/04.html" target="_blank">2010年4月 (4)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/03.html" target="_blank">2010年3月 (3)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/02.html" target="_blank">2010年2月 (1)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2010/01.html" target="_blank">2010年1月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/12.html" target="_blank">2009年12月 (1)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/11.html" target="_blank">2009年11月 (3)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/10.html" target="_blank">2009年10月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/09.html" target="_blank">2009年9月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/08.html" target="_blank">2009年8月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/07.html" target="_blank">2009年7月 (3)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/06.html" target="_blank">2009年6月 (1)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/05.html" target="_blank">2009年5月 (4)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/04.html" target="_blank">2009年4月 (5)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/03.html" target="_blank">2009年3月 (5)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/01.html" target="_blank">2009年1月 (1)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/11.html" target="_blank">2008年11月 (3)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/10.html" target="_blank">2008年10月 (1)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/09.html" target="_blank">2008年9月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/08.html" target="_blank">2008年8月 (1)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/07.html" target="_blank">2008年7月 (4)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/06.html" target="_blank">2008年6月 (4)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/05.html" target="_blank">2008年5月 (3)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/04.html" target="_blank">2008年4月 (1)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/03.html" target="_blank">2008年3月 (3)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/02.html" target="_blank">2008年2月 (1)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/01.html" target="_blank">2008年1月 (10)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/12.html" target="_blank">2007年12月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/11.html" target="_blank">2007年11月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/10.html" target="_blank">2007年10月 (6)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/09.html" target="_blank">2007年9月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/08.html" target="_blank">2007年8月 (4)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/07.html" target="_blank">2007年7月 (5)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/06.html" target="_blank">2007年6月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/05.html" target="_blank">2007年5月 (4)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/04.html" target="_blank">2007年4月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/03.html" target="_blank">2007年3月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/02.html" target="_blank">2007年2月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/01.html" target="_blank">2007年1月 (1)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/12.html" target="_blank">2006年12月 (6)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/11.html" target="_blank">2006年11月 (5)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/10.html" target="_blank">2006年10月 (8)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/09.html" target="_blank">2006年9月 (13)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/08.html" target="_blank">2006年8月 (15)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/07.html" target="_blank">2006年7月 (3)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/06.html" target="_blank">2006年6月 (7)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/05.html" target="_blank">2006年5月 (9)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/04.html" target="_blank">2006年4月 (12)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/03.html" target="_blank">2006年3月 (13)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/02.html" target="_blank">2006年2月 (9)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/01.html" target="_blank">2006年1月 (14)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/12.html" target="_blank">2005年12月 (11)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/11.html" target="_blank">2005年11月 (14)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/10.html" target="_blank">2005年10月 (9)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/09.html" target="_blank">2005年9月 (10)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/08.html" target="_blank">2005年8月 (5)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/07.html" target="_blank">2005年7月 (9)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/06.html" target="_blank">2005年6月 (9)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/05.html" target="_blank">2005年5月 (2)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/02.html" target="_blank">2005年2月 (1)</a></li>
-</ul>
-<h3 id="-">文章档案</h3>
-<ul>
-<li><a href="http://www.blogjava.net/BlueDavy/archives/2005/05.html" target="_blank">2005年5月 (2)</a></li>
-</ul>
-<h3 id="blogger-s">Blogger&#39;s</h3>
-<ul>
-<li><a href="http://www.dbanotes.net/" target="_blank">DBANotes</a></li>
-<li>大名鼎鼎了，勿需多说</li>
-<li><a href="http://www.esbzone.net/" target="_blank">ESBZone</a> <a href="http://www.esbzone.net/feed" title="Subscribe to ESBZone" target="_blank">(rss)</a></li>
-<li>SOA实战者，强烈推荐</li>
-<li><a href="http://kenwublog.com/" target="_blank">kenwu&#39;s blog[推荐]</a> <a href="http://feed.kenwublog.com/" title="Subscribe to kenwu&#39;s blog[推荐]" target="_blank">(rss)</a></li>
-<li>Java底层和JVM的很多文章，强烈推荐。</li>
-<li><a href="http://dreamhead.blogbus.com/" target="_blank">梦想风暴</a></li>
-<li><a href="http://www.blogjava.net/cenwenchu/" target="_blank">西湖边的穷秀才</a></li>
-</ul>
-<h3 id="-">搜索</h3>
-<p>*</p>
-<ul>
-<li></li>
-</ul>
-<h3 id="-http-www-blogjava-net-bluedavy-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/BlueDavy/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
-<ul>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2013/07/19/321796.html#401750" target="_blank">1. re: 关于《分布式Java应用：基础与实践》一书</a></li>
-<li>博主 大神啊 这个博客很久没有更新了</li>
-<li>--1836567962@qq.com</li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2013/07/11/267970.html#401444" target="_blank">2. re: 网站架构相关PPT、文章整理（更新于2009-7-15）</a></li>
-<li>这个文章很有用，收藏</li>
-<li>--度哥网</li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2013/05/28/267968.html#399877" target="_blank">3. re: OSGi Opendoc &amp; Book</a></li>
-<li>评论内容较长,点击标题查看</li>
-<li>--stono</li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2013/05/28/267968.html#399865" target="_blank">4. re: OSGi Opendoc &amp; Book</a></li>
-<li>我再看《OSGi》原理与最佳实践，可是源码没有办法下载呀；
-有没有什么办法呢？</li>
-<li>--stono</li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2013/05/27/321796.html#399801" target="_blank">5. re: 关于《分布式Java应用：基础与实践》一书</a></li>
-<li>在这篇blog中放置了我收集的一些网站架构相关的PPT和文章</li>
-<li>--色都</li>
-</ul>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/09/03/226749.html" target="_blank">1. 大型网站架构演变和知识体系(57644)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/04/28/267970.html" target="_blank">2. 网站架构相关PPT、文章整理（更新于2009-7-15）(38737)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/03/27/37582.html" target="_blank">3. Hibernate实践(31780)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/06/13/6037.html" target="_blank">4. 系统设计说明书(架构、概要、详细)目录结构(24259)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/08/25/65741.html" target="_blank">5. 发布《OSGi实战》正式版(17727)</a></li>
-</ul>
-<h3 id="-">评论排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2008/09/03/226749.html" target="_blank">1. 大型网站架构演变和知识体系(96)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2005/09/07/12340.html" target="_blank">2. 漫谈CMS(88)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2009/04/28/267970.html" target="_blank">3. 网站架构相关PPT、文章整理（更新于2009-7-15）(66)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2007/09/29/149631.html" target="_blank">4. 《OSGi进阶》预览版发布(59)</a></li>
-<li><a href="http://www.blogjava.net/BlueDavy/archive/2006/08/25/65741.html" target="_blank">5. 发布《OSGi实战》正式版(54)</a></li>
-</ul>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/架构师/">架构师</a></li></span><span class="breadcrumb"><li><a href="/categories/架构师/">架构师</a></li><li><a href="/categories/架构师/架构/">架构</a></li></span></span> | <span class="tags">Tagged <a href="/tags/架构/" class="label label-primary">架构</a><a href="/tags/架构师/" class="label label-success">架构师</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:28"datetime="2014-03-07 09:54:28"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-架构师-架构--网站架构相关PPT、文章整理（更新于2009-7-15）/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-架构师-架构--网站架构相关PPT、文章整理（更新于2009-7-15）" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/JS用法/">JS用法</a></li></span><span class="breadcrumb"><li><a href="/categories/JS用法/">JS用法</a></li><li><a href="/categories/JS用法/jquery-cookie/">jquery-cookie</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JS用法/" class="label label-primary">JS用法</a><a href="/tags/jquery-cookie/" class="label label-success">jquery-cookie</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:04:09"datetime="2014-03-07 10:04:09"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JS用法-jquery-cookie--Documentation/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JS用法-jquery-cookie--Documentation" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1658,7 +1490,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:55:37</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:28:50</em></span></div>
 </div>
 <div class="clearfix"></div>
 

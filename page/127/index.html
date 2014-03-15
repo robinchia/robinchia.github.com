@@ -1462,392 +1462,6 @@ Statistics   统计信息</li>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-oracle--OracleParallel用法并行技术/">Oracle Parallel用法 并行技术</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:34.000Z"> <a href="/2014/02/02/2014-02-02-DB-oracle--OracleParallel用法并行技术/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="oracle-parallel-">Oracle Parallel用法 并行技术</h1>
-<p>一、Parallel
-1．用途
-强行启用并行度来执行当前SQL。这个在Oracle 9i之后的版本可以使用，之前的版本现在没有环境进行测试。也就是说，加上这个说明，可以强行启用Oracle的多线程处理功能。举例的话，就像电脑装了多核的CPU，但大多情况下都不会完全多核同时启用（2核以上的比较明显），使用parallel说明，就会多核同时工作，来提高效率。
-但本身启动这个功能，也是要消耗资源与性能的。所有，一般都会在返回记录数大于100万时使用，效果也会比较明显。
-2．语法
-//<em>+parallel(table_short_name,cash_number)/</em>/
-这个可以加到insert、delete、update、select的后面来使用（和rule的用法差不多，有机会再分享rule的用法）
-开启parallel功能的语句是：
-alter session enable parallel dml;
-这个语句是DML语句哦，如果在程序中用，用execute的方法打开。
-3．实例说明
-用ERP中的transaction来说明下吧。这个table记录了所有的transaction，而且每天数据量也算相对比较大的（根据企业自身业务量而定）。假设我们现在要查看对比去年一年当中每月的进、销情况，所以，一般都会写成：
-<a href="">复制内容到剪贴板</a><img src="" alt="程序代码"> 程序代码</p>
-<p>select to_char(transaction_date,&#39;yyyymm&#39;) txn_month,
-       sum(
-        decode(
-            sign(transaction_quantity),1,transaction_quantity,0
-              )
-          ) in_qty,
-       sum(
-        decode(
-            sign(transaction_quantity),-1,transaction_quantity,0
-              )
-          ) out_qty
-  from mtl_material_transactions mmt
-where transaction_date &gt;= add_months(
-                            to_date(<br>                                to_char(sysdate,&#39;yyyy&#39;)||&#39;0101&#39;,&#39;yyyymmdd&#39;),
-                                -12)
-   and transaction_date &lt;= add_months(
-                            to_date(
-                                to_char(sysdate,&#39;yyyy&#39;)||&#39;1231&#39;,&#39;yyyymmdd&#39;),
-                                -12)
-group by to_char(transaction_date,&#39;yyyymm&#39;) 
-这个SQL执行起来，如果transaction_date上面有加index的话，效率还算过的去；但如果没有加index的话，估计就会半个小时内都执行不出来。这是就可以在select 后面加上parallel说明。例如：
-<a href="">复制内容到剪贴板</a><img src="" alt="程序代码"> 程序代码</p>
-<p>select //<em>+parallel(mmt,10)/</em>/
-       to_char(transaction_date,&#39;yyyymm&#39;) txn_month,
-...
-这样的话，会大大提高执行效率。如果要将检索出来的结果insert到另一个表tmp_count_tab的话，也可以写成：
-<a href="">复制内容到剪贴板</a><img src="" alt="程序代码"> 程序代码</p>
-<p>insert //<em>+parallel(t,10)/</em>/
-  into tmp_count_tab
-(
-    txn_month,
-    in_qty,
-    out_qty
-)
-select //<em>+parallel(mmt,10)/</em>/
-       to_char(transaction_date,&#39;yyyymm&#39;) txn_month,
-...
-插入的机制和检索机制差不多，所以，在insert后面加parallel也会加速的。关于insert机制，这里暂不说了。
-Parallel后面的数字，越大，执行效率越高。不过，貌似跟server的配置还有oracle的配置有关，增大到一定值，效果就不明显了。所以，一般用8,10,12,16的比较常见。我试过用30，发现和16的效果一样。不过，数值越大，占用的资源也会相对增大的。如果是在一些package、function or procedure中写的话，还是不要写那么大，免得占用太多资源被DBA开K。
-4．Parallel也可以用于多表
-多表的话，就是在第一后面，加入其他的就可以了。具体写法如下：
-//<em>+parallel(t,10) (b,10)/</em>/
-5．小结
-关于执行效率，建议还是多按照index的方法来提高效果。Oracle有自带的explan road的方法，在执行之前，先看下执行计划路线，对写好的SQL tuned之后再执行。实在没办法了，再用parallel方法。Parallel比较邪恶，对开发者而言，不是好东西，会养成不好习惯，导致很多bad SQL不会暴漏，SQL Tuning的能力得不到提升。我有见过某些人create table后，从不create index或primary key，认为写SQL时加parallel就可以了。</p>
-<p>来源： <a href="[http://www.wudongqi.com/article/519.htm](http://www.wudongqi.com/article/519.htm)">[http://www.wudongqi.com/article/519.htm](http://www.wudongqi.com/article/519.htm)</a></p>
-<h1 id="oracle-parallel-">oracle的Parallel 并行技术</h1>
-<p><strong>启用Parallel**</strong>前的忠告：**只有在需要处理一个很大的任务，如需要几十分钟，几个小时的作业中，并且要有足够的系统资源的情况下(这些资源包括cpu，内存，io),您才应该考虑使用parallel。否则，在一个多并发用户下，系统本身资源负担已经很大的情况下，启用parallel，将会导致某一个会话试图占用了所有的资源，其他会话不得不去等待，从而导致系统系能反而下降的情况，一般情况下，oltp系统不要使用parallel，olap系统中可以考虑去使用。</p>
-<p>Parallel分类</p>
-<p>l        并行查询parallel query</p>
-<p>l        并行dml parallel dml pdml</p>
-<p>l        <strong>并行查询</strong></p>
-<p>并行查询允许将一个<strong>[</strong>sql<strong>]()</strong>select语句划分为多个较小的查询，每个部分的查询并发地运行，然后将各个部分的结果组合起来，提供最终的结果，多用于全表扫描，索引全扫描等，大表的扫描和连接、创建大的索引、分区索引扫描、大批量插入更新和删除
-<strong>启用并行查询</strong></p>
-<p>告知<strong>[</strong>oracle<strong>]()</strong>，对T1启用parallel查询，但并行度要参照系统的资源负载状况来确定。</p>
-<p>利用hints提示，启用并行，同时也可以告知明确的并行度，否则oracle自行决定启用的并行度，这些提示只对该sql语句有效。</p>
-<p>SQL&gt; select //<em>+ parallel(t1 8) /</em>/ count(/*) from t1;</p>
-<p>SQL&gt; select degree from user_tables<strong>where</strong>table_name=&#39;T1&#39;;</p>
-<p>DEGREE</p>
-<hr>
-<p>  DEFAULT</p>
-<p>并行度为Default，其值由下面2个参数决定</p>
-<p>SQL&gt; show parameter cpu</p>
-<p>NAME                                TYPE       VALUE</p>
-<hr>
-<p>cpu_count                           integer    2</p>
-<p>parallel_threads_per_cpu            integer    2</p>
-<p>cpu_count表示cpu数</p>
-<p>parallel_threads_per_cpu表示每个cpu允许的并行进程数</p>
-<p>default情况下，并行数为cpu_count/*parallel_threads_per_cpu</p>
-<p><strong>取消并行设置</strong></p>
-<p>SQL&gt; alter table t1 noparallel;</p>
-<p>SQL&gt; select degree from user_tables where table_name=&#39;T1&#39;;</p>
-<p>DEGREE</p>
-<hr>
-<pre><code>    1
-</code></pre><p>对于一个大的任务，一般的做法是利用一个进程，串行的执行，如果系统资源足够，可以采用parallel技术，把一个大的任务分成若干个小的任务，同时启用n个进程/线程，并行的处理这些小的任务，这些并发的进程称为并行执行<a href=""><strong>服务器</strong></a>(parallel executeion<strong>[</strong>server<strong>]()</strong>)，这些并发进程由一个称为并发协调进程的进程来<a href=""><strong>管理</strong></a>。</p>
-<p><strong>启用Parallel**</strong>前的忠告：**只有在需要处理一个很大的任务，如需要几十分钟，几个小时的作业中，并且要有足够的系统资源的情况下(这些资源包括cpu，内存，io),您才应该考虑使用parallel。否则，在一个多并发用户下，系统本身资源负担已经很大的情况下，启用parallel，将会导致某一个会话试图占用了所有的资源，其他会话不得不去等待，从而导致系统系能反而下降的情况，一般情况下，oltp系统不要使用parallel，oltp系统中可以考虑去使用。</p>
-<p>Parallel分类</p>
-<p>l        并行查询parallel query</p>
-<p>l        并行dml parallel dml pdml</p>
-<p>l        并行ddl parallel ddl pddl</p>
-<p>l        <strong>并行查询</strong></p>
-<p>并行查询允许将一个<strong>sql</strong>select语句划分为多个较小的查询，每个部分的查询并发地运行，然后将各个部分的结果组合起来，提供最终的结果，多用于全表扫描，索引全扫描等，大表的扫描和连接、创建大的索引、分区索引扫描、大批量插入更新和删除</p>
-<p><strong>启用并行查询</strong></p>
-<p>SQL&gt; ALTER TABLE T1 PARALLEL;</p>
-<p>告知<strong>oracle</strong>，对T1启用parallel查询，但并行度要参照系统的资源负载状况来确定。</p>
-<p>利用hints提示，启用并行，同时也可以告知明确的并行度，否则oracle自行决定启用的并行度，这些提示只对该sql语句有效。</p>
-<p>SQL&gt; select //<em>+ parallel(t1 8) /</em>/ count(/*) from t1;</p>
-<p>SQL&gt; select degree from user_tables<strong>where</strong>table_name=&#39;T1&#39;;</p>
-<p>DEGREE</p>
-<hr>
-<p>  DEFAULT</p>
-<p>并行度为Default，其值由下面2个参数决定</p>
-<p>SQL&gt; show parameter cpu</p>
-<p>NAME                                TYPE       VALUE</p>
-<hr>
-<p>cpu_count                           integer    2</p>
-<p>parallel_threads_per_cpu            integer    2</p>
-<p>cpu_count表示cpu数</p>
-<p>parallel_threads_per_cpu表示每个cpu允许的并行进程数</p>
-<p>default情况下，并行数为cpu_count/*parallel_threads_per_cpu</p>
-<p><strong>取消并行设置</strong></p>
-<p>SQL&gt; alter table t1 noparallel;</p>
-<p>SQL&gt; select degree from user_tables where table_name=&#39;T1&#39;;</p>
-<p>DEGREE</p>
-<hr>
-<pre><code>    1
-</code></pre><p><strong>数据字典视图</strong></p>
-<p>v$px_session</p>
-<p>sid：各个并行会话的sid</p>
-<p>qcsid：query coordinator sid,查询协调器sid</p>
-<p>l        <strong>并行dml</strong>
-**
-并行dml包括insert，update，delete，merge，在pdml期间，oracle可以使用多个并行执行服务器来执行insert，update，delete，merge，多个会话同时执行，同时每个会话(并发进程)都有自己的undo段，都是独立的一个事务，这些事务要么由pdml协调器进程提交，要么都rollback。</p>
-<p>在一个有充足I/o带宽的多cpu主机中，对于大规模的dml，速度可能会有很大的提升，尤其是在大型的数据仓库环境中。</p>
-<p>并行dml需要显示的启用</p>
-<p>SQL&gt; alter session enable parallel dml;</p>
-<p>Disable并行dml</p>
-<p>SQL&gt; alter session disable parallel dml;
-来源： <a href="[http://space.itpub.net/8183550/viewspace-667633](http://space.itpub.net/8183550/viewspace-667633)">[http://space.itpub.net/8183550/viewspace-667633](http://space.itpub.net/8183550/viewspace-667633)</a> </p>
-<p><img src="" alt=""> oracle并行查询一例</p>
-<p>今天碰到一个开发人员反映SQL执行时间过长。根本无法得到结果集。
-        看到服务器压力也没有很高，估计又是一个非常消耗磁盘的查询。果然，发现是一个200w的表和一个超过1100w表的HASH JOIN . 
-        简单的帮助优化了一个SQL后，SQL如下:</p>
-<p>select    count(ui.usin_uid_fk)
-    from table1 av, table2 ui
-where av.av_usse_activatedate &gt;= to_date(&#39;20090102&#39;, &#39;yyyymmdd&#39;)
-     and av.av_usse_activatedate &lt; to_date(&#39;20090401&#39;, &#39;yyyymmdd&#39;)
-     and av.av_usse_uid_fk = ui.usin_uid_fk
-     and ui.usin_mcnc_fk =XXX%&#39;</p>
-<pre><code>   不难想象执行的不是很理想。近20分钟的执行时间，真是让人崩溃。
-</code></pre><h2 id="count-ui-usin_uid_fk-">COUNT(UI.USIN_UID_FK)</h2>
-<pre><code>                        1918591
-</code></pre><p>Elapsed: 00:19:03.07</p>
-<h2 id="statistics">Statistics</h2>
-<pre><code>                0    recursive calls
-                0    db block gets
- 32921639    consistent gets
-     352073    physical reads
-                0    redo size
-            395    bytes sent via SQL/*Net to client
-            503    bytes received via SQL/*Net from client
-                2    SQL/*Net roundtrips to/from client
-                0    sorts (memory)
-                0    sorts (disk)
-                1    rows processed
-
-    对于那张TABLE2的大表（符合条件的超过1100w），决定试图通过并行来提高执行速度。SQL如下：
-</code></pre><p>select //<em>+parallel (tbl_userinfo 4)/</em>/ count(ui.usin_uid_fk)
-from table1 av, table2 ui
-where av.av_usse_activatedate &gt;= to_date(&#39;20090101&#39;, &#39;yyyymmdd&#39;)
-and av.av_usse_activatedate &lt; to_date(&#39;20090401&#39;, &#39;yyyymmdd&#39;)
-and av.av_usse_uid_fk = ui.usin_uid_fk
-and ui.usin_mcnc_fk like &#39;XXX%&#39;;</p>
-<pre><code>  执行效果还是非常明显的。从19分钟多到1分45秒！其中consistent gets更是减少了一个数量级 -:)
-</code></pre><h2 id="count-ui-usin_uid_fk-">COUNT(UI.USIN_UID_FK)</h2>
-<pre><code>                        1918591
-</code></pre><p>Elapsed: 00:01:45.15</p>
-<h2 id="statistics">Statistics</h2>
-<pre><code>                0    recursive calls
-                0    db block gets
-    2571109    consistent gets
-     124523    physical reads
-                0    redo size
-            395    bytes sent via SQL/*Net to client
-            504    bytes received via SQL/*Net from client
-                2    SQL/*Net roundtrips to/from client
-                0    sorts (memory)
-                0    sorts (disk)
-                1    rows processed
-
-
-
-  因为这个服务器为2×4核心的cpu，应该可以算是8个CPU，所以应该可以通过增加并行度来进一步减少执行时间。如下SQL：
-</code></pre><p>SQL&gt; select //<em>+parallel (tbl_userinfo 8)/</em>/ count(ui.usin_uid_fk)
-    2        from table1 av, table2 ui
-    3     where av.av_usse_activatedate &gt;= to_date(&#39;20090101&#39;, &#39;yyyymmdd&#39;)
-    4         and av.av_usse_activatedate &lt; to_date(&#39;20090401&#39;, &#39;yyyymmdd&#39;)
-    5         and av.av_usse_uid_fk = ui.usin_uid_fk
-    6         and ui.usin_mcnc_fk like &#39;460%&#39;;</p>
-<h2 id="count-ui-usin_uid_fk-">COUNT(UI.USIN_UID_FK)</h2>
-<pre><code>                        1949033
-</code></pre><p>Elapsed: 00:00:20.60</p>
-<h2 id="statistics">Statistics</h2>
-<pre><code>                0    recursive calls
-                0    db block gets
-    2607524    consistent gets
-        55050    physical reads
-                0    redo size
-            395    bytes sent via SQL/*Net to client
-            503    bytes received via SQL/*Net from client
-                2    SQL/*Net roundtrips to/from client
-                0    sorts (memory)
-                0    sorts (disk)
-                1    rows processed
-
-   可以说还是比较理想的。只有20S左右了。虽然最大并行度可以到CPU/*2，但是效果未必会好。进一步做一个16个并行度的SQL执行测试。
-</code></pre><h2 id="count-ui-usin_uid_fk-">COUNT(UI.USIN_UID_FK)</h2>
-<pre><code>                        1949033
-</code></pre><p>Elapsed: 00:00:20.64</p>
-<h2 id="statistics">Statistics</h2>
-<pre><code>                0    recursive calls
-                0    db block gets
-    2607524    consistent gets
-        55299    physical reads
-                0    redo size
-            395    bytes sent via SQL/*Net to client
-            504    bytes received via SQL/*Net from client
-                2    SQL/*Net roundtrips to/from client
-                0    sorts (memory)
-                0    sorts (disk)
-                1    rows processed
-
-
-   没有任何提高，并且执行时间还稍高于并行度为8的SQL。
-   通过以上测试我们不难发现：
-   在处理大量数据查询，例如出现HASH JOIN的情况下，并行查询非常有效果的。也就是说并行查询在数据仓库这样的应用中会“大显身手”。
-    但是并行查询的使用还是有很多限制的。例如相对较小的数据查询和连接是会适得其反的。盲目增加并行度也是大忌，相对来讲，并行度和CPU数相同比较好。这里的CPU数应该是指的核心数。例如服务器中有一个CPU是4核心的，并行度为4是好的。
-    技术很难有十全十美的，最重要的是对于特定技术的使用要恰到好处，保证扬长避短。 -:)
-</code></pre><hr>
-<p> 以上测试环境：
-ORACLE 9.2.0.4 
-RHEL 4 U4</p>
-<p>来源： <a href="[http://miracle.blog.51cto.com/255044/147058](http://miracle.blog.51cto.com/255044/147058)">[http://miracle.blog.51cto.com/255044/147058](http://miracle.blog.51cto.com/255044/147058)</a> **</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/oracle/">oracle</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/oracle/" class="label label-success">oracle</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:34"datetime="2014-03-07 09:54:34"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-oracle--OracleParallel用法并行技术/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-oracle--OracleParallel用法并行技术" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB--PostgreSQL8_4在中文windows下安装错误/">PostgreSQL 8_4 在中文 windows 下安装错误</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:34.000Z"> <a href="/2014/02/02/2014-02-02-DB--PostgreSQL8_4在中文windows下安装错误/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="postgresql-8_4-windows-">PostgreSQL 8_4 在中文 windows 下安装错误</h1>
-<h1 id="-goldenhawking-http-blog-csdn-net-goldenhawking-"><a href="http://blog.csdn.net/goldenhawking" target="_blank">goldenhawking的专栏</a></h1>
-<h1 id="-">#</h1>
-<ul>
-<li><a href="http://passport.csdn.net/UserLogin.aspx" target="_blank">登录</a></li>
-<li><a href="http://passport.csdn.net/CSDNUserRegister.aspx" target="_blank">注册</a></li>
-<li><a href="http://hi.csdn.net/" target="_blank">欢迎</a></li>
-<li><a href="http://writeblog.csdn.net/Signout.aspx" target="_blank">退出</a></li>
-<li><a href="http://blog.csdn.net/" target="_blank">我的博客</a></li>
-<li><a href="http://writeblog.csdn.net/configure.aspx" target="_blank">配置</a></li>
-<li><a href="http://writeblog.csdn.net/PostEditPlain.aspx" target="_blank">写文章</a></li>
-<li><a href="http://writeblog.csdn.net/PostList.aspx" target="_blank">文章管理</a></li>
-<li><a href="http://blog.csdn.net/" target="_blank">博客首页</a></li>
-</ul>
-<p>*</p>
-<ul>
-<li><p>全站 当前博客
-*</p>
-</li>
-<li><p><a href="http://hi.csdn.net/goldenhawking" target="_blank">空间</a></p>
-</li>
-<li><a href="http://blog.csdn.net/goldenhawking" target="_blank">博客</a></li>
-<li><a href="http://hi.csdn.net/!s/friend/list/goldenhawking" target="_blank">好友</a></li>
-<li><a href="http://hi.csdn.net/!s/album/list/goldenhawking" target="_blank">相册</a></li>
-<li><a href="http://hi.csdn.net/!s/wall/to/goldenhawking" target="_blank">留言</a></li>
-</ul>
-<p>用户操作<a href="http://hi.csdn.net/!s/wall/to/goldenhawking" target="_blank">[留言]</a>  <a href="http://hi.csdn.net/!s/msg/to/goldenhawking" target="_blank">[发消息]</a>  <a href="http://hi.csdn.net/!s/friend/add/goldenhawking" target="_blank">[加为好友]</a> 订阅我的博客<a href="http://feeds.feedsky.com/csdn.net/goldenhawking" target="_blank"><img src="" alt="XML聚合"></a>   <a href="http://feeds.feedsky.com/csdn.net/goldenhawking" target="_blank"><img src="" alt="FeedSky"></a><a href="http://www.xianguo.com/subscribe.php?url=http://feeds.feedsky.com/csdn.net/goldenhawking" target="_blank"><img src="" alt="订阅到鲜果"></a><a href="http://fusion.google.com/add?feedurl=http://feeds.feedsky.com/csdn.net/goldenhawking" target="_blank"><img src="" alt="订阅到Google"></a><a href="http://www.zhuaxia.com/add_channel.php?url=http://feeds.feedsky.com/csdn.net/goldenhawking" target="_blank"><img src="" alt="订阅到抓虾"></a>goldenhawking的公告文章分类存档* <a href="http://blog.csdn.net/goldenhawking/archive/2009/08.aspx" target="_blank">2009年08月(3)</a></p>
-<ul>
-<li><a href="http://blog.csdn.net/goldenhawking/archive/2008/04.aspx" target="_blank">2008年04月(1)</a></li>
-<li><a href="http://blog.csdn.net/goldenhawking/archive/2008/02.aspx" target="_blank">2008年02月(1)</a><h1 id="-postgresql-8-4-windows-"><img src="" alt="原创">  PostgreSQL 8.4 在中文 windows 下安装错误 <a href="&quot;收藏到我的网摘中，并分享给我的朋友&quot;">收藏</a></h1>
-</li>
-</ul>
-<p>这个错误是在安装新版的PostgreSQL 8.4时遇到的，安装程序在 windows xp sp3下启动（简体中文），一路Next, 没注意“locale”选项，当时选择了default,next, 导致无法安装完成，提示：</p>
-<p>Installation fails with complaint about accessing data\postgresql.conf
-发现这个老兄也遇到了：</p>
-<p><a href="http://www.nabble.com/BUG--4785%3A-Installation-fails-to23323059.html#a23323059" target="_blank"><a href="http://www.nabble.com/BUG--4785%3A-Installation-fails-to23323059.html/#a23323059">http://www.nabble.com/BUG--4785%3A-Installation-fails-to23323059.html/#a23323059</a></a></p>
-<p>搞半天，最后发现了问题，是PSQL的全文搜索中没有简体中文支持。其实，安装的时候选择&quot;C&quot;就可以了。</p>
-<p>哎，看来我和开源数据库最近老扯不清关系。</p>
-<p>这是在nabble上的帖子。
-En, I have that damm problem sloved.
-Are you using a Non-English Version of Windows? for example, JPN, CHS?
-If you install your PSQL in an Asian-language windows, be sure that &quot;locale&quot; settings should be setted manualy to a supported language, I choosed &quot;C&quot; for it is the first item in the combo.
-this is the errmsg when you&#39;re using default local settings:
-Running the post-installation/upgrade actions:
-Delete the temporary scripts directory...
-Write the base directory to the ini file...
-Write the version number to the ini file...
-Initialising the database cluster (this may take a few minutes)...
-Executing cscript
-Script exit code: 0
-Script output:
-Ensuring we can write to the data directory (using cacls):
-数据无效。(Means data is unavaliable)
-The files belonging to this database system will be owned by user &quot;XXXXXXXX&quot;.
-This user must also own the server process.
-The database cluster will be initialized with locale Chinese_XXXXXXX.936.
-initdb: could not find suitable text search configuration for locale Chinese_XXXXXXX.936
-The default text search configuration will be set to &quot;simple&quot;.
-fixing permissions on existing directory D:/XXXXXX... ok
-creating subdirectories ... ok
-selecting default max_connections ... 100
-selecting default shared_buffers ... 32MB
-creating configuration files ... ok
-creating template1 database in D:/XXXXXXX/base/1 ... ok
-initializing pg_authid ... FATAL:  database locale is incompatible with operating system
-DETAIL:  The database was initialized with LC_COLLATE &quot;Chinese_XXXXXXXX.936&quot;,  which is not recognized by setlocale().
-HINT:  Recreate the database with another locale or install the missing locale.
-child process exited with exit code 1
-initdb: removing contents of data directory &quot;D:/XXXXXX&quot;
-Granting service account access to the data directory (using cacls):
-处理的目录: D:\XXXXXXXXX(Processed folder:D:\XXXXXXXXX)
-initcluster.vbs ran to completion
-Script stderr:
-Configuring database server startup...
-Executing cscript
-Script exit code: 0
-Script output:
-startupcfg.vbs ran to completion
-Script stderr:</p>
-<p>发表于 @ 2009年08月05日　12:44:00 | <a href="http://blog.csdn.net/goldenhawking/archive/2009/08/05/4411446.aspx#FeedBack" title="评论" target="_blank">评论( loading...  )</a>| <a href="http://writeblog.csdn.net/PostEdit.aspx?entryId=4411446" title="编辑" target="_blank">编辑</a>| <a href="mailto:yuexn@csdn.net?subject=Article%20Report!!!&amp;body=Author:goldenhawking%0D%0AURL:http://blog.csdn.net/ArticleContent.aspx?UserName=goldenhawking&amp;Entryid=4411446">举报</a>| <a href="&quot;收藏到我的网摘中，并分享给我的朋友&quot;">收藏</a></p>
-<h3 id="-my-sql-http-blog-csdn-net-goldenhawking-archive-2009-08-05-4411395-aspx-"><a href="http://blog.csdn.net/goldenhawking/archive/2009/08/05/4411395.aspx" target="_blank">旧一篇:初试My-SQL</a><a href=""></a></h3>
-<p>Copyright © goldenhawkingPowered by CSDN Blog<img src="" alt=""></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:34"datetime="2014-03-07 09:54:34"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB--PostgreSQL8_4在中文windows下安装错误/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB--PostgreSQL8_4在中文windows下安装错误" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-oracle--Oraclenotin查不到应有的结果2/">Oracle not in查不到应有的结果 (2)</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:34.000Z"> <a href="/2014/02/02/2014-02-02-DB-oracle--Oraclenotin查不到应有的结果2/">feb. 2 2014</a></time></span>      
@@ -2118,6 +1732,392 @@ Weblogs that reference this entry</p>
 
 
 
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB--PostgreSQL8_4在中文windows下安装错误/">PostgreSQL 8_4 在中文 windows 下安装错误</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:34.000Z"> <a href="/2014/02/02/2014-02-02-DB--PostgreSQL8_4在中文windows下安装错误/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="postgresql-8_4-windows-">PostgreSQL 8_4 在中文 windows 下安装错误</h1>
+<h1 id="-goldenhawking-http-blog-csdn-net-goldenhawking-"><a href="http://blog.csdn.net/goldenhawking" target="_blank">goldenhawking的专栏</a></h1>
+<h1 id="-">#</h1>
+<ul>
+<li><a href="http://passport.csdn.net/UserLogin.aspx" target="_blank">登录</a></li>
+<li><a href="http://passport.csdn.net/CSDNUserRegister.aspx" target="_blank">注册</a></li>
+<li><a href="http://hi.csdn.net/" target="_blank">欢迎</a></li>
+<li><a href="http://writeblog.csdn.net/Signout.aspx" target="_blank">退出</a></li>
+<li><a href="http://blog.csdn.net/" target="_blank">我的博客</a></li>
+<li><a href="http://writeblog.csdn.net/configure.aspx" target="_blank">配置</a></li>
+<li><a href="http://writeblog.csdn.net/PostEditPlain.aspx" target="_blank">写文章</a></li>
+<li><a href="http://writeblog.csdn.net/PostList.aspx" target="_blank">文章管理</a></li>
+<li><a href="http://blog.csdn.net/" target="_blank">博客首页</a></li>
+</ul>
+<p>*</p>
+<ul>
+<li><p>全站 当前博客
+*</p>
+</li>
+<li><p><a href="http://hi.csdn.net/goldenhawking" target="_blank">空间</a></p>
+</li>
+<li><a href="http://blog.csdn.net/goldenhawking" target="_blank">博客</a></li>
+<li><a href="http://hi.csdn.net/!s/friend/list/goldenhawking" target="_blank">好友</a></li>
+<li><a href="http://hi.csdn.net/!s/album/list/goldenhawking" target="_blank">相册</a></li>
+<li><a href="http://hi.csdn.net/!s/wall/to/goldenhawking" target="_blank">留言</a></li>
+</ul>
+<p>用户操作<a href="http://hi.csdn.net/!s/wall/to/goldenhawking" target="_blank">[留言]</a>  <a href="http://hi.csdn.net/!s/msg/to/goldenhawking" target="_blank">[发消息]</a>  <a href="http://hi.csdn.net/!s/friend/add/goldenhawking" target="_blank">[加为好友]</a> 订阅我的博客<a href="http://feeds.feedsky.com/csdn.net/goldenhawking" target="_blank"><img src="" alt="XML聚合"></a>   <a href="http://feeds.feedsky.com/csdn.net/goldenhawking" target="_blank"><img src="" alt="FeedSky"></a><a href="http://www.xianguo.com/subscribe.php?url=http://feeds.feedsky.com/csdn.net/goldenhawking" target="_blank"><img src="" alt="订阅到鲜果"></a><a href="http://fusion.google.com/add?feedurl=http://feeds.feedsky.com/csdn.net/goldenhawking" target="_blank"><img src="" alt="订阅到Google"></a><a href="http://www.zhuaxia.com/add_channel.php?url=http://feeds.feedsky.com/csdn.net/goldenhawking" target="_blank"><img src="" alt="订阅到抓虾"></a>goldenhawking的公告文章分类存档* <a href="http://blog.csdn.net/goldenhawking/archive/2009/08.aspx" target="_blank">2009年08月(3)</a></p>
+<ul>
+<li><a href="http://blog.csdn.net/goldenhawking/archive/2008/04.aspx" target="_blank">2008年04月(1)</a></li>
+<li><a href="http://blog.csdn.net/goldenhawking/archive/2008/02.aspx" target="_blank">2008年02月(1)</a><h1 id="-postgresql-8-4-windows-"><img src="" alt="原创">  PostgreSQL 8.4 在中文 windows 下安装错误 <a href="&quot;收藏到我的网摘中，并分享给我的朋友&quot;">收藏</a></h1>
+</li>
+</ul>
+<p>这个错误是在安装新版的PostgreSQL 8.4时遇到的，安装程序在 windows xp sp3下启动（简体中文），一路Next, 没注意“locale”选项，当时选择了default,next, 导致无法安装完成，提示：</p>
+<p>Installation fails with complaint about accessing data\postgresql.conf
+发现这个老兄也遇到了：</p>
+<p><a href="http://www.nabble.com/BUG--4785%3A-Installation-fails-to23323059.html#a23323059" target="_blank"><a href="http://www.nabble.com/BUG--4785%3A-Installation-fails-to23323059.html/#a23323059">http://www.nabble.com/BUG--4785%3A-Installation-fails-to23323059.html/#a23323059</a></a></p>
+<p>搞半天，最后发现了问题，是PSQL的全文搜索中没有简体中文支持。其实，安装的时候选择&quot;C&quot;就可以了。</p>
+<p>哎，看来我和开源数据库最近老扯不清关系。</p>
+<p>这是在nabble上的帖子。
+En, I have that damm problem sloved.
+Are you using a Non-English Version of Windows? for example, JPN, CHS?
+If you install your PSQL in an Asian-language windows, be sure that &quot;locale&quot; settings should be setted manualy to a supported language, I choosed &quot;C&quot; for it is the first item in the combo.
+this is the errmsg when you&#39;re using default local settings:
+Running the post-installation/upgrade actions:
+Delete the temporary scripts directory...
+Write the base directory to the ini file...
+Write the version number to the ini file...
+Initialising the database cluster (this may take a few minutes)...
+Executing cscript
+Script exit code: 0
+Script output:
+Ensuring we can write to the data directory (using cacls):
+数据无效。(Means data is unavaliable)
+The files belonging to this database system will be owned by user &quot;XXXXXXXX&quot;.
+This user must also own the server process.
+The database cluster will be initialized with locale Chinese_XXXXXXX.936.
+initdb: could not find suitable text search configuration for locale Chinese_XXXXXXX.936
+The default text search configuration will be set to &quot;simple&quot;.
+fixing permissions on existing directory D:/XXXXXX... ok
+creating subdirectories ... ok
+selecting default max_connections ... 100
+selecting default shared_buffers ... 32MB
+creating configuration files ... ok
+creating template1 database in D:/XXXXXXX/base/1 ... ok
+initializing pg_authid ... FATAL:  database locale is incompatible with operating system
+DETAIL:  The database was initialized with LC_COLLATE &quot;Chinese_XXXXXXXX.936&quot;,  which is not recognized by setlocale().
+HINT:  Recreate the database with another locale or install the missing locale.
+child process exited with exit code 1
+initdb: removing contents of data directory &quot;D:/XXXXXX&quot;
+Granting service account access to the data directory (using cacls):
+处理的目录: D:\XXXXXXXXX(Processed folder:D:\XXXXXXXXX)
+initcluster.vbs ran to completion
+Script stderr:
+Configuring database server startup...
+Executing cscript
+Script exit code: 0
+Script output:
+startupcfg.vbs ran to completion
+Script stderr:</p>
+<p>发表于 @ 2009年08月05日　12:44:00 | <a href="http://blog.csdn.net/goldenhawking/archive/2009/08/05/4411446.aspx#FeedBack" title="评论" target="_blank">评论( loading...  )</a>| <a href="http://writeblog.csdn.net/PostEdit.aspx?entryId=4411446" title="编辑" target="_blank">编辑</a>| <a href="mailto:yuexn@csdn.net?subject=Article%20Report!!!&amp;body=Author:goldenhawking%0D%0AURL:http://blog.csdn.net/ArticleContent.aspx?UserName=goldenhawking&amp;Entryid=4411446">举报</a>| <a href="&quot;收藏到我的网摘中，并分享给我的朋友&quot;">收藏</a></p>
+<h3 id="-my-sql-http-blog-csdn-net-goldenhawking-archive-2009-08-05-4411395-aspx-"><a href="http://blog.csdn.net/goldenhawking/archive/2009/08/05/4411395.aspx" target="_blank">旧一篇:初试My-SQL</a><a href=""></a></h3>
+<p>Copyright © goldenhawkingPowered by CSDN Blog<img src="" alt=""></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:34"datetime="2014-03-07 09:54:34"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB--PostgreSQL8_4在中文windows下安装错误/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB--PostgreSQL8_4在中文windows下安装错误" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-oracle--OracleParallel用法并行技术/">Oracle Parallel用法 并行技术</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:34.000Z"> <a href="/2014/02/02/2014-02-02-DB-oracle--OracleParallel用法并行技术/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="oracle-parallel-">Oracle Parallel用法 并行技术</h1>
+<p>一、Parallel
+1．用途
+强行启用并行度来执行当前SQL。这个在Oracle 9i之后的版本可以使用，之前的版本现在没有环境进行测试。也就是说，加上这个说明，可以强行启用Oracle的多线程处理功能。举例的话，就像电脑装了多核的CPU，但大多情况下都不会完全多核同时启用（2核以上的比较明显），使用parallel说明，就会多核同时工作，来提高效率。
+但本身启动这个功能，也是要消耗资源与性能的。所有，一般都会在返回记录数大于100万时使用，效果也会比较明显。
+2．语法
+//<em>+parallel(table_short_name,cash_number)/</em>/
+这个可以加到insert、delete、update、select的后面来使用（和rule的用法差不多，有机会再分享rule的用法）
+开启parallel功能的语句是：
+alter session enable parallel dml;
+这个语句是DML语句哦，如果在程序中用，用execute的方法打开。
+3．实例说明
+用ERP中的transaction来说明下吧。这个table记录了所有的transaction，而且每天数据量也算相对比较大的（根据企业自身业务量而定）。假设我们现在要查看对比去年一年当中每月的进、销情况，所以，一般都会写成：
+<a href="">复制内容到剪贴板</a><img src="" alt="程序代码"> 程序代码</p>
+<p>select to_char(transaction_date,&#39;yyyymm&#39;) txn_month,
+       sum(
+        decode(
+            sign(transaction_quantity),1,transaction_quantity,0
+              )
+          ) in_qty,
+       sum(
+        decode(
+            sign(transaction_quantity),-1,transaction_quantity,0
+              )
+          ) out_qty
+  from mtl_material_transactions mmt
+where transaction_date &gt;= add_months(
+                            to_date(<br>                                to_char(sysdate,&#39;yyyy&#39;)||&#39;0101&#39;,&#39;yyyymmdd&#39;),
+                                -12)
+   and transaction_date &lt;= add_months(
+                            to_date(
+                                to_char(sysdate,&#39;yyyy&#39;)||&#39;1231&#39;,&#39;yyyymmdd&#39;),
+                                -12)
+group by to_char(transaction_date,&#39;yyyymm&#39;) 
+这个SQL执行起来，如果transaction_date上面有加index的话，效率还算过的去；但如果没有加index的话，估计就会半个小时内都执行不出来。这是就可以在select 后面加上parallel说明。例如：
+<a href="">复制内容到剪贴板</a><img src="" alt="程序代码"> 程序代码</p>
+<p>select //<em>+parallel(mmt,10)/</em>/
+       to_char(transaction_date,&#39;yyyymm&#39;) txn_month,
+...
+这样的话，会大大提高执行效率。如果要将检索出来的结果insert到另一个表tmp_count_tab的话，也可以写成：
+<a href="">复制内容到剪贴板</a><img src="" alt="程序代码"> 程序代码</p>
+<p>insert //<em>+parallel(t,10)/</em>/
+  into tmp_count_tab
+(
+    txn_month,
+    in_qty,
+    out_qty
+)
+select //<em>+parallel(mmt,10)/</em>/
+       to_char(transaction_date,&#39;yyyymm&#39;) txn_month,
+...
+插入的机制和检索机制差不多，所以，在insert后面加parallel也会加速的。关于insert机制，这里暂不说了。
+Parallel后面的数字，越大，执行效率越高。不过，貌似跟server的配置还有oracle的配置有关，增大到一定值，效果就不明显了。所以，一般用8,10,12,16的比较常见。我试过用30，发现和16的效果一样。不过，数值越大，占用的资源也会相对增大的。如果是在一些package、function or procedure中写的话，还是不要写那么大，免得占用太多资源被DBA开K。
+4．Parallel也可以用于多表
+多表的话，就是在第一后面，加入其他的就可以了。具体写法如下：
+//<em>+parallel(t,10) (b,10)/</em>/
+5．小结
+关于执行效率，建议还是多按照index的方法来提高效果。Oracle有自带的explan road的方法，在执行之前，先看下执行计划路线，对写好的SQL tuned之后再执行。实在没办法了，再用parallel方法。Parallel比较邪恶，对开发者而言，不是好东西，会养成不好习惯，导致很多bad SQL不会暴漏，SQL Tuning的能力得不到提升。我有见过某些人create table后，从不create index或primary key，认为写SQL时加parallel就可以了。</p>
+<p>来源： <a href="[http://www.wudongqi.com/article/519.htm](http://www.wudongqi.com/article/519.htm)">[http://www.wudongqi.com/article/519.htm](http://www.wudongqi.com/article/519.htm)</a></p>
+<h1 id="oracle-parallel-">oracle的Parallel 并行技术</h1>
+<p><strong>启用Parallel**</strong>前的忠告：**只有在需要处理一个很大的任务，如需要几十分钟，几个小时的作业中，并且要有足够的系统资源的情况下(这些资源包括cpu，内存，io),您才应该考虑使用parallel。否则，在一个多并发用户下，系统本身资源负担已经很大的情况下，启用parallel，将会导致某一个会话试图占用了所有的资源，其他会话不得不去等待，从而导致系统系能反而下降的情况，一般情况下，oltp系统不要使用parallel，olap系统中可以考虑去使用。</p>
+<p>Parallel分类</p>
+<p>l        并行查询parallel query</p>
+<p>l        并行dml parallel dml pdml</p>
+<p>l        <strong>并行查询</strong></p>
+<p>并行查询允许将一个<strong>[</strong>sql<strong>]()</strong>select语句划分为多个较小的查询，每个部分的查询并发地运行，然后将各个部分的结果组合起来，提供最终的结果，多用于全表扫描，索引全扫描等，大表的扫描和连接、创建大的索引、分区索引扫描、大批量插入更新和删除
+<strong>启用并行查询</strong></p>
+<p>告知<strong>[</strong>oracle<strong>]()</strong>，对T1启用parallel查询，但并行度要参照系统的资源负载状况来确定。</p>
+<p>利用hints提示，启用并行，同时也可以告知明确的并行度，否则oracle自行决定启用的并行度，这些提示只对该sql语句有效。</p>
+<p>SQL&gt; select //<em>+ parallel(t1 8) /</em>/ count(/*) from t1;</p>
+<p>SQL&gt; select degree from user_tables<strong>where</strong>table_name=&#39;T1&#39;;</p>
+<p>DEGREE</p>
+<hr>
+<p>  DEFAULT</p>
+<p>并行度为Default，其值由下面2个参数决定</p>
+<p>SQL&gt; show parameter cpu</p>
+<p>NAME                                TYPE       VALUE</p>
+<hr>
+<p>cpu_count                           integer    2</p>
+<p>parallel_threads_per_cpu            integer    2</p>
+<p>cpu_count表示cpu数</p>
+<p>parallel_threads_per_cpu表示每个cpu允许的并行进程数</p>
+<p>default情况下，并行数为cpu_count/*parallel_threads_per_cpu</p>
+<p><strong>取消并行设置</strong></p>
+<p>SQL&gt; alter table t1 noparallel;</p>
+<p>SQL&gt; select degree from user_tables where table_name=&#39;T1&#39;;</p>
+<p>DEGREE</p>
+<hr>
+<pre><code>    1
+</code></pre><p>对于一个大的任务，一般的做法是利用一个进程，串行的执行，如果系统资源足够，可以采用parallel技术，把一个大的任务分成若干个小的任务，同时启用n个进程/线程，并行的处理这些小的任务，这些并发的进程称为并行执行<a href=""><strong>服务器</strong></a>(parallel executeion<strong>[</strong>server<strong>]()</strong>)，这些并发进程由一个称为并发协调进程的进程来<a href=""><strong>管理</strong></a>。</p>
+<p><strong>启用Parallel**</strong>前的忠告：**只有在需要处理一个很大的任务，如需要几十分钟，几个小时的作业中，并且要有足够的系统资源的情况下(这些资源包括cpu，内存，io),您才应该考虑使用parallel。否则，在一个多并发用户下，系统本身资源负担已经很大的情况下，启用parallel，将会导致某一个会话试图占用了所有的资源，其他会话不得不去等待，从而导致系统系能反而下降的情况，一般情况下，oltp系统不要使用parallel，oltp系统中可以考虑去使用。</p>
+<p>Parallel分类</p>
+<p>l        并行查询parallel query</p>
+<p>l        并行dml parallel dml pdml</p>
+<p>l        并行ddl parallel ddl pddl</p>
+<p>l        <strong>并行查询</strong></p>
+<p>并行查询允许将一个<strong>sql</strong>select语句划分为多个较小的查询，每个部分的查询并发地运行，然后将各个部分的结果组合起来，提供最终的结果，多用于全表扫描，索引全扫描等，大表的扫描和连接、创建大的索引、分区索引扫描、大批量插入更新和删除</p>
+<p><strong>启用并行查询</strong></p>
+<p>SQL&gt; ALTER TABLE T1 PARALLEL;</p>
+<p>告知<strong>oracle</strong>，对T1启用parallel查询，但并行度要参照系统的资源负载状况来确定。</p>
+<p>利用hints提示，启用并行，同时也可以告知明确的并行度，否则oracle自行决定启用的并行度，这些提示只对该sql语句有效。</p>
+<p>SQL&gt; select //<em>+ parallel(t1 8) /</em>/ count(/*) from t1;</p>
+<p>SQL&gt; select degree from user_tables<strong>where</strong>table_name=&#39;T1&#39;;</p>
+<p>DEGREE</p>
+<hr>
+<p>  DEFAULT</p>
+<p>并行度为Default，其值由下面2个参数决定</p>
+<p>SQL&gt; show parameter cpu</p>
+<p>NAME                                TYPE       VALUE</p>
+<hr>
+<p>cpu_count                           integer    2</p>
+<p>parallel_threads_per_cpu            integer    2</p>
+<p>cpu_count表示cpu数</p>
+<p>parallel_threads_per_cpu表示每个cpu允许的并行进程数</p>
+<p>default情况下，并行数为cpu_count/*parallel_threads_per_cpu</p>
+<p><strong>取消并行设置</strong></p>
+<p>SQL&gt; alter table t1 noparallel;</p>
+<p>SQL&gt; select degree from user_tables where table_name=&#39;T1&#39;;</p>
+<p>DEGREE</p>
+<hr>
+<pre><code>    1
+</code></pre><p><strong>数据字典视图</strong></p>
+<p>v$px_session</p>
+<p>sid：各个并行会话的sid</p>
+<p>qcsid：query coordinator sid,查询协调器sid</p>
+<p>l        <strong>并行dml</strong>
+**
+并行dml包括insert，update，delete，merge，在pdml期间，oracle可以使用多个并行执行服务器来执行insert，update，delete，merge，多个会话同时执行，同时每个会话(并发进程)都有自己的undo段，都是独立的一个事务，这些事务要么由pdml协调器进程提交，要么都rollback。</p>
+<p>在一个有充足I/o带宽的多cpu主机中，对于大规模的dml，速度可能会有很大的提升，尤其是在大型的数据仓库环境中。</p>
+<p>并行dml需要显示的启用</p>
+<p>SQL&gt; alter session enable parallel dml;</p>
+<p>Disable并行dml</p>
+<p>SQL&gt; alter session disable parallel dml;
+来源： <a href="[http://space.itpub.net/8183550/viewspace-667633](http://space.itpub.net/8183550/viewspace-667633)">[http://space.itpub.net/8183550/viewspace-667633](http://space.itpub.net/8183550/viewspace-667633)</a> </p>
+<p><img src="" alt=""> oracle并行查询一例</p>
+<p>今天碰到一个开发人员反映SQL执行时间过长。根本无法得到结果集。
+        看到服务器压力也没有很高，估计又是一个非常消耗磁盘的查询。果然，发现是一个200w的表和一个超过1100w表的HASH JOIN . 
+        简单的帮助优化了一个SQL后，SQL如下:</p>
+<p>select    count(ui.usin_uid_fk)
+    from table1 av, table2 ui
+where av.av_usse_activatedate &gt;= to_date(&#39;20090102&#39;, &#39;yyyymmdd&#39;)
+     and av.av_usse_activatedate &lt; to_date(&#39;20090401&#39;, &#39;yyyymmdd&#39;)
+     and av.av_usse_uid_fk = ui.usin_uid_fk
+     and ui.usin_mcnc_fk =XXX%&#39;</p>
+<pre><code>   不难想象执行的不是很理想。近20分钟的执行时间，真是让人崩溃。
+</code></pre><h2 id="count-ui-usin_uid_fk-">COUNT(UI.USIN_UID_FK)</h2>
+<pre><code>                        1918591
+</code></pre><p>Elapsed: 00:19:03.07</p>
+<h2 id="statistics">Statistics</h2>
+<pre><code>                0    recursive calls
+                0    db block gets
+ 32921639    consistent gets
+     352073    physical reads
+                0    redo size
+            395    bytes sent via SQL/*Net to client
+            503    bytes received via SQL/*Net from client
+                2    SQL/*Net roundtrips to/from client
+                0    sorts (memory)
+                0    sorts (disk)
+                1    rows processed
+
+    对于那张TABLE2的大表（符合条件的超过1100w），决定试图通过并行来提高执行速度。SQL如下：
+</code></pre><p>select //<em>+parallel (tbl_userinfo 4)/</em>/ count(ui.usin_uid_fk)
+from table1 av, table2 ui
+where av.av_usse_activatedate &gt;= to_date(&#39;20090101&#39;, &#39;yyyymmdd&#39;)
+and av.av_usse_activatedate &lt; to_date(&#39;20090401&#39;, &#39;yyyymmdd&#39;)
+and av.av_usse_uid_fk = ui.usin_uid_fk
+and ui.usin_mcnc_fk like &#39;XXX%&#39;;</p>
+<pre><code>  执行效果还是非常明显的。从19分钟多到1分45秒！其中consistent gets更是减少了一个数量级 -:)
+</code></pre><h2 id="count-ui-usin_uid_fk-">COUNT(UI.USIN_UID_FK)</h2>
+<pre><code>                        1918591
+</code></pre><p>Elapsed: 00:01:45.15</p>
+<h2 id="statistics">Statistics</h2>
+<pre><code>                0    recursive calls
+                0    db block gets
+    2571109    consistent gets
+     124523    physical reads
+                0    redo size
+            395    bytes sent via SQL/*Net to client
+            504    bytes received via SQL/*Net from client
+                2    SQL/*Net roundtrips to/from client
+                0    sorts (memory)
+                0    sorts (disk)
+                1    rows processed
+
+
+
+  因为这个服务器为2×4核心的cpu，应该可以算是8个CPU，所以应该可以通过增加并行度来进一步减少执行时间。如下SQL：
+</code></pre><p>SQL&gt; select //<em>+parallel (tbl_userinfo 8)/</em>/ count(ui.usin_uid_fk)
+    2        from table1 av, table2 ui
+    3     where av.av_usse_activatedate &gt;= to_date(&#39;20090101&#39;, &#39;yyyymmdd&#39;)
+    4         and av.av_usse_activatedate &lt; to_date(&#39;20090401&#39;, &#39;yyyymmdd&#39;)
+    5         and av.av_usse_uid_fk = ui.usin_uid_fk
+    6         and ui.usin_mcnc_fk like &#39;460%&#39;;</p>
+<h2 id="count-ui-usin_uid_fk-">COUNT(UI.USIN_UID_FK)</h2>
+<pre><code>                        1949033
+</code></pre><p>Elapsed: 00:00:20.60</p>
+<h2 id="statistics">Statistics</h2>
+<pre><code>                0    recursive calls
+                0    db block gets
+    2607524    consistent gets
+        55050    physical reads
+                0    redo size
+            395    bytes sent via SQL/*Net to client
+            503    bytes received via SQL/*Net from client
+                2    SQL/*Net roundtrips to/from client
+                0    sorts (memory)
+                0    sorts (disk)
+                1    rows processed
+
+   可以说还是比较理想的。只有20S左右了。虽然最大并行度可以到CPU/*2，但是效果未必会好。进一步做一个16个并行度的SQL执行测试。
+</code></pre><h2 id="count-ui-usin_uid_fk-">COUNT(UI.USIN_UID_FK)</h2>
+<pre><code>                        1949033
+</code></pre><p>Elapsed: 00:00:20.64</p>
+<h2 id="statistics">Statistics</h2>
+<pre><code>                0    recursive calls
+                0    db block gets
+    2607524    consistent gets
+        55299    physical reads
+                0    redo size
+            395    bytes sent via SQL/*Net to client
+            504    bytes received via SQL/*Net from client
+                2    SQL/*Net roundtrips to/from client
+                0    sorts (memory)
+                0    sorts (disk)
+                1    rows processed
+
+
+   没有任何提高，并且执行时间还稍高于并行度为8的SQL。
+   通过以上测试我们不难发现：
+   在处理大量数据查询，例如出现HASH JOIN的情况下，并行查询非常有效果的。也就是说并行查询在数据仓库这样的应用中会“大显身手”。
+    但是并行查询的使用还是有很多限制的。例如相对较小的数据查询和连接是会适得其反的。盲目增加并行度也是大忌，相对来讲，并行度和CPU数相同比较好。这里的CPU数应该是指的核心数。例如服务器中有一个CPU是4核心的，并行度为4是好的。
+    技术很难有十全十美的，最重要的是对于特定技术的使用要恰到好处，保证扬长避短。 -:)
+</code></pre><hr>
+<p> 以上测试环境：
+ORACLE 9.2.0.4 
+RHEL 4 U4</p>
+<p>来源： <a href="[http://miracle.blog.51cto.com/255044/147058](http://miracle.blog.51cto.com/255044/147058)">[http://miracle.blog.51cto.com/255044/147058](http://miracle.blog.51cto.com/255044/147058)</a> **</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/oracle/">oracle</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/oracle/" class="label label-success">oracle</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:34"datetime="2014-03-07 09:54:34"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-oracle--OracleParallel用法并行技术/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-oracle--OracleParallel用法并行技术" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -2188,7 +2188,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:55:36</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:28:50</em></span></div>
 </div>
 <div class="clearfix"></div>
 

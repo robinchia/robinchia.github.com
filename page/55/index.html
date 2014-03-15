@@ -110,6 +110,335 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--GC悲观策略之ParallelGC篇/">GC悲观策略之Parallel GC篇</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--GC悲观策略之ParallelGC篇/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="gc-parallel-gc-">GC悲观策略之Parallel GC篇</h1>
+<h1 id="-bluedavy-blog-https-blog-bluedavy-com-"><a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a></h1>
+<p>{互联网，OSGi，Java, High Scalability, High Performance,HA}</p>
+<ul>
+<li><a href="https://blog.bluedavy.com/" target="_blank">Home</a></li>
+<li><a href="https://blog.bluedavy.com/?page_id=2" target="_blank">About</a></li>
+<li><a href="https://blog.bluedavy.com/?page_id=81" target="_blank">Photos</a></li>
+</ul>
+<h2 id="-gc-parallel-gc-https-blog-bluedavy-com-p-166-gc-parallel-gc-"><a href="https://blog.bluedavy.com/?p=166" title="GC悲观策略之Parallel GC篇" target="_blank">GC悲观策略之Parallel GC篇</a></h2>
+<p>Nov 07</p>
+<p><a href="http://bluedavy.com/" title="Visit bluedavy’s website" target="_blank">bluedavy</a><a href="https://blog.bluedavy.com/?cat=13" title="View all posts in jvm" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=gc" target="_blank">gc</a>, <a href="https://blog.bluedavy.com/?tag=jvm" target="_blank">jvm</a>, <a href="https://blog.bluedavy.com/?tag=pessimism-policy" target="_blank">pessimism policy</a>, <a href="https://blog.bluedavy.com/?tag=%e6%82%b2%e8%a7%82%e7%ad%96%e7%95%a5" target="_blank">悲观策略</a> <a href="&quot;Comment on GC悲观策略之Parallel GC篇&quot;">12 Comments</a>
+先来看段代码：
+<a href="">?</a>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13</p>
+<p>14
+import</p>
+<p>java.util./*;</p>
+<p>public</p>
+<p>class</p>
+<p>SummaryCase{</p>
+<p>public</p>
+<p>static</p>
+<p>void</p>
+<p>main(String[] args)</p>
+<p>throws</p>
+<p>Exception{</p>
+<p>List<Object> caches=</p>
+<p>new</p>
+<p>ArrayList<Object>();</p>
+<p>for</p>
+<p>(</p>
+<p>int</p>
+<p>i=</p>
+<p>0</p>
+<p>;i&lt;</p>
+<p>7</p>
+<p>;i++){</p>
+<p>caches.add(</p>
+<p>new</p>
+<p>byte</p>
+<p>[</p>
+<p>1024</p>
+<p>/*</p>
+<p>1024</p>
+<p>/*</p>
+<p>3</p>
+<p>]);</p>
+<p>}</p>
+<p>caches.clear();</p>
+<p>for</p>
+<p>(</p>
+<p>int</p>
+<p>i=</p>
+<p>0</p>
+<p>;i&lt;</p>
+<p>2</p>
+<p>;i++){</p>
+<p>caches.add(</p>
+<p>new</p>
+<p>byte</p>
+<p>[</p>
+<p>1024</p>
+<p>/*</p>
+<p>1024</p>
+<p>/*</p>
+<p>3</p>
+<p>]);</p>
+<p>}</p>
+<p>Thread.sleep(</p>
+<p>10000</p>
+<p>);</p>
+<p>}</p>
+<p>}</p>
+<p>当用-Xms30m -Xmx30m -Xmn10m -XX:+UseParallelGC执行上面的代码时会执行几次Minor GC和几次Full GC呢？
+按照eden空间不足时触发minor gc的规则，上面代码执行后的GC应为：M、M、M、M，但实际上上面代码执行后GC则为：M、M、M、F、F。
+这里的原因就在于Parallel Scavenge GC时的悲观策略，当在eden上分配内存失败时且对象的大小尚不需要直接在old上分配时，会触发YGC，代码片段如下：</p>
+<p><a href="">?</a>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13</p>
+<p>14
+15</p>
+<p>16
+17</p>
+<p>18
+19</p>
+<p>20
+21</p>
+<p>22
+23</p>
+<p>24
+25</p>
+<p>26
+27</p>
+<p>28
+29</p>
+<p>30
+31</p>
+<p>32
+33</p>
+<p>34
+35</p>
+<p>36
+37void</p>
+<p>PSScavenge::invoke(){</p>
+<p>...
+bool</p>
+<p>scavenge_was_done = PSScavenge::invoke_no_policy();</p>
+<p>PSGCAdaptivePolicyCounters/* counters = heap-&gt;gc_policy_counters();
+if</p>
+<p>(UsePerfData)</p>
+<p>counters-&gt;update_full_follows_scavenge(0);
+if</p>
+<p>(!scavenge_was_done ||</p>
+<p>policy-&gt;should_full_GC(heap-&gt;old_gen()-&gt;free_in_bytes())) {
+if</p>
+<p>(UsePerfData)</p>
+<p>counters-&gt;update_full_follows_scavenge(full_follows_scavenge);&lt;</p>
+<p>GCCauseSetter gccs(heap, GCCause::_adaptive_size_policy);
+if</p>
+<p>(UseParallelOldGC) {</p>
+<p>PSParallelCompact::invoke_no_policy(</p>
+<p>false</p>
+<p>);
+}</p>
+<p>else</p>
+<p>{</p>
+<p>PSMarkSweep::invoke_no_policy(</p>
+<p>false</p>
+<p>);
+}</p>
+<p>}
+...</p>
+<p>}
+PSScavenge::invoke_no_policy{</p>
+<p>...
+if</p>
+<p>(!should_attempt_scavenge()) {</p>
+<p>return</p>
+<p>false</p>
+<p>;
+}</p>
+<p>...
+}</p>
+<p>bool</p>
+<p>PSScavenge::should_attempt_scavenge() {
+...</p>
+<p>PSAdaptiveSizePolicy/* policy = heap-&gt;size_policy();</p>
+<p>size_t</p>
+<p>avg_promoted = (</p>
+<p>size_t</p>
+<p>) policy-&gt;padded_average_promoted_in_bytes();
+size_t</p>
+<p>promotion_estimate = MIN2(avg_promoted, young_gen-&gt;used_in_bytes());</p>
+<p>bool</p>
+<p>result = promotion_estimate &lt; old_gen-&gt;free_in_bytes();
+...</p>
+<p>return</p>
+<p>result;
+}</p>
+<p>在上面should_attempt_scavenge代码片段中，可以看到会比较之前YGC晋升到Old中的平均大小与当前新生代中已被使用的字节数大小，取更小的值与旧生代目前剩余空间大小对比，如更大，则返回false，就终止了YGC的执行了，当返回false时，PSScavenge::invoke就将触发Full GC了。
+在PSScavenge:invoke中还有一个条件为：policy-&gt;should_full_GC(heap-&gt;old_gen()-&gt;free_in_bytes()，来看看这段代码片段：</p>
+<p><a href="">?</a>1</p>
+<p>2
+3</p>
+<p>4
+5bool</p>
+<p>PSAdaptiveSizePolicy::should_full_GC(</p>
+<p>size_t</p>
+<p>old_free_in_bytes) {</p>
+<p>bool</p>
+<p>result = padded_average_promoted_in_bytes() &gt; (</p>
+<p>float</p>
+<p>) old_free_in_bytes;
+...</p>
+<p>return</p>
+<p>result;
+}</p>
+<p>可看到，这段代码检查的也是之前YGC时晋升到old的平均大小是否大于了旧生代的剩余空间，如大于，则触发full gc。
+总结上面分析的策略，可以看到采用Parallel GC的情况下，当YGC触发时，会有两个检查：
+1、在YGC执行前，min(目前新生代已使用的大小,之前平均晋升到old的大小中的较小值) &gt; 旧生代剩余空间大小 ? 不执行YGC，直接执行Full GC : 执行YGC；
+2、在YGC执行后，平均晋升到old的大小 &gt; 旧生代剩余空间大小 ? 触发Full GC ： 什么都不做。</p>
+<p>按照这样的说明，再来看看上面代码的执行过程中eden和old大小的变化状况：
+代码 eden old YGC FGC
+第一次循环 3 0 0 0
+第二次循环 6 0 0 0
+第三次循环 3 6 1 0
+第四次循环 6 6 1 0
+第五次循环 3 12 2 0
+第六次循环 6 12 2 0
+第七次循环 3 18 3 1
+第八次循环 6 18 3 1
+第九次循环 3 3 3 2
+在第7次循环时，YGC后旧生代剩余空间为2m，而之前平均晋级到old的对象大小为6m，因此在YGC后会触发一次FGC。
+而第9次循环时，在YGC执行前，此时新生代已使用的大小为6m，之前晋级到old的平均大小为6m，这两者去最小值为6m，这个值已大于old的剩余空间，因此就不执行YGC，直接执行FGC了。</p>
+<p>Sun JDK之所以要有悲观策略，我猜想理由是程序最终是会以一个较为稳态的状况执行的，此时每次YGC后晋升到old的对象大小应该是差不多的，在YGC时做好检查，避免等YGC后晋升到Old的对象导致old空间不足，因此还不如干脆就直接执行FGC，正因为悲观策略的存在，大家有些时候可能会看到old空间没满但full gc执行的状况。
+埋个伏笔，大家将上面的执行参数换为-XX:+UseSerialGC执行看看，会发生什么呢？ <img src="" alt=":)"></p>
+<p><a href="https://blog.bluedavy.com/?p=114" target="_blank">JavaOne美国之行–硅谷公司交流篇</a> <a href="https://blog.bluedavy.com/?p=170" target="_blank">GC悲观策略之Serial GC篇</a></p>
+<h3 id="12-comments-add-yours-">12 Comments <em>(<a href="">+add yours?</a>)</em></h3>
+<ol>
+<li><img src="" alt=""> xan
+<strong>Nov 08, 2010</strong> @ 11:58:44
+代码布局不怎么给力啊 <img src="" alt=":)"></li>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Nov 08, 2010</strong> @ 12:23:52
+确实不给力，我折腾下。</li>
+<li><img src="https://secure.gravatar.com/avatar/3ed95d835a4c573899a9be257428c69f?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://twitter.com/imbeneo" target="_blank">imbeneo</a>
+<strong>Nov 08, 2010</strong> @ 13:12:45
+我忘记了clean，结果总是OOM。</li>
+<li><img src="https://secure.gravatar.com/avatar/03ec79001b70a7dc41d51c1db4db4baa?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> oliver
+<strong>Apr 26, 2011</strong> @ 11:34:35
+我的疑问是为什么第一次full gc时old里面使用空间没有被回收掉，第二次full gc时old里面才回收？</li>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Apr 26, 2011</strong> @ 13:32:18
+因为caches.clear是后来才调的…</li>
+<li><img src="https://secure.gravatar.com/avatar/3cc9849504cb6c7c78b5533df02043ac?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://www.dosmile.net/" target="_blank">yinhex</a>
+<strong>Jul 09, 2011</strong> @ 22:38:20
+这里我有个问题啊：我看你的分布式基础看到你能举例出很多大网站的设计。不知道你是从哪里可以看到这些信息的呢？可以细数一下你经常上去获取信息国外网站吗？</li>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Jul 11, 2011</strong> @ 10:01:48
+@yinhex
+一般来说，例如highscalability.com，还有各种国外的技术大会，各家著名公司的engineer的blog，都会有这些信息，:)</li>
+<li><img src="https://secure.gravatar.com/avatar/f2ec9eb448e778dc947957c779fdd735?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> Gary
+<strong>Sep 29, 2011</strong> @ 11:09:58
+-XX:+UseSerialGC gc.log发现是MMMMF,符合预期啊</li>
+<li><img src="https://secure.gravatar.com/avatar/e9ef6892fbac714e6678cd30f4a212f4?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> yangxuesong
+<strong>Nov 29, 2011</strong> @ 17:31:49
+一次full gc的执行流程是怎么用的呢？</li>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Dec 03, 2011</strong> @ 11:10:22
+@yangxuesong
+这个…要看是什么垃圾收集器…<h3 id="leave-a-reply">Leave a Reply</h3>
+</li>
+</ol>
+<p><a href="">Cancel</a></p>
+<p>Name (required)</p>
+<p>Mail (required)</p>
+<p>Website</p>
+<p><img src="&quot;CAPTCHA Image&quot;" alt="CAPTCHA Image"></p>
+<p><a href="&quot;Refresh Image&quot;"><img src="" alt="Refresh Image"></a></p>
+<p>CAPTCHA Code /*</p>
+<p><style type='text/css'>/#submit {display:none;}</style><br /> <input name="submit" type="submit" id="submit-alt" tabindex="6" value="Submit Comment" /></p>
+<p>July 2013 M T W T F S S <a href="https://blog.bluedavy.com/?m=201303" title="View posts for March 2013" target="_blank">« Mar</a>     1234567 891011121314 15161718192021 22232425262728 293031  </p>
+<h3 id="categories">Categories</h3>
+<ul>
+<li><a href="https://blog.bluedavy.com/?cat=63" title="View all posts filed under Java" target="_blank">Java</a> (10)</li>
+<li><a href="https://blog.bluedavy.com/?cat=13" title="View all posts filed under jvm" target="_blank">jvm</a> (19)</li>
+<li><a href="https://blog.bluedavy.com/?cat=56" title="View all posts filed under NoSQL" target="_blank">NoSQL</a> (7)</li>
+<li><a href="https://blog.bluedavy.com/?cat=4" title="View all posts filed under SOA" target="_blank">SOA</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=11" title="关于《分布式Java应用：基础与实践》书部分章节的公开、书内容的纠错以及补充完善。" target="_blank">书:分布式Java应用</a> (5)</li>
+<li><a href="https://blog.bluedavy.com/?cat=6" title="View all posts filed under 互联网" target="_blank">互联网</a> (5)</li>
+<li><a href="https://blog.bluedavy.com/?cat=46" title="View all posts filed under 产品总结" target="_blank">产品总结</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=18" title="View all posts filed under 优化案例" target="_blank">优化案例</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=12" title="View all posts filed under 圆桌交流" target="_blank">圆桌交流</a> (2)</li>
+<li><a href="https://blog.bluedavy.com/?cat=8" title="View all posts filed under 容量规划" target="_blank">容量规划</a> (2)</li>
+<li><a href="https://blog.bluedavy.com/?cat=97" title="View all posts filed under 迁户口" target="_blank">迁户口</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=52" title="View all posts filed under 高可用" target="_blank">高可用</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=3" title="View all posts filed under 高并发" target="_blank">高并发</a> (3)</li>
+<li><p><a href="https://blog.bluedavy.com/?cat=1" title="关于性能优化方面的一些东西。" target="_blank">高性能</a> (2)</p>
+<h3 id="recent-comments">Recent Comments</h3>
+</li>
+<li><p><a href="http://code1.riaos.com/?p=5030138" target="_blank">JVM调优 | code1（code1.riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16520" target="_blank">说说MaxTenuringThreshold这个参数</a></p>
+</li>
+<li><a href="http://architecture1.riaos.com/?p=3063358" target="_blank">JVM调优 | architecture（riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16519" target="_blank">说说MaxTenuringThreshold这个参数</a></li>
+<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16462" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+<li>xiaobo on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16460" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16459" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+</ul>
+<h3 id="tags">Tags</h3>
+<p><a href="https://blog.bluedavy.com/?tag=btrace" title="2 topics" target="_blank">btrace</a> <a href="https://blog.bluedavy.com/?tag=c1" title="1 topic" target="_blank">c1</a> <a href="https://blog.bluedavy.com/?tag=c2" title="1 topic" target="_blank">c2</a> <a href="https://blog.bluedavy.com/?tag=deflater" title="1 topic" target="_blank">Deflater</a> <a href="https://blog.bluedavy.com/?tag=facebook" title="2 topics" target="_blank">facebook</a> <a href="https://blog.bluedavy.com/?tag=gc" title="4 topics" target="_blank">gc</a> <a href="https://blog.bluedavy.com/?tag=gc-tuning" title="2 topics" target="_blank">gc tuning</a> <a href="https://blog.bluedavy.com/?tag=grizzly" title="2 topics" target="_blank">Grizzly</a> <a href="https://blog.bluedavy.com/?tag=hbase" title="6 topics" target="_blank">HBase</a> <a href="https://blog.bluedavy.com/?tag=hotspot" title="1 topic" target="_blank">hotspot</a> <a href="https://blog.bluedavy.com/?tag=inflater" title="1 topic" target="_blank">Inflater</a> <a href="https://blog.bluedavy.com/?tag=interpreter" title="1 topic" target="_blank">interpreter</a> <a href="https://blog.bluedavy.com/?tag=javac" title="1 topic" target="_blank">javac</a> <a href="https://blog.bluedavy.com/?tag=java-code-generation" title="1 topic" target="_blank">java code generation</a> <a href="https://blog.bluedavy.com/?tag=javaone" title="4 topics" target="_blank">JavaOne</a> <a href="https://blog.bluedavy.com/?tag=javaone-general-technical-session" title="1 topic" target="_blank">javaone general technical session</a> <a href="https://blog.bluedavy.com/?tag=java%e4%bb%a3%e7%a0%81%e6%89%a7%e8%a1%8c" title="1 topic" target="_blank">java代码执行</a> <a href="https://blog.bluedavy.com/?tag=java-%e5%b9%b6%e5%8f%91" title="1 topic" target="_blank">Java 并发</a> <a href="https://blog.bluedavy.com/?tag=jit" title="1 topic" target="_blank">jit</a> <a href="https://blog.bluedavy.com/?tag=jvm" title="12 topics" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=memory-management" title="1 topic" target="_blank">memory management</a> <a href="https://blog.bluedavy.com/?tag=native-memory-leak" title="1 topic" target="_blank">Native Memory Leak</a> <a href="https://blog.bluedavy.com/?tag=nosql" title="2 topics" target="_blank">NoSQL</a> <a href="https://blog.bluedavy.com/?tag=oom" title="1 topic" target="_blank">oom</a> <a href="https://blog.bluedavy.com/?tag=oracle-keynote" title="1 topic" target="_blank">oracle keynote</a> <a href="https://blog.bluedavy.com/?tag=pessimism-policy" title="1 topic" target="_blank">pessimism policy</a> <a href="https://blog.bluedavy.com/?tag=references" title="1 topic" target="_blank">references</a> <a href="https://blog.bluedavy.com/?tag=rpc" title="2 topics" target="_blank">RPC</a> <a href="https://blog.bluedavy.com/?tag=serial-gc" title="1 topic" target="_blank">serial gc</a> <a href="https://blog.bluedavy.com/?tag=soa" title="2 topics" target="_blank">SOA</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk" title="1 topic" target="_blank">sun jdk</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk-oom" title="1 topic" target="_blank">sun jdk oom</a> <a href="https://blog.bluedavy.com/?tag=web%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92%e7%9a%84%e8%89%ba%e6%9c%af" title="1 topic" target="_blank">Web容量规划的艺术</a> <a href="https://blog.bluedavy.com/?tag=yuanzhuo" title="1 topic" target="_blank">yuanzhuo</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6" title="1 topic" target="_blank">书:分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6%e8%af%84" title="1 topic" target="_blank">书评</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%92%e8%81%94%e7%bd%91%e6%8a%80%e6%9c%af" title="1 topic" target="_blank">互联网技术</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86" title="1 topic" target="_blank">内存管理</a> <a href="https://blog.bluedavy.com/?tag=%e5%88%86%e5%b8%83%e5%bc%8fjava%e5%ba%94%e7%94%a8" title="2 topics" target="_blank">分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e5%9c%86%e6%a1%8c%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">圆桌交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92" title="2 topics" target="_blank">容量规划</a> <a href="https://blog.bluedavy.com/?tag=%e6%82%b2%e8%a7%82%e7%ad%96%e7%95%a5" title="3 topics" target="_blank">悲观策略</a> <a href="https://blog.bluedavy.com/?tag=%e6%9c%8d%e5%8a%a1%e6%a1%86%e6%9e%b6" title="1 topic" target="_blank">服务框架</a> <a href="https://blog.bluedavy.com/?tag=%e7%a1%85%e8%b0%b7%e5%85%ac%e5%8f%b8" title="1 topic" target="_blank">硅谷公司</a></p>
+<h3 id="-">订阅</h3>
+<h3 id="-">推荐书籍</h3>
+<h3 id="my-book">My Book</h3>
+<p><a href="http://book.douban.com/subject/4848587/" title="分布式Java应用：基础与实践" target="_blank"><img src="" alt=""></a> <a href="http://book.douban.com/subject/3843896/" title="OSGi原理与最佳实践" target="_blank"><img src="" alt=""></a>
+© <a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a> 2013</p>
+<p><a href="http://icondock.com/" target="_blank">Icons</a> &amp; <a href="http://www.ndesign-studio.com/wp-themes" target="_blank">Wordpress Theme</a> by <a href="http://www.ndesign-studio.com/" target="_blank">N.Design</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--GC悲观策略之ParallelGC篇/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--GC悲观策略之ParallelGC篇" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--BTrace使用简介/">BTrace使用简介</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--BTrace使用简介/">feb. 2 2014</a></time></span>      
@@ -574,439 +903,93 @@ TraceMethodArgsAndReturn.java:10: 找不到符号
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（三）——JAVA线程池的分析和使用/">聊聊并发（三）——JAVA线程池的分析和使用</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-java-com-wmi-监控--使用J-Interop在Java中调用WMI/">使用 J</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（三）——JAVA线程池的分析和使用/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-java-com-wmi-监控--使用J-Interop在Java中调用WMI/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-java-">聊聊并发（三）——JAVA线程池的分析和使用</h1>
-<h3 id="-">分享到</h3>
+        <h1 id="-j-interop-java-wmi">使用 J-Interop 在 Java 中调用WMI</h1>
+<p><a href="http://simpleframework.net/space.html" target="_blank">我的空间</a> <img src="" alt="">|<a href="http://simpleframework.net/invite.html" target="_blank">邀请</a> |<a href="">登录</a>|<a href="http://simpleframework.net/regist.html" target="_blank">注册</a> <a href="http://simpleframework.net/" target="_blank"> </a>  简单就是最好的，java web 开发，simple 让你化繁为简 !</p>
+<p><a href="http://simpleframework.net/index.html" target="_blank">首页</a><a href=""></a><a href="http://simpleframework.net/news.html">新闻资讯</a><a href=""></a><a href="http://simpleframework.net/blog.html">博客</a><a href=""></a><a href="http://simpleframework.net/bbs.html">论坛</a><a href=""></a><a href="http://simpleframework.net/market.html">Simple市场</a><a href=""></a><a href="http://simpleframework.net/doc/d2.html">全面介绍</a><a href=""></a><a href="http://demo.simpleframework.net/simple3">simple3演示</a><a href=""></a><a href="http://simple4.simpleframework.net/simple4">simple4演示</a><a href=""></a><a href="http://simpleframework.net/home.html">My Portal</a></p>
+<p><img src="" alt=""><a href="http://simpleframework.net/news/v/27953.html" target="_blank">SimpleFramework开发者必读</a></p>
+<p><a href="http://simpleframework.net/space/176.html" target="_blank"><img src="" alt=""></a></p>
+<p><a href="http://simpleframework.net/blog/176.html" target="_blank">赵老师的博客</a></p>
 <ul>
-<li><a href="">一键分享</a></li>
-<li><a href="">QQ空间</a></li>
-<li><a href="">新浪微博</a></li>
-<li><a href="">百度搜藏</a></li>
-<li><a href="">人人网</a></li>
-<li><a href="">腾讯微博</a></li>
-<li><a href="">百度相册</a></li>
-<li><a href="">开心网</a></li>
-<li><a href="">腾讯朋友</a></li>
-<li><a href="">百度贴吧</a></li>
-<li><a href="">豆瓣网</a></li>
-<li><a href="">搜狐微博</a></li>
-<li><a href="">百度新首页</a></li>
-<li><a href="">QQ好友</a></li>
-<li><a href="">和讯微博</a></li>
-<li><a href="">更多...</a></li>
+<li><a href="http://simpleframework.net/blog.html" target="_blank">全部</a></li>
+<li><a href="http://simpleframework.net/blog.html?t=recommended" target="_blank">推荐</a></li>
+<li><a href="http://simpleframework.net/$resource/default/login/jsp/location.jsp" target="_blank">关注</a></li>
+<li><a href="http://simpleframework.net/$resource/default/login/jsp/location.jsp" target="_blank">我的博客</a></li>
 </ul>
-<p><a href="">百度分享</a></p>
-<ul>
-<li><a href="http://www.infoq.com/cn/aboutus" title="关于我们" target="_blank">关于我们</a></li>
-<li><p><a href="http://www.infoq.com/cn/contribute" title="让大家在InfoQ上听见你的声音" target="_blank">让大家在InfoQ上听见你的声音</a></p>
-</li>
-<li><p><a href="http://e.weibo.com/infoqchina" target="_blank"><img src="" alt=""></a></p>
-</li>
-<li><a href="http://www.infoq.com/cn/news/2013/02/infoq-wechat" target="_blank"><img src="" alt=""></a></li>
-<li><a href="http://www.infoq.com/cn/rss/rss.action?token=J6EBu2hcpyEuMs9msdo8GyNCZTcWG7pm" target="_blank"><img src="" alt=""></a></li>
-</ul>
-<h1 id="-java-">聊聊并发（三）——JAVA线程池的分析和使用</h1>
-<p>作者 <a href="http://www.infoq.com/cn/author/%E6%96%B9%E8%85%BE%E9%A3%9E" target="_blank">方腾飞</a> 发布于 十一月 15, 2012 <em>|</em> <a href="">14 评论</a></p>
-<h2 id="1-">1. 引言</h2>
-<p>合理利用线程池能够带来三个好处。第一：降低资源消耗。通过重复利用已创建的线程降低线程创建和销毁造成的消耗。第二：提高响应速度。当任务到达时，任务可以不需要等到线程创建就能立即执行。第三：提高线程的可管理性。线程是稀缺资源，如果无限制的创建，不仅会消耗系统资源，还会降低系统的稳定性，使用线程池可以进行统一的分配，调优和监控。但是要做到合理的利用线程池，必须对其原理了如指掌。</p>
-<h2 id="2-">2. 线程池的使用</h2>
-<p><strong>线程池的创建</strong></p>
-<p>我们可以通过ThreadPoolExecutor来创建一个线程池。
-new ThreadPoolExecutor(corePoolSize, maximumPoolSize, keepAliveTime, milliseconds,runnableTaskQueue, handler);</p>
-<p>创建一个线程池需要输入几个参数：</p>
-<ul>
-<li>corePoolSize（线程池的基本大小）：当提交一个任务到线程池时，线程池会创建一个线程来执行任务，即使其他空闲的基本线程能够执行新任务也会创建线程，等到需要执行的任务数大于线程池基本大小时就不再创建。如果调用了线程池的prestartAllCoreThreads方法，线程池会提前创建并启动所有基本线程。</li>
-<li><p>runnableTaskQueue（任务队列）：用于保存等待执行的任务的阻塞队列。 可以选择以下几个阻塞队列。</p>
-</li>
-<li><p>ArrayBlockingQueue：是一个基于数组结构的有界阻塞队列，此队列按 FIFO（先进先出）原则对元素进行排序。</p>
-</li>
-<li>LinkedBlockingQueue：一个基于链表结构的阻塞队列，此队列按FIFO （先进先出） 排序元素，吞吐量通常要高于ArrayBlockingQueue。静态工厂方法Executors.newFixedThreadPool()使用了这个队列。</li>
-<li>SynchronousQueue：一个不存储元素的阻塞队列。每个插入操作必须等到另一个线程调用移除操作，否则插入操作一直处于阻塞状态，吞吐量通常要高于LinkedBlockingQueue，静态工厂方法Executors.newCachedThreadPool使用了这个队列。</li>
-<li>PriorityBlockingQueue：一个具有优先级的无限阻塞队列。</li>
-<li>maximumPoolSize（线程池最大大小）：线程池允许创建的最大线程数。如果队列满了，并且已创建的线程数小于最大线程数，则线程池会再创建新的线程执行任务。值得注意的是如果使用了无界的任务队列这个参数就没什么效果。</li>
-<li>ThreadFactory：用于设置创建线程的工厂，可以通过线程工厂给每个创建出来的线程设置更有意义的名字。</li>
-<li><p>RejectedExecutionHandler（饱和策略）：当队列和线程池都满了，说明线程池处于饱和状态，那么必须采取一种策略处理提交的新任务。这个策略默认情况下是AbortPolicy，表示无法处理新任务时抛出异常。以下是JDK1.5提供的四种策略。</p>
-</li>
-<li><p>AbortPolicy：直接抛出异常。</p>
-</li>
-<li>CallerRunsPolicy：只用调用者所在线程来运行任务。</li>
-<li>DiscardOldestPolicy：丢弃队列里最近的一个任务，并执行当前任务。</li>
-<li>DiscardPolicy：不处理，丢弃掉。</li>
-<li>当然也可以根据应用场景需要来实现RejectedExecutionHandler接口自定义策略。如记录日志或持久化不能处理的任务。</li>
-<li>keepAliveTime（线程活动保持时间）：线程池的工作线程空闲后，保持存活的时间。所以如果任务很多，并且每个任务执行的时间比较短，可以调大这个时间，提高线程的利用率。</li>
-<li>TimeUnit（线程活动保持时间的单位）：可选的单位有天（DAYS），小时（HOURS），分钟（MINUTES），毫秒(MILLISECONDS)，微秒(MICROSECONDS, 千分之一毫秒)和毫微秒(NANOSECONDS, 千分之一微秒)。</li>
-</ul>
-<p><strong>向线程池提交任务</strong></p>
-<p>我们可以使用execute提交的任务，但是execute方法没有返回值，所以无法判断任务是否被线程池执行成功。通过以下代码可知execute方法输入的任务是一个Runnable类的实例。
-threadsPool.execute(new Runnable() { @Override public void run() { // TODO Auto-generated method stub } });</p>
-<p>我们也可以使用submit 方法来提交任务，它会返回一个future,那么我们可以通过这个future来判断任务是否执行成功，通过future的get方法来获取返回值，get方法会阻塞住直到任务完成，而使用get(long timeout, TimeUnit unit)方法则会阻塞一段时间后立即返回，这时有可能任务没有执行完。</p>
-<p>Future<Object> future = executor.submit(harReturnValuetask); try { Object s = future.get(); } catch (InterruptedException e) { // 处理中断异常 } catch (ExecutionException e) { // 处理无法执行任务异常 } finally { // 关闭线程池 executor.shutdown(); }</p>
-<p><strong>线程池的关闭</strong></p>
-<p>我们可以通过调用线程池的shutdown或shutdownNow方法来关闭线程池，它们的原理是遍历线程池中的工作线程，然后逐个调用线程的interrupt方法来中断线程，所以无法响应中断的任务可能永远无法终止。但是它们存在一定的区别，shutdownNow首先将线程池的状态设置成STOP，然后尝试停止所有的正在执行或暂停任务的线程，并返回等待执行任务的列表，而shutdown只是将线程池的状态设置成SHUTDOWN状态，然后中断所有没有正在执行任务的线程。</p>
-<p>只要调用了这两个关闭方法的其中一个，isShutdown方法就会返回true。当所有的任务都已关闭后,才表示线程池关闭成功，这时调用isTerminaed方法会返回true。至于我们应该调用哪一种方法来关闭线程池，应该由提交到线程池的任务特性决定，通常调用shutdown来关闭线程池，如果任务不一定要执行完，则可以调用shutdownNow。</p>
-<h2 id="3-">3. 线程池的分析</h2>
-<p>流程分析：线程池的主要工作流程如下图：</p>
+<p><a href="">关注</a> (<a href="">1</a>)</p>
+<p><a href="http://simpleframework.net/blog.html" target="_blank">博客</a>»<a href="http://simpleframework.net/blog/176.html" target="_blank">赵老师</a>»显示全文</p>
+<p>使用 J-Interop 在 Java 中调用WMI
+5评/3355阅</p>
+<p>发表于: 2011-06-16 07:12</p>
+<p><strong>有关**</strong>WMI<strong>**的小知识</strong></p>
+<p><a href="http://msdn.microsoft.com/en-us/library/aa394582(VS.85" target="_blank"><strong>Windows**</strong>管理规范（<strong><strong>WMI</strong></strong>）**</a>.aspx)是微软对来自<a href="http://en.wikipedia.org/wiki/Distributed_Management_Task_Force" title="Distributed Management Task Force" target="_blank">分布式管理任务组</a>（<strong>DMTF</strong>）的<a href="http://en.wikipedia.org/wiki/Web-Based_Enterprise_Management" title="Web-Based Enterprise Management" target="_blank">基于Web的企业管理</a>（WBEM）和<a href="http://en.wikipedia.org/wiki/Common_Information_Model_(computing" target="_blank">通用信息模型</a> &quot;Common Information Model (computing)&quot;)（CIM）标准的实现。WMI用于访问Windows系统、应用、网络、设备等组件，并管理它们。连接到一台机器通过<strong>DCOM</strong>进行管理。因此，有关<strong>DCOM</strong>的小知识将有助于本文的理解。你可以到MSDN了解有关WMI的更多细节。</p>
+<h3 id="-j-interop-"><strong>J-Interop</strong></h3>
+<p>市场上有一些在使用 JAVA 调用 WMI 的好库，包括 <a href="http://www.j-interop.org/index.html" target="_blank">J-Interop</a>、<a href="http://sourceforge.net/projects/jacob-project/" target="_blank">JACOB-Project</a> 和 <a href="http://j-integra.intrinsyc.com/products/com/" target="_blank">J-Integra</a>。其中，我更喜欢J-Interop，因为它是完全免费和开源的API。它提供了没有任何依赖的纯DCOM桥，完全用Java编写的没有任何JNI代码。</p>
+<h3 id="-wmi-windows-"><strong>使用**</strong>WMI<strong><strong>管理</strong></strong>Windows<strong>**服务</strong></h3>
+<p>现在，来看一个使用JAVA调用WMI的例子。这个例子利用J-Interop的API使用Win32_Service类解释WMI操作，将启动和停止在这个例子中的窗口服务。</p>
+<h3 id="-1-wbem-"><strong>步骤**</strong>1<strong><strong>：连接到</strong></strong>WBEM<strong>**服务</strong></h3>
+<p>下面的代码示例显示了使用J-Interop如何初始化DCOM会话，并连接到远程DCOM服务使。它使用SWbemLocator对象连接到<strong>SWbemServices</strong>，<strong>SWbemServices</strong>对象提供对本地或远程计算机WMI的访问，它调用“ConnectServer”方法连接到<strong>SWbemServices**</strong>。在本例中，<em>提供管理员级别的用户连接到远程计算机。**</em>
+JISessiondcomSession=JISession.createSession(domainName,userName,password); dcomSession.useSessionSecurity(false);   JIComServercomServer=newJIComServer(valueOf(&quot;WbemScripting.SWbemLocator&quot;),hostIP,dcomSession); IJIDispatchwbemLocator=(IJIDispatch)narrowObject(comServer.createInstance().queryInterface(IID)); //parameterstoconnecttoWbemScripting.SWbemLocator Object[]params=newObject[]{                           newJIString(hostIP),//strServer                           newJIString(win32_namespace),//strNamespace                           JIVariant.OPTIONAL_PARAM(),//strUser                           JIVariant.OPTIONAL_PARAM(),//strPassword                           JIVariant.OPTIONAL_PARAM(),//strLocale                           JIVariant.OPTIONAL_PARAM(),//strAuthority                           newInteger(0),//iSecurityFlags                           JIVariant.OPTIONAL_PARAM()//objwbemNamedValueSet                           };   JIVariantresults[]=wbemLocator.callMethodA(&quot;ConnectServer&quot;,params); IJIDispatchwbemServices=(IJIDispatch)narrowObject(results[0].getObjectAsComObject());</p>
+<p>（<strong>domainName</strong>=远程计算机域名，<strong>hostIP</strong>=远程计算机IP地址,<strong>用户名</strong>=管理员级别的用户，<strong>密码</strong>=密码）</p>
+<h3 id="-2-win32_service-"><strong>第**</strong>2<strong><strong>步：获取</strong></strong>Win32_Service<strong>**实例</strong></h3>
+<p>一旦你获得对<strong>SWbemServices</strong>对象的引用，就可以调用这个类的任何方法。其中<strong>WbemServices.InstancesOf**</strong>方法获得任何<strong><strong>Win32</strong></strong>类的实例。**</p>
+<p>也可以使用WMI查询语言(WQL)达到同样的目的，如下所示：
+finalintRETURN_IMMEDIATE=0x10; finalintFORWARD_ONLY=0x20; Object[]params=newObject[]{ newJIString(&quot;SELECT/*FROMWin32_Service&quot;), JIVariant.OPTIONAL_PARAM(), newJIVariant(newInteger(RETURN_IMMEDIATE+FORWARD_ONLY)) }; JIVariant[]servicesSet=wbemServices.callMethodA(&quot;ExecQuery&quot;,params); IJIDispatchwbemObjectSet=(IJIDispatch)narrowObject(servicesSet[0].getObjectAsComObject());</p>
+<h3 id="-"><strong>第三步：执行方法</strong></h3>
+<p>现在，已得到<strong>Win32_Service</strong>类的实例，可采用下述代码来调用同一类的方法，因为，它返回多个服务实例，要列举它们以便获取IJIDispatcher服务。
+JIVariant newEnumvariant = wbemObjectSet.get(&quot;_NewEnum&quot;); IJIComObject enumComObject = newEnumvariant.getObjectAsComObject(); IJIEnumVariant enumVariant = (IJIEnumVariant) narrowObject(enumComObject.queryInterface(IJIEnumVariant.IID));   Object[] elements = enumVariant.next(1); JIArray aJIArray = (JIArray) elements[0];   JIVariant[] array = (JIVariant[]) aJIArray.getArrayInstance(); for (JIVariant variant : array) {     IJIDispatch wbemObjectDispatch = (IJIDispatch) narrowObject(variant.getObjectAsComObject());       JIVariant returnStatus = wbemObjectDispatch.callMethodA(&quot;StopService&quot;);       System.out.println(returnStatus.getObjectAsInt()); }</p>
+<p>现在，下面的代码显示了一个使用WMI启动和停止Windows服务的完整Java类。</p>
+<p>packagecom.wmi.windows;   importstaticorg.jinterop.dcom.core.JIProgId.valueOf; importstaticorg.jinterop.dcom.impls.JIObjectFactory.narrowObject; importstaticorg.jinterop.dcom.impls.automation.IJIDispatch.IID; importjava.util.logging.Level; importorg.jinterop.dcom.common.JIException; importorg.jinterop.dcom.common.JIRuntimeException; importorg.jinterop.dcom.common.JISystem; importorg.jinterop.dcom.core.IJIComObject; importorg.jinterop.dcom.core.JIArray; importorg.jinterop.dcom.core.JIComServer; importorg.jinterop.dcom.core.JISession; importorg.jinterop.dcom.core.JIString; importorg.jinterop.dcom.core.JIVariant; importorg.jinterop.dcom.impls.automation.IJIDispatch; importorg.jinterop.dcom.impls.automation.IJIEnumVariant;   publicclassServiceManager{            privatestaticStringdomainName=&quot;&quot;;          privatestaticStringuserName=&quot;administrator&quot;;          privatestaticStringpassword=&quot;&quot;;          privatestaticStringhostIP=&quot;127.0.0.1&quot;;          privatestaticfinalStringwin32<em>namespace=&quot;ROOT\CIMV2&quot;;            privatestaticfinalintSTOP_SERVICE=0;          privatestaticfinalintSTART_SERVICE=1;            privateJISessiondcomSession=null;          //<em>/</em>          /<em>          /</em>@paramargs          /<em>/          publicstaticvoidmain(String[]args){                  ServiceManagermanager=newServiceManager();                   manager.stopService(domainName,hostIP,userName,password,&quot;MySql&quot;);//stopsaservicenamedMySql          }          //</em>/<em>          /</em>Startsagivenserviceifitsstopped.          /<em>          /</em>@paramdomainName          /<em>@paramhostname          /</em>@paramusername          /<em>@parampassword          /</em>@paramserviceName          /<em>/    publicvoidstartService(StringdomainName,Stringhostname,Stringusername,Stringpassword,StringserviceName){                  execute(domainName,hostname,username,password,serviceName,START_SERVICE);          }          //</em>/<em>          /</em>Stopsagivenserviceifitsrunning.          /<em>          /</em>@paramdomainName          /<em>@paramhostname          /</em>@paramusername          /<em>@parampassword          /</em>@paramserviceName          /<em>/     publicvoidstopService(StringdomainName,Stringhostname,Stringusername,Stringpassword,StringserviceName){                  execute(domainName,hostname,username,password,serviceName,STOP_SERVICE);          }          //</em>/<em>          /</em>Starts/Stopsagivenserviceofremotemachineashostname.          /<em>          /</em>@paramdomainName          /<em>@paramhostname          /</em>@paramusername          /<em>@parampassword          /</em>@paramserviceName          /<em>@paramaction          /</em>/ publicvoidexecute(StringdomainName,Stringhostname,Stringusername,Stringpassword,StringserviceName,intaction){                    try{                           IJIDispatchwbemServices=createCOMServer();                             finalintRETURN_IMMEDIATE=0x10;                           finalintFORWARD_ONLY=0x20;                           Object[]params=newObject[]{                                             newJIString(&quot;SELECT/*FROMWin32_ServiceWHEREName=&#39;&quot;+serviceName+&quot;&#39;&quot;),                                             JIVariant.OPTIONAL_PARAM(),                                             newJIVariant(newInteger(RETURN_IMMEDIATE+FORWARD_ONLY))                           };                           JIVariant[]servicesSet=wbemServices.callMethodA(&quot;ExecQuery&quot;,params);                           IJIDispatchwbemObjectSet=(IJIDispatch)narrowObject(servicesSet[0].getObjectAsComObject());                             JIVariantnewEnumvariant=wbemObjectSet.get(&quot;_NewEnum&quot;);                           IJIComObjectenumComObject=newEnumvariant.getObjectAsComObject();                    IJIEnumVariantenumVariant=(IJIEnumVariant)narrowObject(enumComObject.queryInterface(IJIEnumVariant.IID));                             Object[]elements=enumVariant.next(1);                           JIArrayaJIArray=(JIArray)elements[0];                             JIVariant[]array=(JIVariant[])aJIArray.getArrayInstance();                           for(JIVariantvariant:array){                                    IJIDispatchwbemObjectDispatch=(IJIDispatch)narrowObject(variant.getObjectAsComObject());                                      //Printobjectastext.                                    JIVariant[]v=wbemObjectDispatch.callMethodA(&quot;GetObjectText</em>&quot;,newObject[]{1});                                    System.out.println(v[0].getObjectAsString().getString());                                      //StartorStoptheservice                                    StringmethodToInvoke=(action==START_SERVICE)?&quot;StartService&quot;:&quot;StopService&quot;;                                    JIVariantreturnStatus=wbemObjectDispatch.callMethodA(methodToInvoke);                           System.out.println(&quot;Returnstatus:&quot;+returnStatus.getObjectAsInt());//ifreturncode=0success.Seemsdnformoredetailsaboutthemethod.                           }                  }catch(Exceptione){                           e.printStackTrace();                  }finally{                           if(dcomSession!=null){                                    try{                                             JISession.destroySession(dcomSession);                                    }catch(Exceptionex){                                             ex.printStackTrace();                                    }                           }                  }          }          //<em>/</em>          /<em>InitializeDCOMsessionandconnecttoSWBEMserviceongivenhostmachine.          /</em>@return          /*/          privateIJIDispatchcreateCOMServer(){                  JIComServercomServer;                  try{                           JISystem.getLogger().setLevel(Level.WARNING);                           JISystem.setAutoRegisteration(true);                           dcomSession=JISession.createSession(domainName,userName,password);                           dcomSession.useSessionSecurity(false);                           comServer=newJIComServer(valueOf(&quot;WbemScripting.SWbemLocator&quot;),hostIP,dcomSession);                             IJIDispatchwbemLocator=(IJIDispatch)narrowObject(comServer.createInstance().queryInterface(IID));                           //parameterstoconnecttoWbemScripting.SWbemLocator                           Object[]params=newObject[]{                                             newJIString(hostIP),//strServer                                             newJIString(win32_namespace),//strNamespace                                             JIVariant.OPTIONAL_PARAM(),//strUser                                             JIVariant.OPTIONAL_PARAM(),//strPassword                                             JIVariant.OPTIONAL_PARAM(),//strLocale                                             JIVariant.OPTIONAL_PARAM(),//strAuthority                                             newInteger(0),//iSecurityFlags                                             JIVariant.OPTIONAL_PARAM()//objwbemNamedValueSet                           };                           JIVariantresults[]=wbemLocator.callMethodA(&quot;ConnectServer&quot;,params);                           IJIDispatchwbemServices=(IJIDispatch)narrowObject(results[0].getObjectAsComObject());                           returnwbemServices;                  }catch(JIExceptionjie){                           System.out.println(jie.getMessage());                           jie.printStackTrace();                  }catch(JIRuntimeExceptionjire){                           jire.printStackTrace();                  }catch(Exceptione){                           e.printStackTrace();                  }finally{                           if(dcomSession!=null){                                    try{                                             JISession.destroySession(dcomSession);                                    }catch(JIExceptione){                                             e.printStackTrace();                                    }                           }                  }                  returnnull;          } }</p>
+<p>【原文】<a href="http://nikunjp.wordpress.com/" target="_blank"><a href="http://nikunjp.wordpress.com/">http://nikunjp.wordpress.com/</a></a>
+评论 (共 5 条评论)</p>
+<p>匿名 (219.142.23.106), 475天前</p>
+<p>j-interop 远程收集WIN7 的eventlog日志怎么不行啊，求助赵老师
+<a href="">回复</a>|<a href="">支持</a>|<a href="">反对</a>
+匿名 (219.142.23.106), 475天前</p>
+<p>是啊，win7怎么不行呢。。
+<a href="">回复</a>|<a href="">支持</a>|<a href="">反对</a></p>
+<p>匿名 (59.40.119.215), 497天前</p>
+<p>xp的开始Remote Register 服务就可以了。 win7还在研究中
+<a href="">回复</a>|<a href="">支持</a>|<a href="">反对</a>
+匿名 (219.133.0.1), 501天前</p>
+<p>win7平台为什么会用不了呢？ 我也测试过了，xp的机器可以成功运行。
+有些xp的也不行，我觉得可能是有什么配置项没有配置而导致。
+<a href="">回复</a>|<a href="">支持</a>|<a href="">反对</a></p>
+<p>匿名 (111.4.219.247), 722天前</p>
+<p>我测试报错：The system cannot find the file specified. win7平台。
+<a href="">回复</a>|<a href="">支持</a>|<a href="">反对</a> (共5, 显示全部)/</p>
+<p><a href="">表情</a> 发表评论</p>
 <p><img src="" alt=""></p>
-<p>从上图我们可以看出，当提交一个新任务到线程池时，线程池的处理流程如下：</p>
-<ol>
-<li>首先线程池判断<strong>基本线程池</strong>是否已满？没满，创建一个工作线程来执行任务。满了，则进入下个流程。</li>
-<li>其次线程池判断<strong>工作队列</strong>是否已满？没满，则将新提交的任务存储在工作队列里。满了，则进入下个流程。</li>
-<li>最后线程池判断<strong>整个线程池</strong>是否已满？没满，则创建一个新的工作线程来执行任务，满了，则交给饱和策略来处理这个任务。</li>
-</ol>
-<p><strong>源码分析</strong>。上面的流程分析让我们很直观的了解了线程池的工作原理，让我们再通过源代码来看看是如何实现的。线程池执行任务的方法如下：
-public void execute(Runnable command) { if (command == null) throw new NullPointerException(); //如果线程数小于基本线程数，则创建线程并执行当前任务 if (poolSize &gt;= corePoolSize || !addIfUnderCorePoolSize(command)) { //如线程数大于等于基本线程数或线程创建失败，则将当前任务放到工作队列中。 if (runState == RUNNING &amp;&amp; workQueue.offer(command)) { if (runState != RUNNING || poolSize == 0) ensureQueuedTaskHandled(command); } //如果线程池不处于运行中或任务无法放入队列，并且当前线程数量小于最大允许的线程数量， 则创建一个线程执行任务。 else if (!addIfUnderMaximumPoolSize(command)) //抛出RejectedExecutionException异常 reject(command); // is shutdown or saturated } }</p>
-<p><strong>工作线程</strong>。线程池创建线程时，会将线程封装成工作线程Worker，Worker在执行完任务后，还会无限循环获取工作队列里的任务来执行。我们可以从Worker的run方法里看到这点：</p>
-<p>public void run() { try { Runnable task = firstTask; firstTask = null; while (task != null || (task = getTask()) != null) { runTask(task); task = null; } } finally { workerDone(this); } }</p>
-<h2 id="4-">4. 合理的配置线程池</h2>
-<p>要想合理的配置线程池，就必须首先分析任务特性，可以从以下几个角度来进行分析：</p>
-<ol>
-<li>任务的性质：CPU密集型任务，IO密集型任务和混合型任务。</li>
-<li>任务的优先级：高，中和低。</li>
-<li>任务的执行时间：长，中和短。</li>
-<li>任务的依赖性：是否依赖其他系统资源，如数据库连接。</li>
-</ol>
-<p>任务性质不同的任务可以用不同规模的线程池分开处理。CPU密集型任务配置尽可能小的线程，如配置Ncpu+1个线程的线程池。IO密集型任务则由于线程并不是一直在执行任务，则配置尽可能多的线程，如2/*Ncpu。混合型的任务，如果可以拆分，则将其拆分成一个CPU密集型任务和一个IO密集型任务，只要这两个任务执行的时间相差不是太大，那么分解后执行的吞吐率要高于串行执行的吞吐率，如果这两个任务执行时间相差太大，则没必要进行分解。我们可以通过Runtime.getRuntime().availableProcessors()方法获得当前设备的CPU个数。</p>
-<p>优先级不同的任务可以使用优先级队列PriorityBlockingQueue来处理。它可以让优先级高的任务先得到执行，需要注意的是如果一直有优先级高的任务提交到队列里，那么优先级低的任务可能永远不能执行。</p>
-<p>执行时间不同的任务可以交给不同规模的线程池来处理，或者也可以使用优先级队列，让执行时间短的任务先执行。</p>
-<p>依赖数据库连接池的任务，因为线程提交SQL后需要等待数据库返回结果，如果等待的时间越长CPU空闲时间就越长，那么线程数应该设置越大，这样才能更好的利用CPU。</p>
-<p>建议使用有界队列，有界队列能增加系统的稳定性和预警能力，可以根据需要设大一点，比如几千。有一次我们组使用的后台任务线程池的队列和线程池全满了，不断的抛出抛弃任务的异常，通过排查发现是数据库出现了问题，导致执行SQL变得非常缓慢，因为后台任务线程池里的任务全是需要向数据库查询和插入数据的，所以导致线程池里的工作线程全部阻塞住，任务积压在线程池里。如果当时我们设置成无界队列，线程池的队列就会越来越多，有可能会撑满内存，导致整个系统不可用，而不只是后台任务出现问题。当然我们的系统所有的任务是用的单独的服务器部署的，而我们使用不同规模的线程池跑不同类型的任务，但是出现这样问题时也会影响到其他任务。</p>
-<h2 id="5-">5. 线程池的监控</h2>
-<p>通过线程池提供的参数进行监控。线程池里有一些属性在监控线程池的时候可以使用</p>
+<p><a href="">看不清楚，再换一张</a> <a href="">高级模式</a></p>
+<p>相关主题</p>
+<p><a href="http://simpleframework.net/blog/v/32903.html" target="_blank">JAVA问题定位技术</a> 2/3333</p>
+<p><a href="http://simpleframework.net/space/26397.html" target="_blank">sword</a>, 799天前</p>
+<p><a href="http://simpleframework.net/blog/v/18467.html" target="_blank">Java序列化和克隆</a> 0/1568</p>
+<p><a href="http://simpleframework.net/space/534.html" target="_blank">书生</a>, 870天前
+<a href="http://simpleframework.net/blog/v/46888.html" target="_blank">Java EE6中的装饰器，高级用法</a> 0/1163</p>
+<p><a href="http://simpleframework.net/space/176.html" target="_blank">赵老师</a>, 733天前</p>
+<p><a href="http://simpleframework.net/blog/v/16596.html" target="_blank">通过 Java 编程处理 XML 服务定义</a> 1/1691</p>
+<p><a href="http://simpleframework.net/space/534.html" target="_blank">书生</a>, 877天前
+<a href="http://simpleframework.net/blog/v/34389.html" target="_blank">解析Java软件开发中的五种认识误区</a> 0/1178</p>
+<p><a href="http://simpleframework.net/space/534.html" target="_blank">书生</a>, 792天前</p>
+<p><a href="http://simpleframework.net/blog/v/23210.html" target="_blank">Java内省和反射机制三步曲之(2)反射</a> 0/1409</p>
+<p><a href="http://simpleframework.net/space/534.html" target="_blank">书生</a>, 854天前</p>
+<p>一周点击排行
+<a href="http://simpleframework.net/guestbook.html" target="_blank">留言</a>|<a href="http://simpleframework.net/contact.html" target="_blank">联系我们</a>|<a href="http://simpleframework.net/copyright.html" target="_blank">版权声明</a>|<a href="http://simpleframework.net/about.html" target="_blank">关于</a></p>
+<p>simpleframework.net Copyright ©2011 版权所有</p>
+<p>Powered by SimpleFramework [ 0.156 s ]</p>
+<p>*</p>
 <ul>
-<li>taskCount：线程池需要执行的任务数量。</li>
-<li>completedTaskCount：线程池在运行过程中已完成的任务数量。小于或等于taskCount。</li>
-<li>largestPoolSize：线程池曾经创建过的最大线程数量。通过这个数据可以知道线程池是否满过。如等于线程池的最大大小，则表示线程池曾经满了。</li>
-<li>getPoolSize:线程池的线程数量。如果线程池不销毁的话，池里的线程不会自动销毁，所以这个大小只增不+ getActiveCount：获取活动的线程数。</li>
+<li>数据装载中...
+*</li>
 </ul>
-<p>通过扩展线程池进行监控。通过继承线程池并重写线程池的beforeExecute，afterExecute和terminated方法，我们可以在任务执行前，执行后和线程池关闭前干一些事情。如监控任务的平均执行时间，最大执行时间和最小执行时间等。这几个方法在线程池里是空方法。如：
-protected void beforeExecute(Thread t, Runnable r) { }</p>
-<h2 id="6-">6. 参考资料</h2>
-<ul>
-<li>Java并发编程实战。</li>
-<li>JDK1.6源码</li>
-</ul>
-<h2 id="-">作者介绍</h2>
-<p><strong>方腾飞</strong>，花名清英，淘宝资深开发工程师，关注并发编程，目前在广告技术部从事无线广告联盟的开发和设计工作。个人博客：<a href="http://ifeve.com/" target="_blank"><a href="http://ifeve.com">http://ifeve.com</a></a> 微博：<a href="http://weibo.com/kirals" target="_blank"><a href="http://weibo.com/kirals">http://weibo.com/kirals</a></a> 欢迎通过我的微博进行技术交流。</p>
-<p>感谢<a href="http://www.infoq.com/cn/bycategory.action?authorName=张龙" target="_blank">张龙</a>对本文的审校。</p>
-<p>给InfoQ中文站投稿或者参与内容翻译工作，请邮件至<a href="mailto:editors@cn.infoq.com">editors@cn.infoq.com</a>。也欢迎大家通过新浪微博（<a href="http://www.weibo.com/infoqchina" target="_blank">@InfoQ</a>）或者腾讯微博（<a href="http://t.qq.com/infoqchina" target="_blank">@InfoQ</a>）关注我们，并与我们的编辑和其他读者朋友交流。</p>
-<ul>
-<li><a href="">Sections</a></li>
-<li><a href="http://www.infoq.com/cn/development" target="_blank"><strong>语言 &amp; 开发</strong></a></li>
-<li><a href="">Topics</a></li>
-<li><a href="http://www.infoq.com/cn/threading" target="_blank">线程技术</a></li>
-<li><a href="http://www.infoq.com/cn/Multi-threading" target="_blank">多线程</a></li>
-<li><a href="http://www.infoq.com/cn/concurrency" target="_blank">并发</a></li>
-<li><a href="http://www.infoq.com/cn/java" target="_blank">Java</a></li>
-<li><a href="http://www.infoq.com/cn/threadPool" target="_blank">线程池</a></li>
-<li><a href="http://www.infoq.com/cn/thread" target="_blank">线程</a></li>
-</ul>
-<p>相关内容</p>
-<h3 id="-java-http-www-infoq-com-cn-articles-java-memory-model-7-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-memory-model-7?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型（七）——总结</a></h3>
-<h3 id="-java-final-http-www-infoq-com-cn-articles-java-memory-model-6-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-memory-model-6?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型（六）——final</a></h3>
-<h3 id="-java-http-www-infoq-com-cn-articles-java-memory-model-5-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-memory-model-5?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型（五）——锁</a></h3>
-<h3 id="-concurrentlinkedqueue-http-www-infoq-com-cn-articles-concurrentlinkedqueue-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/ConcurrentLinkedQueue?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">聊聊并发（六）——ConcurrentLinkedQueue的实现原理分析</a></h3>
-<h3 id="-http-www-infoq-com-cn-articles-atomic-operation-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/atomic-operation?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">聊聊并发（五）——原子操作的实现原理</a></h3>
-<h3 id="-java-http-www-infoq-com-cn-articles-java-memory-model-7-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-memory-model-7?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型（七）——总结</a></h3>
-<h3 id="-java-final-http-www-infoq-com-cn-articles-java-memory-model-6-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-memory-model-6?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型（六）——final</a></h3>
-<h3 id="-java-http-www-infoq-com-cn-articles-java-memory-model-5-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-memory-model-5?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型（五）——锁</a></h3>
-<h3 id="-java-http-www-infoq-com-cn-minibooks-java_memory_model-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/minibooks/java_memory_model?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型</a></h3>
-<h3 id="-java-volatile-http-www-infoq-com-cn-articles-java-memory-model-4-utm_source-infoq-utm_medium-related_content_link-utm_campaign-relatedcontent_articles_clk-"><a href="http://www.infoq.com/cn/articles/java-memory-model-4?utm_source=infoq&amp;utm_medium=related_content_link&amp;utm_campaign=relatedContent_articles_clk" target="_blank">深入理解Java内存模型（四）——volatile</a></h3>
-<h2 id="-">您好，陌生人！</h2>
-<p>您需要 <a href="http://www.infoq.com/reginit.action" target="_blank">注册一个InfoQ账号</a> 或者 <a href="">登录</a> 才能进行评论。在您完成注册后还需要进行一些设置。</p>
-<h2 id="-infoq-">获得来自InfoQ的更多体验。<a href=""></a></h2>
-<p>允许的HTML标签: a,b,br,blockquote,i,li,pre,u,ul,p</p>
-<p>当有人回复此评论时请E-mail通知我</p>
-<p>社区评论 <a href="">Watch Thread</a></p>
-<p><a href=""><strong>拜读，有一些困惑望解答</strong> by 史 雨鑫 Posted 16/11/2012 03:19</a>
-<a href=""><strong>Re: 拜读，有一些困惑望解答</strong> by 方 腾飞 Posted 16/11/2012 05:06</a></p>
-<p><a href=""><strong>Re: 拜读，有一些困惑望解答</strong> by 萧 欢 Posted 18/11/2012 12:57</a>
-<a href=""><strong>Re: 拜读，有一些困惑望解答</strong> by 方 腾飞 Posted 18/11/2012 02:43</a></p>
-<p><a href=""><strong>能谈谈thread pool和多核CPU的关系吗？ 怎样能保证thread pool的配置，让其能够最大化的压栈多核cpu</strong> by biao jiang Posted 20/11/2012 11:02</a>
-<a href=""><strong>Re: 能谈谈thread pool和多核CPU的关系吗？ 怎样能保证thread pool的配置，让其能够最大化的压栈多核cpu</strong> by 萧 欢 Posted 20/11/2012 02:26</a></p>
-<p><a href=""><strong>Re: 能谈谈thread pool和多核CPU的关系吗？ 怎样能保证thread pool的配置，让其能够最大化的压栈多核cpu</strong> by 老 bull Posted 22/11/2012 11:48</a>
-<a href=""><strong>Re: 能谈谈thread pool和多核CPU的关系吗？ 怎样能保证thread pool的配置，让其能够最大化的压栈多核cpu</strong> by 方 腾飞 Posted 26/11/2012 00:00</a></p>
-<p><a href=""><strong>使用的一些问题?</strong> by Qiao stephen Posted 25/02/2013 02:23</a>
-<a href=""><strong>Re: 使用的一些问题?</strong> by vince vince Posted 16/04/2013 02:45</a></p>
-<p><a href=""><strong>不知道是不是错误</strong> by 高 鹏翔 Posted 29/03/2013 01:53</a>
-<a href=""><strong>Re: 不知道是不是错误</strong> by 方 腾飞 Posted 18/05/2013 01:25</a></p>
-<p><a href=""><strong>昨晚再次阅读了该文，有几个问题需要解答</strong> by 王 明军 Posted 27/05/2013 09:11</a>
-<a href=""><strong>Re: 昨晚再次阅读了该文，有几个问题需要解答</strong> by 方 腾飞 Posted 13/06/2013 03:38</a>
-<a href=""></a></p>
-<p><strong>拜读，有一些困惑望解答</strong> 16/11/2012 03:19 by 史 雨鑫</p>
-<p>腾飞，线程池分析小节中，“队列是否满了”-&gt;”线程池是否满了“过程中，假设使用ArrayBlockingQueue队列，文中提到如果队列满了，并且线程池没满，则会新建线程处理此任务，那问题是此任务有可能会在队列任务被执行前执行，这样就不满足”先进先出“原则了吧？望解答。</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a></li>
-</ul>
-<p><a href=""></a></p>
-<p><strong>Re: 拜读，有一些困惑望解答</strong> 16/11/2012 05:06 by 方 腾飞</p>
-<p>此任务是提交给线程池执行的新任务，不在队列里。队列里的任务存储的都是以前提交的任务，它们需要等待线程空闲时来执行。</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a>
-<a href=""></a></li>
-</ul>
-<p><strong>Re: 拜读，有一些困惑望解答</strong> 18/11/2012 12:57 by 萧 欢</p>
-<p>你的理解是对的。如果在创建线程池的时候，指定的corePoolSize<maximumPoolsize是会出现你说的这种情况，这在线程池机制中称为“应急处理”。如果你的线程池模型用于任务有严格的先后顺序的情况下，指定corePoolSize=maximumPoolsize就不会有你说的问题了。通常用newFixedThreadPool这个工厂方法创建的线程池是corePoolSize=maximumPoolsize，遵循先进先出></p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a></li>
-</ul>
-<p><a href=""></a></p>
-<p><strong>Re: 拜读，有一些困惑望解答</strong> 18/11/2012 02:43 by 方 腾飞</p>
-<p>是的。之前没理解你的问题。</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a>
-<a href=""></a></li>
-</ul>
-<p><strong>能谈谈thread pool和多核CPU的关系吗？ 怎样能保证thread pool的配置，让其能够最大化的压栈多核cpu</strong> 20/11/2012 11:02 by biao jiang</p>
-<p>能谈谈thread pool和多核CPU的关系吗？ 怎样能保证thread pool的配置，让其能够最大化的压栈多核cpu</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a></li>
-</ul>
-<p><a href=""></a></p>
-<p><strong>Re: 能谈谈thread pool和多核CPU的关系吗？ 怎样能保证thread pool的配置，让其能够最大化的压栈多核cpu</strong> 20/11/2012 02:26 by 萧 欢</p>
-<p>这个应该挺难的。只能说，理论上一个CPU分配一个线程是最优的情况，然而这只是理论上。线程池和CPU核数的关系也与线程池的任务模型息息相关，是CPU密集型还是I/O密集型。最简单的方式就是动态递增的增加线程池数目然后跑一段时间程序，观察系统吞吐率，寻找最适合你的那个高层点</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a>
-<a href=""></a></li>
-</ul>
-<p><strong>Re: 能谈谈thread pool和多核CPU的关系吗？ 怎样能保证thread pool的配置，让其能够最大化的压栈多核cpu</strong> 22/11/2012 11:48 by 老 bull</p>
-<p>Java 1.2之后线程都是采用内核级线程（进程）实现的，一个JAVA用户线程最终会对应到一个内核线程上面托管，而内核线程在CPU上的调度是依赖操作系统的，这个问题可以从操作系统层面上解决或者寻求答案。</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a></li>
-</ul>
-<p><a href=""></a></p>
-<p><strong>Re: 能谈谈thread pool和多核CPU的关系吗？ 怎样能保证thread pool的配置，让其能够最大化的压栈多核cpu</strong> 26/11/2012 00:00 by 方 腾飞</p>
-<p>文中有提到如果是CPU密集型任务，使用Ncpu+1个线程可以很好的压榨CPU。详细的可以参见“合理的配置线程池”章节。</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a>
-<a href=""></a></li>
-</ul>
-<p><strong>使用的一些问题?</strong> 25/02/2013 02:23 by Qiao stephen</p>
-<p>如果我在一个应用中,存在多个小服务,每个服务都开启一个线程,请问那么是在整个应用中开启一个线程池还是每个小服务开启
-一个线程池呢?如果是每个小服务开启一个,各个线程池之间又是怎么管理呢?
-是不是使用一个线程池来管理上面的多个线程池呢?</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a></li>
-</ul>
-<p><a href=""></a></p>
-<p><strong>不知道是不是错误</strong> 29/03/2013 01:53 by 高 鹏翔</p>
-<p>◦DiscardOldestPolicy：丢弃队列里最近的一个任务，并执行当前任务。
-这个策略,我看的时候有点疑惑,进入代码里面看了下,应该是丢弃待执行的任务队列的对首,但是这个队列是FIFO的,所以我觉得应该是丢弃最远的一个任务,不知道是否理解的有误解,忘指正</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a>
-<a href=""></a></li>
-</ul>
-<p><strong>Re: 使用的一些问题?</strong> 16/04/2013 02:45 by vince vince</p>
-<p>应该是在应用中建一个线程池，把每个服务要执行的方法体封装成Runnable对象提交到线程池里执行吧，线程池顾名思义，就是一个线程库，事先为你建好，要用的时候丢给它，它给你返回结果，至于优势嘛开头说得很清楚了~这么做可以简化客户端代码复杂度，让他只关心自己的线程体逻辑，而线程本身的生命周期等都不需要自己操心~</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a></li>
-</ul>
-<p><a href=""></a></p>
-<p><strong>Re: 不知道是不是错误</strong> 18/05/2013 01:25 by 方 腾飞</p>
-<p>的确是丢弃最远的任务，源码如下
-public void rejectedExecution(Runnable r, ThreadPoolExecutor e) {
-if (!e.isShutdown()) {
-e.getQueue().poll();
-e.execute(r);
-}
-}</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a>
-<a href=""></a></li>
-</ul>
-<p><strong>昨晚再次阅读了该文，有几个问题需要解答</strong> 27/05/2013 09:11 by 王 明军</p>
-<p>1、文中提到了线程池的关闭，那么线程池在什么情况下执行关闭呢？
-2、什么是CPU密集型任务？
-谢谢！有个问题通过阅读评论已经解决，是丢弃任务那个问题。</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a></li>
-</ul>
-<p><a href=""></a></p>
-<p><strong>Re: 昨晚再次阅读了该文，有几个问题需要解答</strong> 13/06/2013 03:38 by 方 腾飞</p>
-<p>1：不需要使用的时候就关闭。比如服务器暂停使用。
-2：CPU密集型任务，如压缩和解压缩，这种需要CPU不停的计算的任务。</p>
-<ul>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a></li>
-</ul>
-<p><a href="">关闭</a></p>
-<h3 id="-by"><em>**</em>by</h3>
-<p>发布于</p>
-<ul>
-<li><a href="">查看</a></li>
-<li><a href="">回复</a></li>
-<li><a href="">回到顶部</a>
-<a href="">关闭</a> 主题  您的回复 <a href="">引用原消息</a></li>
-</ul>
-<p>允许的HTML标签: a,b,br,blockquote,i,li,pre,u,ul,p
-当有人回复此评论时请E-mail通知我</p>
-<p><a href="">关闭</a> 主题  您的回复</p>
-<p>允许的HTML标签: a,b,br,blockquote,i,li,pre,u,ul,p
-当有人回复此评论时请E-mail通知我
-<a href="">关闭</a></p>
-<ul>
-<li>热点内容</li>
-<li><a href="">本周</a></li>
-<li><a href="">本月</a></li>
-<li><a href="">近6个月</a><h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
-</li>
-</ul>
-<h3 id="-thoughtworks-2013-5-http-www-infoq-com-cn-articles-thoughtworks-technology-radar-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/thoughtWorks-technology-radar?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">ThoughtWorks技术雷达（2013年5月）</a></h3>
-<h3 id="-1-5-http-www-infoq-com-cn-articles-iqiyi-cloud-push-practices-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/iqiyi-cloud-push-practices?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">让1.5亿移动端用户第一时间获取消息</a></h3>
-<h3 id="-thoughtworks-ceo-http-www-infoq-com-cn-news-2013-06-tw-guoxiao-on-talents-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/tw-guoxiao-on-talents?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">ThoughtWorks全球CEO郭晓谈软件人才的招聘与培养</a></h3>
-<h3 id="-http-www-infoq-com-cn-news-2013-06-10-sins-for-scalability-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/10-sins-for-scalability?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">影响可扩展性的十宗罪</a></h3>
-<h3 id="-6-http-www-infoq-com-cn-minibooks-architect-jun-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jun-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（6月刊）</a></h3>
-<h3 id="-http-www-infoq-com-cn-articles-function-switch-realize-better-continuous-implementations-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/function-switch-realize-better-continuous-implementations?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">使用功能开关更好地实现持续部署</a></h3>
-<h3 id="-eclipse-github-http-www-infoq-com-cn-news-2013-06-eclipse-github-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/eclipse-github?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Eclipse迁移到GitHub</a></h3>
-<h3 id="-newegg-com-http-www-infoq-com-cn-presentations-newegg-big-data-practice-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/presentations/newegg-big-data-practice?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Newegg.com大数据实践</a></h3>
-<h3 id="-http-www-infoq-com-cn-minibooks-software-sys-architect-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/software-sys-architect?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">软件系统架构：使用视点和视角与利益相关者合作</a></h3>
-<h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
-<h3 id="-6-http-www-infoq-com-cn-minibooks-architect-jun-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jun-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（6月刊）</a></h3>
-<h3 id="-rest-http-www-infoq-com-cn-news-2013-06-rest-drawbacks-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/rest-drawbacks?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">REST的缺点是什么？</a></h3>
-<h3 id="-google-web-ui-polymer-http-www-infoq-com-cn-news-2013-06-webcomponents-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/webcomponents?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Google 发布新一代Web UI库Polymer</a></h3>
-<h3 id="-http-www-infoq-com-cn-news-2013-06-dianping-xinnet-hacked-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/dianping-xinnet-hacked?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">大众点评网域名劫持事件概述</a></h3>
-<h3 id="-node-js-grunt-js-http-www-infoq-com-cn-articles-gruntjs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/GruntJs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">基于Node.js的自动化构建工具Grunt.js</a></h3>
-<h3 id="-node-js-node-js-http-www-infoq-com-cn-articles-what-is-nodejs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/what-is-nodejs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（一）：什么是Node.js</a></h3>
-<h3 id="-http-www-infoq-com-cn-minibooks-i-m-wrights-hard-code-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/i-m-wrights-hard-code?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">代码之殇·第二版</a></h3>
-<h3 id="-http-www-infoq-com-cn-minibooks-software-sys-architect-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/software-sys-architect?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">软件系统架构：使用视点和视角与利益相关者合作</a></h3>
-<h3 id="-18-java-http-www-infoq-com-cn-news-2013-06-zhuhong-on-java-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/zhuhong-on-java?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">大家谈18岁的Java——朱鸿：开过跑车后再去开大巴车总是有点不爽的</a></h3>
-<h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
-<h3 id="-java-http-www-infoq-com-cn-articles-java-memory-model-1-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/java-memory-model-1?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入理解Java内存模型（一）——基础</a></h3>
-<h3 id="-node-js-node-js-http-www-infoq-com-cn-articles-what-is-nodejs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/what-is-nodejs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（一）：什么是Node.js</a></h3>
-<h3 id="-node-js-node-js-npm-http-www-infoq-com-cn-articles-nodejs-npm-install-config-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/nodejs-npm-install-config?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（二）：Node.js&amp;NPM的安装与配置</a></h3>
-<h3 id="-3-http-www-infoq-com-cn-minibooks-architect-mar-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-mar-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（3月刊）</a></h3>
-<h3 id="-1-http-www-infoq-com-cn-minibooks-architect-jan-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jan-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（1月刊）</a></h3>
-<h3 id="-4-http-www-infoq-com-cn-minibooks-architect-apr-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-apr-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（4月刊）</a></h3>
-<h3 id="-java-http-www-infoq-com-cn-articles-java-threadpool-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/java-threadPool?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">聊聊并发（三）——JAVA线程池的分析和使用</a></h3>
-<h3 id="-2-http-www-infoq-com-cn-minibooks-architect-feb-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-feb-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（2月刊）</a></h3>
-<h3 id="-12306-github-http-www-infoq-com-cn-news-2013-01-12306-plugin-ddos-github-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/01/12306-plugin-ddos-github?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">12306订票助手插件拖垮GitHub事件原因始末</a></h3>
-<h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
-<h3 id="-thoughtworks-2013-5-http-www-infoq-com-cn-articles-thoughtworks-technology-radar-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/thoughtWorks-technology-radar?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">ThoughtWorks技术雷达（2013年5月）</a></h3>
-<h3 id="-1-5-http-www-infoq-com-cn-articles-iqiyi-cloud-push-practices-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/iqiyi-cloud-push-practices?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">让1.5亿移动端用户第一时间获取消息</a></h3>
-<h3 id="-thoughtworks-ceo-http-www-infoq-com-cn-news-2013-06-tw-guoxiao-on-talents-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/tw-guoxiao-on-talents?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">ThoughtWorks全球CEO郭晓谈软件人才的招聘与培养</a></h3>
-<h3 id="-http-www-infoq-com-cn-news-2013-06-10-sins-for-scalability-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/10-sins-for-scalability?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">影响可扩展性的十宗罪</a></h3>
-<h3 id="-6-http-www-infoq-com-cn-minibooks-architect-jun-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jun-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（6月刊）</a></h3>
-<h3 id="-http-www-infoq-com-cn-articles-function-switch-realize-better-continuous-implementations-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/function-switch-realize-better-continuous-implementations?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">使用功能开关更好地实现持续部署</a></h3>
-<h3 id="-eclipse-github-http-www-infoq-com-cn-news-2013-06-eclipse-github-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/eclipse-github?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Eclipse迁移到GitHub</a></h3>
-<h3 id="-newegg-com-http-www-infoq-com-cn-presentations-newegg-big-data-practice-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/presentations/newegg-big-data-practice?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Newegg.com大数据实践</a></h3>
-<h3 id="-http-www-infoq-com-cn-minibooks-software-sys-architect-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/software-sys-architect?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">软件系统架构：使用视点和视角与利益相关者合作</a></h3>
-<h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
-<h3 id="-6-http-www-infoq-com-cn-minibooks-architect-jun-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jun-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（6月刊）</a></h3>
-<h3 id="-rest-http-www-infoq-com-cn-news-2013-06-rest-drawbacks-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/rest-drawbacks?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">REST的缺点是什么？</a></h3>
-<h3 id="-google-web-ui-polymer-http-www-infoq-com-cn-news-2013-06-webcomponents-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/webcomponents?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">Google 发布新一代Web UI库Polymer</a></h3>
-<h3 id="-http-www-infoq-com-cn-news-2013-06-dianping-xinnet-hacked-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/dianping-xinnet-hacked?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">大众点评网域名劫持事件概述</a></h3>
-<h3 id="-node-js-grunt-js-http-www-infoq-com-cn-articles-gruntjs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/GruntJs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">基于Node.js的自动化构建工具Grunt.js</a></h3>
-<h3 id="-node-js-node-js-http-www-infoq-com-cn-articles-what-is-nodejs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/what-is-nodejs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（一）：什么是Node.js</a></h3>
-<h3 id="-http-www-infoq-com-cn-minibooks-i-m-wrights-hard-code-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/i-m-wrights-hard-code?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">代码之殇·第二版</a></h3>
-<h3 id="-http-www-infoq-com-cn-minibooks-software-sys-architect-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/software-sys-architect?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">软件系统架构：使用视点和视角与利益相关者合作</a></h3>
-<h3 id="-18-java-http-www-infoq-com-cn-news-2013-06-zhuhong-on-java-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/06/zhuhong-on-java?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">大家谈18岁的Java——朱鸿：开过跑车后再去开大巴车总是有点不爽的</a></h3>
-<h3 id="-32-http-www-infoq-com-cn-news-2012-08-32-most-important-algorithms-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2012/08/32-most-important-algorithms?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">计算机科学中最重要的32个算法</a></h3>
-<h3 id="-java-http-www-infoq-com-cn-articles-java-memory-model-1-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/java-memory-model-1?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入理解Java内存模型（一）——基础</a></h3>
-<h3 id="-node-js-node-js-http-www-infoq-com-cn-articles-what-is-nodejs-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/what-is-nodejs?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（一）：什么是Node.js</a></h3>
-<h3 id="-node-js-node-js-npm-http-www-infoq-com-cn-articles-nodejs-npm-install-config-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/nodejs-npm-install-config?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">深入浅出Node.js（二）：Node.js&amp;NPM的安装与配置</a></h3>
-<h3 id="-3-http-www-infoq-com-cn-minibooks-architect-mar-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-mar-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（3月刊）</a></h3>
-<h3 id="-1-http-www-infoq-com-cn-minibooks-architect-jan-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-jan-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（1月刊）</a></h3>
-<h3 id="-4-http-www-infoq-com-cn-minibooks-architect-apr-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-apr-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（4月刊）</a></h3>
-<h3 id="-java-http-www-infoq-com-cn-articles-java-threadpool-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/articles/java-threadPool?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">聊聊并发（三）——JAVA线程池的分析和使用</a></h3>
-<h3 id="-2-http-www-infoq-com-cn-minibooks-architect-feb-10-2013-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/minibooks/architect-feb-10-2013?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">架构师（2月刊）</a></h3>
-<h3 id="-12306-github-http-www-infoq-com-cn-news-2013-01-12306-plugin-ddos-github-utm_source-infoq-utm_medium-popular_links_homepage-"><a href="http://www.infoq.com/cn/news/2013/01/12306-plugin-ddos-github?utm_source=infoq&amp;utm_medium=popular_links_homepage" target="_blank">12306订票助手插件拖垮GitHub事件原因始末</a></h3>
-<h2 id="-">深度内容</h2>
-<ul>
-<li><a href="">全部</a></li>
-<li><a href="">文章</a></li>
-<li><a href="">演讲</a></li>
-<li><a href="">访谈</a></li>
-<li><a href="">迷你书</a></li>
-</ul>
-<h2 id="-juergen-fesslmeier-javascript-http-www-infoq-com-cn-interviews-end-to-end-javascript-juergen-fesslmeier-javascript-"><a href="http://www.infoq.com/cn/interviews/end-to-end-javascript" title="Juergen Fesslmeier谈端到端的JavaScript开发" target="_blank">Juergen Fesslmeier谈端到端的JavaScript开发</a></h2>
-<p><a href="http://www.infoq.com/cn/author/Juergen-Fesslmeier" title="Juergen Fesslmeier" target="_blank">Juergen Fesslmeier</a> 七月 02, 2013</p>
-<p><a href="http://www.infoq.com/cn/interviews/end-to-end-javascript" title="Juergen Fesslmeier谈端到端的JavaScript开发" target="_blank"><img src="" alt=""></a></p>
-<h2 id="-http-www-infoq-com-cn-articles-design-pattern-automation-"><a href="http://www.infoq.com/cn/articles/Design-Pattern-Automation" title="设计模式自动化" target="_blank">设计模式自动化</a></h2>
-<p><a href="http://www.infoq.com/cn/author/Gael-Fraiteur-and-Yan-Cui" title="Gael Fraiteur and Yan Cui" target="_blank">Gael Fraiteur and Yan Cui</a> 七月 01, 2013</p>
-<p><a href="http://www.infoq.com/cn/articles/Design-Pattern-Automation" title="设计模式自动化" target="_blank"><img src="" alt=""></a></p>
-<h2 id="-http-www-infoq-com-cn-articles-designing-a-world-at-your-fingertips-mobile-user-interfaces-"><a href="http://www.infoq.com/cn/articles/designing-a-world-at-your-fingertips-mobile-user-interfaces" title="设计指尖上的世界：移动用户界面一瞥" target="_blank">设计指尖上的世界：移动用户界面一瞥</a></h2>
-<p><a href="http://www.infoq.com/cn/author/Forrest-Shull" title="Forrest Shull" target="_blank">Forrest Shull</a> 六月 28, 2013</p>
-<p><a href="http://www.infoq.com/cn/articles/designing-a-world-at-your-fingertips-mobile-user-interfaces" title="设计指尖上的世界：移动用户界面一瞥" target="_blank"><img src="" alt=""></a></p>
-<h2 id="-alm-http-www-infoq-com-cn-articles-integrated-alm-alm-"><a href="http://www.infoq.com/cn/articles/Integrated-ALM" title="成功的根本—集成的ALM工具" target="_blank">成功的根本—集成的ALM工具</a></h2>
-<p><a href="http://www.infoq.com/cn/author/Dave-West" title="Dave West" target="_blank">Dave West</a> 六月 28, 2013</p>
-<p><a href="http://www.infoq.com/cn/articles/Integrated-ALM" title="成功的根本—集成的ALM工具" target="_blank"><img src="" alt=""></a></p>
-<h2 id="-http-www-infoq-com-cn-articles-atdd-by-example-book-"><a href="http://www.infoq.com/cn/articles/atdd-by-example-book" title="书评：验收测试驱动开发实践指南" target="_blank">书评：验收测试驱动开发实践指南</a></h2>
-<p><a href="http://www.infoq.com/cn/author/Manuel-Pais" title="Manuel Pais" target="_blank">Manuel Pais</a> 六月 26, 2013</p>
-<p><a href="http://www.infoq.com/cn/articles/atdd-by-example-book" title="书评：验收测试驱动开发实践指南" target="_blank"><img src="" alt=""></a></p>
-<h2 id="-web-http-www-infoq-com-cn-presentations-across-device-web-web-"><a href="http://www.infoq.com/cn/presentations/across-device-web" title="跨终端的web" target="_blank">跨终端的web</a></h2>
-<p><a href="http://www.infoq.com/cn/author/%E8%88%92%E6%96%87%E4%BA%AE" title="舒文亮" target="_blank">舒文亮</a> 六月 26, 2013</p>
-<p><a href="http://www.infoq.com/cn/presentations/across-device-web" title="跨终端的web" target="_blank"><img src="" alt=""></a></p>
-<ul>
-<li><a href="">更早的 &gt;</a></li>
-</ul>
-<p>语言 &amp; 开发</p>
-<p><a href="http://www.infoq.com/cn/interviews/end-to-end-javascript" title="Juergen Fesslmeier谈端到端的JavaScript开发" target="_blank">Juergen Fesslmeier谈端到端的JavaScript开发</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/07/mobilecloud-tfs" title="MobileCloud for TFS支持测试Windows Phone,Android,iOS及BlackBerry应用" target="_blank">MobileCloud for TFS支持测试Windows Phone,Android,iOS及BlackBerry应用</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/07/baidu-salon39-summary" title="百度技术沙龙第39期回顾：前端快速开发实践（含资料下载）" target="_blank">百度技术沙龙第39期回顾：前端快速开发实践（含资料下载）</a></p>
-<p>架构 &amp; 设计</p>
-<p><a href="http://www.infoq.com/cn/news/2013/07/Native-Performance" title="内存与本机代码的性能" target="_blank">内存与本机代码的性能</a></p>
-<p><a href="http://www.infoq.com/cn/articles/Design-Pattern-Automation" title="设计模式自动化" target="_blank">设计模式自动化</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/07/WinRT-Devices" title="连接设备编程" target="_blank">连接设备编程</a>
-过程 &amp; 实践</p>
-<p><a href="http://www.infoq.com/cn/articles/Integrated-ALM" title="成功的根本—集成的ALM工具" target="_blank">成功的根本—集成的ALM工具</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/06/tw-guoxiao-on-talents" title="ThoughtWorks全球CEO郭晓谈软件人才的招聘与培养" target="_blank">ThoughtWorks全球CEO郭晓谈软件人才的招聘与培养</a></p>
-<p><a href="http://www.infoq.com/cn/articles/atdd-by-example-book" title="书评：验收测试驱动开发实践指南" target="_blank">书评：验收测试驱动开发实践指南</a></p>
-<p>运维 &amp; 基础架构</p>
-<p><a href="http://www.infoq.com/cn/news/2013/06/devops-in-traditional-enterprise" title="在传统企业中引入DevOps" target="_blank">在传统企业中引入DevOps</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/06/dod-ams-day1-s-is-for-security" title="安全性——“DevOpS”中的S" target="_blank">安全性——“DevOpS”中的S</a></p>
-<p><a href="http://www.infoq.com/cn/articles/atdd-by-example-book" title="书评：验收测试驱动开发实践指南" target="_blank">书评：验收测试驱动开发实践指南</a>
-企业架构</p>
-<p><a href="http://www.infoq.com/cn/articles/designing-a-world-at-your-fingertips-mobile-user-interfaces" title="设计指尖上的世界：移动用户界面一瞥" target="_blank">设计指尖上的世界：移动用户界面一瞥</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/06/stratos-2" title="Stratos 2.0已发布，支持所有运行时环境和30个IaaS" target="_blank">Stratos 2.0已发布，支持所有运行时环境和30个IaaS</a></p>
-<p><a href="http://www.infoq.com/cn/articles/iqiyi-cloud-push-practices" title="让1.5亿移动端用户第一时间获取消息" target="_blank">让1.5亿移动端用户第一时间获取消息</a></p>
-<p>语言 &amp; 开发</p>
-<p><a href="http://www.infoq.com/cn/interviews/end-to-end-javascript" title="Juergen Fesslmeier谈端到端的JavaScript开发" target="_blank">Juergen Fesslmeier谈端到端的JavaScript开发</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/07/mobilecloud-tfs" title="MobileCloud for TFS支持测试Windows Phone,Android,iOS及BlackBerry应用" target="_blank">MobileCloud for TFS支持测试Windows Phone,Android,iOS及BlackBerry应用</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/07/baidu-salon39-summary" title="百度技术沙龙第39期回顾：前端快速开发实践（含资料下载）" target="_blank">百度技术沙龙第39期回顾：前端快速开发实践（含资料下载）</a>
-架构 &amp; 设计</p>
-<p><a href="http://www.infoq.com/cn/news/2013/07/Native-Performance" title="内存与本机代码的性能" target="_blank">内存与本机代码的性能</a></p>
-<p><a href="http://www.infoq.com/cn/articles/Design-Pattern-Automation" title="设计模式自动化" target="_blank">设计模式自动化</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/07/WinRT-Devices" title="连接设备编程" target="_blank">连接设备编程</a></p>
-<p>过程 &amp; 实践</p>
-<p><a href="http://www.infoq.com/cn/articles/Integrated-ALM" title="成功的根本—集成的ALM工具" target="_blank">成功的根本—集成的ALM工具</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/06/tw-guoxiao-on-talents" title="ThoughtWorks全球CEO郭晓谈软件人才的招聘与培养" target="_blank">ThoughtWorks全球CEO郭晓谈软件人才的招聘与培养</a></p>
-<p><a href="http://www.infoq.com/cn/articles/atdd-by-example-book" title="书评：验收测试驱动开发实践指南" target="_blank">书评：验收测试驱动开发实践指南</a>
-运维 &amp; 基础架构</p>
-<p><a href="http://www.infoq.com/cn/news/2013/06/devops-in-traditional-enterprise" title="在传统企业中引入DevOps" target="_blank">在传统企业中引入DevOps</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/06/dod-ams-day1-s-is-for-security" title="安全性——“DevOpS”中的S" target="_blank">安全性——“DevOpS”中的S</a></p>
-<p><a href="http://www.infoq.com/cn/articles/atdd-by-example-book" title="书评：验收测试驱动开发实践指南" target="_blank">书评：验收测试驱动开发实践指南</a></p>
-<p>企业架构</p>
-<p><a href="http://www.infoq.com/cn/articles/designing-a-world-at-your-fingertips-mobile-user-interfaces" title="设计指尖上的世界：移动用户界面一瞥" target="_blank">设计指尖上的世界：移动用户界面一瞥</a></p>
-<p><a href="http://www.infoq.com/cn/news/2013/06/stratos-2" title="Stratos 2.0已发布，支持所有运行时环境和30个IaaS" target="_blank">Stratos 2.0已发布，支持所有运行时环境和30个IaaS</a></p>
-<p><a href="http://www.infoq.com/cn/articles/iqiyi-cloud-push-practices" title="让1.5亿移动端用户第一时间获取消息" target="_blank">让1.5亿移动端用户第一时间获取消息</a>
-<a href="">Close</a> E-mail  密码</p>
-<p><a href="http://www.infoq.com/cn/social/googleLogin.action?fl=login" title="使用Google账号登录" target="_blank">使用Google账号登录</a> <a href="http://www.infoq.com/cn/social/liveLogin.action?fl=login" title="使用Microsoft账号登录" target="_blank">使用Microsoft账号登录</a>
-<a href="">忘记密码？</a>
- InfoQ账号使用的E-mail 发送邮件</p>
-<p><a href="">重新登录</a>
-重新发送激活信息 重新发送</p>
-<p><a href="">重新登录</a>
-<a href="http://www.infoq.com/cn/reginit.action" target="_blank">没有用户名？</a></p>
-<p><a href="http://www.infoq.com/cn/reginit.action" target="_blank">点击注册</a></p>
 
       
     </div>
@@ -1016,8 +999,8 @@ e.execute(r);
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_多线程/">Java_多线程</a></li><li><a href="/categories/Java&J2EE/Java_多线程/并发/">并发</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_多线程/" class="label label-success">Java_多线程</a><a href="/tags/并发/" class="label label-info">并发</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（三）——JAVA线程池的分析和使用/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_多线程-并发--聊聊并发（三）——JAVA线程池的分析和使用" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/java-com/">java-com</a></li><li><a href="/categories/Java&J2EE/java-com/wmi-监控/">wmi-监控</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/java-com/" class="label label-success">java-com</a><a href="/tags/wmi-监控/" class="label label-info">wmi-监控</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-java-com-wmi-监控--使用J-Interop在Java中调用WMI/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-java-com-wmi-监控--使用J-Interop在Java中调用WMI" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1032,143 +1015,1504 @@ e.execute(r);
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-java-com-jacob--jacob合并几个word文件到一个word文件/">jacob合并几个word文件到一个word文件</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-java-com-wmi-监控--100-纯java调用windows的wmi获取监控数据-肖国颖的个人页面-开源中国社区/">100</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-java-com-jacob--jacob合并几个word文件到一个word文件/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-java-com-wmi-监控--100-纯java调用windows的wmi获取监控数据-肖国颖的个人页面-开源中国社区/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jacob-word-word-">jacob合并几个word文件到一个word文件</h1>
-<pre><code> 因项目需要将几个word文件合并到一个word文件，后面附项目运用的jar包jacob-1.9
-</code></pre><p>jacob运用中，需要将附件内的jacob.dll放到windows/system32下</p>
-<pre><code> 直接上代码：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+        <h1 id="100-java-windows-wmi-">100%纯java调用windows的wmi获取监控数据 - 肖国颖的个人页面 - 开源中国社区</h1>
+<p><a href="http://www.oschina.net/" title="开源中国社区首页" target="_blank">开源中国社区</a></p>
+<p>开源项目发现、使用和交流平台</p>
+<ul>
+<li><a href="http://www.oschina.net/project" target="_blank">项目</a></li>
+<li><a href="http://www.oschina.net/question" target="_blank">讨论</a></li>
+<li><a href="http://www.oschina.net/code/list" target="_blank">代码</a></li>
+<li><a href="http://www.oschina.net/news" target="_blank">资讯</a></li>
+<li><a href="http://www.oschina.net/translate" target="_blank">翻译</a></li>
+<li><a href="http://www.oschina.net/blog" target="_blank">博客</a></li>
+<li><a href="http://www.oschina.net/android" target="_blank">Android</a></li>
+<li><a href="http://www.oschina.net/job" target="_blank">招聘</a></li>
+</ul>
+<p>当前访客身份： arctichia [ <a href="http://my.oschina.net/arcichia" target="_blank">我的空间</a> | <a href="http://my.oschina.net/action/user/logout?session=9c386f172b1174553110&amp;goto_page=http%3A%2F%2Fmy.oschina.net%2Fnoahxiao" target="_blank">退出</a> ]  <a href="http://my.oschina.net/arcichia/admin/inbox" title="进入我的留言箱" target="_blank">你有<em>0</em>新留言</a></p>
+<p>软件 代码 讨论区 新闻 博客</p>
+<p>软件</p>
+<ul>
+<li><a href="">软件</a></li>
+<li><a href="">代码</a></li>
+<li><a href="">讨论区</a></li>
+<li><a href="">新闻</a></li>
+<li><a href="">博客</a>
+<a href="http://my.oschina.net/noahxiao" target="_blank"><img src="&quot;肖国颖&quot;" alt="肖国颖"></a>  <a href="http://my.oschina.net/noahxiao" title="男" target="_blank">肖国颖</a>  <img src="&quot;男&quot;" alt=""> <a href="&quot;成为TA的粉丝&quot;">关注此人</a></li>
+</ul>
+<p><a href="http://my.oschina.net/noahxiao/fellow" target="_blank">关注(4)</a> <a href="http://my.oschina.net/noahxiao/fans" target="_blank">粉丝(71)</a> <a href="http://www.oschina.net/question/3307_20931" title="查看OSCHINA积分规则" target="_blank">积分(280)</a></p>
+<p>不做鬼中鬼，怎做人上人
+<a href="">.发送留言</a> <a href="http://www.oschina.net/question/ask?user=569848" target="_blank">.请教问题</a></p>
+<p><strong>博客分类</strong></p>
+<ul>
+<li><a href="http://my.oschina.net/noahxiao/blog?catalog=186739" target="_blank">工作日志</a>(47)</li>
+<li><a href="http://my.oschina.net/noahxiao/blog?catalog=186740" target="_blank">日常记录</a>(0)</li>
+<li><a href="http://my.oschina.net/noahxiao/blog?catalog=186741" target="_blank">转贴的文章</a>(0)
+<strong>阅读排行</strong></li>
+</ul>
 <ol>
-<li>public static void main(String[] args) {  </li>
-<li>List list  = new ArrayList();  </li>
-<li>String file1= &quot;D:\file1.doc&quot;;  </li>
-<li>String file2= &quot;D:\file2.doc&quot;;  </li>
-<li>String file3= &quot;D:\file3.doc&quot;;  </li>
-<li>list.add(file1);  </li>
-<li>list.add(file2);  </li>
-<li>list.add(file3);  </li>
-<li>uniteDoc(list,&quot;d:\file.doc&quot;);  </li>
-<li>}  </li>
-<li>public static void uniteDoc(List fileList, String savepaths) {  </li>
-<li>if (fileList.size() == 0 || fileList == null) {  </li>
-<li>return;  </li>
-<li>}  </li>
-<li>//打开word  </li>
-<li>ActiveXComponent app = new ActiveXComponent(&quot;Word.Application&quot;);//启动word  </li>
-<li>try {  </li>
-<li>// 设置word不可见  </li>
-<li>app.setProperty(&quot;Visible&quot;, new Variant(false));  </li>
-<li>//获得documents对象  </li>
-<li>Object docs = app.getProperty(&quot;Documents&quot;).toDispatch();  </li>
-<li>//打开第一个文件  </li>
-<li>Object doc = Dispatch  </li>
-<li>.invoke(  </li>
-<li>(Dispatch) docs,  </li>
-<li>&quot;Open&quot;,  </li>
-<li>Dispatch.Method,  </li>
-<li>new Object[] { (String) fileList.get(0),  </li>
-<li>new Variant(false), new Variant(true) },  </li>
-<li>new int[3]).toDispatch();  </li>
-<li>//追加文件  </li>
-<li>for (int i = 1; i &lt; fileList.size(); i++) {  </li>
-<li>Dispatch.invoke(app.getProperty(&quot;Selection&quot;).toDispatch(),  </li>
-<li>&quot;insertFile&quot;, Dispatch.Method, new Object[] {  </li>
-<li>(String) fileList.get(i), &quot;&quot;,  </li>
-<li>new Variant(false), new Variant(false),  </li>
-<li>new Variant(false) }, new int[3]);  </li>
-<li>}  </li>
-<li>//保存新的word文件  </li>
-<li>Dispatch.invoke((Dispatch) doc, &quot;SaveAs&quot;, Dispatch.Method,  </li>
-<li>new Object[] { savepaths, new Variant(1) }, new int[3]);  </li>
-<li>Variant f = new Variant(false);  </li>
-<li>Dispatch.call((Dispatch) doc, &quot;Close&quot;, f);  </li>
-<li>} catch (Exception e) {  </li>
-<li>throw new RuntimeException(&quot;合并word文件出错.原因:&quot; + e);  </li>
-<li>} finally {  </li>
-<li>app.invoke(&quot;Quit&quot;, new Variant[] {});  </li>
-<li>}  </li>
-<li>}  </li>
+<li><a href="http://my.oschina.net/noahxiao/blog/61987" target="_blank">1. 在Android中嵌入AdMob广告，赚午饭钱</a></li>
+<li><a href="http://my.oschina.net/noahxiao/blog/86328" target="_blank">2. 解决iOS6看YouTb的心酸，补充可看版(goagent+opendoor)</a></li>
+<li><a href="http://my.oschina.net/noahxiao/blog/126357" target="_blank">3. 当单例（Singleton）爱上多线程——重复初始化问题</a></li>
+<li><a href="http://my.oschina.net/noahxiao/blog/112759" target="_blank">4. Java序列化与JSON序列化大比拼</a></li>
+<li><a href="http://my.oschina.net/noahxiao/blog/61495" target="_blank">5. 在Eclipse中用Scala语言开发Android应用</a></li>
+<li><a href="http://my.oschina.net/noahxiao/blog/88687" target="_blank">6. Ubuntu 12.10下用Empathy（pidgin-lwqq）登录QQ</a></li>
+<li><a href="http://my.oschina.net/noahxiao/blog/65071" target="_blank">7. 解决Ubuntu 12.04下频繁死机-Chrome</a></li>
+<li><a href="http://my.oschina.net/noahxiao/blog/140771" target="_blank">8. 以Jar形式为Web项目提供资源文件（JS、CSS与图片）</a></li>
 </ol>
-<p>public static void main(String[] args) {</p>
-<pre><code>        List list  = new ArrayList();
-        String file1= &quot;D:\\file1.doc&quot;;
+<p><strong>最新评论</strong></p>
+<ul>
+<li><a href="http://my.oschina.net/wenshao" target="_blank">@wenshao</a>：fastjson缺省是做循环引用检测的，你关掉这个再测... <a href="http://my.oschina.net/action/tweet/go?obj=274988152&amp;type=18&amp;user=127152" target="_blank">查看»</a></li>
+<li><a href="http://my.oschina.net/wenshao" target="_blank">@wenshao</a>：这个测试不对，你直接测试JavaBean而不是Map看看... <a href="http://my.oschina.net/action/tweet/go?obj=274988031&amp;type=18&amp;user=127152" target="_blank">查看»</a></li>
+<li><a href="http://my.oschina.net/u/1182868" target="_blank">@rrstpit</a>：Fffff <a href="http://my.oschina.net/action/tweet/go?obj=274896306&amp;type=18&amp;user=1182868" target="_blank">查看»</a></li>
+<li><a href="http://my.oschina.net/fxl" target="_blank">@付学良</a>：引用来自“xautlx”的评论 Servlet3规范好像已经... <a href="http://my.oschina.net/action/tweet/go?obj=274529269&amp;type=18&amp;user=83617" target="_blank">查看»</a></li>
+<li><a href="http://my.oschina.net/112358" target="_blank">@yezheng1993</a>：引用来自“肖国颖”的评论 引用来自“yezheng19... <a href="http://my.oschina.net/action/tweet/go?obj=274481572&amp;type=18&amp;user=1173735" target="_blank">查看»</a></li>
+<li><a href="http://my.oschina.net/noahxiao" target="_blank">@肖国颖</a>：引用来自“yezheng1993”的评论 请问一下怎么在那... <a href="http://my.oschina.net/action/tweet/go?obj=274479348&amp;type=18&amp;user=569848" target="_blank">查看»</a></li>
+<li><a href="http://my.oschina.net/112358" target="_blank">@yezheng1993</a>：请问一下怎么在那边创建文件以及文件夹，新手，还... <a href="http://my.oschina.net/action/tweet/go?obj=274477519&amp;type=18&amp;user=1173735" target="_blank">查看»</a></li>
+<li><a href="http://my.oschina.net/u/151176" target="_blank">@xautlx</a>：Servlet3规范好像已经有标准支持：<a href="https://blogs" target="_blank">https://blogs</a>... <a href="http://my.oschina.net/action/tweet/go?obj=274464191&amp;type=18&amp;user=151176" target="_blank">查看»</a></li>
+<li><a href="http://my.oschina.net/u/613918" target="_blank">@ahnan</a>：www.webjars.org <a href="http://my.oschina.net/action/tweet/go?obj=274462857&amp;type=18&amp;user=613918" target="_blank">查看»</a></li>
+<li><p><a href="http://my.oschina.net/wj2699" target="_blank">@wj2699</a>：spring的mvc确实有这么个功能，但是如果和apach... <a href="http://my.oschina.net/action/tweet/go?obj=274461745&amp;type=18&amp;user=106294" target="_blank">查看»</a>
+<strong>访客统计</strong></p>
+</li>
+<li><p>今日访问：26</p>
+</li>
+<li>昨日访问：148</li>
+<li>本周访问：389</li>
+<li>本月访问：1573</li>
+<li>所有访问：52224</li>
+</ul>
+<p><a href="http://my.oschina.net/noahxiao" target="_blank">空间</a> » <a href="http://my.oschina.net/noahxiao/blog" target="_blank">博客</a> » <a href="http://my.oschina.net/noahxiao/blog?catalog=186739" target="_blank">工作日志</a> » 博客正文</p>
+<h1 id="-100-java-windows-wmi-"><img src="" alt=""> 100%纯java调用windows的wmi获取监控数据</h1>
+<p><em>23</em>人收藏此文章,  <a href="&quot;添加到收藏夹&quot;">我要收藏</a>   发表于12个月前(2012-08-16 18:17) , 已有<strong>2348</strong>次阅读 ，共<strong><a href="">5</a></strong>个评论</p>
+<p>纯java主要体现在可以跨平台调用com。所用的是j-Interop，它是100%纯java实现的com的调用</p>
+<h3 id="1-">1、环境准备</h3>
+<p>a、windows要开启Remote Registry与Windows Management Instrumentation服务</p>
+<p>b、修改安全策略</p>
+<p>我系统是英文的，如果是中文系统，翻译为中文，相对应的查找并修改。</p>
+<p>Administrative Tools&gt;Local Security Policy&gt;Local Policy&gt;Security Policy&gt;Network access: Sharing and security model for local accounts</p>
+<p>修改为Classic（经典）</p>
+<p>c、禁用放火墙</p>
+<p>d、window2008系统注册表越狱（高版本的win）</p>
+<p>需要修改regedit中HKEY_CLASSES_ROOT\CLSID{76A64158-CB41-11D1-8B02-00600806D9B6}的权限，windows2008不再给Administrators完全控制权。</p>
+<p>下载SetACL.exe，下载地址：<a href="http://files.helgeklein.com/downloads/SetACL/current/SetACL%20(executable%20version).zip" target="_blank">http://files.helgeklein.com/downloads/SetACL/current/SetACL%20(executable%20version).zip</a></p>
+<p>set_wmi_reg_acl.cmd</p>
+<p><a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
+<p>1</p>
+<p>SetACL.exe -on</p>
+<p>&quot;HKEY_CLASSES_ROOT\CLSID{76A64158-CB41-11D1-8B02-00600806D9B6}&quot;</p>
+<p>-ot reg -actn setowner -ownr</p>
+<p>&quot;n:Administrators&quot;</p>
+<p>2</p>
+<p>SetACL.exe -on</p>
+<p>&quot;HKEY_CLASSES_ROOT\CLSID{76A64158-CB41-11D1-8B02-00600806D9B6}&quot;</p>
+<p>-ot reg -actn ace -ace</p>
+<p>&quot;n:Administrators;p:full&quot;</p>
+<p>以超级管理员身份执行这个cms，就会把owner与完全控制权限授予Administrators组</p>
+<h2 id="-">#</h2>
+<h3 id="2-">2、程序代码</h3>
+<p>java类</p>
+<p><a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
+<p>001</p>
+<p>package</p>
+<p>org.noah.wmitest;</p>
+<p>002</p>
+<p>003</p>
+<p>import</p>
+<p>org.jinterop.dcom.common.JIException;</p>
+<p>004</p>
+<p>import</p>
+<p>org.jinterop.dcom.common.JISystem;
+005</p>
+<p>import</p>
+<p>org.jinterop.dcom.core./*;</p>
+<p>006</p>
+<p>import</p>
+<p>org.jinterop.dcom.impls.JIObjectFactory;
+007</p>
+<p>import</p>
+<p>org.jinterop.dcom.impls.automation.IJIDispatch;</p>
+<p>008</p>
+<p>import</p>
+<p>org.jinterop.dcom.impls.automation.IJIEnumVariant;
+009</p>
+<p>import</p>
+<p>org.slf4j.Logger;</p>
+<p>010</p>
+<p>import</p>
+<p>org.slf4j.LoggerFactory;
+011</p>
+<p>012</p>
+<p>import</p>
+<p>java.net.UnknownHostException;
+013</p>
+<p>import</p>
+<p>java.util.logging.Level;</p>
+<p>014</p>
+<p>015</p>
+<p>//<em>/</em></p>
+<p>016</p>
+<p>/* Created with IntelliJ IDEA.
+017</p>
+<p>/* User: noah</p>
+<p>018</p>
+<p>/* Date: 8/16/12
+019</p>
+<p>/* Time: 8:00 AM</p>
+<p>020</p>
+<p>/* To change this template use File | Settings | File Templates.
+021</p>
+<p>/*/</p>
+<p>022</p>
+<p>public</p>
+<p>class</p>
+<p>WmiService {
+023</p>
+<p>024</p>
+<p>private</p>
+<p>JIComServer m_ComStub =</p>
+<p>null</p>
+<p>;
+025</p>
+<p>private</p>
+<p>IJIComObject m_ComObject =</p>
+<p>null</p>
+<p>;</p>
+<p>026</p>
+<p>private</p>
+<p>IJIDispatch m_Dispatch =</p>
+<p>null</p>
+<p>;
+027</p>
+<p>private</p>
+<p>String m_Address =</p>
+<p>null</p>
+<p>;</p>
+<p>028</p>
+<p>private</p>
+<p>JISession m_Session =</p>
+<p>null</p>
+<p>;
+029</p>
+<p>private</p>
+<p>IJIDispatch m_WbemServices =</p>
+<p>null</p>
+<p>;</p>
+<p>030</p>
+<p>031</p>
+<p>private</p>
+<p>static</p>
+<p>final</p>
+<p>String WMI_CLSID =</p>
+<p>&quot;76A6415B-CB41-11d1-8B02-00600806D9B6&quot;</p>
+<p>;</p>
+<p>032</p>
+<p>private</p>
+<p>static</p>
+<p>final</p>
+<p>String WMI_PROGID =</p>
+<p>&quot;WbemScripting.SWbemLocator&quot;</p>
+<p>;
+033</p>
+<p>034</p>
+<p>private</p>
+<p>Logger logger = LoggerFactory.getLogger(</p>
+<p>this</p>
+<p>.getClass());
+035</p>
+<p>036</p>
+<p>037</p>
+<p>public</p>
+<p>WmiService(String address) {</p>
+<p>038</p>
+<p>JISystem.setAutoRegisteration(</p>
+<p>true</p>
+<p>);
+039</p>
+<p>JISystem.getLogger().setLevel(Level.WARNING);</p>
+<p>040</p>
+<p>m_Address = address;
+041</p>
+<p>}</p>
+<p>042</p>
+<p>043</p>
+<p>public</p>
+<p>void</p>
+<p>query(String strQuery) {</p>
+<p>044</p>
+<p>045</p>
+<p>System.out.println(</p>
+<p>&quot;query:&quot;</p>
+<ul>
+<li>strQuery);</li>
+</ul>
+<p>046</p>
+<p>047</p>
+<p>JIVariant results[] =</p>
+<p>new</p>
+<p>JIVariant[</p>
+<p>0</p>
+<p>];</p>
+<p>048</p>
+<p>try</p>
+<p>{
+049</p>
+<p>results = m_WbemServices.callMethodA(</p>
+<p>&quot;ExecQuery&quot;</p>
+<p>,</p>
+<p>new</p>
+<p>Object[]{</p>
+<p>new</p>
+<p>JIString(strQuery), JIVariant.OPTIONAL_PARAM(), JIVariant.OPTIONAL_PARAM(), JIVariant.OPTIONAL_PARAM()});</p>
+<p>050</p>
+<p>IJIDispatch wOSd = (IJIDispatch) JIObjectFactory.narrowObject((results[</p>
+<p>0</p>
+<p>]).getObjectAsComObject());
+051</p>
+<p>052</p>
+<p>int</p>
+<p>count = wOSd.get(</p>
+<p>&quot;Count&quot;</p>
+<p>).getObjectAsInt();
+053</p>
+<p>054</p>
+<p>IJIComObject enumComObject = wOSd.get(</p>
+<p>&quot;_NewEnum&quot;</p>
+<p>).getObjectAsComObject();
+055</p>
+<p>IJIEnumVariant enumVariant = (IJIEnumVariant) JIObjectFactory.narrowObject(enumComObject.queryInterface(IJIEnumVariant.IID));</p>
+<p>056</p>
+<p>057</p>
+<p>IJIDispatch wbemObject_dispatch =</p>
+<p>null</p>
+<p>;</p>
+<p>058</p>
+<p>059</p>
+<p>for</p>
+<p>(</p>
+<p>int</p>
+<p>c =</p>
+<p>0</p>
+<p>; c &lt; count; c++) {</p>
+<p>060</p>
+<p>061</p>
+<p>Object[] values = enumVariant.next(</p>
+<p>1</p>
+<p>);</p>
+<p>062</p>
+<p>JIArray array = (JIArray) values[</p>
+<p>0</p>
+<p>];
+063</p>
+<p>Object[] arrayObj = (Object[]) array.getArrayInstance();</p>
+<p>064</p>
+<p>for</p>
+<p>(</p>
+<p>int</p>
+<p>j =</p>
+<p>0</p>
+<p>; j &lt; arrayObj.length; j++) {
+065</p>
+<p>wbemObject_dispatch = (IJIDispatch) JIObjectFactory.narrowObject(((JIVariant) arrayObj[j]).getObjectAsComObject());</p>
+<p>066</p>
+<p>}
+067</p>
+<p>068</p>
+<p>String str = (wbemObject_dispatch.callMethodA(</p>
+<p>&quot;GetObjectText_&quot;</p>
+<p>,</p>
+<p>new</p>
+<p>Object[]{</p>
+<p>1</p>
+<p>}))[</p>
+<p>0</p>
+<p>].getObjectAsString2();
+069</p>
+<p>System.out.println(</p>
+<p>&quot;(&quot;</p>
+<ul>
+<li>c +</li>
+</ul>
+<p>&quot;):&quot;</p>
+<p>);</p>
+<p>070</p>
+<p>System.out.println(str);
+071</p>
+<p>System.out.println();</p>
+<p>072</p>
+<p>}
+073</p>
+<p>074</p>
+<p>075</p>
+<p>}</p>
+<p>catch</p>
+<p>(JIException e) {</p>
+<p>076</p>
+<p>e.printStackTrace();
+077</p>
+<p>}</p>
+<p>078</p>
+<p>}
+079</p>
+<p>080</p>
+<p>public</p>
+<p>void</p>
+<p>connect(</p>
+<p>final</p>
+<p>String domain,</p>
+<p>final</p>
+<p>String username,</p>
+<p>final</p>
+<p>String password) {
+081</p>
+<p>try</p>
+<p>{</p>
+<p>082</p>
+<p>083</p>
+<p>m_Session = JISession.createSession(domain, username, password);</p>
+<p>084</p>
+<p>m_Session.useSessionSecurity(</p>
+<p>true</p>
+<p>);
+085</p>
+<p>m_Session.setGlobalSocketTimeout(</p>
+<p>5000</p>
+<p>);</p>
+<p>086</p>
+<p>087</p>
+<p>m_ComStub =</p>
+<p>new</p>
+<p>JIComServer(JIProgId.valueOf(WMI_PROGID), m_Address, m_Session);</p>
+<p>088</p>
+<p>089</p>
+<p>IJIComObject unknown = m_ComStub.createInstance();</p>
+<p>090</p>
+<p>m_ComObject = unknown.queryInterface(WMI_CLSID);
+091</p>
+<p>092</p>
+<p>m_Dispatch = (IJIDispatch) JIObjectFactory.narrowObject(m_ComObject.queryInterface(IJIDispatch.IID));
+093</p>
+<p>JIVariant results[] = m_Dispatch.callMethodA(</p>
+<p>094</p>
+<p>&quot;ConnectServer&quot;</p>
+<p>,
+095</p>
+<p>new</p>
+<p>Object[]{</p>
+<p>096</p>
+<p>new</p>
+<p>JIString(m_Address),
+097</p>
+<p>JIVariant.OPTIONAL_PARAM(),</p>
+<p>098</p>
+<p>JIVariant.OPTIONAL_PARAM(),
+099</p>
+<p>JIVariant.OPTIONAL_PARAM(),</p>
+<p>100</p>
+<p>JIVariant.OPTIONAL_PARAM(),
+101</p>
+<p>JIVariant.OPTIONAL_PARAM(),</p>
+<p>102</p>
+<p>0</p>
+<p>,
+103</p>
+<p>JIVariant.OPTIONAL_PARAM()</p>
+<p>104</p>
+<p>}
+105</p>
+<p>);</p>
+<p>106</p>
+<p>107</p>
+<p>m_WbemServices = (IJIDispatch) JIObjectFactory.narrowObject((results[</p>
+<p>0</p>
+<p>]).getObjectAsComObject());</p>
+<p>108</p>
+<p>109</p>
+<p>}</p>
+<p>catch</p>
+<p>(JIException e) {</p>
+<p>110</p>
+<p>e.printStackTrace();
+111</p>
+<p>if</p>
+<p>(m_Session !=</p>
+<p>null</p>
+<p>) {</p>
+<p>112</p>
+<p>try</p>
+<p>{
+113</p>
+<p>JISession.destroySession(m_Session);</p>
+<p>114</p>
+<p>}</p>
+<p>catch</p>
+<p>(JIException e1) {
+115</p>
+<p>logger.error(e.getMessage(), e);</p>
+<p>116</p>
+<p>}
+117</p>
+<p>}</p>
+<p>118</p>
+<p>}</p>
+<p>catch</p>
+<p>(UnknownHostException e) {
+119</p>
+<p>if</p>
+<p>(m_Session !=</p>
+<p>null</p>
+<p>) {</p>
+<p>120</p>
+<p>try</p>
+<p>{
+121</p>
+<p>JISession.destroySession(m_Session);</p>
+<p>122</p>
+<p>}</p>
+<p>catch</p>
+<p>(JIException e1) {
+123</p>
+<p>logger.error(e.getMessage(), e);</p>
+<p>124</p>
+<p>}
+125</p>
+<p>}</p>
+<p>126</p>
+<p>}
+127</p>
+<p>}</p>
+<p>128</p>
+<p>129</p>
+<p>public</p>
+<p>void</p>
+<p>disconnect() {</p>
+<p>130</p>
+<p>try</p>
+<p>{
+131</p>
+<p>JISession.destroySession(m_Session);</p>
+<p>132</p>
+<p>}</p>
+<p>catch</p>
+<p>(JIException e) {
+133</p>
+<p>logger.error(e.getMessage(), e);</p>
+<p>134</p>
+<p>}
+135</p>
+<p>}</p>
+<p>136</p>
+<p>137</p>
+<p>138</p>
+<p>public</p>
+<p>static</p>
+<p>void</p>
+<p>main(String[] args) {
+139</p>
+<p>140</p>
+<p>WmiService wmiService =</p>
+<p>new</p>
+<p>WmiService(</p>
+<p>&quot;172.16.158.129&quot;</p>
+<p>);
+141</p>
+<p>142</p>
+<p>//域（一般为空字符），用户名，密码
+143</p>
+<p>wmiService.connect(</p>
+<p>&quot;&quot;</p>
+<p>,</p>
+<p>&quot;username&quot;</p>
+<p>,</p>
+<p>&quot;password&quot;</p>
+<p>);</p>
+<p>144</p>
+<p>145</p>
+<p>//系统信息</p>
+<p>146</p>
+<p>wmiService.query(</p>
+<p>&quot;SELECT /* FROM Win32_ComputerSystem&quot;</p>
+<p>);
+147</p>
+<p>148</p>
+<p>//CPU信息
+149</p>
+<p>wmiService.query(</p>
+<p>&quot;SELECT /* FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name != &#39;_Total&#39;&quot;</p>
+<p>);</p>
+<p>150</p>
+<p>151</p>
+<p>//内存信息</p>
+<p>152</p>
+<p>wmiService.query(</p>
+<p>&quot;SELECT /* FROM Win32_PerfFormattedData_PerfOS_Memory&quot;</p>
+<p>);
+153</p>
+<p>154</p>
+<p>//磁盘信息
+155</p>
+<p>wmiService.query(</p>
+<p>&quot;SELECT /* FROM Win32_PerfRawData_PerfDisk_PhysicalDisk Where Name != &#39;_Total&#39;&quot;</p>
+<p>);</p>
+<p>156</p>
+<p>157</p>
+<p>wmiService.disconnect();</p>
+<p>158</p>
+<p>}
+159</p>
+<p>}</p>
+<p>mavne配置(pom.xml)
+<a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
+<p>01</p>
+<p>&lt;?</p>
+<p>xml</p>
+<p>version</p>
+<p>=</p>
+<p>&quot;1.0&quot;</p>
+<p>encoding</p>
+<p>=</p>
+<p>&quot;UTF-8&quot;</p>
+<p>?&gt;</p>
+<p>02</p>
+<p>&lt;</p>
+<p>project</p>
+<p>xmlns</p>
+<p>=</p>
+<p>&quot;<a href="http://maven.apache.org/POM/4.0.0" target="_blank">http://maven.apache.org/POM/4.0.0</a>&quot;
+03</p>
+<p>xmlns:xsi</p>
+<p>=</p>
+<p>&quot;<a href="http://www.w3.org/2001/XMLSchema-instance" target="_blank">http://www.w3.org/2001/XMLSchema-instance</a>&quot;</p>
+<p>04</p>
+<p>xsi:schemaLocation</p>
+<p>=</p>
+<p>&quot;<a href="http://maven.apache.org/POM/4.0.0" target="_blank">http://maven.apache.org/POM/4.0.0</a> <a href="http://maven.apache.org/xsd/maven-4.0.0.xsd" target="_blank">http://maven.apache.org/xsd/maven-4.0.0.xsd</a>&quot;</p>
+<p>&gt;
+05</p>
+<p>&lt;</p>
+<p>modelVersion</p>
+<blockquote>
+<p>4.0.0&lt;/</p>
+</blockquote>
+<p>modelVersion</p>
+<p>&gt;</p>
+<p>06</p>
+<p>07</p>
+<p>&lt;</p>
+<p>groupId</p>
+<blockquote>
+<p>org.noahx&lt;/</p>
+</blockquote>
+<p>groupId</p>
+<p>&gt;</p>
+<p>08</p>
+<p>&lt;</p>
+<p>artifactId</p>
+<blockquote>
+<p>wmi-test&lt;/</p>
+</blockquote>
+<p>artifactId</p>
+<p>&gt;
+09</p>
+<p>&lt;</p>
+<p>version</p>
+<blockquote>
+<p>1.0&lt;/</p>
+</blockquote>
+<p>version</p>
+<p>&gt;</p>
+<p>10</p>
+<p>11</p>
+<p>12</p>
+<p>&lt;</p>
+<p>dependencies</p>
+<p>&gt;
+13</p>
+<p>14</p>
+<p>&lt;</p>
+<p>dependency</p>
+<p>&gt;
+15</p>
+<p>&lt;</p>
+<p>groupId</p>
+<blockquote>
+<p>org.kohsuke.jinterop&lt;/</p>
+</blockquote>
+<p>groupId</p>
+<p>&gt;</p>
+<p>16</p>
+<p>&lt;</p>
+<p>artifactId</p>
+<blockquote>
+<p>j-interop&lt;/</p>
+</blockquote>
+<p>artifactId</p>
+<p>&gt;
+17</p>
+<p>&lt;</p>
+<p>version</p>
+<blockquote>
+<p>2.0.8-kohsuke-1&lt;/</p>
+</blockquote>
+<p>version</p>
+<p>&gt;</p>
+<p>18</p>
+<p>&lt;/</p>
+<p>dependency</p>
+<p>&gt;
+19</p>
+<p>20</p>
+<p>&lt;</p>
+<p>dependency</p>
+<p>&gt;
+21</p>
+<p>&lt;</p>
+<p>groupId</p>
+<blockquote>
+<p>org.slf4j&lt;/</p>
+</blockquote>
+<p>groupId</p>
+<p>&gt;</p>
+<p>22</p>
+<p>&lt;</p>
+<p>artifactId</p>
+<blockquote>
+<p>slf4j-log4j12&lt;/</p>
+</blockquote>
+<p>artifactId</p>
+<p>&gt;
+23</p>
+<p>&lt;</p>
+<p>version</p>
+<blockquote>
+<p>1.6.4&lt;/</p>
+</blockquote>
+<p>version</p>
+<p>&gt;</p>
+<p>24</p>
+<p>&lt;/</p>
+<p>dependency</p>
+<p>&gt;
+25</p>
+<p>26</p>
+<p>&lt;/</p>
+<p>dependencies</p>
+<p>&gt;
+27</p>
+<p>28</p>
+<p>&lt;/</p>
+<p>project</p>
+<p>&gt;</p>
+<p>运行结果</p>
+<p><a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
+<p>001</p>
+<p>query:SELECT /* FROM Win32_ComputerSystem</p>
+<p>002</p>
+<p>(0):
+003</p>
+<p>004</p>
+<p>instance of Win32_ComputerSystem
+005</p>
+<p>{</p>
+<p>006</p>
+<p>AdminPasswordStatus = 1;
+007</p>
+<p>AutomaticResetBootOption = FALSE;</p>
+<p>008</p>
+<p>AutomaticResetCapability = TRUE;
+009</p>
+<p>BootOptionOnLimit = 3;</p>
+<p>010</p>
+<p>BootOptionOnWatchDog = 3;
+011</p>
+<p>BootROMSupported = TRUE;</p>
+<p>012</p>
+<p>BootupState =</p>
+<p>&quot;Normal boot&quot;</p>
+<p>;
+013</p>
+<p>Caption =</p>
+<p>&quot;NAK-E1A7C21EA3C&quot;</p>
+<p>;</p>
+<p>014</p>
+<p>ChassisBootupState = 3;
+015</p>
+<p>CreationClassName =</p>
+<p>&quot;Win32_ComputerSystem&quot;</p>
+<p>;</p>
+<p>016</p>
+<p>CurrentTimeZone = 480;
+017</p>
+<p>Description =</p>
+<p>&quot;AT/AT COMPATIBLE&quot;</p>
+<p>;</p>
+<p>018</p>
+<p>Domain =</p>
+<p>&quot;WORKGROUP&quot;</p>
+<p>;
+019</p>
+<p>DomainRole = 0;</p>
+<p>020</p>
+<p>EnableDaylightSavingsTime = TRUE;
+021</p>
+<p>FrontPanelResetStatus = 3;</p>
+<p>022</p>
+<p>InfraredSupported = FALSE;
+023</p>
+<p>KeyboardPasswordStatus = 3;</p>
+<p>024</p>
+<p>Manufacturer =</p>
+<p>&quot;VMware, Inc.&quot;</p>
+<p>;
+025</p>
+<p>Model =</p>
+<p>&quot;VMware Virtual Platform&quot;</p>
+<p>;</p>
+<p>026</p>
+<p>Name =</p>
+<p>&quot;NAK-E1A7C21EA3C&quot;</p>
+<p>;
+027</p>
+<p>NetworkServerModeEnabled = TRUE;</p>
+<p>028</p>
+<p>NumberOfLogicalProcessors = 2;
+029</p>
+<p>NumberOfProcessors = 1;</p>
+<p>030</p>
+<p>OEMStringArray = {</p>
+<p>&quot;[MS_VM_CERT/SHA1/27d66596a61c48dd3dc7216fd715126e33f59ae7]&quot;</p>
+<p>,</p>
+<p>&quot;Welcome to the Virtual Machine&quot;</p>
+<p>};
+031</p>
+<p>PartOfDomain = FALSE;</p>
+<p>032</p>
+<p>PauseAfterReset =</p>
+<p>&quot;3932100000&quot;</p>
+<p>;
+033</p>
+<p>PowerOnPasswordStatus = 0;</p>
+<p>034</p>
+<p>PowerState = 0;
+035</p>
+<p>PowerSupplyState = 3;</p>
+<p>036</p>
+<p>PrimaryOwnerName =</p>
+<p>&quot;nak&quot;</p>
+<p>;
+037</p>
+<p>ResetCapability = 1;</p>
+<p>038</p>
+<p>ResetCount = -1;
+039</p>
+<p>ResetLimit = -1;</p>
+<p>040</p>
+<p>Roles = {</p>
+<p>&quot;LM_Workstation&quot;</p>
+<p>,</p>
+<p>&quot;LM_Server&quot;</p>
+<p>,</p>
+<p>&quot;NT&quot;</p>
+<p>,</p>
+<p>&quot;Potential_Browser&quot;</p>
+<p>,</p>
+<p>&quot;Master_Browser&quot;</p>
+<p>};
+041</p>
+<p>Status =</p>
+<p>&quot;OK&quot;</p>
+<p>;</p>
+<p>042</p>
+<p>SystemStartupDelay = 0;
+043</p>
+<p>SystemStartupOptions = {</p>
+<p>&quot;\&quot;Microsoft Windows XP Professional\&quot; /noexecute=optin /fastdetect&quot;</p>
+<p>};</p>
+<p>044</p>
+<p>SystemStartupSetting = 0;
+045</p>
+<p>SystemType =</p>
+<p>&quot;X86-based PC&quot;</p>
+<p>;</p>
+<p>046</p>
+<p>ThermalState = 3;
+047</p>
+<p>TotalPhysicalMemory =</p>
+<p>&quot;1610063872&quot;</p>
+<p>;</p>
+<p>048</p>
+<p>UserName =</p>
+<p>&quot;NAK-E1A7C21EA3C\a&quot;</p>
+<p>;
+049</p>
+<p>WakeUpType = 6;</p>
+<p>050</p>
+<p>};
+051</p>
+<p>052</p>
+<p>053</p>
+<p>query:SELECT /* FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name !=</p>
+<p>&#39;_Total&#39;</p>
+<p>054</p>
+<p>(0):
+055</p>
+<p>056</p>
+<p>instance of Win32_PerfFormattedData_PerfOS_Processor
+057</p>
+<p>{</p>
+<p>058</p>
+<p>C1TransitionsPersec =</p>
+<p>&quot;77&quot;</p>
+<p>;
+059</p>
+<p>C2TransitionsPersec =</p>
+<p>&quot;0&quot;</p>
+<p>;</p>
+<p>060</p>
+<p>C3TransitionsPersec =</p>
+<p>&quot;0&quot;</p>
+<p>;
+061</p>
+<p>DPCRate = 0;</p>
+<p>062</p>
+<p>DPCsQueuedPersec = 4;
+063</p>
+<p>InterruptsPersec = 71;</p>
+<p>064</p>
+<p>Name =</p>
+<p>&quot;0&quot;</p>
+<p>;
+065</p>
+<p>PercentC1Time =</p>
+<p>&quot;96&quot;</p>
+<p>;</p>
+<p>066</p>
+<p>PercentC2Time =</p>
+<p>&quot;0&quot;</p>
+<p>;
+067</p>
+<p>PercentC3Time =</p>
+<p>&quot;0&quot;</p>
+<p>;</p>
+<p>068</p>
+<p>PercentDPCTime =</p>
+<p>&quot;0&quot;</p>
+<p>;
+069</p>
+<p>PercentIdleTime =</p>
+<p>&quot;100&quot;</p>
+<p>;</p>
+<p>070</p>
+<p>PercentInterruptTime =</p>
+<p>&quot;0&quot;</p>
+<p>;
+071</p>
+<p>PercentPrivilegedTime =</p>
+<p>&quot;0&quot;</p>
+<p>;</p>
+<p>072</p>
+<p>PercentProcessorTime =</p>
+<p>&quot;0&quot;</p>
+<p>;
+073</p>
+<p>PercentUserTime =</p>
+<p>&quot;0&quot;</p>
+<p>;</p>
+<p>074</p>
+<p>};
+075</p>
+<p>076</p>
+<p>077</p>
+<p>(1):</p>
+<p>078</p>
+<p>079</p>
+<p>instance of Win32_PerfFormattedData_PerfOS_Processor</p>
+<p>080</p>
+<p>{
+081</p>
+<p>C1TransitionsPersec =</p>
+<p>&quot;83&quot;</p>
+<p>;</p>
+<p>082</p>
+<p>C2TransitionsPersec =</p>
+<p>&quot;0&quot;</p>
+<p>;
+083</p>
+<p>C3TransitionsPersec =</p>
+<p>&quot;0&quot;</p>
+<p>;</p>
+<p>084</p>
+<p>DPCRate = 0;
+085</p>
+<p>DPCsQueuedPersec = 10;</p>
+<p>086</p>
+<p>InterruptsPersec = 67;
+087</p>
+<p>Name =</p>
+<p>&quot;1&quot;</p>
+<p>;</p>
+<p>088</p>
+<p>PercentC1Time =</p>
+<p>&quot;96&quot;</p>
+<p>;
+089</p>
+<p>PercentC2Time =</p>
+<p>&quot;0&quot;</p>
+<p>;</p>
+<p>090</p>
+<p>PercentC3Time =</p>
+<p>&quot;0&quot;</p>
+<p>;
+091</p>
+<p>PercentDPCTime =</p>
+<p>&quot;0&quot;</p>
+<p>;</p>
+<p>092</p>
+<p>PercentIdleTime =</p>
+<p>&quot;100&quot;</p>
+<p>;
+093</p>
+<p>PercentInterruptTime =</p>
+<p>&quot;0&quot;</p>
+<p>;</p>
+<p>094</p>
+<p>PercentPrivilegedTime =</p>
+<p>&quot;0&quot;</p>
+<p>;
+095</p>
+<p>PercentProcessorTime =</p>
+<p>&quot;0&quot;</p>
+<p>;</p>
+<p>096</p>
+<p>PercentUserTime =</p>
+<p>&quot;0&quot;</p>
+<p>;
+097</p>
+<p>};</p>
+<p>098</p>
+<p>099</p>
+<p>100</p>
+<p>query:SELECT /* FROM Win32_PerfFormattedData_PerfOS_Memory
+101</p>
+<p>(0):</p>
+<p>102</p>
+<p>103</p>
+<p>instance of Win32_PerfFormattedData_PerfOS_Memory</p>
+<p>104</p>
+<p>{
+105</p>
+<p>AvailableBytes =</p>
+<p>&quot;1142099968&quot;</p>
+<p>;</p>
+<p>106</p>
+<p>AvailableKBytes =</p>
+<p>&quot;1115332&quot;</p>
+<p>;
+107</p>
+<p>AvailableMBytes =</p>
+<p>&quot;1089&quot;</p>
+<p>;</p>
+<p>108</p>
+<p>CacheBytes =</p>
+<p>&quot;70725632&quot;</p>
+<p>;
+109</p>
+<p>CacheBytesPeak =</p>
+<p>&quot;72904704&quot;</p>
+<p>;</p>
+<p>110</p>
+<p>CacheFaultsPersec = 634;
+111</p>
+<p>CommitLimit =</p>
+<p>&quot;3063078912&quot;</p>
+<p>;</p>
+<p>112</p>
+<p>CommittedBytes =</p>
+<p>&quot;326488064&quot;</p>
+<p>;
+113</p>
+<p>DemandZeroFaultsPersec = 13965;</p>
+<p>114</p>
+<p>FreeSystemPageTableEntries = 159743;
+115</p>
+<p>PageFaultsPersec = 13965;</p>
+<p>116</p>
+<p>PageReadsPersec = 0;
+117</p>
+<p>PagesInputPersec = 0;</p>
+<p>118</p>
+<p>PagesOutputPersec = 0;
+119</p>
+<p>PagesPersec = 0;</p>
+<p>120</p>
+<p>PageWritesPersec = 0;
+121</p>
+<p>PercentCommittedBytesInUse = 10;</p>
+<p>122</p>
+<p>PoolNonpagedAllocs = 38040;
+123</p>
+<p>PoolNonpagedBytes =</p>
+<p>&quot;7585792&quot;</p>
+<p>;</p>
+<p>124</p>
+<p>PoolPagedAllocs = 57820;
+125</p>
+<p>PoolPagedBytes =</p>
+<p>&quot;29380608&quot;</p>
+<p>;</p>
+<p>126</p>
+<p>PoolPagedResidentBytes =</p>
+<p>&quot;28622848&quot;</p>
+<p>;
+127</p>
+<p>SystemCacheResidentBytes =</p>
+<p>&quot;40235008&quot;</p>
+<p>;</p>
+<p>128</p>
+<p>SystemCodeResidentBytes =</p>
+<p>&quot;1867776&quot;</p>
+<p>;
+129</p>
+<p>SystemCodeTotalBytes =</p>
+<p>&quot;1167360&quot;</p>
+<p>;</p>
+<p>130</p>
+<p>SystemDriverResidentBytes =</p>
+<p>&quot;0&quot;</p>
+<p>;
+131</p>
+<p>SystemDriverTotalBytes =</p>
+<p>&quot;4071424&quot;</p>
+<p>;</p>
+<p>132</p>
+<p>TransitionFaultsPersec = 0;
+133</p>
+<p>WriteCopiesPersec = 0;</p>
+<p>134</p>
+<p>};
+135</p>
+<p>136</p>
+<p>137</p>
+<p>query:SELECT /* FROM Win32_PerfRawData_PerfDisk_PhysicalDisk Where Name !=</p>
+<p>&#39;_Total&#39;</p>
+<p>138</p>
+<p>(0):
+139</p>
+<p>140</p>
+<p>instance of Win32_PerfRawData_PerfDisk_PhysicalDisk
+141</p>
+<p>{</p>
+<p>142</p>
+<p>AvgDiskBytesPerRead =</p>
+<p>&quot;138920448&quot;</p>
+<p>;
+143</p>
+<p>AvgDiskBytesPerRead_Base = 8000;</p>
+<p>144</p>
+<p>AvgDiskBytesPerTransfer =</p>
+<p>&quot;208285696&quot;</p>
+<p>;
+145</p>
+<p>AvgDiskBytesPerTransfer_Base = 13701;</p>
+<p>146</p>
+<p>AvgDiskBytesPerWrite =</p>
+<p>&quot;69365248&quot;</p>
+<p>;
+147</p>
+<p>AvgDiskBytesPerWrite_Base = 5701;</p>
+<p>148</p>
+<p>AvgDiskQueueLength =</p>
+<p>&quot;581460650&quot;</p>
+<p>;
+149</p>
+<p>AvgDiskReadQueueLength =</p>
+<p>&quot;405581626&quot;</p>
+<p>;</p>
+<p>150</p>
+<p>AvgDisksecPerRead = 2794786622;
+151</p>
+<p>AvgDisksecPerRead_Base = 8000;</p>
+<p>152</p>
+<p>AvgDisksecPerTransfer = 322083534;
+153</p>
+<p>AvgDisksecPerTransfer_Base = 13701;</p>
+<p>154</p>
+<p>AvgDisksecPerWrite = 1822264208;
+155</p>
+<p>AvgDisksecPerWrite_Base = 5701;</p>
+<p>156</p>
+<p>AvgDiskWriteQueueLength =</p>
+<p>&quot;175879024&quot;</p>
+<p>;
+157</p>
+<p>CurrentDiskQueueLength = 0;</p>
+<p>158</p>
+<p>DiskBytesPersec =</p>
+<p>&quot;208285696&quot;</p>
+<p>;
+159</p>
+<p>DiskReadBytesPersec =</p>
+<p>&quot;138920448&quot;</p>
+<p>;</p>
+<p>160</p>
+<p>DiskReadsPersec = 8000;
+161</p>
+<p>DiskTransfersPersec = 13701;</p>
+<p>162</p>
+<p>DiskWriteBytesPersec =</p>
+<p>&quot;69365248&quot;</p>
+<p>;
+163</p>
+<p>DiskWritesPersec = 5701;</p>
+<p>164</p>
+<p>Frequency_Object =</p>
+<p>&quot;0&quot;</p>
+<p>;
+165</p>
+<p>Frequency_PerfTime =</p>
+<p>&quot;3034010000&quot;</p>
+<p>;</p>
+<p>166</p>
+<p>Frequency_Sys100NS =</p>
+<p>&quot;10000000&quot;</p>
+<p>;
+167</p>
+<p>Name =</p>
+<p>&quot;0 C:&quot;</p>
+<p>;</p>
+<p>168</p>
+<p>PercentDiskReadTime =</p>
+<p>&quot;405581626&quot;</p>
+<p>;
+169</p>
+<p>PercentDiskReadTime_Base =</p>
+<p>&quot;129895856572522792&quot;</p>
+<p>;</p>
+<p>170</p>
+<p>PercentDiskTime =</p>
+<p>&quot;581460650&quot;</p>
+<p>;
+171</p>
+<p>PercentDiskTime_Base =</p>
+<p>&quot;129895856572522792&quot;</p>
+<p>;</p>
+<p>172</p>
+<p>PercentDiskWriteTime =</p>
+<p>&quot;175879024&quot;</p>
+<p>;
+173</p>
+<p>PercentDiskWriteTime_Base =</p>
+<p>&quot;129895856572522792&quot;</p>
+<p>;</p>
+<p>174</p>
+<p>PercentIdleTime =</p>
+<p>&quot;18446744072967667781&quot;</p>
+<p>;
+175</p>
+<p>PercentIdleTime_Base =</p>
+<p>&quot;129895856572522792&quot;</p>
+<p>;</p>
+<p>176</p>
+<p>SplitIOPerSec = 1074;
+177</p>
+<p>Timestamp_Object =</p>
+<p>&quot;0&quot;</p>
+<p>;</p>
+<p>178</p>
+<p>Timestamp_PerfTime =</p>
+<p>&quot;3635534093651&quot;</p>
+<p>;
+179</p>
+<p>Timestamp_Sys100NS =</p>
+<p>&quot;129895856572522792&quot;</p>
+<p>;</p>
+<p>180</p>
+<p>};&lt;span style=</p>
+<p>&quot;font-family:&#39;sans serif, tahoma, verdana, helvetica&#39;;font-size:x-small;&quot;</p>
+<blockquote>
+<p>&lt;span style=</p>
+</blockquote>
+<p>&quot;line-height:18.18181800842285px;white-space:normal;&quot;</p>
+<blockquote>
+<p></span></span></p>
+</blockquote>
+<h2 id="-">#</h2>
+<h3 id="3-">3、有可能出现的问题</h3>
+<p>报错a</p>
+<p><a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
+<p>01</p>
+<p>org.jinterop.dcom.common.JIException: Message not found</p>
+<p>for</p>
+<p>errorCode:</p>
+<p>0xC0000034</p>
+<p>02</p>
+<p>at org.jinterop.winreg.smb.JIWinRegStub.winreg_OpenHKLM(JIWinRegStub.java:</p>
+<p>115</p>
+<p>)
+03</p>
+<p>at org.jinterop.dcom.core.JIProgId.getIdFromWinReg(JIProgId.java:</p>
+<p>130</p>
+<p>)</p>
+<p>04</p>
+<p>at org.jinterop.dcom.core.JIProgId.getCorrespondingCLSID(JIProgId.java:</p>
+<p>162</p>
+<p>)
+05</p>
+<p>at org.jinterop.dcom.core.JIComServer.<init>(JIComServer.java:</p>
+<p>413</p>
+<p>)</p>
+<p>06</p>
+<p>at org.noah.wmitest.WmiService.connect(WmiService.java:</p>
+<p>122</p>
+<p>)
+07</p>
+<p>at org.noah.wmitest.WmiService.main(WmiService.java:</p>
+<p>177</p>
+<p>)</p>
+<p>08</p>
+<p>at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+09</p>
+<p>at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:</p>
+<p>39</p>
+<p>)</p>
+<p>10</p>
+<p>at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:</p>
+<p>25</p>
+<p>)
+11</p>
+<p>at java.lang.reflect.Method.invoke(Method.java:</p>
+<p>597</p>
+<p>)</p>
+<p>12</p>
+<p>at com.intellij.rt.execution.application.AppMain.main(AppMain.java:</p>
+<p>120</p>
+<p>)
+13</p>
+<p>Caused by: jcifs.smb.SmbException: The system cannot find the file specified.</p>
+<p>14</p>
+<p>at jcifs.smb.SmbTransport.checkStatus(SmbTransport.java:</p>
+<p>522</p>
+<p>)
+15</p>
+<p>at jcifs.smb.SmbTransport.send(SmbTransport.java:</p>
+<p>622</p>
+<p>)</p>
+<p>16</p>
+<p>at jcifs.smb.SmbSession.send(SmbSession.java:</p>
+<p>239</p>
+<p>)
+17</p>
+<p>at jcifs.smb.SmbTree.send(SmbTree.java:</p>
+<p>109</p>
+<p>)</p>
+<p>18</p>
+<p>at jcifs.smb.SmbFile.send(SmbFile.java:</p>
+<p>718</p>
+<p>)
+19</p>
+<p>at jcifs.smb.SmbFile.open0(SmbFile.java:</p>
+<p>923</p>
+<p>)</p>
+<p>20</p>
+<p>at jcifs.smb.SmbFile.open(SmbFile.java:</p>
+<p>940</p>
+<p>)
+21</p>
+<p>at jcifs.smb.SmbFileOutputStream.<init>(SmbFileOutputStream.java:</p>
+<p>142</p>
+<p>)</p>
+<p>22</p>
+<p>at jcifs.smb.TransactNamedPipeOutputStream.<init>(TransactNamedPipeOutputStream.java:</p>
+<p>32</p>
+<p>)
+23</p>
+<p>at jcifs.smb.SmbNamedPipe.getNamedPipeOutputStream(SmbNamedPipe.java:</p>
+<p>187</p>
+<p>)</p>
+<p>24</p>
+<p>at rpc.ncacn_np.RpcTransport.attach(RpcTransport.java:</p>
+<p>92</p>
+<p>)
+25</p>
+<p>at rpc.Stub.attach(Stub.java:</p>
+<p>105</p>
+<p>)</p>
+<p>26</p>
+<p>at rpc.Stub.call(Stub.java:</p>
+<p>110</p>
+<p>)
+27</p>
+<p>at org.jinterop.winreg.smb.JIWinRegStub.winreg_OpenHKLM(JIWinRegStub.java:</p>
+<p>113</p>
+<p>)</p>
+<p>28</p>
+<p>...</p>
+<p>10</p>
+<p>more</p>
+<p>需要开启Remote Registry服务
+报错b</p>
+<p><a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
+<p>01</p>
+<p>org.jinterop.dcom.common.JIException: Message not found</p>
+<p>for</p>
+<p>errorCode:</p>
+<p>0xC0000001</p>
+<p>02</p>
+<p>at org.jinterop.winreg.smb.JIWinRegStub.winreg_OpenHKLM(JIWinRegStub.java:</p>
+<p>115</p>
+<p>)
+03</p>
+<p>at org.jinterop.dcom.core.JIProgId.getIdFromWinReg(JIProgId.java:</p>
+<p>130</p>
+<p>)</p>
+<p>04</p>
+<p>at org.jinterop.dcom.core.JIProgId.getCorrespondingCLSID(JIProgId.java:</p>
+<p>162</p>
+<p>)
+05</p>
+<p>at org.jinterop.dcom.core.JIComServer.<init>(JIComServer.java:</p>
+<p>413</p>
+<p>)</p>
+<p>06</p>
+<p>at org.noah.wmitest.WmiService.connect(WmiService.java:</p>
+<p>87</p>
+<p>)
+07</p>
+<p>at org.noah.wmitest.WmiService.main(WmiService.java:</p>
+<p>142</p>
+<p>)</p>
+<p>08</p>
+<p>at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+09</p>
+<p>at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:</p>
+<p>39</p>
+<p>)</p>
+<p>10</p>
+<p>at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:</p>
+<p>25</p>
+<p>)
+11</p>
+<p>at java.lang.reflect.Method.invoke(Method.java:</p>
+<p>597</p>
+<p>)</p>
+<p>12</p>
+<p>at com.intellij.rt.execution.application.AppMain.main(AppMain.java:</p>
+<p>120</p>
+<p>)
+13</p>
+<p>Caused by: jcifs.smb.SmbException: Connection timeout</p>
+<p>14</p>
+<p>jcifs.util.transport.TransportException: Connection timeout
+15</p>
+<p>16</p>
+<p>或
+17</p>
+<p>18</p>
+<p>org.jinterop.dcom.common.JIException: Message not found</p>
+<p>for</p>
+<p>errorCode:</p>
+<p>0x8001FFFF
+19</p>
+<p>at org.jinterop.dcom.core.JIComServer.init(JIComServer.java:</p>
+<p>576</p>
+<p>)</p>
+<p>20</p>
+<p>at org.jinterop.dcom.core.JIComServer.initialise(JIComServer.java:</p>
+<p>481</p>
+<p>)
+21</p>
+<p>at org.jinterop.dcom.core.JIComServer.<init>(JIComServer.java:</p>
+<p>414</p>
+<p>)</p>
+<p>22</p>
+<p>at org.noah.wmitest.WmiService.connect(WmiService.java:</p>
+<p>87</p>
+<p>)
+23</p>
+<p>at org.noah.wmitest.WmiService.main(WmiService.java:</p>
+<p>142</p>
+<p>)</p>
+<p>24</p>
+<p>at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+25</p>
+<p>at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:</p>
+<p>39</p>
+<p>)</p>
+<p>26</p>
+<p>at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:</p>
+<p>25</p>
+<p>)
+27</p>
+<p>at java.lang.reflect.Method.invoke(Method.java:</p>
+<p>597</p>
+<p>)</p>
+<p>28</p>
+<p>at com.intellij.rt.execution.application.AppMain.main(AppMain.java:</p>
+<p>120</p>
+<p>)
+29</p>
+<p>Caused by: java.net.ConnectException: Connection timed out</p>
+<p>需要禁用放火墙</p>
+<h3 id="4-">4、总结</h3>
+<p>j-Interop纯java跨平台，我就是linux系统。</p>
+<p>用j-Interop就可以很方便的调用windows系统com，虽然这里只演示了WMI。
+如果关心WMI与监控的话，建议去opennms-wmi看一看，他们有更好api封装（底层也是j-Interop）。
+<strong>关键字：</strong> <a href="http://www.oschina.net/search?scope=blog&amp;q=wmi" target="_blank">wmi</a> <a href="http://www.oschina.net/search?scope=blog&amp;q=windows" target="_blank">windows</a> <a href="http://www.oschina.net/search?scope=blog&amp;q=j-interop" target="_blank">j-interop</a></p>
+<p>声明：OSCHINA 博客文章版权属于作者，受法律保护。未经作者同意不得转载。</p>
+<ul>
+<li><a href="http://my.oschina.net/noahxiao/blog/72861" title="上一篇：既爱又恨的VA-API(Ubuntu视频加速)" target="_blank">« 既爱又恨的VA-API(Ubuntu视频加速)</a></li>
+<li><a href="http://my.oschina.net/noahxiao/blog/75463" title="下一篇：通过javamelody监控web应用的性能指标" target="_blank">通过javamelody监控web应用的性能指标 »</a></li>
+</ul>
+<p>开源中国-程序员在线工具：<a href="http://www.ostools.net/apidocs" target="_blank">API文档大全(120+)</a> <a href="http://runjs.cn/" target="_blank">JS在线编辑演示</a> <a href="http://www.ostools.net/qr" target="_blank">二维码</a> <a href="http://www.ostools.net/" target="_blank">更多&gt;&gt;</a>
+<strong>分享到：</strong> <a href="&quot;分享到新浪微博&quot;"></a> <a href="&quot;分享到腾讯微博&quot;"></a>  <a href="">顶</a>已有 <em>0</em>人顶</p>
+<h2 id="-5-"><a href=""></a>共有 5 条网友评论</h2>
+<ul>
+<li><a href="http://my.oschina.net/u/657242" target="_blank"><img src="&quot;leehark&quot;" alt="leehark"></a> 1楼：<a href="http://my.oschina.net/u/657242" target="_blank">leehark</a>(Android) 发表于 2012-08-18 19:35 <a href="">回复此评论</a></li>
+</ul>
+<p>能通过代码禁止防火墙么？是都要管理员权限？</p>
+<ul>
+<li><a href="http://my.oschina.net/mingyuejingque" target="_blank"><img src="&quot;明月惊鹊&quot;" alt="明月惊鹊"></a> 2楼：<a href="http://my.oschina.net/mingyuejingque" target="_blank">明月惊鹊</a> 发表于 2012-08-19 14:40 <a href="">回复此评论</a></li>
+</ul>
+<p>WMI里应该就有控制防火墙的。这种操作肯定需要管理员权限了。</p>
+<ul>
+<li><a href="http://my.oschina.net/u/124197" target="_blank"><img src="&quot;黄金比&quot;" alt="黄金比"></a> 3楼：<a href="http://my.oschina.net/u/124197" target="_blank">黄金比</a>(iPhone) 发表于 2012-08-21 07:06 <a href="">回复此评论</a></li>
+</ul>
+<p>不知道远程调用行不行呢?请博主明确一下。</p>
+<ul>
+<li><a href="http://my.oschina.net/noahxiao" target="_blank"><img src="&quot;肖国颖&quot;" alt="肖国颖"></a> 4楼：<a href="http://my.oschina.net/noahxiao" target="_blank">肖国颖</a>(iPhone) 发表于 2012-08-21 08:23 <a href="">回复此评论</a></li>
+</ul>
+<h3 id="-">引用来自“黄金比”的评论</h3>
+<p>不知道远程调用行不行呢?请博主明确一下。
+你指的是非本机吗？我测试的方式就是一台linux运行程序指定ip调用另一台win服务器的wmi</p>
+<ul>
+<li><a href="http://my.oschina.net/u/124197" target="_blank"><img src="&quot;黄金比&quot;" alt="黄金比"></a> 5楼：<a href="http://my.oschina.net/u/124197" target="_blank">黄金比</a>(iPhone) 发表于 2012-08-21 12:47 <a href="">回复此评论</a></li>
+</ul>
+<h3 id="-">引用来自“肖国颖”的评论</h3>
+<h3 id="-">引用来自“黄金比”的评论</h3>
+<p>不知道远程调用行不行呢?请博主明确一下。
+你指的是非本机吗？我测试的方式就是一台linux运行程序指定ip调用另一台win服务器的wmi</p>
+<p>收到，谢博主，试下先!</p>
+<p>文明上网，理性发言
+<a href=""></a></p>
+<p><img src="" alt=""> 文明上网，理性发言  <a href="">回到页首</a> | <a href="">回到评论列表</a></p>
+<p><strong><a href="">关闭</a>相关文章阅读</strong></p>
+<ul>
+<li>2012/08/16 <a href="http://my.oschina.net/u/581475/blog/73199" title="100%纯java调用windows的wmi获取监控数据" target="_blank">100%纯java调用windows的wmi获取监控...</a></li>
+<li>2011/07/06 <a href="http://my.oschina.net/veterans/blog/27840" title="使用WMI修改文件文件夹的NTFS权限" target="_blank">使用WMI修改文件文件夹的NTFS权限...</a></li>
+<li>2013/04/24 <a href="http://my.oschina.net/fenlog/blog/124859" title="利用WMI实现ring3进程监控 - vc" target="_blank">利用WMI实现ring3进程监控 - vc...</a></li>
+<li>2012/03/22 <a href="http://my.oschina.net/zhajiang/blog/50524" title="py2exe打包包含wmi模块的脚本后，运行时出现win32api.pyd错误的解决办法。" target="_blank">py2exe打包包含wmi模块的脚本后，运...</a></li>
+<li>2011/09/02 <a href="http://my.oschina.net/u/129490/blog/30675" title="在windows下使用OpenSSH（上）" target="_blank">在windows下使用OpenSSH（上）...</a></li>
+</ul>
+<p>© 开源中国(OsChina.NET) | <a href="http://www.oschina.net/home/about" target="_blank">关于我们</a> | <a href="mailto:oschina.net@gmail.com">广告联系</a> | <a href="http://weibo.com/oschina2010" target="_blank">@新浪微博</a> | <a href="http://m.oschina.net/" target="_blank">开源中国手机版</a> | <a href="http://www.miitbeian.gov.cn/" target="_blank">粤ICP备12009483号-3</a> 开源中国手机客户端： <a href="http://www.oschina.net/app" title="Android客户端" target="_blank">Android</a> <a href="http://www.oschina.net/app" title="iPhone 客户端" target="_blank">iPhone</a> <a href="http://www.oschina.net/app" title="Windows Phone 客户端" target="_blank">WP7</a></p>
+<p><a href=""></a><a href=""></a><a href=""></a>
+<img src="" alt=""></p>
 
-        String file2= &quot;D:\\file2.doc&quot;;
-        String file3= &quot;D:\\file3.doc&quot;;
-
-        list.add(file1);
-        list.add(file2);
-
-        list.add(file3);
-        uniteDoc(list,&quot;d:\\file.doc&quot;);
-
-}
-public static void uniteDoc(List fileList, String savepaths) {
-
-    if (fileList.size() == 0 || fileList == null) {
-        return;
-
-    }
-    //打开word
-
-    ActiveXComponent app = new ActiveXComponent(&quot;Word.Application&quot;);//启动word
-    try {
-
-        // 设置word不可见
-        app.setProperty(&quot;Visible&quot;, new Variant(false));
-
-        //获得documents对象
-        Object docs = app.getProperty(&quot;Documents&quot;).toDispatch();
-
-        //打开第一个文件
-        Object doc = Dispatch
-
-            .invoke(
-                    (Dispatch) docs,
-
-                    &quot;Open&quot;,
-                    Dispatch.Method,
-
-                    new Object[] { (String) fileList.get(0),
-                            new Variant(false), new Variant(true) },
-
-                    new int[3]).toDispatch();
-        //追加文件
-
-        for (int i = 1; i &lt; fileList.size(); i++) {
-            Dispatch.invoke(app.getProperty(&quot;Selection&quot;).toDispatch(),
-
-                &quot;insertFile&quot;, Dispatch.Method, new Object[] {
-                        (String) fileList.get(i), &quot;&quot;,
-
-                        new Variant(false), new Variant(false),
-                        new Variant(false) }, new int[3]);
-
-        }
-        //保存新的word文件
-
-        Dispatch.invoke((Dispatch) doc, &quot;SaveAs&quot;, Dispatch.Method,
-            new Object[] { savepaths, new Variant(1) }, new int[3]);
-
-        Variant f = new Variant(false);
-        Dispatch.call((Dispatch) doc, &quot;Close&quot;, f);
-
-    } catch (Exception e) {
-        throw new RuntimeException(&quot;合并word文件出错.原因:&quot; + e);
-
-    } finally {
-        app.invoke(&quot;Quit&quot;, new Variant[] {});
-
-    }
-}
-</code></pre>
       
     </div>
     
@@ -1177,8 +2521,8 @@ public static void uniteDoc(List fileList, String savepaths) {
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/java-com/">java-com</a></li><li><a href="/categories/Java&J2EE/java-com/jacob/">jacob</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/jacob/" class="label label-success">jacob</a><a href="/tags/java-com/" class="label label-info">java-com</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-java-com-jacob--jacob合并几个word文件到一个word文件/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-java-com-jacob--jacob合并几个word文件到一个word文件" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/java-com/">java-com</a></li><li><a href="/categories/Java&J2EE/java-com/wmi-监控/">wmi-监控</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/java-com/" class="label label-success">java-com</a><a href="/tags/wmi-监控/" class="label label-info">wmi-监控</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-java-com-wmi-监控--100-纯java调用windows的wmi获取监控数据-肖国颖的个人页面-开源中国社区/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-java-com-wmi-监控--100-纯java调用windows的wmi获取监控数据-肖国颖的个人页面-开源中国社区" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -2445,961 +3789,6 @@ for(int i=0,length=bookmarks.getBookmarksCount();i&lt;length;i++){
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-NIO--JAVANIO总结/">JAVA NIO总结</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-NIO--JAVANIO总结/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-nio-">JAVA NIO总结</h1>
-<p>（一）—基本概念</p>
-<h2 id="1-">1、输入/输出：概念性描述</h2>
-<h3 id="-1-1-i-o-"><a href=""></a>1.1） I/O简介</h3>
-<p>I/O  或者输入/输出指的是计算机与外部世界或者一个程序与计算机的其余部分的之间的接口。它对于任何计算机系统都非常关键，因而所有 I/O 的主体实际上是内置在操作系统中的。单独的程序一般是让系统为它们完成大部分的工作。</p>
-<p>在 Java 编程中，直到最近一直使用<strong>流</strong>的方式完成 I/O。所有 I/O 都被视为单个的字节的移动，通过一个称为 Stream 的对象一次移动一个字节。流 I/O 用于与外部世界接触。它也在内部使用，用于将对象转换为字节，然后再转换回对象。NIO 与原来的 I/O 有同样的作用和目的，但是它使用不同的方式? <strong>块 I/O</strong>。正如您将在本教程中学到的，块 I/O 的效率可以比流 I/O 高许多。</p>
-<h3 id="-1-2-nio-"><a href=""></a>1.2）为什么要使用NIO？</h3>
-<p>NIO 的创建目的是为了让 Java 程序员可以实现高速 I/O 而无需编写自定义的本机代码。NIO 将最耗时的 I/O 操作(即填充和提取缓冲区)转移回操作系统，因而可以极大地提高速度。</p>
-<h3 id="-1-3-"><a href=""></a>1.3）流与块的比较</h3>
-<p>原来的 I/O 库(在 </p>
-<p>java.io./*
-中) 与 NIO 最重要的区别是数据打包和传输的方式。正如前面提到的，原来的 I/O 以流的方式处理数据，而 NIO 以块的方式处理数据。</p>
-<p><strong>面向流*</strong> *的 I/O 系统一次一个字节地处理数据。一个输入流产生一个字节的数据，一个输出流消费一个字节的数据。为流式数据创建过滤器非常容易。链接几个过滤器，以便每个过滤器只负责单个复杂处理机制的一部分，这样也是相对简单的。不利的一面是，面向流的 I/O 通常相当慢。</p>
-<p>一个 <strong>面向块*</strong> *的 I/O 系统以块的形式处理数据。每一个操作都在一步中产生或者消费一个数据块。按块处理数据比按(流式的)字节处理数据要快得多。但是面向块的 I/O 缺少一些面向流的 I/O 所具有的优雅性和简单性。</p>
-<h3 id="-1-4-io"><a href=""></a>1.4）集成的IO</h3>
-<p>在 JDK 1.4 中原来的 I/O 包和 NIO 已经很好地集成了。 </p>
-<p>java.io./*
- 已经以 NIO 为基础重新实现了，所以现在它可以利用 NIO 的一些特性。例如， </p>
-<p>java.io./*
- 包中的一些类包含以块的形式读写数据的方法，这使得即使在更面向流的系统中，处理速度也会更快。</p>
-<p>也可以用 NIO 库实现标准 I/O 功能。例如，可以容易地使用块 I/O 一次一个字节地移动数据。但是正如您会看到的，NIO 还提供了原 I/O 包中所没有的许多好处。</p>
-<h2 id="-2-"><a href=""></a>2、通道和缓冲区</h2>
-<h3 id="-2-1-"><a href=""></a>2.1）概述</h3>
-<p>通道 
-和 </p>
-<p>缓冲区 
-是 NIO 中的核心对象，几乎在每一个 I/O 操作中都要使用它们。</p>
-<p>通道是对原 I/O 包中的流的模拟。到任何目的地(或来自任何地方)的所有数据都必须通过一个 Channel 对象。一个 Buffer 实质上是一个容器对象。发送给一个通道的所有对象都必须首先放到缓冲区中；同样地，从通道中读取的任何数据都要读到缓冲区中。</p>
-<p>在本节中，您会了解到 NIO 中通道和缓冲区是如何工作的。</p>
-<h3 id="-2-2-"><a href=""></a>2.2）什么是缓冲区</h3>
-<p>Buffer
- 是一个对象， 它包含一些要写入或者刚读出的数据。 在 NIO 中加入 </p>
-<p>Buffer
- 对象，体现了新库与原 I/O 的一个重要区别。在面向流的 I/O 中，您将数据直接写入或者将数据直接读到 </p>
-<p>Stream
- 对象中。</p>
-<p>在 NIO 库中，所有数据都是用缓冲区处理的。在读取数据时，它是直接读到缓冲区中的。在写入数据时，它是写入到缓冲区中的。任何时候访问 NIO 中的数据，您都是将它放到缓冲区中。</p>
-<p>缓冲区实质上是一个数组。通常它是一个字节数组，但是也可以使用其他种类的数组。但是一个缓冲区不 <em>仅仅 </em>是一个数组。缓冲区提供了对数据的结构化访问，而且还可以跟踪系统的读/写进程。</p>
-<h3 id="-2-3-"><a href=""></a>2.3）缓冲区类型</h3>
-<p>最常用的缓冲区类型是 </p>
-<p>ByteBuffer
-。一个 </p>
-<p>ByteBuffer
- 可以在其底层字节数组上进行 get/set 操作(即字节的获取和设置)。</p>
-<p>ByteBuffer
- 不是 NIO 中唯一的缓冲区类型。事实上，对于每一种基本 Java 类型都有一种缓冲区类型：</p>
-<ul>
-<li>ByteBuffer</li>
-<li>CharBuffer</li>
-<li>ShortBuffer</li>
-<li>IntBuffer</li>
-<li>LongBuffer</li>
-<li>FloatBuffer</li>
-<li>DoubleBuffer</li>
-</ul>
-<p>每一个 </p>
-<p>Buffer
- 类都是 </p>
-<p>Buffer
- 接口的一个实例。 除了 </p>
-<p>ByteBuffer
-，每一个 Buffer 类都有完全一样的操作，只是它们所处理的数据类型不一样。因为大多数标准 I/O 操作都使用 </p>
-<p>ByteBuffer
-，所以它具有所有共享的缓冲区操作以及一些特有的操作。</p>
-<p>现在您可以花一点时间运行 UseFloatBuffer.java，它包含了类型化的缓冲区的一个应用例子。</p>
-<h3 id="-2-4-"><a href=""></a>2.4）什么是通道</h3>
-<p>Channel
-是一个对象，可以通过它读取和写入数据。拿 NIO 与原来的 I/O 做个比较，通道就像是流。</p>
-<p>正如前面提到的，所有数据都通过 </p>
-<p>Buffer
- 对象来处理。您永远不会将字节直接写入通道中，相反，您是将数据写入包含一个或者多个字节的缓冲区。同样，您不会直接从通道中读取字节，而是将数据从通道读入缓冲区，再从缓冲区获取这个字节。</p>
-<h3 id="-2-5-"><a href=""></a>2.5）通道类型</h3>
-<p>通道与流的不同之处在于通道是双向的。而流只是在一个方向上移动(一个流必须是 </p>
-<p>InputStream
- 或者 </p>
-<p>OutputStream
- 的子类)， 而 </p>
-<p>通道 
-可以用于读、写或者同时用于读写。因为它们是双向的，所以通道可以比流更好地反映底层操作系统的真实情况。特别是在 UNIX 模型中，底层操作系统通道是双向的。</p>
-<h2 id="-3-nio-"><a href=""></a>3、从理论到实践：NIO的读和写</h2>
-<h3 id="-3-1-"><a href=""></a>3.1）概述</h3>
-<p>读和写是 I/O 的基本过程。从一个通道中读取很简单：只需创建一个缓冲区，然后让通道将数据读到这个缓冲区中。写入也相当简单：创建一个缓冲区，用数据填充它，然后让通道用这些数据来执行写入操作。</p>
-<p>在本节中，我们将学习有关在 Java 程序中读取和写入数据的一些知识。我们将回顾 NIO 的主要组件(缓冲区、通道和一些相关的方法)，看看它们是如何交互以进行读写的。在接下来的几节中，我们将更详细地分析这其中的每个组件以及其交互。<strong>所有例子代码下载请点击<a href="http://www.ibm.com/developerworks/cn/education/java/j-nio/nio-src.zip" target="_blank">例子代码</a>。</strong></p>
-<h3 id="-3-2-"><a href=""></a>3.2）从文件中读取</h3>
-<p>在我们第一个练习中，我们将从一个文件中读取一些数据。如果使用原来的 I/O，那么我们只需创建一个 </p>
-<p>FileInputStream
- 并从它那里读取。而在 NIO 中，情况稍有不同：我们首先从 </p>
-<p>FileInputStream
- 获取一个 </p>
-<p>FileInputStream
- 对象，然后使用这个通道来读取数据。</p>
-<p>在 NIO 系统中，任何时候执行一个读操作，您都是从通道中读取，但是您<strong>不是直接*</strong> *从通道读取。因为所有数据最终都驻留在缓冲区中，所以您是从通道读到缓冲区中。</p>
-<p>因此读取文件涉及三个步骤：(1) 从 </p>
-<p>FileInputStream
- 获取 </p>
-<p>Channel
-，(2) 创建 </p>
-<p>Buffer
-，(3) 将数据从 </p>
-<p>Channel
- 读到 </p>
-<p>Buffer 
-中。现在，让我们看一下这个过程。</p>
-<h3 id="-3-3-"><a href=""></a>3.3）三个容易的步骤</h3>
-<p>第一步是获取通道。我们从 </p>
-<p>FileInputStream
- 获取通道：
-FileInputStream fin = new FileInputStream( &quot;readandshow.txt&quot; );</p>
-<p>FileChannel fc = fin.getChannel();</p>
-<p>下一步是创建缓冲区：
-ByteBuffer buffer = ByteBuffer.allocate( 1024 );</p>
-<p>最后，需要将数据从通道读到缓冲区中，如下所示：
-fc.read( buffer );</p>
-<p>您会注意到，我们不需要告诉通道要读 <em>多少数据 </em>到缓冲区中。每一个缓冲区都有复杂的内部统计机制，它会跟踪已经读了多少数据以及还有多少空间可以容纳更多的数据。我们将在 <strong>缓冲区内部细节</strong> 中介绍更多关于缓冲区统计机制的内容。</p>
-<h3 id="-3-4-"><a href=""></a>3.4）写入文件</h3>
-<p>在 NIO 中写入文件类似于从文件中读取。首先从 </p>
-<p>FileOutputStream
- 获取一个通道：
-FileOutputStream fout = new FileOutputStream( &quot;writesomebytes.txt&quot; );</p>
-<p>FileChannel fc = fout.getChannel();</p>
-<p>下一步是创建一个缓冲区并在其中放入一些数据 - 在这里，数据将从一个名为 </p>
-<p>message
- 的数组中取出，这个数组包含字符串 &quot;Some bytes&quot; 的 ASCII 字节(本教程后面将会解释 </p>
-<p>buffer.flip()
- 和 </p>
-<p>buffer.put()
- 调用)。
-ByteBuffer buffer = ByteBuffer.allocate( 1024 );</p>
-<p>for (int i=0; i&lt;message.length; ++i) {</p>
-<pre><code> buffer.put( message[i] );
-</code></pre><p>}</p>
-<p>buffer.flip();</p>
-<p>最后一步是写入通道中：
-fc.write( buffer );</p>
-<p>注意在这里同样不需要告诉通道要写入多数据。缓冲区的内部统计机制会跟踪它包含多少数据以及还有多少数据要写入。</p>
-<h3 id="-3-5-"><a href=""></a>3.5）读写结合</h3>
-<p>下面我们将看一下在结合读和写时会有什么情况。我们以一个名为 CopyFile.java 的简单程序作为这个练习的基础，它将一个文件的所有内容拷贝到另一个文件中。CopyFile.java 执行三个基本操作：首先创建一个 </p>
-<p>Buffer
-，然后从源文件中将数据读到这个缓冲区中，然后将缓冲区写入目标文件。这个程序不断重复 ― 读、写、读、写 ― 直到源文件结束。</p>
-<p>CopyFile 程序让您看到我们如何检查操作的状态，以及如何使用 </p>
-<p>clear()
- 和 </p>
-<p>flip()
- 方法重设缓冲区，并准备缓冲区以便将新读取的数据写到另一个通道中。</p>
-<h3 id="-copyfile-"><a href=""></a>运行CopyFile例子</h3>
-<p>因为缓冲区会跟踪它自己的数据，所以 CopyFile 程序的内部循环 (inner loop) 非常简单，如下所示：
-fcin.read( buffer );</p>
-<p>fcout.write( buffer );</p>
-<p>第一行将数据从输入通道 </p>
-<p>fcin
- 中读入缓冲区，第二行将这些数据写到输出通道 </p>
-<p>fcout
- 。</p>
-<h3 id="-"><a href=""></a>检查状态</h3>
-<p>下一步是检查拷贝何时完成。当没有更多的数据时，拷贝就算完成，并且可以在 </p>
-<p>read()
- 方法返回 -1 是判断这一点，如下所示：
-int r = fcin.read( buffer );</p>
-<p>if (r==-1) {</p>
-<pre><code> break;
-</code></pre><p>}</p>
-<h3 id="-"><a href=""></a>重设缓冲区</h3>
-<p>最后，在从输入通道读入缓冲区之前，我们调用 </p>
-<p>clear()
- 方法。同样，在将缓冲区写入输出通道之前，我们调用 </p>
-<p>flip()
- 方法，如下所示：</p>
-<p>buffer.clear();</p>
-<p>int r = fcin.read( buffer );</p>
-<p>if (r==-1) {
-     break;</p>
-<p>}</p>
-<p>buffer.flip();
-fcout.write( buffer );</p>
-<p>clear()
- 方法重设缓冲区，使它可以接受读入的数据。 </p>
-<p>flip()
- 方法让缓冲区可以将新读入的数据写入另一个通道。</p>
-<p>来源： <a href="[http://blog.csdn.net/ssjhust123/article/details/7904757](http://blog.csdn.net/ssjhust123/article/details/7904757)">[http://blog.csdn.net/ssjhust123/article/details/7904757](http://blog.csdn.net/ssjhust123/article/details/7904757)</a> </p>
-<p><a href="http://blog.csdn.net/ssjhust123/article/details/7905278" target="_blank">（二）—缓冲区原理</a></p>
-<h2 id="4-">4、缓冲区的内部细节</h2>
-<h3 id="-"><a href=""></a><strong>概述</strong></h3>
-<p>本节将介绍 NIO 中两个重要的缓冲区组件：状态变量和访问方法 (accessor)。</p>
-<p>状态变量是前一节中提到的&quot;内部统计机制&quot;的关键。每一个读/写操作都会改变缓冲区的状态。通过记录和跟踪这些变化，缓冲区就可能够内部地管理自己的资源。</p>
-<p>在从通道读取数据时，数据被放入到缓冲区。在有些情况下，可以将这个缓冲区直接写入另一个通道，但是在一般情况下，您还需要查看数据。这是使用 <em>访问方法 </em></p>
-<p>get()
- 来完成的。同样，如果要将原始数据放入缓冲区中，就要使用访问方法 </p>
-<p>put()
-。</p>
-<p>在本节中，您将学习关于 NIO 中的状态变量和访问方法的内容。我们将描述每一个组件，并让您有机会看到它的实际应用。虽然 NIO 的内部统计机制初看起来可能很复杂，但是您很快就会看到大部分的实际工作都已经替您完成了。您可能习惯于通过手工编码进行簿记 ― 即使用字节数组和索引变量，现在它已在 NIO 中内部地处理了。</p>
-<h3 id="-"><a href=""></a>状态变量</h3>
-<p>可以用三个值指定缓冲区在任意时刻的状态：</p>
-<ul>
-<li>position</li>
-<li>limit</li>
-<li>capacity</li>
-</ul>
-<p>这三个变量一起可以跟踪缓冲区的状态和它所包含的数据。我们将在下面的小节中详细分析每一个变量，还要介绍它们如何适应典型的读/写(输入/输出)进程。在这个例子中，我们假定要将数据从一个输入通道拷贝到一个输出通道。</p>
-<h3 id="-position"><a href=""></a>position</h3>
-<p>您可以回想一下，缓冲区实际上就是美化了的数组。在从通道读取时，您将所读取的数据放到底层的数组中。 </p>
-<p>position
- 变量跟踪已经写了多少数据。更准确地说，它指定了下一个字节将放到数组的哪一个元素中。因此，如果您从通道中读三个字节到缓冲区中，那么缓冲区的 </p>
-<p>position
- 将会设置为3，指向数组中第四个元素。</p>
-<p>同样，在写入通道时，您是从缓冲区中获取数据。 </p>
-<p>position
- 值跟踪从缓冲区中获取了多少数据。更准确地说，它指定下一个字节来自数组的哪一个元素。因此如果从缓冲区写了5个字节到通道中，那么缓冲区的 </p>
-<p>position
- 将被设置为5，指向数组的第六个元素。</p>
-<h3 id="-"><a href=""></a></h3>
-<p>limit</p>
-<p>limit
- 变量表明还有多少数据需要取出(在从缓冲区写入通道时)，或者还有多少空间可以放入数据(在从通道读入缓冲区时)。</p>
-<p>position
- 总是小于或者等于 </p>
-<p>limit
-。</p>
-<h3 id="-capacity-"><a href=""></a><strong>capacity</strong></h3>
-<p>缓冲区的 </p>
-<p>capacity
- 表明可以储存在缓冲区中的最大数据容量。实际上，它指定了底层数组的大小 ― 或者至少是指定了准许我们使用的底层数组的容量。</p>
-<p>limit
- 决不能大于 </p>
-<p>capacity
-。</p>
-<h3 id="-"><a href=""></a><strong>观察变量</strong></h3>
-<p>我们首先观察一个新创建的缓冲区。出于本例子的需要，我们假设这个缓冲区的 </p>
-<p>总容量 
-为8个字节。 </p>
-<p>Buffer
- 的状态如下所示：
-<img src="" alt="Buffer state"> </p>
-<p>回想一下 ，</p>
-<p>limit
- 决不能大于 </p>
-<p>capacity
-，此例中这两个值都被设置为 8。我们通过将它们指向数组的尾部之后(如果有第8个槽，则是第8个槽所在的位置)来说明这点。
-<img src="" alt="Array"> </p>
-<p>position
- 设置为0。如果我们读一些数据到缓冲区中，那么下一个读取的数据就进入 slot 0 。如果我们从缓冲区写一些数据，从缓冲区读取的下一个字节就来自 slot 0 。 </p>
-<p>position
- 设置如下所示：
-<img src="" alt="Position setting"> </p>
-<p>由于 </p>
-<p>capacity
- 不会改变，所以我们在下面的讨论中可以忽略它。</p>
-<h3 id="-"><a href=""></a><strong>第一次读取</strong></h3>
-<p>现在我们可以开始在新创建的缓冲区上进行读/写操作。首先从输入通道中读一些数据到缓冲区中。第一次读取得到三个字节。它们被放到数组中从 </p>
-<p>position
- 开始的位置，这时 position 被设置为 0。读完之后，position 就增加到 3，如下所示：
-<img src="" alt="Position increased to 3"> </p>
-<p>limit
- 没有改变。</p>
-<h3 id="-"><a href=""></a><strong>第二次读取</strong></h3>
-<p>在第二次读取时，我们从输入通道读取另外两个字节到缓冲区中。这两个字节储存在由 </p>
-<p>position
- 所指定的位置上， </p>
-<p>position
- 因而增加 2：
-<img src="" alt="Position increased by 2"> </p>
-<p>limit
- 没有改变。</p>
-<h3 id="-flip-"><a href=""></a><strong>flip</strong></h3>
-<p>现在我们要将数据写到输出通道中。在这之前，我们必须调用 </p>
-<p>flip()
- 方法。这个方法做两件非常重要的事：</p>
-<ol>
-<li>它将 </li>
-</ol>
-<p>limit
- 设置为当前 </p>
-<p>position
-。</p>
-<ol>
-<li>它将 </li>
-</ol>
-<p>position
- 设置为 0。</p>
-<p>前一小节中的图显示了在 flip 之前缓冲区的情况。下面是在 flip 之后的缓冲区：
-<img src="" alt="Buffer after the flip"> </p>
-<p>我们现在可以将数据从缓冲区写入通道了。 </p>
-<p>position
- 被设置为 0，这意味着我们得到的下一个字节是第一个字节。 </p>
-<p>limit
- 已被设置为原来的 </p>
-<p>position
-，这意味着它包括以前读到的所有字节，并且一个字节也不多。</p>
-<h3 id="-"><a href=""></a><strong>第一次写入</strong></h3>
-<p>在第一次写入时，我们从缓冲区中取四个字节并将它们写入输出通道。这使得 </p>
-<p>position
- 增加到 4，而 </p>
-<p>limit
- 不变，如下所示：
-<img src="" alt="Position advanced to 4, limit unchanged"> </p>
-<h3 id="-"><a href=""></a><strong>第二次写入</strong></h3>
-<p>我们只剩下一个字节可写了。 </p>
-<p>limit
-在我们调用 </p>
-<p>flip()
- 时被设置为 5，并且 </p>
-<p>position
- 不能超过 </p>
-<p>limit
-。所以最后一次写入操作从缓冲区取出一个字节并将它写入输出通道。这使得 </p>
-<p>position
- 增加到 5，并保持 </p>
-<p>limit
- 不变，如下所示：
-<img src="" alt="Position advanced to 5, limit unchanged"> </p>
-<h3 id="-clear-"><a href=""></a><strong>clear</strong></h3>
-<p>最后一步是调用缓冲区的 </p>
-<p>clear()
- 方法。这个方法重设缓冲区以便接收更多的字节。 </p>
-<p>Clear
- 做两种非常重要的事情：</p>
-<ol>
-<li>它将 </li>
-</ol>
-<p>limit
- 设置为与 </p>
-<p>capacity
- 相同。</p>
-<ol>
-<li>它设置 </li>
-</ol>
-<p>position
- 为 0。</p>
-<p>下图显示了在调用 </p>
-<p>clear()
- 后缓冲区的状态：
-<img src="" alt="State of the buffer after clear() has been called"> </p>
-<p>缓冲区现在可以接收新的数据了。</p>
-<p><strong>访问方法</strong></p>
-<p>到目前为止，我们只是使用缓冲区将数据从一个通道转移到另一个通道。然而，程序经常需要直接处理数据。例如，您可能需要将用户数据保存到磁盘。在这种情况下，您必须将这些数据直接放入缓冲区，然后用通道将缓冲区写入磁盘。</p>
-<p>或者，您可能想要从磁盘读取用户数据。在这种情况下，您要将数据从通道读到缓冲区中，然后检查缓冲区中的数据。</p>
-<p>在本节的最后，我们将详细分析如何使用 </p>
-<p>ByteBuffer
- 类的 </p>
-<p>get()
- 和 </p>
-<p>put()
- 方法直接访问缓冲区中的数据</p>
-<h3 id="-"><a href=""></a></h3>
-<p>get()方法</p>
-<p>ByteBuffer
- 类中有四个 </p>
-<p>get()
- 方法：</p>
-<ol>
-<li>byte get();</li>
-<li>ByteBuffer get( byte dst[] );</li>
-<li>ByteBuffer get( byte dst[], int offset, int length );</li>
-<li>byte get( int index );</li>
-</ol>
-<p>第一个方法获取单个字节。第二和第三个方法将一组字节读到一个数组中。第四个方法从缓冲区中的特定位置获取字节。那些返回</p>
-<p>ByteBuffer
- 的方法只是返回调用它们的缓冲区的 </p>
-<p>this
- 值。</p>
-<p>此外，我们认为前三个 </p>
-<p>get()
- 方法是相对的，而最后一个方法是绝对的。 <em>相对 </em>意味着 </p>
-<p>get()
- 操作服从 </p>
-<p>limit
- 和 </p>
-<p>position
- 值 ― 更明确地说，字节是从当前 </p>
-<p>position
- 读取的，而 </p>
-<p>position
- 在 </p>
-<p>get
- 之后会增加。另一方面，一个 <em>绝对 </em>方法会忽略 </p>
-<p>limit
- 和 </p>
-<p>position
- 值，也不会影响它们。事实上，它完全绕过了缓冲区的统计方法。</p>
-<p>上面列出的方法对应于 </p>
-<p>ByteBuffer
- 类。其他类有等价的 </p>
-<p>get()
- 方法，这些方法除了不是处理字节外，其它方面是是完全一样的，它们处理的是与该缓冲区类相适应的类型。</p>
-<h3 id="-put-"><a href=""></a><strong>put()方法</strong></h3>
-<p>ByteBuffer
- 类中有五个 </p>
-<p>put()
- 方法：</p>
-<ol>
-<li>ByteBuffer put( byte b );</li>
-<li>ByteBuffer put( byte src[] );</li>
-<li>ByteBuffer put( byte src[], int offset, int length );</li>
-<li>ByteBuffer put( ByteBuffer src );</li>
-<li>ByteBuffer put( int index, byte b );</li>
-</ol>
-<p>第一个方法 </p>
-<p>写入（put） 
-单个字节。第二和第三个方法写入来自一个数组的一组字节。第四个方法将数据从一个给定的源</p>
-<p>ByteBuffer
- 写入这个 </p>
-<p>ByteBuffer
-。第五个方法将字节写入缓冲区中特定的 </p>
-<p>位置 
-。那些返回 </p>
-<p>ByteBuffer
- 的方法只是返回调用它们的缓冲区的 </p>
-<p>this
- 值。</p>
-<p>与 </p>
-<p>get()
- 方法一样，我们将把 </p>
-<p>put()
- 方法划分为 <em>相对 </em>或者 <em>绝对 </em>的。前四个方法是相对的，而第五个方法是绝对的。</p>
-<p>上面显示的方法对应于 </p>
-<p>ByteBuffer
- 类。其他类有等价的 </p>
-<p>put()
- 方法，这些方法除了不是处理字节之外，其它方面是完全一样的。它们处理的是与该缓冲区类相适应的类型。</p>
-<h3 id="-get-put-"><a href=""></a>类型化的 get() 和 put() 方法</h3>
-<p>除了前些小节中描述的 </p>
-<p>get()
- 和 </p>
-<p>put()
- 方法， </p>
-<p>ByteBuffer
- 还有用于读写不同类型的值的其他方法，如下所示：</p>
-<ul>
-<li>getByte()</li>
-<li>getChar()</li>
-<li>getShort()</li>
-<li>getInt()</li>
-<li>getLong()</li>
-<li>getFloat()</li>
-<li>getDouble()</li>
-<li>putByte()</li>
-<li>putChar()</li>
-<li>putShort()</li>
-<li>putInt()</li>
-<li>putLong()</li>
-<li>putFloat()</li>
-<li>putDouble()</li>
-</ul>
-<p>事实上，这其中的每个方法都有两种类型 ― 一种是相对的，另一种是绝对的。它们对于读取格式化的二进制数据（如图像文件的头部）很有用。</p>
-<p>您可以在例子程序 TypesInByteBuffer.java 中看到这些方法的实际应用。</p>
-<h3 id="-"><a href=""></a><strong>缓冲区的使用：一个内部循环</strong></h3>
-<p>下面的内部循环概括了使用缓冲区将数据从输入通道拷贝到输出通道的过程。
-while (true) {</p>
-<pre><code> buffer.clear();
- int r = fcin.read( buffer );
-
-
- if (r==-1) {
-
-   break;
- }
-
-
- buffer.flip();
-
- fcout.write( buffer );
-</code></pre><p>}</p>
-<p>read()
- 和 </p>
-<p>write()
- 调用得到了极大的简化，因为许多工作细节都由缓冲区完成了。 </p>
-<p>clear()
- 和 </p>
-<p>flip()
- 方法用于让缓冲区在读和写之间切换。</p>
-<p>5、关于缓冲区的更多内容</p>
-<p><strong>概述</strong></p>
-<p>到目前为止，您已经学习了使用缓冲区进行日常工作所需要掌握的大部分内容。我们的例子没怎么超出标准的读/写过程种类，在原来的 I/O 中可以像在 NIO 中一样容易地实现这样的标准读写过程。</p>
-<p>本节将讨论使用缓冲区的一些更复杂的方面，比如缓冲区分配、包装和分片。我们还会讨论 NIO 带给 Java 平台的一些新功能。您将学到如何创建不同类型的缓冲区以达到不同的目的，如可保护数据不被修改的 <em>只读 </em>缓冲区，和直接映射到底层操作系统缓冲区的 <em>直接 </em>缓冲区。我们将在本节的最后介绍如何在 NIO 中创建内存映射文件。</p>
-<p><strong>缓冲区分配和包装</strong></p>
-<p>在能够读和写之前，必须有一个缓冲区。要创建缓冲区，您必须 <em>分配 </em>它。我们使用静态方法 </p>
-<p>allocate()
- 来分配缓冲区：
-ByteBuffer buffer = ByteBuffer.allocate( 1024 );</p>
-<p>allocate()
- 方法分配一个具有指定大小的底层数组，并将它包装到一个缓冲区对象中 ― 在本例中是一个 </p>
-<p>ByteBuffer
-。</p>
-<p>您还可以将一个现有的数组转换为缓冲区，如下所示：
-byte array[] = new byte[1024];</p>
-<p>ByteBuffer buffer = ByteBuffer.wrap( array );</p>
-<p>本例使用了 </p>
-<p>wrap()
- 方法将一个数组包装为缓冲区。必须非常小心地进行这类操作。一旦完成包装，底层数据就可以通过缓冲区或者直接访问。</p>
-<p><strong>缓冲区分片</strong></p>
-<p>slice()
- 方法根据现有的缓冲区创建一种 <em>子缓冲区 </em>。也就是说，它创建一个新的缓冲区，新缓冲区与原来的缓冲区的一部分共享数据。</p>
-<p>使用例子可以最好地说明这点。让我们首先创建一个长度为 10 的 </p>
-<p>ByteBuffer
-：
-ByteBuffer buffer = ByteBuffer.allocate( 10 );</p>
-<p>然后使用数据来填充这个缓冲区，在第 <em>n</em> 个槽中放入数字 <em>n</em>：
-for (int i=0; i&lt;buffer.capacity(); ++i) {</p>
-<pre><code> buffer.put( (byte)i );
-</code></pre><p>}</p>
-<p>现在我们对这个缓冲区 <em>分片 </em>，以创建一个包含槽 3 到槽 6 的子缓冲区。在某种意义上，子缓冲区就像原来的缓冲区中的一个 <em>窗口 </em>。</p>
-<p>窗口的起始和结束位置通过设置 </p>
-<p>position
- 和 </p>
-<p>limit
- 值来指定，然后调用 </p>
-<p>Buffer
- 的 </p>
-<p>slice()
- 方法：
-buffer.position( 3 );</p>
-<p>buffer.limit( 7 );
-ByteBuffer slice = buffer.slice();</p>
-<p>片段
-是缓冲区的 </p>
-<p>子缓冲区 
-。不过， </p>
-<p>片段
-和 </p>
-<p>缓冲区
-共享同一个底层数据数组，我们在下一节将会看到这一点。</p>
-<p><strong>缓冲区分片和数据共享</strong></p>
-<p>我们已经创建了原缓冲区的子缓冲区，并且我们知道缓冲区和子缓冲区共享同一个底层数据数组。让我们看看这意味着什么。</p>
-<p>我们遍历子缓冲区，将每一个元素乘以 11 来改变它。例如，5 会变成 55。
-for (int i=0; i&lt;slice.capacity(); ++i) {</p>
-<pre><code> byte b = slice.get( i );
- b /*= 11;
-
- slice.put( i, b );
-</code></pre><p>}</p>
-<p>最后，再看一下原缓冲区中的内容：
-buffer.position( 0 );</p>
-<p>buffer.limit( buffer.capacity() );</p>
-<p>while (buffer.remaining()&gt;0) {
-     System.out.println( buffer.get() );</p>
-<p>}</p>
-<p>结果表明只有在子缓冲区窗口中的元素被改变了：
-$ java SliceBuffer</p>
-<p>0
-1</p>
-<p>2
-33</p>
-<p>44
-55</p>
-<p>66
-7</p>
-<p>8
-9</p>
-<p>缓冲区片对于促进抽象非常有帮助。可以编写自己的函数处理整个缓冲区，而且如果想要将这个过程应用于子缓冲区上，您只需取主缓冲区的一个片，并将它传递给您的函数。这比编写自己的函数来取额外的参数以指定要对缓冲区的哪一部分进行操作更容易。</p>
-<p><strong>只读缓冲区</strong></p>
-<p>只读缓冲区非常简单 ― 您可以读取它们，但是不能向它们写入。可以通过调用缓冲区的 </p>
-<p>asReadOnlyBuffer()
- 方法，将任何常规缓冲区转换为只读缓冲区，这个方法返回一个与原缓冲区完全相同的缓冲区(并与其共享数据)，只不过它是只读的。</p>
-<p>只读缓冲区对于保护数据很有用。在将缓冲区传递给某个对象的方法时，您无法知道这个方法是否会修改缓冲区中的数据。创建一个只读的缓冲区可以 <em>保证 </em>该缓冲区不会被修改。</p>
-<p>不能将只读的缓冲区转换为可写的缓冲区。</p>
-<p><strong>直接和间接缓冲区</strong></p>
-<p>另一种有用的 </p>
-<p>ByteBuffer
- 是直接缓冲区。 <em>直接缓冲区 </em>是为加快 I/O 速度，而以一种特殊的方式分配其内存的缓冲区。</p>
-<p>实际上，直接缓冲区的准确定义是与实现相关的。Sun 的文档是这样描述直接缓冲区的：</p>
-<p><em>给定一个直接字节缓冲区，Java 虚拟机将尽最大努力直接对它执行本机 I/O 操作。也就是说，它会在每一次调用底层操作系统的本机 I/O 操作之前(或之后)，尝试避免将缓冲区的内容拷贝到一个中间缓冲区中(或者从一个中间缓冲区中拷贝数据)。</em></p>
-<p>您可以在例子程序 FastCopyFile.java 中看到直接缓冲区的实际应用，这个程序是 CopyFile.java 的另一个版本，它使用了直接缓冲区以提高速度。</p>
-<p>还可以用内存映射文件创建直接缓冲区。</p>
-<p><strong>[java]</strong> <a href="http://blog.csdn.net/ssjhust123/article/details/7905278#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/ssjhust123/article/details/7905278#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>ByteBuffer buffer = ByteBuffer.allocateDirect( 1024 ); //直接缓冲区  </li>
-</ol>
-<p><strong>内存映射文件I/O</strong></p>
-<p>内存映射文件 I/O 是一种读和写文件数据的方法，它可以比常规的基于流或者基于通道的 I/O 快得多。</p>
-<p>内存映射文件 I/O 是通过使文件中的数据神奇般地出现为内存数组的内容来完成的。这其初听起来似乎不过就是将整个文件读到内存中，但是事实上并不是这样。一般来说，只有文件中实际读取或者写入的部分才会送入（或者 <em>映射 </em>）到内存中。</p>
-<p>内存映射并不真的神奇或者多么不寻常。现代操作系统一般根据需要将文件的部分映射为内存的部分，从而实现文件系统。Java 内存映射机制不过是在底层操作系统中可以采用这种机制时，提供了对该机制的访问。</p>
-<p>尽管创建内存映射文件相当简单，但是向它写入可能是危险的。仅只是改变数组的单个元素这样的简单操作，就可能会直接修改磁盘上的文件。修改数据与将数据保存到磁盘是没有分开的。</p>
-<p><strong>将文件映射到内存</strong></p>
-<p>了解内存映射的最好方法是使用例子。在下面的例子中，我们要将一个 </p>
-<p>FileChannel
- (它的全部或者部分)映射到内存中。为此我们将使用 </p>
-<p>FileChannel.map()
- 方法。下面代码行将文件的前 1024 个字节映射到内存中：
-MappedByteBuffer mbb = fc.map( FileChannel.MapMode.READ_WRITE,</p>
-<pre><code> 0, 1024 );
-</code></pre><p>map()
- 方法返回一个 </p>
-<p>MappedByteBuffer
-，它是 </p>
-<p>ByteBuffer
- 的子类。因此，您可以像使用其他任何 </p>
-<p>ByteBuffer
- 一样使用新映射的缓冲区，操作系统会在需要时负责执行行映射。
-来源： <a href="[http://blog.csdn.net/ssjhust123/article/details/7905278](http://blog.csdn.net/ssjhust123/article/details/7905278)">[http://blog.csdn.net/ssjhust123/article/details/7905278](http://blog.csdn.net/ssjhust123/article/details/7905278)</a> </p>
-<p><a href="http://blog.csdn.net/ssjhust123/article/details/7905367" target="_blank">（三）—分散聚集、文件锁定、字符集</a></p>
-<h2 id="6-">6、分散和聚集</h2>
-<p><strong>概述</strong></p>
-<p>分散/聚集 I/O 是使用多个而不是单个缓冲区来保存数据的读写方法。</p>
-<p>一个分散的读取就像一个常规通道读取，只不过它是将数据读到一个缓冲区数组中而不是读到单个缓冲区中。同样地，一个聚集写入是向缓冲区数组而不是向单个缓冲区写入数据。分散/聚集 I/O 对于将数据流划分为单独的部分很有用，这有助于实现复杂的数据格式。</p>
-<p><strong>分散/聚集IO</strong></p>
-<p>通道可以有选择地实现两个新的接口： </p>
-<p>ScatteringByteChannel
- 和 </p>
-<p>GatheringByteChannel
-。一个 </p>
-<p>ScatteringByteChannel
- 是一个具有两个附加读方法的通道：</p>
-<ul>
-<li>long read( ByteBuffer[] dsts );</li>
-<li>long read( ByteBuffer[] dsts, int offset, int length );</li>
-</ul>
-<p>这些 </p>
-<p>long read()
- 方法很像标准的 </p>
-<p>read
- 方法，只不过它们不是取单个缓冲区而是取一个缓冲区数组。</p>
-<p>在 <em>分散读取 </em>中，通道依次填充每个缓冲区。填满一个缓冲区后，它就开始填充下一个。在某种意义上，缓冲区数组就像一个大缓冲区。</p>
-<p><em>聚集写入 </em>类似于分散读取，只不过是用来写入。它也有接受缓冲区数组的方法：</p>
-<ul>
-<li>long write( ByteBuffer[] srcs );</li>
-<li>long write( ByteBuffer[] srcs, int offset, int length );</li>
-</ul>
-<p>聚集写对于把一组单独的缓冲区中组成单个数据流很有用。为了与上面的消息例子保持一致，您可以使用聚集写入来自动将网络消息的各个部分组装为单个数据流，以便跨越网络传输消息。</p>
-<p>从例子程序 UseScatterGather.java 中可以看到分散读取和聚集写入的实际应用。</p>
-<p><strong>分散/聚集的应用</strong></p>
-<p>分散/聚集 I/O 对于将数据划分为几个部分很有用。例如，您可能在编写一个使用消息对象的网络应用程序，每一个消息被划分为固定长度的头部和固定长度的正文。您可以创建一个刚好可以容纳头部的缓冲区和另一个刚好可以容难正文的缓冲区。当您将它们放入一个数组中并使用分散读取来向它们读入消息时，头部和正文将整齐地划分到这两个缓冲区中。</p>
-<p>我们从缓冲区所得到的方便性对于缓冲区数组同样有效。因为每一个缓冲区都跟踪自己还可以接受多少数据，所以分散读取会自动找到有空间接受数据的第一个缓冲区。在这个缓冲区填满后，它就会移动到下一个缓冲区。</p>
-<h2 id="-7-"><a href=""></a>7、文件锁定</h2>
-<p><strong>概述</strong></p>
-<p>文件锁定初看起来可能让人迷惑。它 <em>似乎 </em>指的是防止程序或者用户访问特定文件。事实上，文件锁就像常规的 Java 对象锁 ― 它们是 <em>劝告式的（advisory） </em>锁。它们不阻止任何形式的数据访问，相反，它们通过锁的共享和获取赖允许系统的不同部分相互协调。</p>
-<p>您可以锁定整个文件或者文件的一部分。如果您获取一个排它锁，那么其他人就不能获得同一个文件或者文件的一部分上的锁。如果您获得一个共享锁，那么其他人可以获得同一个文件或者文件一部分上的共享锁，但是不能获得排它锁。文件锁定并不总是出于保护数据的目的。例如，您可能临时锁定一个文件以保证特定的写操作成为原子的，而不会有其他程序的干扰。</p>
-<p>大多数操作系统提供了文件系统锁，但是它们并不都是采用同样的方式。有些实现提供了共享锁，而另一些仅提供了排它锁。事实上，有些实现使得文件的锁定部分不可访问，尽管大多数实现不是这样的。</p>
-<p>在本节中，您将学习如何在 NIO 中执行简单的文件锁过程，我们还将探讨一些保证被锁定的文件尽可能可移植的方法。</p>
-<p><strong>锁定文件</strong></p>
-<p>要获取文件的一部分上的锁，您要调用一个打开的 </p>
-<p>FileChannel
- 上的 </p>
-<p>lock()
- 方法。注意，如果要获取一个排它锁，您必须以写方式打开文件。
-RandomAccessFile raf = new RandomAccessFile( &quot;usefilelocks.txt&quot;, &quot;rw&quot; );</p>
-<p>FileChannel fc = raf.getChannel();
-FileLock lock = fc.lock( start, end, false );</p>
-<p>在拥有锁之后，您可以执行需要的任何敏感操作，然后再释放锁：
-lock.release();</p>
-<p>在释放锁后，尝试获得锁的其他任何程序都有机会获得它。</p>
-<p>本小节的例子程序 UseFileLocks.java 必须与它自己并行运行。这个程序获取一个文件上的锁，持有三秒钟，然后释放它。如果同时运行这个程序的多个实例，您会看到每个实例依次获得锁。如果两个程序分别获取同一个文件不同位置的锁，则不会阻塞。比如第一个程序获取文件范围为0-20的锁，而第二个程序获取21-40的锁，则会正常执行。</p>
-<p><strong>文件锁定和可移植性</strong></p>
-<p>文件锁定可能是一个复杂的操作，特别是考虑到不同的操作系统是以不同的方式实现锁这一事实。下面的指导原则将帮助您尽可能保持代码的可移植性：</p>
-<ul>
-<li>只使用排它锁。</li>
-<li>将所有的锁视为劝告式的（advisory）。</li>
-</ul>
-<p>8、字符集</p>
-<p><strong>概述</strong></p>
-<p>根据 Sun 的文档，一个 </p>
-<p>Charset
- 是“十六位 Unicode 字符序列与字节序列之间的一个命名的映射”。实际上，一个 </p>
-<p>Charset
- 允许您以尽可能最具可移植性的方式读写字符序列。</p>
-<p>Java 语言被定义为基于 Unicode。然而在实际上，许多人编写代码时都假设一个字符在磁盘上或者在网络流中用一个字节表示。这种假设在许多情况下成立，但是并不是在所有情况下都成立，而且随着计算机变得对 Unicode 越来越友好，这个假设就日益变得不能成立了。</p>
-<p>在本节中，我们将看一下如何使用 </p>
-<p>Charsets
- 以适合现代文本格式的方式处理文本数据。这里将使用的示例程序相当简单，不过，它触及了使用 </p>
-<p>Charset
- 的所有关键方面：为给定的字符编码创建 </p>
-<p>Charset
-，以及使用该 </p>
-<p>Charset
- 解码和编码文本数据。</p>
-<p><a href="http://www.ibm.com/developerworks/cn/education/java/j-nio/section10.html#ibm-pcon" target="_blank">回页首</a></p>
-<p><strong>编码/解码</strong></p>
-<p>要读和写文本，我们要分别使用 </p>
-<p>CharsetDecoder
- 和 </p>
-<p>CharsetEncoder
-。将它们称为 <em>编码器 </em>和 <em>解码器 </em>是有道理的。一个 <em>字符 </em>不再表示一个特定的位模式，而是表示字符系统中的一个实体。因此，由某个实际的位模式表示的字符必须以某种特定的 <em>编码 </em>来表示。</p>
-<p>CharsetDecoder
- 用于将逐位表示的一串字符转换为具体的 </p>
-<p>char
- 值。同样，一个 </p>
-<p>CharsetEncoder
- 用于将字符转换回位。</p>
-<p>在下一个小节中，我们将考察一个使用这些对象来读写数据的程序。</p>
-<p><a href="http://www.ibm.com/developerworks/cn/education/java/j-nio/section10.html#ibm-pcon" target="_blank">回页首</a></p>
-<p><strong>处理文本的正确方式</strong></p>
-<p>现在我们将分析这个例子程序 UseCharsets.java。这个程序非常简单 ― 它从一个文件中读取一些文本，并将该文本写入另一个文件。但是它把该数据当作文本数据，并使用 </p>
-<p>CharBuffer
- 来将该数句读入一个 </p>
-<p>CharsetDecoder
- 中。同样，它使用 </p>
-<p>CharsetEncoder
- 来写回该数据。</p>
-<p>我们将假设字符以 ISO-8859-1(Latin1) 字符集（这是 ASCII 的标准扩展）的形式储存在磁盘上。尽管我们必须为使用 Unicode 做好准备，但是也必须认识到不同的文件是以不同的格式储存的，而 ASCII 无疑是非常普遍的一种格式。事实上，每种 Java 实现都要求对以下字符编码提供完全的支持：</p>
-<ul>
-<li>US-ASCII</li>
-<li>ISO-8859-1</li>
-<li>UTF-8</li>
-<li>UTF-16BE</li>
-<li>UTF-16LE</li>
-<li>UTF-16</li>
-</ul>
-<p><a href="http://www.ibm.com/developerworks/cn/education/java/j-nio/section10.html#ibm-pcon" target="_blank">回页首</a></p>
-<p><strong>示例程序</strong></p>
-<p>在打开相应的文件、将输入数据读入名为 </p>
-<p>inputData
- 的 </p>
-<p>ByteBuffer
- 之后，我们的程序必须创建 ISO-8859-1 (Latin1) 字符集的一个实例：
-Charset latin1 = Charset.forName( &quot;ISO-8859-1&quot; );</p>
-<p>然后，创建一个解码器（用于读取）和一个编码器 （用于写入）：
-CharsetDecoder decoder = latin1.newDecoder();</p>
-<p>CharsetEncoder encoder = latin1.newEncoder();</p>
-<p>为了将字节数据解码为一组字符，我们把 </p>
-<p>ByteBuffer
- 传递给 </p>
-<p>CharsetDecoder
-，结果得到一个 </p>
-<p>CharBuffer
-：
-CharBuffer cb = decoder.decode( inputData );</p>
-<p>如果想要处理字符，我们可以在程序的此处进行。但是我们只想无改变地将它写回，所以没有什么要做的。</p>
-<p>要写回数据，我们必须使用 </p>
-<p>CharsetEncoder
- 将它转换回字节：
-ByteBuffer outputData = encoder.encode( cb );</p>
-<p>在转换完成之后，我们就可以将数据写到文件中了。
-来源： <a href="[http://blog.csdn.net/ssjhust123/article/details/7905367](http://blog.csdn.net/ssjhust123/article/details/7905367)">[http://blog.csdn.net/ssjhust123/article/details/7905367](http://blog.csdn.net/ssjhust123/article/details/7905367)</a> <a href="http://blog.csdn.net/ssjhust123/article/details/7905401" target="_blank">（四）—网络和异步IO</a></p>
-<p>9、连网和异步 I/O</p>
-<p><strong>概述</strong></p>
-<p>连网是学习异步 I/O 的很好基础，而异步 I/O 对于在 Java 语言中执行任何输入/输出过程的人来说，无疑都是必须具备的知识。NIO 中的连网与 NIO 中的其他任何操作没有什么不同 ― 它依赖通道和缓冲区，而您通常使用 </p>
-<p>InputStream
- 和 </p>
-<p>OutputStream
- 来获得通道。</p>
-<p>本节首先介绍异步 I/O 的基础 ― 它是什么以及它不是什么，然后转向更实用的、程序性的例子。</p>
-<p><strong>异步I/O</strong></p>
-<p>异步 I/O 是一种 <em>没有阻塞地 </em>读写数据的方法。通常，在代码进行 </p>
-<p>read()
- 调用时，代码会阻塞直至有可供读取的数据。同样，</p>
-<p>write()
- 调用将会阻塞直至数据能够写入。</p>
-<p>另一方面，异步 I/O 调用不会阻塞。相反，您将注册对特定 I/O 事件的兴趣 ― 可读的数据的到达、新的套接字连接，等等，而在发生这样的事件时，系统将会告诉您。</p>
-<p>异步 I/O 的一个优势在于，它允许您同时根据大量的输入和输出执行 I/O。同步程序常常要求助于轮询，或者创建许许多多的线程以处理大量的连接。使用异步 I/O，您可以监听任何数量的通道上的事件，不用轮询，也不用额外的线程。</p>
-<p>我们将通过研究一个名为 MultiPortEcho.java 的例子程序来查看异步 I/O 的实际应用。这个程序就像传统的 <em>echo server</em>，它接受网络连接并向它们回响它们可能发送的数据。不过它有一个附加的特性，就是它能同时监听多个端口，并处理来自所有这些端口的连接。并且它只在单个线程中完成所有这些工作。</p>
-<p><strong>Selectors</strong></p>
-<p>本节的阐述对应于 </p>
-<p>MultiPortEcho
- 的源代码中的 </p>
-<p>go()
- 方法的实现，因此应该看一下源代码，以便对所发生的事情有个更全面的了解。</p>
-<p>异步 I/O 中的核心对象名为 </p>
-<p>Selector
-。</p>
-<p>Selector
- 就是您注册对各种 I/O 事件的兴趣的地方，而且当那些事件发生时，就是这个对象告诉您所发生的事件。</p>
-<p>所以，我们需要做的第一件事就是创建一个 </p>
-<p>Selector
-：
-Selector selector = Selector.open();</p>
-<p>然后，我们将对不同的通道对象调用 </p>
-<p>register()
- 方法，以便注册我们对这些对象中发生的 I/O 事件的兴趣。</p>
-<p>register()
- 的第一个参数总是这个 </p>
-<p>Selector
-。</p>
-<p><strong>打开一个Server Socket Channel</strong></p>
-<p>为了接收连接，我们需要一个 </p>
-<p>ServerSocketChannel
-。事实上，我们要监听的每一个端口都需要有一个 </p>
-<p>ServerSocketChannel
- 。对于每一个端口，我们打开一个 </p>
-<p>ServerSocketChannel
-，如下所示：
-ServerSocketChannel ssc = ServerSocketChannel.open();</p>
-<p>ssc.configureBlocking( false );</p>
-<p>ServerSocket ss = ssc.socket();
-InetSocketAddress address = new InetSocketAddress( ports[i] );</p>
-<p>ss.bind( address );</p>
-<p>第一行创建一个新的 </p>
-<p>ServerSocketChannel
- ，最后三行将它绑定到给定的端口。第二行将 </p>
-<p>ServerSocketChannel
- 设置为 <em>非阻塞的 </em>。我们必须对每一个要使用的套接字通道调用这个方法，否则异步 I/O 就不能工作。</p>
-<p><strong>选择键</strong></p>
-<p>下一步是将新打开的 </p>
-<p>ServerSocketChannels
- 注册到 </p>
-<p>Selector
-上。为此我们使用 ServerSocketChannel.register() 方法，如下所示：
-SelectionKey key = ssc.register( selector, SelectionKey.OP_ACCEPT );</p>
-<p>register()
- 的第一个参数总是这个 </p>
-<p>Selector
-。第二个参数是 </p>
-<p>OP_ACCEPT
-，这里它指定我们想要监听 <em>accept</em> 事件，也就是在新的连接建立时所发生的事件。这是适用于 </p>
-<p>ServerSocketChannel
- 的唯一事件类型。</p>
-<p>请注意对 </p>
-<p>register()
- 的调用的返回值。 </p>
-<p>SelectionKey
- 代表这个通道在此 </p>
-<p>Selector
- 上的这个注册。当某个 </p>
-<p>Selector
- 通知您某个传入事件时，它是通过提供对应于该事件的 </p>
-<p>SelectionKey
- 来进行的。</p>
-<p>SelectionKey
- 还可以用于取消通道的注册。</p>
-<p><strong>内部循环</strong></p>
-<p>现在已经注册了我们对一些 I/O 事件的兴趣，下面将进入主循环。使用 </p>
-<p>Selectors
- 的几乎每个程序都像下面这样使用内部循环：
-int num = selector.select();</p>
-<p>Set selectedKeys = selector.selectedKeys();</p>
-<p>Iterator it = selectedKeys.iterator();</p>
-<p>while (it.hasNext()) {
-     SelectionKey key = (SelectionKey)it.next();</p>
-<pre><code> // ... deal with I/O event ...
-</code></pre><p>}</p>
-<p>首先，我们调用 </p>
-<p>Selector
- 的 </p>
-<p>select()
- 方法。这个方法会阻塞，直到至少有一个已注册的事件发生。当一个或者更多的事件发生时，</p>
-<p>select()
- 方法将返回所发生的事件的数量。</p>
-<p>接下来，我们调用 </p>
-<p>Selector
- 的 </p>
-<p>selectedKeys()
- 方法，它返回发生了事件的 </p>
-<p>SelectionKey
- 对象的一个 </p>
-<p>集合 
-。</p>
-<p>我们通过迭代 </p>
-<p>SelectionKeys
- 并依次处理每个 </p>
-<p>SelectionKey
- 来处理事件。对于每一个 </p>
-<p>SelectionKey
-，您必须确定发生的是什么 I/O 事件，以及这个事件影响哪些 I/O 对象。</p>
-<p><strong>监听新连接</strong></p>
-<p>程序执行到这里，我们仅注册了 </p>
-<p>ServerSocketChannel
-，并且仅注册它们“接收”事件。为确认这一点，我们对 </p>
-<p>SelectionKey
- 调用</p>
-<p>readyOps()
- 方法，并检查发生了什么类型的事件：
-if ((key.readyOps() &amp; SelectionKey.OP_ACCEPT)</p>
-<pre><code> == SelectionKey.OP_ACCEPT) {
-
-
- // Accept the new connection
- // ...
-</code></pre><p>}</p>
-<p>可以肯定地说， </p>
-<p>readOps()
- 方法告诉我们该事件是新的连接。</p>
-<p><strong>接收新的连接</strong></p>
-<p>因为我们知道这个服务器套接字上有一个传入连接在等待，所以可以安全地接受它；也就是说，不用担心 </p>
-<p>accept()
- 操作会阻塞：
-ServerSocketChannel ssc = (ServerSocketChannel)key.channel();</p>
-<p>SocketChannel sc = ssc.accept();</p>
-<p>下一步是将新连接的 </p>
-<p>SocketChannel
- 配置为非阻塞的。而且由于接受这个连接的目的是为了读取来自套接字的数据，所以我们还必须将 </p>
-<p>SocketChannel
- 注册到 </p>
-<p>Selector
-上，如下所示：
-sc.configureBlocking( false );</p>
-<p>SelectionKey newKey = sc.register( selector, SelectionKey.OP_READ );</p>
-<p>注意我们使用 </p>
-<p>register()
- 的 </p>
-<p>OP_READ
- 参数，将 </p>
-<p>SocketChannel
- 注册用于 <em>读取 </em>而不是 <em>接受 </em>新连接。</p>
-<p><strong>删除处理过的SelectionKey</strong></p>
-<p>在处理 </p>
-<p>SelectionKey
- 之后，我们几乎可以返回主循环了。但是我们必须首先将处理过的 </p>
-<p>SelectionKey
- 从选定的键集合中删除。如果我们没有删除处理过的键，那么它仍然会在主集合中以一个激活的键出现，这会导致我们尝试再次处理它。我们调用迭代器的</p>
-<p>remove()
- 方法来删除处理过的 </p>
-<p>SelectionKey
-：
-it.remove();</p>
-<p>现在我们可以返回主循环并接受从一个套接字中传入的数据(或者一个传入的 I/O 事件)了。</p>
-<p><strong>传入的I/O</strong></p>
-<p>当来自一个套接字的数据到达时，它会触发一个 I/O 事件。这会导致在主循环中调用 </p>
-<p>Selector.select()
-，并返回一个或者多个 I/O 事件。这一次， </p>
-<p>SelectionKey
- 将被标记为 </p>
-<p>OP_READ
- 事件，如下所示：
-} else if ((key.readyOps() &amp; SelectionKey.OP_READ)</p>
-<pre><code> == SelectionKey.OP_READ) {
- // Read the data
-
- SocketChannel sc = (SocketChannel)key.channel();
- // ...
-</code></pre><p>}</p>
-<p>与以前一样，我们取得发生 I/O 事件的通道并处理它。在本例中，由于这是一个 echo server，我们只希望从套接字中读取数据并马上将它发送回去。关于这个过程的细节，请参见代码中的源代码 (MultiPortEcho.java)。</p>
-<p><strong>回到主循环</strong></p>
-<p>每次返回主循环，我们都要调用 </p>
-<p>select
- 的 </p>
-<p>Selector()
-方法，并取得一组 </p>
-<p>SelectionKey
-。每个键代表一个 I/O 事件。我们处理事件，从选定的键集中删除 </p>
-<p>SelectionKey
-，然后返回主循环的顶部。</p>
-<p>这个程序有点过于简单，因为它的目的只是展示异步 I/O 所涉及的技术。在现实的应用程序中，您需要通过将通道从 </p>
-<p>Selector
- 中删除来处理关闭的通道。而且您可能要使用多个线程。这个程序可以仅使用一个线程，因为它只是一个演示，但是在现实场景中，创建一个线程池来负责 I/O 事件处理中的耗时部分会更有意义。
-来源： <a href="[http://blog.csdn.net/ssjhust123/article/details/7905401](http://blog.csdn.net/ssjhust123/article/details/7905401)">[http://blog.csdn.net/ssjhust123/article/details/7905401](http://blog.csdn.net/ssjhust123/article/details/7905401)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/NIO/">NIO</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/NIO/" class="label label-success">NIO</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-NIO--JAVANIO总结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-NIO--JAVANIO总结" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -3470,7 +3859,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:55:36</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:28:49</em></span></div>
 </div>
 <div class="clearfix"></div>
 

@@ -110,6 +110,182 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-Nosql--GoogleDremel原理–如何能3秒分析1PB/">Google Dremel 原理 – 如何能3秒分析1PB</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:31.000Z"> <a href="/2014/02/02/2014-02-02-Nosql--GoogleDremel原理–如何能3秒分析1PB/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="google-dremel-3-1pb">Google Dremel 原理 – 如何能3秒分析1PB</h1>
+<h3 id="-">简介</h3>
+<p>Dremel 是Google 的“交互式”数据分析系统。可以组建成规模上千的集群，处理PB级别的数据。MapReduce处理一个数据，需要分钟级的时间。作为MapReduce的发起人，Google开发了Dremel将处理时间缩短到秒级，作为MapReduce的有力补充。Dremel作为Google BigQuery的report引擎，获得了很大的成功。最近Apache计划推出Dremel的开源实现Drill，将Dremel的技术又推到了浪尖上。</p>
+<h3 id="google-dremel-">Google Dremel设计</h3>
+<p>根据Google公开的论文《<a href="http://research.google.com/pubs/pub36632.html" target="_blank">Dremel: Interactive Analysis of WebScaleDatasets</a>》可以看到Dremel的设计原理。还有一些测试报告。论文写于2006年，公开于2010年，Google在处理大数据方面，果真有得天独厚的优势。下面的内容，很大部分来自这篇论文。</p>
+<p>随着Hadoop的流行，大规模的数据分析系统已经越来越普及。数据分析师需要一个能将数据“玩转”的交互式系统。如此，就可以非常方便快捷的浏览数据，建立分析模型。Dremel系统有下面几个主要的特点：</p>
+<ul>
+<li><strong>Dremel**</strong>是一个大规模系统。**在一个PB级别的数据集上面，将任务缩短到秒级，无疑需要大量的并发。磁盘的顺序读速度在100MB/S上下，那么在1S内处理1TB数据，意味着至少需要有1万个磁盘的并发读! Google一向是用廉价机器办大事的好手。但是机器越多，出问题概率越大，如此大的集群规模，需要有足够的容错考虑，保证整个分析的速度不被集群中的个别慢(坏)节点影响。</li>
+<li><strong>Dremel**</strong>是MR<strong>**交互式查询能力不足的补充。</strong>和MapReduce一样，Dremel也需要和数据运行在一起，将计算移动到数据上面。所以它需要GFS这样的文件系统作为存储层。在设计之初，Dremel并非是MapReduce的替代品，它只是可以执行非常快的分析，在使用的时候，常常用它来处理MapReduce的结果集或者用来建立分析原型。</li>
+<li><strong>Dremel**</strong>的数据模型是嵌套(nested)<strong>**的。</strong>互联网数据常常是非关系型的。Dremel还需要有一个灵活的数据模型，这个数据模型至关重要。Dremel支持一个嵌套(nested)的数据模型，类似于Json。而传统的关系模型，由于不可避免的有大量的Join操作，在处理如此大规模的数据的时候，往往是有心无力的。</li>
+<li><strong>Dremel**</strong>中的数据是用列式存储的。**使用列式存储，分析的时候，可以只扫描需要的那部分数据的时候，减少CPU和磁盘的访问量。同时列式存储是压缩友好的，使用压缩，可以综合CPU和磁盘，发挥最大的效能。对于关系型数据，如果使用列式存储，我们都很有经验。但是对于嵌套(nested)的结构，Dremel也可以用列存储，非常值得我们学习。</li>
+<li><strong>Dremel**</strong>结合了Web<strong><strong>搜索</strong></strong>和并行DBMS<strong>**的技术。</strong>首先，他借鉴了Web搜索中的“查询树”的概念，将一个相对巨大复杂的查询，分割成较小较简单的查询。大事化小，小事化了，能并发的在大量节点上跑。其次，和并行DBMS类似，Dremel可以提供了一个SQL-like的接口，就像Hive和Pig那样。</li>
+</ul>
+<h3 id="google-dremel-">Google Dremel应用场景</h3>
+<p>设想一个使用场景。我们的美女数据分析师，她有一个新的想法要验证。要验证她的想法，需要在一个上亿条数据上面，跑一个查询，看看结果和她的想法是不是一样，她可不希望等太长时间，最好几秒钟结果就出来。当然她的想法不一定完善，还需要不断调整语句。然后她验证了想法，发现了数据中的价值。最后，她可以将这个语句完善成一个长期运行的任务。</p>
+<p>对于Google,数据一开始是放在GFS上的。可以通过MapReduce将数据导入到Dremel中去，在这些MapReduce中还可以做一些处理。然后分析师使用Dremel，轻松愉悦的分析数据，建立模型。最后可以编制成一个长期运行的MapReduce任务。</p>
+<p>这种处理方式，让笔者联想到Greenplum的<a href="http://www.greenplum.com/products/chorus" target="_blank">Chorus</a>. Chorus也可以为分析师提供快速的数据查询，不过解决方案是通过预处理，导入部分数据，减少数据集的大小。用的是三十六计，走为上计，避开的瞬时分析大数据的难题。Chorus最近即将开源，可以关注下。</p>
+<p>还有一点特别的就是按列存储的嵌套数据格式。如图所示，在按记录存储的模式中，一个记录的多列是连续的写在一起的。在按列存储中，可以将数据按列分开。也就是说，可以仅仅扫描A.B.C而不去读A.E或者A.B.C。难点在于，我们如何能同时高效地扫描若干列，并做一些分析。</p>
+<p><a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13458644104566_f.jpg" target="_blank"><img src="&quot;Record-wise vs. columnar representation of nested data  &quot;" alt=""></a></p>
+<h3 id="google-dremel-">Google Dremel数据模型</h3>
+<p>在Google, 用Protocol Buffer常常作为序列化的方案。其数据模型可以用数学方法严格的表示如下：</p>
+<p>t=dom|<A1:t[∗|?],...,An:t[∗|?]></p>
+<p>其中t可以是一个基本类型或者组合类型。其中基本类型可以是integer,float和string。组合类型可以是若干个基本类型拼凑。星号(/*)指的是任何类型都可以重复，就是数组一样。问号(?)指的是任意类型都是可以是可选的。简单来说，除了没有Map外，和一个Json几乎没有区别。</p>
+<p>下图是例子，Schema定义了一个组合类型Document.有一个必选列DocId，可选列Links，还有一个数组列Name。可以用Name.Language.Code来表示Code列。</p>
+<p><a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13458646314107_f.jpg" target="_blank"><img src="&quot;Two sample nested records and their schema&quot;" alt=""></a></p>
+<p>这种数据格式是语言无关，平台无关的。可以使用Java来写MR程序来生成这个格式，然后用C++来读取。在这种列式存储中，能够快速通用处理也是非常的重要的。</p>
+<p>上图，是一个示例数据的抽象的模型；下图是这份数据在Dremel实际的存储的格式。</p>
+<p><a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13458643358445_f.jpg" target="_blank"><img src="&quot;Column-striped representation of the sample data in Figure&quot;" alt=""></a></p>
+<p>如果是关系型数据，而不是嵌套的结构。存储的时候，我们可以将每一列的值直接排列下来，不用引入其他的概念，也不会丢失数据。对于嵌套的结构，我们还需要两个变量R (Repetition Level) ,D (Definition Level) 才能存储其完整的信息。</p>
+<p><strong>Repetition Level</strong>是记录该列的值是在哪一个级别上重复的。举个例子说明：对于Name.Language.Code? 我们一共有三条非Null的记录。</p>
+<ol>
+<li>第一个是”en-us”，出现在第一个Name的第一个Lanuage的第一个Code里面。在此之前，这三个元素是没有重复过的，都是第一个。所以其R为0。</li>
+<li>第二个是”en”，出现在下一个Lanuage里面。也就是说Lanague是重复的元素。Name.Language.Code中Lanague排第二个，所以其R为2.</li>
+<li>第三个是”en-gb”，出现在下一个Name中，Name是重复元素，排第一个，所以其R为1。</li>
+</ol>
+<p>我们可以想象，将所有的没有值的列，设值为NULL。如果是数组列，我们也想象有一个NULL值。有了Repetition Level，我们就可以很好的用列表示嵌套的结构了。但是还有一点不足。就是还需要表示一个数组是不是我们想象出来的。</p>
+<p><strong>Definition Level</strong> 是定义的深度，用来记录该列是否是”想象”出来的。所以对于非NULL的记录，是没有意义的，其值必然为相同。同样举个例子。例如Name.Language.Country,</p>
+<ul>
+<li>第一个”us”是在R1里面，其中Name,Language,Country是有定义的。所以D为3。</li>
+<li>第二个”NULL”也是在R1的里面，其中Name,Language是有定义的,其他是想象的。所以D为2。</li>
+<li>第三个”NULL”还是在R1的里面，其中Name是有定义的,其他是想象的。所以D为1。</li>
+<li>第四个”gb”是在R1里面，其中Name,Language,Country是有定义的。所以D为3。</li>
+</ul>
+<p>就是这样，如果路径中有required，可以将其减去，因为required必然会define，记录其数量没有意义。</p>
+<p>理解了如何存储这种嵌套结构。写没有难度。读的时候，我们只读其中部分字段，来构建部分的数据模型。例如，只读取DocID和Name.Language.Country。我们可以同时扫描两个字段，先扫描DocID。记录下第一个，然后发现下一个DocID的R是0；于是该读Name.Language.Country，如果下一个R是1或者2就继续读，如果是0就开始读下一个DocID。</p>
+<p><a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13458640099204_f.jpg" target="_blank"><img src="&quot;Automaton for assembling records from two fields, and&quot;" alt=""></a></p>
+<p>下图展示了一个更为复杂的读取的状态机示例。在读取过程中使用了Definition Level来快速Jump,提升性能。
+<a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13460300363599_f.jpg"><img src="&quot;Complete record assembly automaton. Edges are labeled&lt;br /&gt;
+with repetition levels&quot;" alt=""></a></p>
+<p>到此为止，我们已经知道了Dremel的数据结构。就像其他数据分析系统一样，数据结构确定下来，功能就决定了一大半。对于Dremel的数据查询，必然是“全表扫描”，但由于其巧妙的列存储设计，良好的数据模型设计可以回避掉大部分Join需求和扫描最少的列。</p>
+<h3 id="google-dremel-">Google Dremel查询方式</h3>
+<p>Dremel可以使用一种SQL-like的语法查询嵌套数据。由于Dremel的数据是只读的，并且会密集的发起多次类似的请求。所以可以保留上次请求的信息，还优化下次请求的explain过程。那又是如何explain的呢？</p>
+<p><a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13458646380664_f.jpg" target="_blank"><img src="&quot;System architecture and execution inside a server node&quot;" alt=""></a></p>
+<p>这是一个树状架构。当Client发其一个请求，根节点受到请求，根据metadata，将其分解到枝叶，直到到位于数据上面的叶子Server。他们扫描处理数据，又不断汇总到根节点。</p>
+<p>举个例子：对于请求：
+SELECT A, COUNT(B) FROM T GROUP BY A</p>
+<p>根节点收到请求，会根据数据的分区请求，将请求变成可以拆分的样子。原来的请求会变为。</p>
+<p>SELECT A, SUM(c) FROM (R1 UNION ALL ... Rn) GROUP BY A</p>
+<p>R1,…RN是T的分区计算出的结果集。越大的表有越多的分区，越多的分区可以越好的支持并发。</p>
+<p>然后再将请求切分，发送到每个分区的叶子Server上面去,对于每个Server
+?Ri = SELECT A, COUNT(B) AS c FROM Ti GROUP BY A</p>
+<p>结构集一定会比原始数据小很多，处理起来也更快。根服务器可以很快的将数据汇总。具体的聚合方式，可以使用现有的并行数据库技术。</p>
+<p>Dremel是一个多用户的系统。切割分配任务的时候，还需要考虑用户优先级和负载均衡。对于大型系统，还需要考虑容错，如果一个叶子Server出现故障或变慢，不能让整个查询也受到明显影响。</p>
+<p>通常情况下，每个计算节点，执行多个任务。例如，技巧中有3000个叶子Server，每个Server使用8个线程，有可以有24000个计算单元。如果一张表可以划分为100000个区，就意味着大约每个计算单元需要计算5个区。这执行的过程中，如果某一个计算单元太忙，就会另外启一个来计算。这个过程是动态分配的。</p>
+<p>对于GFS这样的存储，一份数据一般有3份拷贝，计算单元很容易就能分配到数据所在的节点上，典型的情况可以到达95%的命中率。</p>
+<p>Dremel还有一个配置，就是在执行查询的时候，可以指定扫描部分分区，比如可以扫描30%的分区，在使用的时候，相当于随机抽样，加快查询。</p>
+<h3 id="google-dremel-">Google Dremel测试实验</h3>
+<p>实验的数据源如下表示。大部分数据复制了3次，也有一个两次。每个表会有若干分区，每个分区的大小在100K到800K之间。如果压缩率是25%，并且计入复制3份的事实的话。T1的大小已经达到PB级别。这么小且巨量的分区，对于GFS的要求很高，现在的Hdfs稳定版恐怕受不了。接下来的测试会逐步揭示其是如何超过MR，并对性能作出分析。
+<strong>表名</strong> <strong>记录数</strong> <strong>大小(**</strong>已压缩)<strong> </strong>列数<strong> </strong>数据中心<strong> </strong>复制数量** T1 85 billion 87 TB 270 A 3× T2 24 billion 13 TB 530 A 3× T3 4 billion 70 TB 1200 A 3× T4 1+ trillion 105 TB 50 B 2× T5 1+ trillion 20 TB 30 B 3×</p>
+<h3 id="-">列存测试</h3>
+<p>首先，我们测试看看列存的效果。对于T1表，1GB的数据大约有300K行，使用列存的话压缩后大约在375MB。这台机器磁盘的吞吐在70MB/s左右。这1GB的数据，就是我们的现在的测试数据源，测试环境是单机。</p>
+<p><a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13458638268923_f.jpg" target="_blank"><img src="" alt=""></a></p>
+<p>见上图。</p>
+<ul>
+<li>曲线A，是用列存读取数据并解压的耗时。</li>
+<li>曲线B是一条一条记录挨个读的时间。</li>
+<li>曲线C是在B的基础上，加上了反序列化的时间。</li>
+<li>曲线d，是按行存读并解压的耗时。</li>
+<li>曲线e加上了反序列化的时间。因为列很多，反序列化耗时超过了读并解压的50%。</li>
+</ul>
+<p>从图上可以看出。如果需要读的列很少的话，列存的优势就会特别的明显。对于列的增加，产生的耗时也几乎是线性的。而一条一条该个读和反序列化的开销是很大的，几乎都在原来基础上增加了一倍。而按行读，列数的增加没有影响，因为一次性读了全部列。</p>
+<h3 id="dremel-mapreduce-">Dremel和MapReduce的对比测试</h3>
+<p>MR和Dremel最大的区别在于行存和列存。如果不能击败MapReduce，Remel就没有意义了。使用最常见的WordCount测试，计算这个数据中Word的个数。
+Q1: SELECT SUM(CountWords(txtField)) / COUNT(/*) FROM T1</p>
+<p><a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13458638073453_f.jpg" target="_blank"><img src="&quot;MR and Dremel execution on columnar vs. recordoriented&quot;" alt=""></a></p>
+<p>上图是测试的结果。使用了两个MR任务。这两个任务和Dremel一样都运行在3000个节点上面。如果使用列存，Dremel的按列读的MR只需要读0.5TB的数据，而按行存需要读87TB。 MR提供了一个方便有效的途经来讲按行数据转换成按列的数据。Dremel可以方便的导入MapReduce的处理结果。</p>
+<h3 id="-server-">树状计算Server测试</h3>
+<p>接下来我们要对比在T2表示使用两个不同的Group BY查询。T2表有24 billion 行的记录。每个记录有一个 item列表，每一item有一个amount 字段。总共有40 billion个item.amount。这两个Query分别是。
+Q2: SELECT country, SUM(item.amount) FROM T2 GROUP BY country</p>
+<p>Q3: SELECT domain, SUM(item.amount) FROM T2 WHERE domain CONTAINS ’.net’ GROUP BY domain</p>
+<p>Q2需要扫描60GB的压缩数据，Q3需要扫描180GB，同时还要过滤一个条件。</p>
+<p><a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13458647595741_f.jpg" target="_blank"><img src="&quot;Execution time as a function of serving tree levels for&quot;" alt=""></a></p>
+<p>上图是这两个Query在不同的server拓扑下的性能。每个测试都是有2900个叶子Server。在2级拓扑中，根server直接和叶子Server通信。在3级拓扑中，各个级别的比例是1:100:2900，增加了100个中间Server。在4级拓扑中，比例为1:10:100:2900.</p>
+<p>Q2可以在3级拓扑下3秒内执行完毕，但是为他提供更高的拓扑级别，对性能提升没有裨益。相比之下，为Q3提供更高的拓扑级别，性能可以有效提升。这个测试体现了树状拓扑对性能提升的作用。</p>
+<h3 id="-">每个分区的执行情况</h3>
+<p>对于刚刚的两个查询，具体的每个分区的执行情况是这样的。</p>
+<p><a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13458637868939_f.jpg" target="_blank"><img src="&quot;Histograms of processing times&quot;" alt=""></a></p>
+<p>可以看到99%的分区都在1s内完成了。Dremel会自动调度，使用新的Server计算拖后腿的任务。</p>
+<h3 id="-">记录内聚合</h3>
+<p>由于Demel支持List的数据类型，有的时候，我们需要计算每个记录里面的各个List的聚合。如
+Q4 : SELECT COUNT(c1 &gt; c2) FROM</p>
+<p>(SELECT SUM(a.b.c.d) WITHIN RECORD AS c1,</p>
+<p>SUM(a.b.p.q.r) WITHIN RECORD AS c2</p>
+<p>FROM T3)</p>
+<p>我们需要count所有sum(a.b.c.d)比sum(a.b.p.q.r)，执行这条语句实际只需要扫描13GB的数据，耗时15s，而整张表有70TB。如果没有这样的嵌套数据结构，这样的查询会很复杂。</p>
+<h3 id="-">扩展性测试</h3>
+<p>Dremel有良好的扩展性，可以通过增加机器来缩短查询的时间。并且可以处理数以万亿计的记录。</p>
+<p>对于查询：
+Q5: SELECT TOP(aid, 20), COUNT(/*) FROM T4?WHERE bid = fvalue1g AND cid = fvalue2g</p>
+<p>使用不同的叶子Server数目来进行测试。</p>
+<p><a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13458644318827_f.jpg" target="_blank"><img src="&quot;Scaling the system from 1000 to 4000 nodes using a&quot;" alt=""></a></p>
+<p>可以发现CPU的耗时总数是基本不变的，在30万秒左右。但是随着节点数的增加，执行时间也会相应缩短。几乎呈线性递减。如果我们使用通过CPU时间计费的“云计算”机器，每个租户的查询都可以很快，成本也会非常低廉。</p>
+<h3 id="-">容错测试</h3>
+<p>一个大团队里面，总有几个拖油瓶。对于有万亿条记录的T5，我们执行下面的语句。
+Q6: SELECT COUNT(DISTINCT a) FROM T5</p>
+<p>值得注意的是T5的数据只有两份拷贝，所以有更高的概率出现坏节点和拖油瓶。这个查询需要扫描大约1TB的压缩数据，使用2500个节点。</p>
+<p><a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2012/12/13458642912961_f.jpg" target="_blank"><img src="&quot;Query Q5 on T5 illustrating stragglers&quot;" alt=""></a></p>
+<p>可以看到99%的分区都在5S内完成的。不幸的是，有一些分区需要较长的时间来处理。尽管通过动态调度可以加快一些，但在如此大规模的计算上面，很难完全不出问题。如果不在意太精确的结果，完全可以小小减少覆盖的比例，大大提升相应速度。</p>
+<h3 id="google-dremel-">Google Dremel 的影响</h3>
+<p>Google Dremel的能在如此短的时间内处理这么大的数据，的确是十分惊艳的。有个伯克利分校的教授Armando Fox说过一句话“如果你曾事先告诉我Dremel声称其将可做些什么，那么我不会相信你能开发出这种工具”。这么给力的技术，必然对业界造成巨大的影响。第一个被波及到的必然是Hadoop。</p>
+<h3 id="dremel-hadoop">Dremel与Hadoop</h3>
+<p>Dremel的公开论文里面已经说的很明白，Dremel不是用来替代MapReduce，而是和其更好的结合。Hadoop的Hive，Pig无法提供及时的查询，而Dremel的快速查询技术可以给Hadoop提供有力的补充。同时Dremel可以用来分析MapReduce的结果集，只需要将MapReduce的OutputFormat修改为Dremel的格式，就可以几乎不引入额外开销，将数据导入Dremel。使用Dremel来开发数据分析模型，MapReduce来执行数据分析模型。</p>
+<p>Hadoop的Hive,Pig现在也有了列存的模式，架构上和Dremel也接近。但是无论存储结构还是计算方式都没有Dremel精致。对Hadoop实时性的改进也一直是个热点话题。要想在Hadoop中山寨一个Dremel，并且相对现有解决方案有突破，笔者觉得Hadoop自身需要一些改进。一个是HDFS需要对并发细碎的数据读性能有大的改进，HDFS需要更加的低延迟。再者是Hadoop需要不仅仅支持MapReduce这一种计算框架。其他部分,Hadoop都有对应的开源组件，万事俱备只欠东风。</p>
+<h3 id="dremel-">Dremel的开源实现</h3>
+<p>Dremel现在还没有一个可以运行的开源实现，不过我们看到很多努力。一个是Apache的Drill，一个是OpenDremel/Dazo。</p>
+<p><strong>OpenDremel/Dazo</strong></p>
+<p>OpenDremel是一个开源项目，最近改名为Dazo。可以在GoogleCode上找到<a href="http://code.google.com/p/dremel/" target="_blank"><a href="http://code.google.com/p/dremel/">http://code.google.com/p/dremel/</a></a>。目前还没有发布。作者声称他已经完成了一个通用执行引擎和OpenStack Swift的集成。笔者感觉其越走越歪，离Dremel越来越远了。</p>
+<p><strong>Apache Drill</strong></p>
+<p><a href="http://wiki.apache.org/incubator/DrillProposal" target="_blank">Drill</a>是Hadoop的赞助商之一MapR发起的。Drill作为一个Dremel的山寨项目，有和Dremel相似的架构和能力。他们希望Drill最终会想Hive,Pig一样成为Hadoop上的重要组成部分。为Hadoop提供快速查询的能力。和Dremel有一点不同，在数据模型上，开源的项目需要支持更标准的数据结构。比如CSV和JSON。同时Drill还有更大的灵活性，支持多重查询语言，多种接口。</p>
+<p>现在Drill的目标是完成初始的需求，架构。完成一个初始的实现。这个实现包括一个执行引擎和DrQL。DrQL是一个基于列的格式，类似于Dremel。目前，Drill已经完成的需求和架构设计。总共分为了四个组件</p>
+<ul>
+<li>Query language:类似Google BigQuery的查询语言，支持嵌套模型，名为DrQL.</li>
+<li>Low-lantency distribute execution engine:执行引擎，可以支持大规模扩展和容错。可以运行在上万台机器上计算数以PB的数据。</li>
+<li>Nested data format:嵌套数据模型，和Dremel类似。也支持CSV,JSON,YAML类似的模型。这样执行引擎就可以支持更多的数据类型。</li>
+<li>Scalable data source: 支持多种数据源，现阶段以Hadoop为数据源。</li>
+</ul>
+<p>目前这四个组件在分别积极的推进，Drill也非常希望有社区其他公司来加入。Drill希望加入到Hadoop生态系统中去。</p>
+<h3 id="-">最后的话</h3>
+<p>本文介绍了Google Dremel的使用场景，设计实现，测试实验，和对开源世界的影响。相信不久的将来，Dremel的技术会得到广泛的应用。
+Share the post &quot;Google Dremel 原理 - 如何能3秒分析1PB&quot;</p>
+<ul>
+<li><a href="http://service.weibo.com/share/share.php?url=http%3A%2F%2Fwww.yankay.com%2Fgoogle-dremel-rationale%2F" title="Share this article on Weibo" target="_blank">Weibo</a></li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Nosql/">Nosql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Nosql/" class="label label-primary">Nosql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:31"datetime="2014-03-07 09:54:31"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-Nosql--GoogleDremel原理–如何能3秒分析1PB/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-Nosql--GoogleDremel原理–如何能3秒分析1PB" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-Nosql--NoSQL数据库探讨之一－为什么要用非关系数据库？-robbin的自言自语/">NoSQL数据库探讨之一 － 为什么要用非关系数据库？ </a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:31.000Z"> <a href="/2014/02/02/2014-02-02-Nosql--NoSQL数据库探讨之一－为什么要用非关系数据库？-robbin的自言自语/">feb. 2 2014</a></time></span>      
@@ -184,6 +360,367 @@ Voldemort是个和Cassandra类似的面向解决scale问题的分布式数据库
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Nosql/">Nosql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Nosql/" class="label label-primary">Nosql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:31"datetime="2014-03-07 09:54:31"> mar. 7 2014</time></span> | <span class="comment-link">
 <a href="http://itsolife.com/2014/02/02/2014-02-02-Nosql--NoSQL数据库探讨之一－为什么要用非关系数据库？-robbin的自言自语/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-Nosql--NoSQL数据库探讨之一－为什么要用非关系数据库？-robbin的自言自语" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-Nosql--NoSQL反模式–文档数据库篇/">NoSQL反模式 – 文档数据库篇</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:31.000Z"> <a href="/2014/02/02/2014-02-02-Nosql--NoSQL反模式–文档数据库篇/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="nosql-">NoSQL反模式 – 文档数据库篇</h1>
+<ul>
+<li><p><a href="http://www.yankay.com/" target="_blank">首页</a></p>
+</li>
+<li><p><a href="http://www.yankay.com/about/" target="_blank">关于</a></p>
+</li>
+</ul>
+<h1 id="-http-www-yankay-com-"><a href="http://www.yankay.com/" target="_blank">我自然</a></h1>
+<h2 id="-">颜开的博客</h2>
+<h2 id="nosql-">NoSQL反模式 - 文档数据库篇</h2>
+<p>作者: <a href="http://www.yankay.com/author/admin/" title="查看 颜开 的所有文章" target="_blank">颜开</a> 日期: 2013 年 1 月 25 日  <a href="&quot;发表评论？&quot;">发表评论</a> (14) <a href="&quot;查看评论？&quot;">查看评论</a></p>
+<p>我们设计关系数据库Schema的都有一套完整的方案，而NoSQL却没有这些。半年前笔者读了本《SQL反模式》的书，觉得非常好。就开始留意，对于NoSQL是否也有反模式？好的反模式可以在我们设计Schema告诉哪里是陷阱和悬崖。NoSQL宣传的时候往往宣称是SchemaLess的，这会让人误解其不需要设计Schema。但如果不意识到设计Schema的必要，陷阱就在一直在黑暗中等着我们。这篇文章就总结一些别人的，也有自己犯过的深痛的设计Schema错误。</p>
+<p>NoSQL数据库最主流的有文档数据库，列存数据库，键值数据库。三者分别有代表作MongoDB，HBase和Redis。如果将NoSQL比作兵器的话，可以这样(MySQL是典型的关系型数据库，一样参与比较)： <a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2013/01/NosqlImage.png" target="_blank"><img src="&quot;Nosql兵器谱&quot;" alt=""></a></p>
+<ul>
+<li><strong>MySQL</strong>产生年代较早，而且随着LAMP大潮得以成熟。尽管其没有什么大的改进，但是新兴的互联网使用的最多的数据库。就像传统的菜刀，结构简单，几百年没有改进。但是不妨碍产生各式各样的刀法，只要有一把，就能胜任厨房里的大部分事务。MySQL也是一样，核心已经稳定。但是切库，分表，备份，监控，等等手段一应俱全。</li>
+<li><strong>MongoDB</strong>是个新生事物，提供更灵活的Schema，Capped Collection，异步提交，地理位置索引等五花十色的功能。就像瑞士军刀，不但可以当刀用，还可以开瓶盖，剪指甲。但是他也不比MySQL强，因为还缺乏时间的磨砺。一是系统本身的稳定性，二是开发，运维需要更多经验才能流行。</li>
+<li><strong>HBase</strong>是个仗势欺人的大象兵。依仗着Hadoop的生态环境，可以有很好的扩展性。但是就像象兵一样，使用者需要养一头大象(Hadoop),才能驱使他。</li>
+<li><strong>Redis</strong>是键值存储的代表，功能最简单。提供随机数据存储。就像一根棒子一样，没有多余的构造。但是也正是因此，他的伸缩性特别好。就像悟空手里的金箍棒，大可捅破天，小能成缩成针。</li>
+</ul>
+<h3 id="-">文档数据库的得失</h3>
+<p>关系模型试图将数据库模型和数据库实现分开，让开发者可以脱离底层很好的操作数据。但笔者以为关系模型在一些应用场景下有弱点，现在已经不得不面对。</p>
+<ul>
+<li><strong>**</strong>SQL<strong>**弱点一：必须支持Join</strong>。因为数据不能够有重复。所以使用范式的关系模型会不可避免的大量Join。如果参与Join的是一张比内存小的表还好。但是如果大表Join或者表分布在多台机器上的话，Join就是性能的噩梦。</li>
+<li><strong>**SQL弱点二：</strong>计算和存储耦合**。关系模型作为统一的数据模型既可以用于数据分析，也可以用于在线业务。但这两者一个强调高吞吐，一个强调低延时，已经演化出完全不同的架构。用同一套模型来抽象显然是不合适的。Hadoop针对的就是计算的部分。MongoDB,Redis等针对在线业务。两者都抛弃了关系模型。</li>
+</ul>
+<p>针对这两个梦魇。文档数据库如MongoDB的的主要目的是<strong> 提供更丰富的数据结构来抛弃Join来适应在线业务</strong>。当然也不是MongoDB完全不能用Join，不能拿来做数据分析，讨论这个只是见仁见智的问题。所以文档数据库并不比关系数据库强大，由于对Join的弱支持，功能会弱许多。设计关系模型的时候，通常只需要考虑好数据直接的关系，定义数据模型。而设计文档数据库模型的时候，还需要考虑应用如何使用。因此设计好一个的文档数据库Schema比设计关系模型更加的困难。除此之外，由于文档数据库事务的支持也是比较弱，一般NoSQL只会提供一个行锁。这也给设计Schema更加增加了难度。对于文档数据库的使用有很多需要注意的地方，本文只关注模型设计的部分。</p>
+<h3 id="-">反模式一：惯性思维/沿用关系模型</h3>
+<p>关系模型是数据存储的经典模型，使用数据模型范式的好处非常的明显。但是由于文档数据库不支持Join(包括和外键息息相关的外键约束)等特性，习惯性的沿用关系模型有的时候会出现问题。需要利用起文档数据库提供的丰富的数据模型来应对。</p>
+<p>值得一提的是文档数据库的设计和关系模型不同，是灵活多样的。对于同一个情形，可以设计出有多种能够工作的模型，没有绝对意义上最好的模型。</p>
+<p>下图是关系模型和文档模型的对比。
+<a href="http://yankaycom-wordpress.stor.sinaapp.com/uploads/2013/01/r-d1.png" target="_blank"><img src="&quot;关系模型 VS 文档模型&quot;" alt=""></a></p>
+<p>关系模型 VS 文档模型</p>
+<p>这个一个博客的数据模型，有Blog,User等表。左侧是关系模型，右侧是文档模型。这个文档模型并不是完全合理，可以作为“正反两面教材”在下文不断阐述。</p>
+<p><strong>问题一：存在描述多对多的关系表</strong>
+症状：文档数据库中存储在有纯粹的关系表，例如：
+id user_id blog_id 0 0 0 1 0 1</p>
+<p>这样的表就算在关系模型中也是不妥的，因为这个ID非常的多余，可以用联合主键来解决。但是在文档数据库中，由于必须强制单主键，不得不采取这样的设计。</p>
+<p>坏处：</p>
+<ol>
+<li>破坏数据完备性。由于ID是主键，在数据模型上没有约束来保证不出现重复的user_id,blog_id对。一旦数据出现重复，更新删除都是问题。</li>
+<li>索引过多。由于是关系表，必须在user_id和blog_id上面分别建一个索引。影响性能。</li>
+</ol>
+<p>解决方案：
+使用文档数据库典型的处理多对多的办法。不是建立一张关系表，而是在其中一个文档(如User)中，加入一个List字段。
+user_id user_name blog_id[] …… 0 Jake 0,1 …… 1 Rose 1,2 ……</p>
+<p><strong>问题二:没有区分&quot;一对多关系&quot;和“多对一关系”</strong>
+症状：关系模型不区分“一对多”和“多对一”，对于文档数据库来讲，关系模型只有“多对一”。就像这张Comment表：
+comment_id user_id content …… 0 0 “NoSQL反模式是好文章” …… 1 0 “是啊” ……</p>
+<p>如果整个模型都是这样的“多对一”关系就需要反思了。</p>
+<p>坏处：</p>
+<ol>
+<li>额外索引。如果客户端已知user_id,需要获得User信息和Comment信息，需要执行两次查询。其中一次查询需要使用索引。并且要在客户端自己Join。这样可能有潜在性能问题。</li>
+</ol>
+<p>解决方案：
+问题的核心在于是已知user_id查询两张表，还是已知comment_id查询两张表。如果是已知comment_id这样的设计就是合理的，但是如果是已知user_id来查询，把关系放在user表里的设计更合理一些。
+user_id user_name comment_id[] …… 0 Jake 0,1 …… 1 Rose 1,2 ……</p>
+<p>这样的设计，就可以避免一个索引。同理，对于多对多也是一样的，通过合理的安排字段的位置可以避免索引。</p>
+<p>正确使用的场合：</p>
+<p>关系型模型是非常成功的数据模型，合理的沿用是非常好的。但是由于文档数据库的特点，需要适当的调整，这样得出的数据模型，尽管性能不是最优，但是有最好的灵活性。并且也有利于和关系数据库转换。</p>
+<h3 id="-join">反模式二：处处引用客户端Join</h3>
+<p>症状：数据库设计中充满了xx_id的字端，在查询的时候需要大量的手动Join操作。就涉及到了这个反模式。正如上面提到的博客的关系模型，如果已知blog_id查询comments，需要至少执行3次查询，并且手动Join。</p>
+<p>坏处：</p>
+<ol>
+<li>手动Join，麻烦且易出错。文档数据库不支持Join且没有外键保证。因此需要在客户端Join，这样的操作对于软件开发来讲是比较繁琐的。由于没有外键保证，因此不能保证取得的ID在数据库里面是有数据的。在处理的时候需要不断判断，容易出错。</li>
+<li>多次查询。如果引用过多，查询的时候需要多次查询才能查到足够的数据。本来文档数据库是很快的，但是由于多次查询，给数据库增加了压力，获取全部数据的时间也会增加。</li>
+<li>事务处理繁琐。文档数据库一般不支持一般意义上事务，只支持行锁。如果文档数据库有给多个连接。在插入的时候，事务的处理就是噩梦。在文档数据库中使用事务，需要使用行锁，在进行大量的处理。太过繁琐，感兴趣的读者可以搜一下。</li>
+</ol>
+<p>解决方案：
+适当使用内联数据结构。由于文档数据库支持更复杂的数据结构可以将引用转换为内联的数据，而不用新建一张表。这样做可以解决上面的一些问题，是一个推荐的方案。就像上面博客的例子一样。将五张表简化成了两张表。那什么时候使用内联呢？一般认为</p>
+<ul>
+<li>使用内联可以解决读性能问题，明显减少Query的次数的时候。</li>
+<li>可以简化数据模型，化简表之间的关系，而同时不会影响灵活性的时候。</li>
+<li>事务可以得到简化为单行事务的时候</li>
+</ul>
+<p>正确使用的场合：</p>
+<p>范式化的使用场景，文档数据库会被多个应用使用。由于数据库设计无法估计多个应用现在及将来的查询情况，需要极大的灵活性。在这个时候，使用引用比内联靠谱。</p>
+<h3 id="-">反模式三 滥用内联后患无穷</h3>
+<p><strong>问题一 妨碍到查询的内联</strong>
+症状：频繁查询一些内联字段，丢弃其他字段。</p>
+<p>坏处：</p>
+<ol>
+<li>无ID约束：使用内联字段和引用不同，是没有ID约束的。因此不能通过ID(主键)来管理，如果经常需要单独操作内联对象会非常不便。</li>
+<li>索引泛滥：如果以内联字段为条件进行查询，需要建立索引。有可能造成索引泛滥。</li>
+<li>性能浪费：大部分文档数据库的实现是按行存储的，也就意味着，尽管只查询一个字段，但是DB需要将整行从磁盘中取出。如果字段够小，文档够大，是很不合算的。</li>
+</ol>
+<p>解决方案：
+如果出现以上的症结，就可以考虑使用引用代替内联了。内联特性主要的用途在于提高性能，如果出现性能不升反降，那就没有意义了。如果对性能有很强烈的要求，可以考虑使用重复数据，同样的数据即在内联字段中也在引用的表里面。这样可以结合内联和引用的性能优势。缺点是数据出现重复，维护会比较麻烦。</p>
+<p><strong>问题二 无限膨胀的内联</strong>
+症状：List,Map类型的内联字段不断膨胀，而且没有限制。就像前面提到的Blog的内联字段Comment。如果对每一篇Blog的Comment数量没有限制的话，Comment会无限膨胀。轻则影响性能，重则插入失败。
+Blog_id content Comment[] …… 0 “…” “NoSQL反模式是好文章”, “是啊”,”无限增长中”… ……</p>
+<p>坏处：</p>
+<ol>
+<li>插入失败。文档数据库的每条记录都有最大大小，并且也有推荐最佳的大小。一般不会超过4M。就像刚刚提到的例子，如果是篇热门的博文的话，评论的大小很容易就超过4M。届时文档将无法更新，新的评论无法插入。</li>
+<li>性能拖油瓶。由于内联字段膨胀，其大小将远远超过其他部分，影响其他部分的性能表现。并且因此导致该记录大小频繁变化，对档数据库的数据文件内部可能因此产生很多碎片。</li>
+</ol>
+<p>解决方案：
+设定最大数目或者使用引用。还是Blog和Comment的例子，可以将Comment从Blog中剥离出成一张表。如果考虑到性能，可以在Blog表中新建一个字段如最近的评论。这样既保证了性能，又能够预防膨胀。
+Blog_id content last_five_comment[] …… 0 “…” “NoSQL反模式是好文章”, “是啊”,”最多5条”… ……</p>
+<p><strong>问题三 无法维护的内联</strong>
+症状：DBA想单独维护内联字段，但无法做到。</p>
+<p>坏处：</p>
+<ol>
+<li>权限管理难。数据库的权限管理的最小粒度是表。如果使用内联技术，就意味着内联部分必须和其他字段用同一个权限来管理。没有办法在DB级别隐藏。</li>
+<li>切表难。如果发现一张表的庞大需要切表。这个时候就比较纠结了。如果一刀切，partion Key的选择；索引的失效都会成为问题。如果觉得拆为两张表，就会很好操作的话，就是内联的过度使用了 。</li>
+<li>备份难。关系数据库中每张表可以有不同的备份策略。但是如果内联起来，这样的备份就做不到了。
+解决办法：</li>
+</ol>
+<p>设计数据库模型的时候需要考量之后的维护操作，尤其是内联的字段需不需要单独的维护。需要和运维商量。如果对内联的字段有单独维护的要求，可以拆分出来作为引用。</p>
+<p><strong>问题四 盯死应用的内联</strong>
+症状：应用可以非常好的运行在数据库上。但是当新的应用接入的时候会很麻烦。因为设计数据模型的时候考虑到了查询。所以当有新应用，新查询接入的时候，就会难于使用原有的模型。</p>
+<p>坏处：</p>
+<ol>
+<li>新应用接入难。当新的应用试图使用同一个数据库的时候，接入比较困难。因为查询时不同的，需要调整数据模型才能适应。但是调整模型又会影响原有应用。</li>
+<li>集成难。不同的关系型数据库可以集成在一起，共同使用。但是对于文档数据库，虽然功能上可以互补，但是由于内联数据结构的差异，也比较难于集成。</li>
+<li>ETL难。现在大部分的数据分析系统使用的是关系模型，就连Hadoop虽然不用关系模型，但是其上的Hive的常用工具也是按关系模型设计的。</li>
+</ol>
+<p>解决方案：</p>
+<p>使用范式设计数据库，即用引用代替内联。或者在使用内联的时候，给每个内联对象一个全局唯一的Key，保证其和关系模型直接可以存在映射关系，这样可以提高数据模型的灵活性。如Blog表：
+Blog_id content Comment[] …… 0 “…” [{&quot;id&quot;=1,&quot;content&quot;=“NoSQL反模式是好文章”}, {&quot;id&quot;=2,&quot;content&quot;=“是啊”}…] ……</p>
+<p>这样的设计既可以利用到内联的好处，又能将其和关系模型映射起来。确定是需要手动维护comment_id，保证其全局唯一性。</p>
+<h3 id="-">反模式四：在线计算</h3>
+<p>症状：有一些运行时间很长的Query,由于有聚合计算，索引也不能解决。随着数据量的增长，逐渐成为性能瓶颈。</p>
+<p>坏处：</p>
+<ol>
+<li>影响用户体验。在线业务中，如果一个查询大于4s，用户体验会急剧下降。按主键和按索引的查询都能满足要求。但是聚合操作往往需要扫描全表或者大量的数据，随着数据量的增加，查询时间会变长，用户不可容忍。</li>
+<li>影响数据库性能。长查询的坏处数不清。在线上应用中，如果出现长查询，可能会霸占数据的大部分资源，包括IO，连接，CPU等等。导致其他很好的查询，轻则性能也下降，重者无法使用数据库。长查询可以称之为DB杀手。</li>
+</ol>
+<p>解决方案：
+首先要权衡，这个聚合操作是不是必要的，必须实时完成。如果没有必要实时完成的话，可以采取离线操作的方案。在夜深人静的时候，跑一个长查询，将结果缓存起来，给第二天使用。如果必须实时完成，则可以新建一个字段，用“incr”这样的操作，在运行的时候，实时聚合结果。而不是查询的时候执行一次长查询。如果逻辑比较复杂，或者觉得大量“incr”操作给数据库系统带来了压力，可以使用Storm之类的实时数据处理框架。总之，要慎用长查询。</p>
+<h3 id="-map-key-id-">反模式五：把内联Map对象的Key当作ID用</h3>
+<p>症状：文档数据库支持内联Map类型。将其中Map的Key当作数据库的主键来用。
+Blog_id content Comment{} …… 0 “…” {&quot;1&quot;=“NoSQL反模式是好文章”, &quot;2&quot;=“是啊”} ……</p>
+<p>这个反模式很容易犯，因为在编程语言中Map数据结构就是这么用的。但是对于数据库模型来说，这是不折不扣的反模式。</p>
+<p>坏处：</p>
+<ol>
+<li>无法通过数据库做各种(&gt;&lt;=)查询。对于关系型数据库来说，虽然数据结构可以很灵活，但查询的时候都是按层次的。比如comment.id，comment.content。也就是说其Map类型中的Key可以理解为属性名的，而不是用作ID。因此一旦这样使用，就脱离的数据库管制，无法使用各种查询功能。</li>
+<li>无法通过索引查询。文档数据可建立索引是需要列名的。比如comment.id。而这样的数据结构没有固定的列名，因此无法建立索引。</li>
+</ol>
+<p>解决方案：
+使用数组+Map来解决。如：
+Blog_id content Comment[] …… 0 “…” [{&quot;id&quot;=1,&quot;content&quot;=“NoSQL反模式是好文章”}, {&quot;id&quot;=2,&quot;content&quot;=“是啊”}…] ……</p>
+<p>这样，就可以使用comment.id作为索引，也可以使用数据库的查询功能。简单有效。Map类型中的Key是属性名，Value是属性值。这样的用法是文档数据库数据模型的本意，因此其提供的各种功能才能利用上。否则就无法使用。</p>
+<h3 id="-id">反模式六：不合理的ID</h3>
+<p>症状：使用String甚至更复杂数据结构作为的ID，或者全部使用数据库提供的自生成ID。如：
+id(该ID系系统自生成） Blog_id content …… 0 0 ... ……</p>
+<p>坏处:</p>
+<ol>
+<li>ID混乱。如果使用数据库提供的自生成ID，同时表中还有一个类似有主键含义的Blog_id，这样很不好，容易造成逻辑混乱。由于文档数据库不支持ID的重命名，习惯关系数据库做法的人可能会再建立一个自己的逻辑ID字段。这是没有必要的。</li>
+<li>索引庞大，性能低下。ID是数据库的非常重要的部分。ID的长度将决定索引(包括主键的索引)的大小，直接影响到数据库性能。如果索引比内存小，性能会很好。但一旦索引大小超过内存，出现数据交换，性能会急剧下降。一个Long占8字节，一个20个字符的UTF8 String占用约60个字节。相差10倍之巨，不能不考虑。</li>
+</ol>
+<p>解决方案：
+尽量使用有一定意义的字段做ID，并且不在其他字段中重复出现。不使用复杂的数据类型做ID，只使用int,long或者系统提供的主键类型做ID。</p>
+<h3 id="-">文档数据库的反模式总结</h3>
+<p>阐述了这么多的反模式，下面有个一览表，涵盖了上面所有的反模式。这个一览表，是按照文档数据库模型建立的。是个文档数据库模型的例子。
+ID 反模式名 问题 0 存在描述多对多的关系表 [{ID：00
+症状：文档数据库中存储在有纯粹的关系表
+坏处：[破坏数据完备性，索引过多]
+解决方案：加入一个List字段
+},{
+ID：01
+症状：关系模型不区分“一对多”和“多对一”
+坏处：额外索引
+解决方案：合理的安排字段的位置
+}] 1 处处引用客户端Join [{
+ID：10
+症状：查询的时候需要大量的手动Join操作
+坏处：[手动Join，多次查询, 事务处理繁琐]
+解决方案：适当使用内联数据结构。
+}] 2 滥用内联后患无穷 [{
+ID：20
+症状：频繁查询一些内联字段，丢弃其他字段
+坏处：[无ID约束，索引泛滥, 性能浪费]
+解决方案：使用引用代替内联了,允许重复数据
+},{
+ID：21
+症状：List,Map类型的内联字段不断膨胀，而且没有限制
+坏处：[插入失败, 性能拖油瓶]
+解决方案：设定最大数目或者使用引用。
+},{
+ID：22
+症状：DBA想单独维护内联字段，但无法做到
+坏处：[权限管理难, 切表难, 备份难]
+解决方案：设计数据库模型的时候需要考量之后的维护操作
+},{
+ID：23
+症状：应用可以非常好的运行在数据库上。但是当新的应用接入的时候会很麻烦。内联盯死了应用
+坏处：[新应用接入难, 集成难, ETL难]
+解决方案：使用范式设计数据库，即用引用代替内联。保证其和关系模型直接可以存在映射关系
+}] 3 在线计算 [{
+ID：30
+症状：有一些运行时间很长的Query, 逐渐成为性能瓶颈。
+坏处：[影响用户体验，影响数据库性能]
+解决方案：取消不必要的聚合操作. 运行的时候，实时聚合结果.使用第三方实时或非实时工具。如Hadoop，Storm.
+}] 4 把内联Map对象的Key当作ID用 [{
+ID：40
+症状：文档数据库支持内联Map类型。将其中Map的Key当作数据库的主键来用。
+坏处：[无法通过数据库做各种(&gt;&lt;=)查询，无法通过索引查询]
+解决方案：使用数组+Map来解决。
+}] 5 不合理的ID [{
+ID：50
+症状：用String甚至更复杂数据结构作为的ID，或者全部使用数据库提供的自生成ID。
+坏处：[ID混乱，索引庞大]
+解决方案：尽量使用有一定意义的字段做ID。不使用复杂的数据类型做ID。
+}]</p>
+<p>本文试图总结了笔者知道的重要的文档数据库的反模式。现在关于NoSQL数据模型设计模式的讨论才刚刚起步，将来也许会逐渐自成体系。对于列数据库和Key-Value的反模式，笔者等到有了足够积累的时候，再和大家分享。</p>
+<p>Share the post &quot;NoSQL反模式 - 文档数据库篇&quot;</p>
+<ul>
+<li><a href="http://service.weibo.com/share/share.php?url=http%3A%2F%2Fwww.yankay.com%2Fnosql-anti-pattern-document%2F" title="Share this article on Weibo" target="_blank">Weibo</a>
+<a href="http://www.yankay.com/category/%e6%8a%80%e6%9c%af/%e6%af%8f%e6%97%a5%e5%bf%83%e5%be%97/" title="查看 每日心得 中的全部文章" target="_blank">每日心得</a><a href="http://www.yankay.com/tag/nosql/" target="_blank">NoSQL</a>, <a href="http://www.yankay.com/tag/%e5%8f%8d%e6%a8%a1%e5%bc%8f/" target="_blank">反模式</a>, <a href="http://www.yankay.com/tag/%e6%96%87%e6%a1%a3%e6%95%b0%e6%8d%ae%e5%ba%93/" target="_blank">文档数据库</a></li>
+</ul>
+<p><a href="http://www.yankay.com/2012%e5%b9%b4%e5%ad%a6%e4%b9%a0%e5%b0%8f%e7%bb%93/" target="_blank">← 2012年学习小结</a></p>
+<p><a href="http://www.yankay.com/scala-tour-choiceness/" target="_blank">Scala Tour - 精选 →</a></p>
+<p><a href="&quot;发表评论？&quot;">发表评论？</a></p>
+<h2 id="14-">14 条评论。</h2>
+<ol>
+<li><img src="" alt=""> <a href="http://heroicyang.com/" target="_blank">Heroic</a> <a href="">2013 年 1 月 27 日 在 下午 2:32</a></li>
+</ol>
+<p>如果采用内联，数据的同步更新方面怎么做呢？比如：User和Blog，Blog采用内联User的一些信息，以便在显示Blog列表时不用再去查询User。但是当User更新了昵称或头像等Blog内联的信息时，该怎么处理呢？需要更新内联信息吗？实时更新？延时更新？（应用的首页就是加载Blog列表）
+<a href="http://www.yankay.com/nosql-anti-pattern-document/?replytocom=4583#respond" target="_blank">回复</a></p>
+<ol>
+<li><img src="" alt=""> <a href="http://heroicyang.com/" target="_blank">Heroic</a> <a href="">2013 年 1 月 28 日 在 上午 12:05</a></li>
+</ol>
+<p>想请教一下关于内联设计的数据同步更新问题。比如User和Blog，Blog文档中内联一个简单的User信息结构，如用户名、昵称、头像，以便在首页加载所有的Blog列表时不用再查询User。那如果User的信息更新了该怎么处理呢？是同时更新到Blog的内联文档，还是延时更新？或者说不更新？
+<a href="http://www.yankay.com/nosql-anti-pattern-document/?replytocom=4591#respond" target="_blank">回复</a></p>
+<ul>
+<li><img src="" alt=""> 颜开 <a href="">2013 年 2 月 13 日 在 下午 7:33</a></li>
+</ul>
+<p>如果会导致<strong>重复数据</strong>就不建立这样内联，可以内联UserID。除非当使用UserID的时候，性能会差到不可以接受。这个时候可以考虑延迟更新，不更新之类的更复杂的设计。
+<a href="http://www.yankay.com/nosql-anti-pattern-document/?replytocom=4665#respond" target="_blank">回复</a></p>
+<ul>
+<li><img src="" alt=""> vincent <a href="">2013 年 1 月 28 日 在 上午 9:30</a></li>
+</ul>
+<p>我们项目中用到了mongodb和redis,HBase的确是大象兵,一般公司养不起,mongodb应该更好的利用array或称list,但发现我们还是存在一个问题:使用关系数据库的思想去设计mongodb结构...
+<a href="http://www.yankay.com/nosql-anti-pattern-document/?replytocom=4594#respond" target="_blank">回复</a></p>
+<ul>
+<li><img src="" alt=""> Filix <a href="">2013 年 3 月 17 日 在 下午 10:39</a></li>
+</ul>
+<p>关系模型最大的优点就是，在关系不变的情况下可以适应以后各种需求。
+所以，我觉得在mongodb的模型设计中，采用关系模型并不是什么坏事。
+文中作者也提到了，各种内嵌式设计都只是对当前问题的解决方法。当我们的需求变化时，蛋疼的事就来了。</p>
+<p>所以，我是墙头草，两种设计结合比较好。
+<a href="http://www.yankay.com/nosql-anti-pattern-document/?replytocom=5087#respond" target="_blank">回复</a></p>
+<ul>
+<li><img src="" alt=""> clarkorz <a href="">2013 年 2 月 14 日 在 上午 11:41</a></li>
+</ul>
+<p>内容不错，但我有很多疑问。因为每个反模式只交代了问题，没有交代场景，所以我觉得解决方案对不上。比如反模式一的问题一，关系表的存在肯定是个问题，但是解决该问题的方案要看是什么场景。例如一个可能的场景是“用户点击author浏览该autor发布的blog文章（含内容）分页展示每页10条”，此时用你给出的解决方案只能得到该author发布的所有blog文章的bolg_id，要达到取得10个文章内容的目的，还要再去blog集合中查询1次（或10次）。这个场景我认为把user_id放在blog文档里更合适（甚至可以把user的name、email等重要且不易变的信息也一同放进blog文档里）。这就变成了问题二，必须在blog集合中为user_id增加索引，按照你对问题二的解决方案，把blog_id放在user文档里，只查一次db也只能取得用户信息和一堆blog_id，要取得blog内容还是要再查db。而且，没有经过压力测试也不好说给user_id增加索引会引起多大的性能问题，如果在可接受范围内那也没问题。
+所以我觉得就我给出的场景来说，问题二可以不必解决。有必要把和user关联的blog_id及comment_id都放进user文档里的场景，我暂时还没有想到，如果你有例子可以举一个么？：）
+<a href="http://www.yankay.com/nosql-anti-pattern-document/?replytocom=4668#respond" target="_blank">回复</a></p>
+<ul>
+<li><img src="" alt=""> 颜开 <a href="">2013 年 2 月 16 日 在 下午 12:49</a></li>
+</ul>
+<p>谢谢你的留言。
+你说的对。对于问题二，我觉得除了加一个索引外，还有一个可能的隐患是分区的困难。因为这张表需要按blog_id,user_id查询，而分区的时候只能选择一个Key。
+您觉得呢？
+<a href="http://www.yankay.com/nosql-anti-pattern-document/?replytocom=4673#respond" target="_blank">回复</a></p>
+<ul>
+<li><img src="" alt=""> 颜开 <a href="">2013 年 2 月 16 日 在 下午 1:09</a></li>
+</ul>
+<p>的确，在场景不够明晰的环境下，这些问题之间甚至会自相冲突。我也觉得把blog_id，comment_id都放在user里的场景是很少的。
+<a href="http://www.yankay.com/nosql-anti-pattern-document/?replytocom=4674#respond" target="_blank">回复</a></p>
+<ul>
+<li><img src="" alt=""> Cloud <a href="">2013 年 2 月 22 日 在 上午 4:15</a></li>
+</ul>
+<p>我感觉对于内联内容的更新问题，可以只内联不需要更新的部分，比如用户名称，这种基本不会经常变化的。或者内联用户头像，发表过的评论不随用户profile更新头像，这样还可以让用户想起来自己当时发表评论时使用的头像，这在一些社交网络中会有不错的效果，不过见仁见智了。
+<a href="http://www.yankay.com/nosql-anti-pattern-document/?replytocom=4690#respond" target="_blank">回复</a></p>
+<ul>
+<li><img src="" alt=""> <a href="http://larry-wang.com/" target="_blank">Larry</a> <a href="">2013 年 4 月 15 日 在 下午 3:54</a></li>
+</ul>
+<p>从王信文的博客上看到你的链接。呵呵，写的很好。我是王小龙，有空交换个链接，嘿嘿。
+<a href="http://www.yankay.com/nosql-anti-pattern-document/?replytocom=5648#respond" target="_blank">回复</a></p>
+<ul>
+<li><img src="" alt=""> 颜开 <a href="">2013 年 5 月 2 日 在 下午 9:23</a></li>
+</ul>
+<p>好啊
+<a href="http://www.yankay.com/nosql-anti-pattern-document/?replytocom=5892#respond" target="_blank">回复</a></p>
+<ul>
+<li><a href="http://www.xp500.com/Software/multimedia/onlinetv/13002.html" target="_blank">电视棒</a> - trackback on 2013 年 5 月 20 日 在 下午 10:35</li>
+<li><a href="http://www.xhfz.net/thread-2843-1-1.html" target="_blank">苹果电视棒</a> - trackback on 2013 年 6 月 13 日 在 下午 12:21</li>
+<li><a href="http://www.ryands.net/?p=182" target="_blank">NoSQL反模式 – 文档数据库篇 - RYAN 大叔</a> - pingback on 2013 年 6 月 29 日 在 上午 10:37<h3 id="-">发表评论 <a href="">取消回复</a></h3>
+</li>
+</ul>
+<p>昵称</p>
+<p>邮箱</p>
+<p>网址</p>
+<p><a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a></p>
+<p>注意 - 你可以用以下 HTML tags and attributes:</p>
+<p><a href="" title=""> <abbr title=""> <acronym title=""> <b> <blockquote cite=""> <cite> <code> <del datetime=""> <em> <i> <q cite=""> <strike> <strong></p>
+<h3 id="trackbacks-and-pingbacks-">Trackbacks and Pingbacks:</h3>
+<ul>
+<li><a href="http://www.xp500.com/Software/multimedia/onlinetv/13002.html" target="_blank">电视棒</a> - Trackback on 2013/05/20/ 22:35</li>
+<li><a href="http://www.xhfz.net/thread-2843-1-1.html" target="_blank">苹果电视棒</a> - Trackback on 2013/06/13/ 12:21</li>
+<li><a href="http://www.ryands.net/?p=182" target="_blank">NoSQL反模式 – 文档数据库篇 - RYAN 大叔</a> - Pingback on 2013/06/29/ 10:37
+<a href="http://www.yankay.com/feed/" title="RSS 订阅" target="_blank">RSS 订阅</a> <a href="http://weibo.com/yankaycom" title="微博" target="_blank">微博</a></li>
+</ul>
+<h3 id="-">近期文章</h3>
+<ul>
+<li><a href="http://www.yankay.com/scala-tour-choiceness/" title="Scala Tour - 精选" target="_blank">Scala Tour - 精选</a></li>
+<li><a href="http://www.yankay.com/nosql-anti-pattern-document/" title="NoSQL反模式 - 文档数据库篇" target="_blank">NoSQL反模式 - 文档数据库篇</a></li>
+<li><a href="http://www.yankay.com/2012%e5%b9%b4%e5%ad%a6%e4%b9%a0%e5%b0%8f%e7%bb%93/" title="2012年学习小结" target="_blank">2012年学习小结</a></li>
+<li><a href="http://www.yankay.com/go-clear-concurreny/" title="Go-简洁的并发" target="_blank">Go-简洁的并发</a></li>
+<li><a href="http://www.yankay.com/google-spanner%e5%8e%9f%e7%90%86-%e5%85%a8%e7%90%83%e7%ba%a7%e7%9a%84%e5%88%86%e5%b8%83%e5%bc%8f%e6%95%b0%e6%8d%ae%e5%ba%93/" title="Google Spanner原理- 全球级的分布式数据库" target="_blank">Google Spanner原理- 全球级的分布式数据库</a></li>
+<li><a href="http://www.yankay.com/google-dremel-rationale/" title="Google Dremel 原理 - 如何能3秒分析1PB" target="_blank">Google Dremel 原理 - 如何能3秒分析1PB</a></li>
+<li><a href="http://www.yankay.com/java-fast-byte-comparison/" title="Java使用&quot;指针&quot;快速比较字节" target="_blank">Java使用&quot;指针&quot;快速比较字节</a></li>
+<li><a href="http://www.yankay.com/hbase-slider/" title="HBase介绍PPT" target="_blank">HBase介绍PPT</a></li>
+<li><a href="http://www.yankay.com/amazon-ebs%e6%9e%b6%e6%9e%84%e7%8c%9c%e6%83%b3/" title="Amazon EBS架构猜想" target="_blank">Amazon EBS架构猜想</a></li>
+<li><a href="http://www.yankay.com/linux%e5%a4%a7%e6%96%87%e4%bb%b6%e4%bc%a0%e8%be%93/" title="Linux大文件传输" target="_blank">Linux大文件传输</a></li>
+</ul>
+<h3 id="-">标签</h3>
+<p><a href="http://www.yankay.com/tag/android/" title="1 个话题" target="_blank">Android</a> <a href="http://www.yankay.com/tag/apache/" title="1 个话题" target="_blank">apache</a> <a href="http://www.yankay.com/tag/arch/" title="1 个话题" target="_blank">arch</a> <a href="http://www.yankay.com/tag/bigtable/" title="1 个话题" target="_blank">BigTable</a> <a href="http://www.yankay.com/tag/common-cloud/" title="1 个话题" target="_blank">Common Cloud</a> <a href="http://www.yankay.com/tag/eclipse/" title="2 个话题" target="_blank">eclipse</a> <a href="http://www.yankay.com/tag/facebook/" title="2 个话题" target="_blank">Facebook</a> <a href="http://www.yankay.com/tag/friendmap/" title="1 个话题" target="_blank">FriendMap</a> <a href="http://www.yankay.com/tag/gae/" title="3 个话题" target="_blank">Gae</a> <a href="http://www.yankay.com/tag/gaes/" title="5 个话题" target="_blank">GaeS</a> <a href="http://www.yankay.com/tag/gaevfs/" title="1 个话题" target="_blank">GaeVfs</a> <a href="http://www.yankay.com/tag/gdp/" title="1 个话题" target="_blank">GDP</a> <a href="http://www.yankay.com/tag/ggg/" title="1 个话题" target="_blank">GGG</a> <a href="http://www.yankay.com/tag/giant-global-graph/" title="1 个话题" target="_blank">Giant Global Graph</a> <a href="http://www.yankay.com/tag/google-reader/" title="1 个话题" target="_blank">Google Reader</a> <a href="http://www.yankay.com/tag/google-reader-play/" title="1 个话题" target="_blank">Google Reader Play</a> <a href="http://www.yankay.com/tag/hadoop/" title="2 个话题" target="_blank">Hadoop</a> <a href="http://www.yankay.com/tag/hbase/" title="2 个话题" target="_blank">Hbase</a> <a href="http://www.yankay.com/tag/html5/" title="2 个话题" target="_blank">HTML5</a> <a href="http://www.yankay.com/tag/java/" title="4 个话题" target="_blank">Java</a> <a href="http://www.yankay.com/tag/jpa2-0/" title="1 个话题" target="_blank">JPA2.0</a> <a href="http://www.yankay.com/tag/jsa4j/" title="2 个话题" target="_blank">Jsa4j</a> <a href="http://www.yankay.com/tag/latex/" title="2 个话题" target="_blank">latex</a> <a href="http://www.yankay.com/tag/linux/" title="2 个话题" target="_blank">Linux</a> <a href="http://www.yankay.com/tag/maven/" title="1 个话题" target="_blank">maven</a> <a href="http://www.yankay.com/tag/nosql/" title="5 个话题" target="_blank">NoSQL</a> <a href="http://www.yankay.com/tag/tortoisehg/" title="2 个话题" target="_blank">TortoiseHg</a> <a href="http://www.yankay.com/tag/ubuntu/" title="2 个话题" target="_blank">Ubuntu</a> <a href="http://www.yankay.com/tag/%e4%b8%ad%e6%96%87/" title="2 个话题" target="_blank">中文</a> <a href="http://www.yankay.com/tag/%e4%b8%ad%e7%a7%91%e6%9d%af/" title="1 个话题" target="_blank">中科杯</a> <a href="http://www.yankay.com/tag/%e4%b9%b1%e7%a0%81/" title="2 个话题" target="_blank">乱码</a> <a href="http://www.yankay.com/tag/%e4%bc%98%e5%8c%96/" title="2 个话题" target="_blank">优化</a> <a href="http://www.yankay.com/tag/%e5%8a%a8%e6%80%81%e8%a7%84%e5%88%92/" title="1 个话题" target="_blank">动态规划</a> <a href="http://www.yankay.com/tag/%e5%90%8c%e5%ad%a6/" title="1 个话题" target="_blank">同学</a> <a href="http://www.yankay.com/tag/%e5%9b%be%e4%b9%a6%e9%a6%86/" title="1 个话题" target="_blank">图书馆</a> <a href="http://www.yankay.com/tag/%e5%9c%a8%e6%b0%b4%e6%bb%a9/" title="1 个话题" target="_blank">在水滩</a> <a href="http://www.yankay.com/tag/%e6%95%b0%e6%8d%ae%e5%ba%93/" title="1 个话题" target="_blank">数据库</a> <a href="http://www.yankay.com/tag/%e6%96%87%e4%bb%b6/" title="1 个话题" target="_blank">文件</a> <a href="http://www.yankay.com/tag/%e6%a8%a1%e6%9d%bf/" title="1 个话题" target="_blank">模板</a> <a href="http://www.yankay.com/tag/%e6%b1%9f%e8%8b%8f%e6%9d%af/" title="1 个话题" target="_blank">江苏杯</a> <a href="http://www.yankay.com/tag/%e7%9f%a5%e8%af%86%e5%9b%be/" title="1 个话题" target="_blank">知识图</a> <a href="http://www.yankay.com/tag/%e7%ab%8b%e5%bf%97/" title="1 个话题" target="_blank">立志</a> <a href="http://www.yankay.com/tag/%e7%bb%b4%e5%9f%ba%e7%99%be%e7%a7%91/" title="1 个话题" target="_blank">维基百科</a> <a href="http://www.yankay.com/tag/%e8%a7%86%e9%a2%91/" title="1 个话题" target="_blank">视频</a> <a href="http://www.yankay.com/tag/%e9%85%92/" title="1 个话题" target="_blank">酒</a></p>
+<h3 id="-">我的应用</h3>
+<ul>
+<li><a href="http://zh.scala-tour.com/" title="精彩的Scala之旅" target="_blank">Scala Tour</a></li>
+<li><a href="http://weibagua.cloudfoundry.com/" target="_blank">趣味应用-微八卦</a></li>
+</ul>
+<h3 id="-">相关组织</h3>
+<ul>
+<li><a href="http://qing.weibo.com/emclabschina" title="EMC中国研究院" target="_blank">EMC中国研究院</a></li>
+<li><p><a href="http://blog.nosqlfan.com/" target="_blank">nosqlfan</a></p>
+<h3 id="-">友情链接</h3>
+</li>
+<li><p><a href="http://laynepeng.cloudfoundry.com/" target="_blank">Layne Peng的博客</a></p>
+</li>
+<li><a href="http://www.iiira.com/" target="_blank">爱陶</a></li>
+<li><a href="http://larry-wang.com/" target="_blank">王小龙的博客</a></li>
+<li><a href="http://loveharbor.net/" target="_blank">高晟</a>
+版权所有 © 2013 我自然 | Powered by <a href="http://wordpress.org/" target="_blank">WordPress</a> and <a href="http://zww.me/" target="_blank">zBench</a>
+↑ <a href="&quot;Back to top&quot;">回到顶部</a></li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Nosql/">Nosql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Nosql/" class="label label-primary">Nosql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:31"datetime="2014-03-07 09:54:31"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-Nosql--NoSQL反模式–文档数据库篇/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-Nosql--NoSQL反模式–文档数据库篇" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1363,412 +1900,6 @@ v0.3版本将在3月份或之后发布</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-wifi--亲测win7建立wifi热点小米V4可用420已更新可连接无网络问题-机型讨论-MI/">亲测 win7建立wifi热点(小米V4可用)4.20已更新可连接无网络问题 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:31.000Z"> <a href="/2014/02/02/2014-02-02-wifi--亲测win7建立wifi热点小米V4可用420已更新可连接无网络问题-机型讨论-MI/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-win7-wifi-v4-4-20-miui-android-rom">亲测 win7建立wifi热点(小米V4可用)4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM</h1>
-<p>请 <a href=""><strong>登录</strong></a> 后使用快捷导航
-没有帐号？<a href="http://www.miui.com/member.php?mod=register" target="_blank">注册</a></p>
-<h2 id="-miui-http-win7-wifi-v4-4-20-miui-android-rom_files-logo-png-http-www-miui-com-index-php-miui-"><a href="http://www.miui.com/index.php" title="MIUI官方论坛" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI官方论坛">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/logo.png)</a></h2>
-<p><a href="http://passport.xiaomi.com/index.php?appid=3&amp;goto=http%3A%2F%2Fwww.miui.com%2Fextra.php%3Fmod%3Dxiaomi%2Fauthcallback%26referer%3D%2Fthread-512416-1-2.html" target="_blank">登录</a> | <a href="http://passport.xiaomi.com/user/register" target="_blank">注册</a> | <a href="http://passport.xiaomi.com/user/getpass" target="_blank">忘记密码</a></p>
-<p><a href="http://www.miui.com/search.php" target="_blank">搜索</a> <a href="http://www.miui.com/" target="_blank">欢迎页</a>  <a href="http://www.miui.com/show" target="_blank">秀照片赢小米</a></p>
-<ul>
-<li><a href="http://www.miui.com/forum.php" target="_blank">社区首页</a></li>
-<li><a href="http://www.miui.com/forum-8-1.html" target="_blank">小米手机1/1S</a> <a href=""> </a></li>
-<li><a href="http://www.miui.com/forum.php?gid=19" target="_blank">综合讨论</a></li>
-<li><a href="http://www.miui.com/forum.php?gid=20" target="_blank">资源专区</a></li>
-<li><a href="http://www.miui.com/forum.php?mod=forumdisplay_bug&amp;fid=16" target="_blank">开发专区</a></li>
-<li><a href="http://www.miui.com/download.html" target="_blank">MIUI下载</a><h3 id="-">请选择你的机型：</h3>
-</li>
-</ul>
-<p>小米/Google/MOTO <a href="http://www.miui.com/forum-8-1.html" target="_blank">小米手机1/1S</a> <a href="http://www.miui.com/forum-191-1.html" target="_blank">小米手机2</a> <a href="http://www.miui.com/forum-126-1.html" target="_blank">Galaxy Nexus</a> <a href="http://www.miui.com/forum-23-1.html" target="_blank">Google Nexus S</a> <a href="http://www.miui.com/forum-2-1.html" target="_blank">Google Nexus One</a> <a href="http://www.miui.com/forum-193-1.html" target="_blank">Google Nexus 7</a> <a href="http://www.miui.com/forum-27-1.html" target="_blank">MOTO Defy/Defy+</a> <a href="http://www.miui.com/forum-159-1.html" target="_blank">MOTO XT910</a> <a href="http://www.miui.com/forum-199-1.html" target="_blank">MOTO Atrix 2 ME865</a> <a href="http://www.miui.com/forum-135-1.html" target="_blank">MOTO Atrix 4G ME860</a> <a href="http://www.miui.com/forum-10-1.html" target="_blank">MOTO Milestone</a> HTC <a href="http://www.miui.com/forum-120-1.html" target="_blank">HTC Sensation G14/18</a> <a href="http://www.miui.com/forum-147-1.html" target="_blank">HTC One X</a> <a href="http://www.miui.com/forum-160-1.html" target="_blank">HTC One S</a> <a href="http://www.miui.com/forum-175-1.html" target="_blank">HTC EVO 3D</a> <a href="http://www.miui.com/forum-30-1.html" target="_blank">HTC Incredible S</a> <a href="http://www.miui.com/forum-31-1.html" target="_blank">HTC Desire S</a> <a href="http://www.miui.com/forum-22-1.html" target="_blank">HTC Desire HD</a> <a href="http://www.miui.com/forum-26-1.html" target="_blank">HTC Desire Z</a> <a href="http://www.miui.com/forum-12-1.html" target="_blank">HTC HD2</a> <a href="http://www.miui.com/forum-145-1.html" target="_blank">HTC EVO 4G</a> <a href="http://www.miui.com/forum-9-1.html" target="_blank">HTC Desire</a> SAMSUNG <a href="http://www.miui.com/forum-32-1.html" target="_blank">Samsung I9100</a> <a href="http://www.miui.com/forum-133-1.html" target="_blank">Galaxy Note I9220</a> <a href="http://www.miui.com/forum-157-1.html" target="_blank">Galaxy S III I9300</a> <a href="http://www.miui.com/forum-24-1.html" target="_blank">Samsung I9000</a> <a href="http://www.miui.com/forum-25-1.html" target="_blank">Samsung T959</a> <a href="http://www.miui.com/forum-28-1.html" target="_blank">Samsung I897</a> 华为/中兴/联想/天语 <a href="http://www.miui.com/forum-123-1.html" target="_blank">华为 Honor</a> <a href="http://www.miui.com/forum-154-1.html" target="_blank">华为 Ascend P1 ﻿</a> <a href="http://www.miui.com/forum-181-1.html" target="_blank">华为 Ascend D1</a> <a href="http://www.miui.com/forum-173-1.html" target="_blank">华为 C8812</a> <a href="http://www.miui.com/forum-117-1.html" target="_blank">华为 U8800+/Pro</a> <a href="http://www.miui.com/forum-33-1.html" target="_blank">华为 U8800</a> <a href="http://www.miui.com/forum-34-1.html" target="_blank">中兴 V880</a> <a href="http://www.miui.com/forum-186-1.html" target="_blank">中兴 U970</a> <a href="http://www.miui.com/forum-131-1.html" target="_blank">联想 乐Phone</a> <a href="http://www.miui.com/forum-188-1.html" target="_blank">联想 乐pad S2005</a> <a href="http://www.miui.com/forum-197-1.html" target="_blank">天语V8 大黄蜂2</a> 其它品牌 <a href="http://www.miui.com/forum-161-1.html" target="_blank">索尼 LT26i</a> <a href="http://www.miui.com/forum-35-1.html" target="_blank">索爱 LT18i/LT15i</a> <a href="http://www.miui.com/forum-142-1.html" target="_blank">索爱 MT15i/ST18i</a> <a href="http://www.miui.com/forum-29-1.html" target="_blank">LG P990</a> <a href="http://www.miui.com/forum-201-1.html" target="_blank">LG Optimus LTE/LU6200</a> <a href="http://www.miui.com/forum-114-1.html" target="_blank">LG P970</a> <a href="http://www.miui.com/forum-184-1.html" target="_blank">OPPO finder</a> <a href="http://www.miui.com/forum-151-1.html" target="_blank">魅族 MX</a> <a href="http://www.miui.com/forum-36-1.html" target="_blank">其它机型</a></p>
-<ul>
-<li><a href="http://www.miui.com/home.php?mod=spacecp" target="_blank">个人资料</a></li>
-<li><a href="http://www.miui.com/home.php?mod=space" target="_blank">我的空间</a></li>
-<li><a href="http://www.miui.com/forum.php?mod=guide&amp;view=my" target="_blank">我的帖子</a></li>
-<li><a href="http://www.miui.com/home.php?mod=space&amp;do=friend" target="_blank">我的好友</a></li>
-<li><a href="http://www.miui.com/home.php?mod=space&amp;do=album" target="_blank">我的相册</a></li>
-<li><a href="http://www.miui.com/home.php?mod=space&amp;do=favorite&amp;view=me" target="_blank">我的收藏</a></li>
-<li><a href="http://www.miui.com/home.php?mod=medal" target="_blank">勋章中心</a></li>
-<li><p><a href="http://www.miui.com/misc.php?mod=ranklist" target="_blank">热门排行</a></p>
-</li>
-<li><p><a href="http://www.miui.com/extra.php?mod=miuivote/index&amp;op=applyIndex" target="_blank">内测申请</a></p>
-</li>
-<li><a href="http://www.miui.com/extra.php?mod=signcard/index" target="_blank">四格报告</a></li>
-<li><a href="http://www.miui.com/extra.php?mod=romvote/index" target="_blank">机型适配投票</a></li>
-<li><a href="http://www.miui.com/ota" target="_blank">100周专题</a></li>
-<li><a href="http://shao.miui.com/" target="_blank">强迫症测试</a></li>
-<li><a href="http://www.miui.com/themeguider.html" target="_blank">主题文档</a>
-<a href="http://www.miui.com/index.php" title="首页" target="_blank">MIUI官方论坛</a><em>›</em><a href="http://www.miui.com/forum.php" target="_blank">社区</a> <em>›</em> <a href="http://www.miui.com/forum.php?gid=1" target="_blank">机型专区</a> <em>›</em> <a href="http://www.miui.com/forum-8-1.html" target="_blank">小米手机1/1S</a> <em>›</em> <a href="http://www.miui.com/forum-50-2.html" target="_blank">机型讨论</a> <em>›</em> <a href="http://www.miui.com/thread-512416-1-1.html" target="_blank">亲测 win7建立wifi热点(小米V4可用)4.20已更新可连接无 ...</a></li>
-</ul>
-<p><strong>1</strong><a href="http://www.miui.com/thread-512416-2-2.html" target="_blank">2</a><a href="http://www.miui.com/thread-512416-3-2.html" target="_blank">3</a><a href="http://www.miui.com/thread-512416-4-2.html" target="_blank">4</a><a href="http://www.miui.com/thread-512416-5-2.html" target="_blank">5</a><a href="http://www.miui.com/thread-512416-6-2.html" target="_blank">6</a><a href="http://www.miui.com/thread-512416-7-2.html" target="_blank">7</a><a href="http://www.miui.com/thread-512416-8-2.html" target="_blank">8</a><a href="http://www.miui.com/thread-512416-9-2.html" target="_blank">9</a><a href="http://www.miui.com/thread-512416-10-2.html" target="_blank">10</a><a href="http://www.miui.com/thread-512416-127-2.html" target="_blank">... 127</a><a href="http://www.miui.com/thread-512416-2-2.html" target="_blank">下一页</a> <a href="http://www.miui.com/forum-50-2.html" target="_blank">返回列表</a> <a href="&quot;发新帖&quot;"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="发新帖">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/pn_post.png)</a></p>
-<p>查看: 21461|回复: 1264 <a href="http://www.miui.com/forum.php?mod=viewthread&amp;action=printable&amp;tid=512416" title="打印" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="打印">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/print.png)</a> <a href="http://www.miui.com/forum.php?mod=redirect&amp;goto=nextoldset&amp;tid=512416" title="上一主题" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="上一主题">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/thread-prev.png)</a> <a href="http://www.miui.com/forum.php?mod=redirect&amp;goto=nextnewset&amp;tid=512416" title="下一主题" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="下一主题">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/thread-next.png)</a></p>
-<h1 id="-http-www-miui-com-forum-php-mod-forumdisplay-fid-50-filter-typeid-typeid-40-win7-wifi-v4-4-20-http-www-miui-com-thread-512416-1-1-html-http-win7-wifi-v4-4-20-miui-android-rom_files-002-small-gif-"><a href="http://www.miui.com/forum.php?mod=forumdisplay&amp;fid=50&amp;filter=typeid&amp;typeid=40" target="_blank">[经验技巧]</a> <a href="http://www.miui.com/thread-512416-1-1.html" target="_blank">亲测 win7建立wifi热点(小米V4可用)4.20已更新可连接无网络问题</a> <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/002.small.gif)</h1>
-<p> <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/hot_3.gif &quot;3 级热门&quot;) <a href="http://www.miui.com/thread-512416-1-1.html" title="复制本帖链接" target="_blank">[复制链接]</a></p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/002.gif &quot;热帖&quot;) <a href=""></a></p>
-<p><a href="http://www.miui.com/space-uid-2524270.html" target="_blank">sorianne</a>
-<strong><a href="http://www.miui.com/space-uid-2524270.html" target="_blank">sorianne</a></strong> <em>当前在线</em> 积分21200经验18126 米威望196 米精华1帖子<a href="http://www.miui.com/home.php?mod=space&amp;uid=2524270&amp;do=thread&amp;type=reply&amp;view=me&amp;from=space" target="_blank">1271</a>性别保密签到次数31MIUI版本2.8.24注册时间2011-8-31最后登录2012-8-29</p>
-<p><a href="http://wpa.qq.com/msgrd?V=1&amp;Uin=751428582&amp;Site=MIUI%E5%AE%98%E6%96%B9%E8%AE%BA%E5%9D%9B&amp;Menu=yes" title="QQ" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="QQ">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/qq.gif)</a><a href="http://www.miui.com/home.php?mod=space&amp;uid=2524270&amp;do=profile" title="查看详细资料" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="查看详细资料">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/userinfo.gif)</a></p>
-<p><a href="http://www.miui.com/space-uid-2524270.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/70_avatar_middle.jpg)</a></p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=2524270&amp;do=thread&amp;view=me&amp;from=space" target="_blank">29</a>
-主题 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=2524270&amp;do=friend&amp;view=me" target="_blank">50</a>
-好友 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=2524270&amp;do=profile" target="_blank">2万</a>
-积分</p>
-<p><em><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=usergroup&amp;gid=38" target="_blank">解答组</a></em></p>
-<p>学的是工程，每天研究的是手机，兴趣爱好是足球的纯妹纸！</p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level3.gif)<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level2.gif)
-积分21200机型小米手机1签到次数31MIUI版本2.8.24在线时间946 小时</p>
-<p><a href="http://www.miui.com/home.php?mod=medal" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI 100周">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal_100week.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="技术达人">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal22.png)</a></p>
-<ul>
-<li><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=pm&amp;op=showmsg&amp;handlekey=showmsg_2524270&amp;touid=2524270&amp;pmid=0&amp;daterange=2&amp;pid=9372210&amp;tid=512416" title="发消息" target="_blank">发消息</a>
-楼层直通车  <a href="&quot;跳转到指定楼层&quot;"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="跳转到指定楼层">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/fj_btn.png)</a> <strong><a href="http://www.miui.com/thread-512416-1-1.html" title="复制本帖链接" target="_blank">楼主</a></strong></li>
-</ul>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/online_member.gif) <em>发表于 2012-4-1 22:04:49</em> |<a href="http://www.miui.com/forum.php?mod=viewthread&amp;tid=512416&amp;page=1&amp;authorid=2524270" target="_blank">只看该作者</a> |<a href="http://www.miui.com/forum.php?mod=viewthread&amp;tid=512416&amp;extra=page%3D2&amp;ordertype=1" target="_blank">倒序浏览</a></p>
-<p>本帖最后由 sorianne 于 2012-5-16 21:26 编辑
-<strong>写在前面：</strong>
-<strong>很多同鞋在学校宿舍上网，或者上班族都是使用笔记本，一根网线一个账号一个人使用，手机明明支持wifi还要每个月去花钱包流量包，是不是很蛋疼？</strong>
-<strong>今天sorianne给大家带来的这个方法适用于有无线网卡win7系统笔记本、</strong>
-<strong>设置完毕后，只要是支持wifi的设备都可以使用哦。</strong>
-<strong>如果有帮助到你，请给我评分支持，谢谢！</strong>
-<strong>                                                       不说废话了，教程开始：</strong>
-<strong>你可以开启windows 7隐藏的功能，让你的小米飞一会吧！</strong></p>
-<p><strong>      一、点击开始搜索：CMD</strong>
-<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="1.jpg">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/205339plv7vydhzp87vd78.jpg &quot;1.jpg&quot;)</p>
-<p>2012-4-1 20:53 上传 <a href="http://www.miui.com/forum.php?mod=attachment&amp;aid=NTIwMDM0fGI4NWNmODA2fDEzNDYyNDA3ODh8MHw1MTI0MTY%3D&amp;nothumb=yes" title="1.jpg 下载次数:11" target="_blank"><strong>下载附件</strong> (1.62 KB)</a></p>
-<p><a href="http://www.miui.com/api.php?mod=att_pushphone&amp;aid=520034&amp;infloat=yes&amp;handlekey=miphonepush_520034" target="_blank">发送到手机</a></p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="12.jpg">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/220245s6xlc4618w668wz1.jpg.thumb.jpg &quot;12.jpg&quot;)</p>
-<p>2012-4-1 22:02 上传 <a href="http://www.miui.com/forum.php?mod=attachment&amp;aid=NTIwMTYyfDZiOTI4NmVhfDEzNDYyNDA3ODh8MHw1MTI0MTY%3D&amp;nothumb=yes" title="12.jpg 下载次数:27" target="_blank"><strong>下载附件</strong> (46.3 KB)</a></p>
-<p><a href="http://www.miui.com/api.php?mod=att_pushphone&amp;aid=520162&amp;infloat=yes&amp;handlekey=miphonepush_520162" target="_blank">发送到手机</a>
-<strong>二、运行命令：netsh wlan set hostednetwork mode=allow ssid=sorianne key=12345678</strong>
-**<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="4_副本.jpg">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM<em>files/205341fvfhi2oqz5wmmqmw.jpg.thumb.jpg &quot;4</em>副本.jpg&quot;)</p>
-<p>2012-4-1 20:53 上传 <a href="http://www.miui.com/forum.php?mod=attachment&amp;aid=NTIwMDM3fGUwZTdhMjBifDEzNDYyNDA3ODh8MHw1MTI0MTY%3D&amp;nothumb=yes" title="4_副本.jpg 下载次数:27" target="_blank"><strong>下载附件</strong> (61.75 KB)</a></p>
-<p><a href="http://www.miui.com/api.php?mod=att_pushphone&amp;aid=520037&amp;infloat=yes&amp;handlekey=miphonepush_520037" target="_blank">发送到手机</a>
-**</p>
-<p><strong>此命令有三个参数，mode：是否启用虚拟WiFi网卡，改为disallow则为禁用 。               </strong>
-<strong>ssid：无线网名称，最好用英文(以sorianne为例)。</strong></p>
-<p><strong>       key：无线网密码，八个以上字符(以12345678为例)。   </strong>
-<strong>  以上三个参数可以自己设置，例如只使用mode=disallow可以直接禁用虚拟Wifi网卡。</strong>
-**<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="5.jpg">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/205343a1nv1oyhb8yravoy.jpg.thumb.jpg &quot;5.jpg&quot;)</p>
-<p>2012-4-1 20:53 上传 <a href="http://www.miui.com/forum.php?mod=attachment&amp;aid=NTIwMDM4fDgyNTJiMzFifDEzNDYyNDA3ODh8MHw1MTI0MTY%3D&amp;nothumb=yes" title="5.jpg 下载次数:13" target="_blank"><strong>下载附件</strong> (48.96 KB)</a></p>
-<p><a href="http://www.miui.com/api.php?mod=att_pushphone&amp;aid=520038&amp;infloat=yes&amp;handlekey=miphonepush_520038" target="_blank">发送到手机</a>
-**</p>
-<p><strong>  三、 开启成功后，网络连接中会多出一个网卡为“Microsoft Virtual WiFi Miniport Adapter”的无线连接2，为方便起见，个人将其重命名为sorianne。</strong>
-<strong>四、有些win7可能找不到网络连接，在 控制面板\网络和 Internet\网络和共享中心 点左边的更改适配器设置就是网络连接。</strong>
-**<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="6.5.jpg">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/211037fxbdrirw22okvndw.jpg.thumb.jpg &quot;6.5.jpg&quot;)</p>
-<p>2012-4-1 21:10 上传 <a href="http://www.miui.com/forum.php?mod=attachment&amp;aid=NTIwMDg4fDg1NThhOTkyfDEzNDYyNDA3ODh8MHw1MTI0MTY%3D&amp;nothumb=yes" title="6.5.jpg 下载次数:21" target="_blank"><strong>下载附件</strong> (86.96 KB)</a></p>
-<p><a href="http://www.miui.com/api.php?mod=att_pushphone&amp;aid=520088&amp;infloat=yes&amp;handlekey=miphonepush_520088" target="_blank">发送到手机</a>
-**</p>
-<p><strong>五、在“网络连接”窗口中，右键单击已连接到Internet的网络连接，选择“属性”→“共享”，勾上“允许其他······连接(N)”并选择“Sorianne”。确定之后，提供共享的网卡图标旁会出现“共享的”字样，表示“宽带连接”已共享至“Sorianne”**</strong>。<strong>
-</strong><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="7.jpg">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/211041dfnfi4ar4kdphrf4.jpg.thumb.jpg &quot;7.jpg&quot;)</p>
-<p>2012-4-1 21:10 上传 <a href="http://www.miui.com/forum.php?mod=attachment&amp;aid=NTIwMDkwfGVhYjU5YTRifDEzNDYyNDA3ODh8MHw1MTI0MTY%3D&amp;nothumb=yes" title="7.jpg 下载次数:52" target="_blank"><strong>下载附件</strong> (102.17 KB)</a></p>
-<p><a href="http://www.miui.com/api.php?mod=att_pushphone&amp;aid=520090&amp;infloat=yes&amp;handlekey=miphonepush_520090" target="_blank">发送到手机</a>
-<strong>
-</strong>   六、  **</p>
-<p><strong>继续打开记事本功能输入：**</strong>netsh wlan start hostednetwork   <strong>
-</strong>ps:将start改为stop即可关闭该无线网，以后开机后要启用该无线网只需再次运行此命令即可  **</p>
-<p>**<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="8.jpg">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/212604dc4d9fzjqjiiqqd0.jpg.thumb.jpg &quot;8.jpg&quot;)</p>
-<p>2012-4-1 21:26 上传 <a href="http://www.miui.com/forum.php?mod=attachment&amp;aid=NTIwMTE3fDUyZWY0OWM5fDEzNDYyNDA3ODh8MHw1MTI0MTY%3D&amp;nothumb=yes" title="8.jpg 下载次数:8" target="_blank"><strong>下载附件</strong> (50.6 KB)</a></p>
-<p><a href="http://www.miui.com/api.php?mod=att_pushphone&amp;aid=520117&amp;infloat=yes&amp;handlekey=miphonepush_520117" target="_blank">发送到手机</a>
-<strong>
-</strong><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="9.jpg">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/212606dnjvqzj0axvq0q2v.jpg.thumb.jpg &quot;9.jpg&quot;)</p>
-<p>2012-4-1 21:26 上传 <a href="http://www.miui.com/forum.php?mod=attachment&amp;aid=NTIwMTE4fDU1YTVhMjUxfDEzNDYyNDA3ODh8MHw1MTI0MTY%3D&amp;nothumb=yes" title="9.jpg 下载次数:12" target="_blank"><strong>下载附件</strong> (15.24 KB)</a></p>
-<p><a href="http://www.miui.com/api.php?mod=att_pushphone&amp;aid=520118&amp;infloat=yes&amp;handlekey=miphonepush_520118" target="_blank">发送到手机</a>
-<strong>
-</strong><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="10.jpg">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/212609kgyg5dva3vj5jcyv.jpg.thumb.jpg &quot;10.jpg&quot;)</p>
-<p>2012-4-1 21:26 上传 <a href="http://www.miui.com/forum.php?mod=attachment&amp;aid=NTIwMTE5fGFmNDkxMzI3fDEzNDYyNDA3ODh8MHw1MTI0MTY%3D&amp;nothumb=yes" title="10.jpg 下载次数:14" target="_blank"><strong>下载附件</strong> (61.81 KB)</a></p>
-<p><a href="http://www.miui.com/api.php?mod=att_pushphone&amp;aid=520119&amp;infloat=yes&amp;handlekey=miphonepush_520119" target="_blank">发送到手机</a>
-<strong>
-</strong>七、</p>
-<p>游客，如果您要查看本帖隐藏内容请<a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416" target="_blank">回复</a>
-**</p>
-<p><strong>PS：这一步有很多童鞋反馈说，可以连接设备但是没有Internet访问权限，所以我也仔细研究了一下，可以在设备管理器里面更新一下网络适配器中的软件程序。</strong>
-游客，如果您要查看本帖隐藏内容请<a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416" target="_blank">回复</a>
-<strong>Sorianne     </strong>  <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9372210" title="查看全部评分" target="_blank">已有 28 人评分</a>经验 威望 <a href="">收起</a> 理由<a href="http://www.miui.com/space-uid-39590803.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/03_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-39590803.html" target="_blank">恋上悦的泪</a>+ 2  MIUI 因你更精彩！ <a href="http://www.miui.com/space-uid-10513106.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/noavatar_small.gif)</a> <a href="http://www.miui.com/space-uid-10513106.html" target="_blank">草原萧然</a>+ 1  赞 <a href="http://www.miui.com/space-uid-30459642.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/42_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-30459642.html" target="_blank">highskey</a>+ 1  真是麻烦，买一个无线mini路由器不就得了. <a href="http://www.miui.com/space-uid-2048738.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/38_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2048738.html" target="_blank">kgducd</a>+ 1  现在V4不能使用电脑热点了 <a href="http://www.miui.com/space-uid-32639806.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/06_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-32639806.html" target="_blank">幸幸福福</a>+ 1  赞一个 <a href="http://www.miui.com/space-uid-23245496.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/96_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-23245496.html" target="_blank">zhucezhaungyong</a>+ 1  支持 <a href="http://www.miui.com/space-uid-30600173.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/noavatar_small.gif)</a> <a href="http://www.miui.com/space-uid-30600173.html" target="_blank">crazyln123</a>+ 1  赞一个 <a href="http://www.miui.com/space-uid-2240551.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/51_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2240551.html" target="_blank">0619943</a>+ 4  很给力 <a href="http://www.miui.com/space-uid-2425445.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/45_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2425445.html" target="_blank">会编程的猫</a>+ 10 + 3 妹子~~ <a href="http://www.miui.com/space-uid-2588973.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/73_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2588973.html" target="_blank">小胖狐狸</a>+ 1  很给力 <a href="http://www.miui.com/space-uid-15437010.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/10_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-15437010.html" target="_blank">LOVE小蛇</a>+ 5  不错，图文并茂，顶 <a href="http://www.miui.com/space-uid-14123680.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/80_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-14123680.html" target="_blank">光光师傅</a>+ 1  解决大问题 <a href="http://www.miui.com/space-uid-2034443.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/43_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2034443.html" target="_blank">消逝の青春</a>+ 5  支持妹纸！ <a href="http://www.miui.com/space-uid-16968121.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/21_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-16968121.html" target="_blank">贝贝6810774</a>+ 3  支持美妞 <a href="http://www.miui.com/space-uid-1394841.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/41_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-1394841.html" target="_blank">无锡小包子</a>+ 3  给你加三分 <a href="http://www.miui.com/space-uid-508604.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/04_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-508604.html" target="_blank">小阳哥ag</a>+ 1  试了不行？ 我是本地连接的一根宽带 红叉在. <a href="http://www.miui.com/space-uid-184813.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/13_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-184813.html" target="_blank">团支书</a>+ 10  我很赞同 <a href="http://www.miui.com/space-uid-314418.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/18_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-314418.html" target="_blank">微醺··↗</a>+ 3  不错，加油！ <a href="http://www.miui.com/space-uid-433723.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/23_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-433723.html" target="_blank">Hey。StRiVe</a>+ 5  妹纸V5！！支持了···加油！！！！. <a href="http://www.miui.com/space-uid-468027.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/27_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-468027.html" target="_blank">xzhlksh</a>+ 5  精品文章</p>
-<p>总评分: 经验 + 109  威望 + 4   <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9372210" title="查看全部评分" target="_blank">查看全部评分</a> <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewthreadmod&amp;tid=512416" title="帖子模式" target="_blank">本主题由 小墨灰 于 3 天前 提升</a></p>
-<p><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=share&amp;type=thread&amp;id=512416" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="分享">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/oshr.png)分享1</a> <a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=favorite&amp;type=thread&amp;id=512416" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="收藏">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/fav.gif)收藏116</a>
-如对我的解答,还有任何疑问,请点击<strong>回复</strong>,第一时间继续解答。
-对我本人有任何意见或建议，请直接微博@我、<a href="http://weibo.com/316661886" target="_blank"><a href="http://weibo.com/lucy29">http://weibo.com/lucy29</a></a>
-<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/113821q8y99z9s3y6hzg7h.jpg) <em><a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;reppost=9372210&amp;extra=page%3D2&amp;page=1" target="_blank">回复</a> <a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;repquote=9372210&amp;extra=page=2&amp;page=1" target="_blank">引用</a></em></p>
-<p><a href="">举报</a>
-<a href="http://www.miui.com/space-uid-188906.html" target="_blank">乀蒾夨De鱼</a></p>
-<p><strong><a href="http://www.miui.com/space-uid-188906.html" target="_blank">乀蒾夨De鱼</a></strong> <em>当前在线</em> 积分10961经验8570 米威望6 米精华0帖子<a href="http://www.miui.com/home.php?mod=space&amp;uid=188906&amp;do=thread&amp;type=reply&amp;view=me&amp;from=space" target="_blank">2280</a>性别男签到次数58MIUI版本2.8.24注册时间2011-5-1最后登录2012-8-29</p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=188906&amp;do=profile" title="查看详细资料" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="查看详细资料">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/userinfo.gif)</a>
-<a href="http://www.miui.com/space-uid-188906.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/06_avatar_middle.jpg)</a></p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=188906&amp;do=thread&amp;view=me&amp;from=space" target="_blank">10</a>
-主题 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=188906&amp;do=friend&amp;view=me" target="_blank">64</a>
-好友 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=188906&amp;do=profile" target="_blank">1万</a>
-积分</p>
-<p><em><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=usergroup&amp;gid=38" target="_blank">解答组</a></em></p>
-<p>MIUI为发烧而生</p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level3.gif)<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level2.gif)</p>
-<p>积分10961机型小米手机1签到次数58MIUI版本2.8.24在线时间2381 小时</p>
-<p><a href="http://www.miui.com/home.php?mod=medal" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI 100周">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal_100week.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI俱乐部发烧友">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal29.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="小米手机元器件合体活动勋章">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal15.png)</a></p>
-<ul>
-<li><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=pm&amp;op=showmsg&amp;handlekey=showmsg_188906&amp;touid=188906&amp;pmid=0&amp;daterange=2&amp;pid=9373383&amp;tid=512416" title="发消息" target="_blank">发消息</a>
-<strong><a href="http://www.miui.com/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=512416&amp;pid=9373383" title="复制本帖链接" target="_blank">沙发</a></strong></li>
-</ul>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/online_member.gif) <em>发表于 2012-4-1 22:06:45</em> |<a href="http://www.miui.com/forum.php?mod=viewthread&amp;tid=512416&amp;page=1&amp;authorid=188906" target="_blank">只看该作者</a></p>
-<p>本帖最后由 乀蒾夨De鱼 于 2012-4-1 22:07 编辑
-沙发<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/m003.gif)  <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373383" title="查看全部评分" target="_blank">已有 1 人评分</a>经验 <a href="">收起</a> 理由<a href="http://www.miui.com/space-uid-2524270.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/70_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2524270.html" target="_blank">sorianne</a>+ 5 鱼就是好~</p>
-<p>总评分: 经验 + 5   <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373383" title="查看全部评分" target="_blank">查看全部评分</a> <a href="http://weibo.com/2486293870?s=6uyXnP" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/7.png)</a>
-<strong>                                             如有疑问，请点击回复，我会第一时间回复</strong> <em><a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;reppost=9373383&amp;extra=page%3D2&amp;page=1" target="_blank">回复</a> <a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;repquote=9373383&amp;extra=page=2&amp;page=1" target="_blank">引用</a></em></p>
-<p><a href="">举报</a></p>
-<p><a href="http://www.miui.com/space-uid-2143299.html" target="_blank">my丶love</a></p>
-<p><strong><a href="http://www.miui.com/space-uid-2143299.html" target="_blank">my丶love</a></strong> <em>当前在线</em> 积分11089经验7994 米威望112 米精华1帖子<a href="http://www.miui.com/home.php?mod=space&amp;uid=2143299&amp;do=thread&amp;type=reply&amp;view=me&amp;from=space" target="_blank">2509</a>性别保密签到次数32MIUI版本2.8.28注册时间2011-8-23最后登录2012-8-29</p>
-<p><a href="http://wpa.qq.com/msgrd?V=1&amp;Uin=877831040&amp;Site=MIUI%E5%AE%98%E6%96%B9%E8%AE%BA%E5%9D%9B&amp;Menu=yes" title="QQ" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="QQ">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/qq.gif)</a><a href="http://www.miui.com/home.php?mod=space&amp;uid=2143299&amp;do=profile" title="查看详细资料" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="查看详细资料">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/userinfo.gif)</a>
-<a href="http://www.miui.com/space-uid-2143299.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/99_avatar_middle.jpg)</a></p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=2143299&amp;do=thread&amp;view=me&amp;from=space" target="_blank">62</a>
-主题 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=2143299&amp;do=friend&amp;view=me" target="_blank">69</a>
-好友 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=2143299&amp;do=profile" target="_blank">1万</a>
-积分</p>
-<p><em><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=usergroup&amp;gid=38" target="_blank">解答组</a></em></p>
-<p>寻找丶幸福</p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level3.gif)<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level2.gif)</p>
-<p>积分11089机型MOTO Defy签到次数32MIUI版本2.8.28在线时间1431 小时</p>
-<p><a href="http://www.miui.com/home.php?mod=medal" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI 100周">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal_100week.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="我爱米兔">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal25.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI俱乐部发烧友">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal29.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="技术达人">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal22.png)</a></p>
-<ul>
-<li><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=pm&amp;op=showmsg&amp;handlekey=showmsg_2143299&amp;touid=2143299&amp;pmid=0&amp;daterange=2&amp;pid=9373386&amp;tid=512416" title="发消息" target="_blank">发消息</a>
-<strong><a href="http://www.miui.com/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=512416&amp;pid=9373386" title="复制本帖链接" target="_blank">板凳</a></strong></li>
-</ul>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/online_member.gif) <em>发表于 2012-4-1 22:06:47</em> |<a href="http://www.miui.com/forum.php?mod=viewthread&amp;tid=512416&amp;page=1&amp;authorid=2143299" target="_blank">只看该作者</a></p>
-<p>本帖最后由 my丶love 于 2012-4-1 22:07 编辑
-沙发拉出去砍了，板凳威武，支持妹纸。。  <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373386" title="查看全部评分" target="_blank">已有 1 人评分</a>经验 <a href="">收起</a> 理由<a href="http://www.miui.com/space-uid-2524270.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/70_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2524270.html" target="_blank">sorianne</a>+ 5 嘿嘿O(∩_∩)O~</p>
-<p>总评分: 经验 + 5   <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373386" title="查看全部评分" target="_blank">查看全部评分</a> 做一个傻子多么好。 <em><a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;reppost=9373386&amp;extra=page%3D2&amp;page=1" target="_blank">回复</a> <a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;repquote=9373386&amp;extra=page=2&amp;page=1" target="_blank">引用</a></em></p>
-<p><a href="">举报</a>
-<a href="http://www.miui.com/space-uid-113409.html" target="_blank">luffy_wang</a></p>
-<p><strong><a href="http://www.miui.com/space-uid-113409.html" target="_blank">luffy_wang</a></strong> <em>当前离线</em> 积分22283经验16503 米威望20 米精华21帖子<a href="http://www.miui.com/home.php?mod=space&amp;uid=113409&amp;do=thread&amp;type=reply&amp;view=me&amp;from=space" target="_blank">7566</a>性别保密签到次数62MIUI版本2.8.28注册时间2011-3-7最后登录2012-8-29</p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=113409&amp;do=profile" title="查看详细资料" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="查看详细资料">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/userinfo.gif)</a>
-<a href="http://www.miui.com/space-uid-113409.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/09_avatar_middle.jpg)</a></p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=113409&amp;do=thread&amp;view=me&amp;from=space" target="_blank">29</a>
-主题 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=113409&amp;do=friend&amp;view=me" target="_blank">205</a>
-好友 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=113409&amp;do=profile" target="_blank">2万</a>
-积分</p>
-<p><em><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=usergroup&amp;gid=3" target="_blank">社区版主</a></em></p>
-<p>为小米发烧~~</p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 7">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level3.gif)<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 7">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level2.gif)<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 7">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level1.gif)</p>
-<p>积分22283机型小米手机1签到次数62MIUI版本2.8.28在线时间3384 小时</p>
-<p><a href="http://www.miui.com/home.php?mod=medal" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI 100周">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal_100week.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="小米终身荣誉会员勋章">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal13.gif) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="小米手机元器件合体活动勋章">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal15.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="我爱米兔">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal25.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI俱乐部发烧友">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal29.png)</a></p>
-<ul>
-<li><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=pm&amp;op=showmsg&amp;handlekey=showmsg_113409&amp;touid=113409&amp;pmid=0&amp;daterange=2&amp;pid=9373726&amp;tid=512416" title="发消息" target="_blank">发消息</a>
-<strong><a href="http://www.miui.com/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=512416&amp;pid=9373726" title="复制本帖链接" target="_blank">地板</a></strong></li>
-</ul>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/online_moderator.gif) <em>发表于 2012-4-1 22:12:53</em> |<a href="http://www.miui.com/forum.php?mod=viewthread&amp;tid=512416&amp;page=1&amp;authorid=113409" target="_blank">只看该作者</a></p>
-<p>地板才是王道啊~可以跌打滚爬~  <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373726" title="查看全部评分" target="_blank">已有 1 人评分</a>经验 <a href="">收起</a> 理由<a href="http://www.miui.com/space-uid-2524270.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/70_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2524270.html" target="_blank">sorianne</a>+ 5 可爱的小灰灰~</p>
-<p>总评分: 经验 + 5   <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373726" title="查看全部评分" target="_blank">查看全部评分</a> <a href="http://weibo.com/1736708811?s=6uyXnP" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/7(1).png)</a> <em><a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;reppost=9373726&amp;extra=page%3D2&amp;page=1" target="_blank">回复</a> <a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;repquote=9373726&amp;extra=page=2&amp;page=1" target="_blank">引用</a></em></p>
-<p><a href="">举报</a></p>
-<p><a href="http://www.miui.com/space-uid-2617535.html" target="_blank">onezhangyu521</a></p>
-<p><strong><a href="http://www.miui.com/space-uid-2617535.html" target="_blank">onezhangyu521</a></strong> <em>当前离线</em> 积分26315经验17786 米威望78 米精华4帖子<a href="http://www.miui.com/home.php?mod=space&amp;uid=2617535&amp;do=thread&amp;type=reply&amp;view=me&amp;from=space" target="_blank">10692</a>性别男签到次数25MIUI版本2.8.28注册时间2011-12-10最后登录2012-8-28</p>
-<p><a href="http://wpa.qq.com/msgrd?V=1&amp;Uin=282364851&amp;Site=MIUI%E5%AE%98%E6%96%B9%E8%AE%BA%E5%9D%9B&amp;Menu=yes" title="QQ" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="QQ">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/qq.gif)</a><a href="http://www.miui.com/home.php?mod=space&amp;uid=2617535&amp;do=profile" title="查看详细资料" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="查看详细资料">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/userinfo.gif)</a>
-<a href="http://www.miui.com/space-uid-2617535.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/35_avatar_middle.jpg)</a></p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=2617535&amp;do=thread&amp;view=me&amp;from=space" target="_blank">716</a>
-主题 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=2617535&amp;do=friend&amp;view=me" target="_blank">419</a>
-好友 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=2617535&amp;do=profile" target="_blank">2万</a>
-积分</p>
-<p><em><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=usergroup&amp;gid=38" target="_blank">解答组</a></em></p>
-<p>【BUG=求助？】求看顶置贴</p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level3.gif)<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level2.gif)</p>
-<p>积分26315机型小米手机1签到次数25MIUI版本2.8.28在线时间4765 小时</p>
-<p><a href="http://www.miui.com/home.php?mod=medal" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI 100周">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal_100week.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="技术大师">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal23.png)</a></p>
-<ul>
-<li><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=pm&amp;op=showmsg&amp;handlekey=showmsg_2617535&amp;touid=2617535&amp;pmid=0&amp;daterange=2&amp;pid=9373786&amp;tid=512416" title="发消息" target="_blank">发消息</a>
-<strong><a href="http://www.miui.com/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=512416&amp;pid=9373786" title="复制本帖链接" target="_blank"><em>5</em>/#</a></strong></li>
-</ul>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/online_member.gif) <em>发表于 2012-4-1 22:13:52</em> |<a href="http://www.miui.com/forum.php?mod=viewthread&amp;tid=512416&amp;page=1&amp;authorid=2617535" target="_blank">只看该作者</a></p>
-<p>前排正常中··········  <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373786" title="查看全部评分" target="_blank">已有 1 人评分</a>经验 <a href="">收起</a> 理由<a href="http://www.miui.com/space-uid-2524270.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/70_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2524270.html" target="_blank">sorianne</a>+ 5 嘿嘿O(∩_∩)O~</p>
-<p>总评分: 经验 + 5   <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373786" title="查看全部评分" target="_blank">查看全部评分</a> <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/m032.gif)<strong>已经提交的帖子  请移步到提交的链接中查看进度 补充相关内容，您的配合才能使问题得到更好的解决</strong>
-                                                   <strong>回复解答组,版主,或者,答复对应人
-                  点击该楼层回复 ，不然别人是看不到你帖子中的回复的，造成效低，易产生误会。望周知</strong> <em><a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;reppost=9373786&amp;extra=page%3D2&amp;page=1" target="_blank">回复</a> <a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;repquote=9373786&amp;extra=page=2&amp;page=1" target="_blank">引用</a></em></p>
-<p><a href="">举报</a>
-<a href="http://www.miui.com/space-uid-271848.html" target="_blank">QQ20750760</a></p>
-<p><strong><a href="http://www.miui.com/space-uid-271848.html" target="_blank">QQ20750760</a></strong> <em>当前离线</em> 积分3431经验2590 米威望3 米精华0帖子<a href="http://www.miui.com/home.php?mod=space&amp;uid=271848&amp;do=thread&amp;type=reply&amp;view=me&amp;from=space" target="_blank">847</a>性别男签到次数51MIUI版本2.8.17注册时间2011-6-14最后登录2012-8-26</p>
-<p><a href="http://wpa.qq.com/msgrd?V=1&amp;Uin=454523957&amp;Site=MIUI%E5%AE%98%E6%96%B9%E8%AE%BA%E5%9D%9B&amp;Menu=yes" title="QQ" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="QQ">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/qq.gif)</a><a href="http://www.miui.com/home.php?mod=space&amp;uid=271848&amp;do=profile" title="查看详细资料" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="查看详细资料">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/userinfo.gif)</a>
-<a href="http://www.miui.com/space-uid-271848.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/48_avatar_middle.jpg)</a></p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=271848&amp;do=thread&amp;view=me&amp;from=space" target="_blank">39</a>
-主题 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=271848&amp;do=friend&amp;view=me" target="_blank">9</a>
-好友 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=271848&amp;do=profile" target="_blank">3431</a>
-积分</p>
-<p><em><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=usergroup&amp;gid=31" target="_blank">玩机之王</a></em></p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 5">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level3.gif)<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 5">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level1.gif)</p>
-<p>玩机之王, 积分 3431, 距离下一级还需 1569 积分 积分3431机型Galaxy Nexus签到次数51MIUI版本2.8.17在线时间775 小时</p>
-<p><a href="http://www.miui.com/home.php?mod=medal" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI 100周">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal_100week.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="小米手机元器件合体活动勋章">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal15.png)</a></p>
-<ul>
-<li><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=pm&amp;op=showmsg&amp;handlekey=showmsg_271848&amp;touid=271848&amp;pmid=0&amp;daterange=2&amp;pid=9373795&amp;tid=512416" title="发消息" target="_blank">发消息</a>
-<strong><a href="http://www.miui.com/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=512416&amp;pid=9373795" title="复制本帖链接" target="_blank"><em>6</em>/#</a></strong></li>
-</ul>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/online_member.gif) <em>发表于 2012-4-1 22:14:00</em> |<a href="http://www.miui.com/forum.php?mod=viewthread&amp;tid=512416&amp;page=1&amp;authorid=271848" target="_blank">只看该作者</a></p>
-<p>非常实用，<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM<em>files/m034.gif)  <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373795" title="查看全部评分" target="_blank">已有 1 人评分</a>经验 <a href="">收起</a> 理由<a href="http://www.miui.com/space-uid-2524270.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/70_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2524270.html" target="_blank">sorianne</a>+ 5 嘿嘿O(∩</em>∩)O~</p>
-<p>总评分: 经验 + 5   <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373795" title="查看全部评分" target="_blank">查看全部评分</a> <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/forum ... vcddwxxhv0gbzd0.jpg) <em><a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;reppost=9373795&amp;extra=page%3D2&amp;page=1" target="_blank">回复</a> <a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;repquote=9373795&amp;extra=page=2&amp;page=1" target="_blank">引用</a></em></p>
-<p><a href="">举报</a></p>
-<p><a href="http://www.miui.com/space-uid-14686158.html" target="_blank">tsuhv</a></p>
-<p><strong><a href="http://www.miui.com/space-uid-14686158.html" target="_blank">tsuhv</a></strong> <em>当前离线</em> 积分5196经验4152 米威望11 米精华0帖子<a href="http://www.miui.com/home.php?mod=space&amp;uid=14686158&amp;do=thread&amp;type=reply&amp;view=me&amp;from=space" target="_blank">1251</a>签到次数11MIUI版本2.3.7c注册时间2012-1-28最后登录2012-8-28</p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=14686158&amp;do=profile" title="查看详细资料" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="查看详细资料">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/userinfo.gif)</a>
-<a href="http://www.miui.com/space-uid-14686158.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/58_avatar_middle.jpg)</a></p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=14686158&amp;do=thread&amp;view=me&amp;from=space" target="_blank">23</a>
-主题 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=14686158&amp;do=friend&amp;view=me" target="_blank">40</a>
-好友 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=14686158&amp;do=profile" target="_blank">5196</a>
-积分</p>
-<p><em><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=usergroup&amp;gid=38" target="_blank">解答组</a></em></p>
-<p>解答组</p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level3.gif)<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level2.gif)</p>
-<p>积分5196机型小米手机1签到次数11MIUI版本2.3.7c在线时间617 小时</p>
-<ul>
-<li><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=pm&amp;op=showmsg&amp;handlekey=showmsg_14686158&amp;touid=14686158&amp;pmid=0&amp;daterange=2&amp;pid=9373858&amp;tid=512416" title="发消息" target="_blank">发消息</a>
-<strong><a href="http://www.miui.com/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=512416&amp;pid=9373858" title="复制本帖链接" target="_blank"><em>7</em>/#</a></strong></li>
-</ul>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/online_member.gif) <em>发表于 2012-4-1 22:14:47</em> |<a href="http://www.miui.com/forum.php?mod=viewthread&amp;tid=512416&amp;page=1&amp;authorid=14686158" target="_blank">只看该作者</a></p>
-<p>嗯。可以加点血！  <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373858" title="查看全部评分" target="_blank">已有 1 人评分</a>经验 <a href="">收起</a> 理由<a href="http://www.miui.com/space-uid-2524270.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/70_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2524270.html" target="_blank">sorianne</a>+ 5 嘿嘿O(∩_∩)O~</p>
-<p>总评分: 经验 + 5   <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373858" title="查看全部评分" target="_blank">查看全部评分</a> 如果对我的解答有什么不清楚的地方，请点击左下角的回复按钮，否则我可能看不到哦~
-<a href="http://weibo.com/u/2192587945?s=6uyXnP" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/5.png)</a> <em><a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;reppost=9373858&amp;extra=page%3D2&amp;page=1" target="_blank">回复</a> <a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;repquote=9373858&amp;extra=page=2&amp;page=1" target="_blank">引用</a></em></p>
-<p><a href="">举报</a>
-<a href="http://www.miui.com/space-uid-10838766.html" target="_blank">Chammo</a></p>
-<p><strong><a href="http://www.miui.com/space-uid-10838766.html" target="_blank">Chammo</a></strong> <em>当前离线</em> 积分5797经验4536 米威望16 米精华2帖子<a href="http://www.miui.com/home.php?mod=space&amp;uid=10838766&amp;do=thread&amp;type=reply&amp;view=me&amp;from=space" target="_blank">1409</a>性别男签到次数9MIUI版本2.8.24注册时间2012-1-16最后登录2012-8-27</p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=10838766&amp;do=profile" title="查看详细资料" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="查看详细资料">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/userinfo.gif)</a>
-<a href="http://www.miui.com/space-uid-10838766.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/66_avatar_middle.jpg)</a></p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=10838766&amp;do=thread&amp;view=me&amp;from=space" target="_blank">22</a>
-主题 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=10838766&amp;do=friend&amp;view=me" target="_blank">66</a>
-好友 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=10838766&amp;do=profile" target="_blank">5797</a>
-积分</p>
-<p><em><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=usergroup&amp;gid=32" target="_blank">玩机之皇</a></em></p>
-<p>有问题请回复我...</p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level3.gif)<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level2.gif)</p>
-<p>玩机之皇, 积分 5797, 距离下一级还需 14203 积分 积分5797机型HTC DHD签到次数9MIUI版本2.8.24在线时间774 小时</p>
-<p><a href="http://www.miui.com/home.php?mod=medal" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI 100周">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal_100week.png)</a></p>
-<ul>
-<li><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=pm&amp;op=showmsg&amp;handlekey=showmsg_10838766&amp;touid=10838766&amp;pmid=0&amp;daterange=2&amp;pid=9373895&amp;tid=512416" title="发消息" target="_blank">发消息</a>
-<strong><a href="http://www.miui.com/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=512416&amp;pid=9373895" title="复制本帖链接" target="_blank"><em>8</em>/#</a></strong></li>
-</ul>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/online_member.gif) <em>发表于 2012-4-1 22:15:17</em> |<a href="http://www.miui.com/forum.php?mod=viewthread&amp;tid=512416&amp;page=1&amp;authorid=10838766" target="_blank">只看该作者</a></p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM<em>files/m020.gif)前排都没了  <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373895" title="查看全部评分" target="_blank">已有 1 人评分</a>经验 <a href="">收起</a> 理由<a href="http://www.miui.com/space-uid-2524270.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/70_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2524270.html" target="_blank">sorianne</a>+ 5 嘿嘿O(∩</em>∩)O~</p>
-<p>总评分: 经验 + 5   <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373895" title="查看全部评分" target="_blank">查看全部评分</a> 卖女孩的小火柴...采姑娘的小蘑菇
-<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/113821q8y99z9s3y6hzg7h.jpg) <em><a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;reppost=9373895&amp;extra=page%3D2&amp;page=1" target="_blank">回复</a> <a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;repquote=9373895&amp;extra=page=2&amp;page=1" target="_blank">引用</a></em></p>
-<p><a href="">举报</a></p>
-<p><a href="http://www.miui.com/space-uid-468560.html" target="_blank">无声小五</a></p>
-<p><strong><a href="http://www.miui.com/space-uid-468560.html" target="_blank">无声小五</a></strong> <em>当前离线</em> 积分5084经验3813 米威望3 米精华0帖子<a href="http://www.miui.com/home.php?mod=space&amp;uid=468560&amp;do=thread&amp;type=reply&amp;view=me&amp;from=space" target="_blank">1244</a>性别保密签到次数34MIUI版本2.8.28注册时间2011-8-17最后登录2012-8-29</p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=468560&amp;do=profile" title="查看详细资料" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="查看详细资料">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/userinfo.gif)</a>
-<a href="http://www.miui.com/space-uid-468560.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/60_avatar_middle.jpg)</a></p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=468560&amp;do=thread&amp;view=me&amp;from=space" target="_blank">17</a>
-主题 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=468560&amp;do=friend&amp;view=me" target="_blank">26</a>
-好友 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=468560&amp;do=profile" target="_blank">5084</a>
-积分</p>
-<p><em><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=usergroup&amp;gid=32" target="_blank">玩机之皇</a></em></p>
-<p>其实，路并没有错的，错的只是选择。</p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level3.gif)<img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 6">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level2.gif)</p>
-<p>玩机之皇, 积分 5084, 距离下一级还需 14916 积分 积分5084机型小米手机1签到次数34MIUI版本2.8.28在线时间1259 小时</p>
-<p><a href="http://www.miui.com/home.php?mod=medal" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI 100周">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal_100week.png)</a></p>
-<ul>
-<li><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=pm&amp;op=showmsg&amp;handlekey=showmsg_468560&amp;touid=468560&amp;pmid=0&amp;daterange=2&amp;pid=9373913&amp;tid=512416" title="发消息" target="_blank">发消息</a>
-<strong><a href="http://www.miui.com/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=512416&amp;pid=9373913" title="复制本帖链接" target="_blank"><em>9</em>/#</a></strong></li>
-</ul>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/online_member.gif) <em>发表于 2012-4-1 22:15:37</em> |<a href="http://www.miui.com/forum.php?mod=viewthread&amp;tid=512416&amp;page=1&amp;authorid=468560" target="_blank">只看该作者</a></p>
-<p>支持。。。。  <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373913" title="查看全部评分" target="_blank">已有 1 人评分</a>经验 <a href="">收起</a> 理由<a href="http://www.miui.com/space-uid-2524270.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/70_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2524270.html" target="_blank">sorianne</a>+ 5 嘿嘿O(∩_∩)O~</p>
-<p>总评分: 经验 + 5   <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373913" title="查看全部评分" target="_blank">查看全部评分</a> 做人一定要经得起谎言，受得起敷衍，忍得住欺骗，忘得了诺言，放得下一切！ <em><a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;reppost=9373913&amp;extra=page%3D2&amp;page=1" target="_blank">回复</a> <a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;repquote=9373913&amp;extra=page=2&amp;page=1" target="_blank">引用</a></em></p>
-<p><a href="">举报</a>
-<a href="http://www.miui.com/space-uid-2462335.html" target="_blank">老版-王</a></p>
-<p><strong><a href="http://www.miui.com/space-uid-2462335.html" target="_blank">老版-王</a></strong> <em>当前离线</em> 积分1060经验931 米威望0 米精华0帖子<a href="http://www.miui.com/home.php?mod=space&amp;uid=2462335&amp;do=thread&amp;type=reply&amp;view=me&amp;from=space" target="_blank">105</a>性别男签到次数38MIUI版本2.8.28注册时间2011-9-12最后登录2012-8-29</p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=2462335&amp;do=profile" title="查看详细资料" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="查看详细资料">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/userinfo.gif)</a>
-<a href="http://www.miui.com/space-uid-2462335.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/35_avatar_middle(1).jpg)</a></p>
-<p><a href="http://www.miui.com/home.php?mod=space&amp;uid=2462335&amp;do=thread&amp;view=me&amp;from=space" target="_blank">4</a>
-主题 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=2462335&amp;do=friend&amp;view=me" target="_blank">1</a>
-好友 
-<a href="http://www.miui.com/home.php?mod=space&amp;uid=2462335&amp;do=profile" target="_blank">1060</a>
-积分</p>
-<p><em><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=usergroup&amp;gid=30" target="_blank">玩机大师</a></em></p>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="Rank: 4">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/star_level3.gif)</p>
-<p>玩机大师, 积分 1060, 距离下一级还需 940 积分 积分1060机型小米手机1签到次数38MIUI版本2.8.28在线时间152 小时</p>
-<p><a href="http://www.miui.com/home.php?mod=medal" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="MIUI 100周">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal_100week.png) <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="小米手机元器件合体活动勋章">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/medal15.png)</a></p>
-<ul>
-<li><a href="http://www.miui.com/home.php?mod=spacecp&amp;ac=pm&amp;op=showmsg&amp;handlekey=showmsg_2462335&amp;touid=2462335&amp;pmid=0&amp;daterange=2&amp;pid=9373979&amp;tid=512416" title="发消息" target="_blank">发消息</a>
-<strong><a href="http://www.miui.com/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=512416&amp;pid=9373979" title="复制本帖链接" target="_blank"><em>10</em>/#</a></strong></li>
-</ul>
-<p><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/online_member.gif) <em>发表于 2012-4-1 22:16:51</em> |<a href="http://www.miui.com/forum.php?mod=viewthread&amp;tid=512416&amp;page=1&amp;authorid=2462335" target="_blank">只看该作者</a></p>
-<p>公司不搞WIFI 坑爹。  <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373979" title="查看全部评分" target="_blank">已有 1 人评分</a>经验 <a href="">收起</a> 理由<a href="http://www.miui.com/space-uid-2524270.html" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/70_avatar_small.jpg)</a> <a href="http://www.miui.com/space-uid-2524270.html" target="_blank">sorianne</a>+ 5 嘿嘿O(∩_∩)O~</p>
-<p>总评分: 经验 + 5   <a href="http://www.miui.com/forum.php?mod=misc&amp;action=viewratings&amp;tid=512416&amp;pid=9373979" title="查看全部评分" target="_blank">查看全部评分</a> <img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/myphonesbbs_733835.jpg) <em><a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;reppost=9373979&amp;extra=page%3D2&amp;page=1" target="_blank">回复</a> <a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416&amp;repquote=9373979&amp;extra=page=2&amp;page=1" target="_blank">引用</a></em></p>
-<p><a href="">举报</a>
-<strong>1</strong><a href="http://www.miui.com/thread-512416-2-2.html" target="_blank">2</a><a href="http://www.miui.com/thread-512416-3-2.html" target="_blank">3</a><a href="http://www.miui.com/thread-512416-4-2.html" target="_blank">4</a><a href="http://www.miui.com/thread-512416-5-2.html" target="_blank">5</a><a href="http://www.miui.com/thread-512416-6-2.html" target="_blank">6</a><a href="http://www.miui.com/thread-512416-7-2.html" target="_blank">7</a><a href="http://www.miui.com/thread-512416-8-2.html" target="_blank">8</a><a href="http://www.miui.com/thread-512416-9-2.html" target="_blank">9</a><a href="http://www.miui.com/thread-512416-10-2.html" target="_blank">10</a><a href="http://www.miui.com/thread-512416-127-2.html" target="_blank">... 127</a><a href="http://www.miui.com/thread-512416-2-2.html" target="_blank">下一页</a><a href="http://www.miui.com/forum-50-2.html" target="_blank">返回列表</a> <a href="&quot;发新帖&quot;"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="发新帖">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/pn_post.png)</a></p>
-<p><a href="http://www.miui.com/forum.php?mod=post&amp;action=reply&amp;fid=50&amp;tid=512416" target="_blank">高级模式</a></p>
-<p><a href="&quot;文字加粗&quot;">B</a> <a href="&quot;设置文字颜色&quot;">Color</a> <a href="&quot;图片&quot;">Image</a> <a href="&quot;添加链接&quot;">Link</a> <a href="&quot;引用&quot;">Quote</a> <a href="&quot;代码&quot;">Code</a> <a href="">Smilies</a></p>
-<p>您需要登录后才可以回帖 <a href="http://passport.xiaomi.com/index.php?appid=3&amp;goto=http%3A%2F%2Fwww.miui.com%2Fextra.php%3Fmod%3Dxiaomi%2Fauthcallback" target="_blank">登录</a> | <a href="http://passport.xiaomi.com/user/register" target="_blank">注册</a></p>
-<p><strong>发表回复</strong> 回帖后跳转到最后一页</p>
-<h3 id="-">浏览过的版块</h3>
-<ul>
-<li><a href="http://www.miui.com/forum-37-1.html" target="_blank">公告</a></li>
-<li><a href="http://www.miui.com/forum-51-1.html" target="_blank">BUG反馈</a></li>
-<li><a href="http://www.miui.com/forum-60-1.html" target="_blank">机型讨论</a></li>
-<li><a href="http://www.miui.com/forum-1-1.html" target="_blank">机型专区</a></li>
-<li><a href="http://www.miui.com/forum-170-1.html" target="_blank">机型讨论</a></li>
-<li><a href="http://www.miui.com/forum-69-1.html" target="_blank">BUG反馈</a></li>
-<li><a href="http://www.miui.com/forum-38-1.html" target="_blank">新功能讨论</a></li>
-<li><a href="http://www.miui.com/forum-78-1.html" target="_blank">机型讨论</a></li>
-<li><a href="http://www.miui.com/forum-70-1.html" target="_blank">机型讨论</a></li>
-</ul>
-<h3 id="miui-100-">MIUI 100周</h3>
-<p>100周发布纪念</p>
-<h3 id="-">技术达人</h3>
-<p>技术达人</p>
-<h3 id="miui-">MIUI俱乐部发烧友</h3>
-<p>MIUI俱乐部发烧友</p>
-<h3 id="-">小米手机元器件合体活动勋章</h3>
-<p>小米求合体勋章</p>
-<h3 id="-">我爱米兔</h3>
-<p>我爱米兔</p>
-<h3 id="-">小米终身荣誉会员勋章</h3>
-<p>小米终身荣誉会员勋章</p>
-<h3 id="-">技术大师</h3>
-<p>技术大师</p>
-<p><a href="http://www.miui.com/" target="_blank">MIUI官方网站</a> - <a href="http://www.xiaomi.com/" target="_blank">小米旗下网站</a> - <a href="http://jobs.miui.com/" target="_blank">加入小米</a> - <a href="http://www.miui.com/a-69.html" target="_blank">免责声明</a> - <a href="http://www.miui.com/forum.php?mobile=yes" target="_blank">手机版</a>
-Copyright @ 2012 MIUI <a href="http://www.miitbeian.gov.cn/" target="_blank">京ICP备10046444号</a>
-<a href="https://ss.knet.cn/verifyseal.dll?sn=e12033011010015827301369&amp;ct=df&amp;a=1&amp;pa=888348" target="_blank"><img src="https://kxlogo.knet.cn/seallogo.dll?kind=pic&amp;sn=e12033011010015827301369&amp;ct=df" alt="可信网站"></a>
-<a href="http://www.cnzz.com/stat/website.php?web_id=2441309" title="站长统计" target="_blank"><img src="http://./亲测 win7建立wifi热点(小米V4可用" alt="">4.20已更新可连接无网络问题 - 机型讨论 - MIUI官方论坛 - 发烧友必刷的Android ROM_files/pic.gif)</a>
-积分 0, 距离下一级还需 积分  回顶部</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wifi/">wifi</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wifi/" class="label label-primary">wifi</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:31"datetime="2014-03-07 09:54:31"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-wifi--亲测win7建立wifi热点小米V4可用420已更新可连接无网络问题-机型讨论-MI/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wifi--亲测win7建立wifi热点小米V4可用420已更新可连接无网络问题-机型讨论-MI" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-Nosql--NoSQL数据建模技术/">NoSQL 数据建模技术</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:31.000Z"> <a href="/2014/02/02/2014-02-02-Nosql--NoSQL数据建模技术/">feb. 2 2014</a></time></span>      
@@ -2683,498 +2814,6 @@ NOSQL建模技术中所透露的信息实际上绝大多数还是反规范化技
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-Nosql--译NoSQL生态系统/">[译] NoSQL生态系统</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:31.000Z"> <a href="/2014/02/02/2014-02-02-Nosql--译NoSQL生态系统/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-nosql-">[译] NoSQL生态系统</h1>
-<h1 id="-nosqlfan-http-blog-nosqlfan-com-"><a href="http://blog.nosqlfan.com/" target="_blank">NoSQLFan</a></h1>
-<p>关注NoSQL相关的新闻与技术</p>
-<ul>
-<li><a href="http://blog.nosqlfan.com/books" title="NoSQL书籍" target="_blank">NoSQL书籍</a></li>
-<li><a href="http://blog.nosqlfan.com/newslist" title="分类列表" target="_blank">分类列表</a></li>
-<li><a href="http://blog.nosqlfan.com/about" title="关于本站" target="_blank">关于本站</a></li>
-<li><a href="http://10gt.com/circle/NoSQL" title="NoSQL讨论区" target="_blank">NoSQL讨论区</a></li>
-</ul>
-<h2 id="-nosql-">[译] NoSQL生态系统</h2>
-<p>作者：<a href="http://blog.nosqlfan.com/html/author/nosqlfan/" title="由 nosqlfan 发表" target="_blank">nosqlfan</a> on 星期五, 六月 24, 2011 · <a href="">6条评论</a> 【阅读：17,483 次】 <img src="" alt=""></p>
-<p>本文原文出自《<a href="http://www.aosabook.org/en/index.html" target="_blank">The Architecture of Open Source Applications</a>》一书第13章《<a href="http://www.aosabook.org/en/nosql.html" target="_blank">The NoSQL Ecosystem</a>》，由NoSQLFan的@<a href="http://twitter.com/iammutex" target="_blank">iammutex</a>，也就是正在码字的我，利用业余时间零碎时间经过半个月左右翻译完成。</p>
-<p>不得不说这是一个非常有意思的过程，凡是做过翻译的人应该都能理解翻译与阅读在深度和细度上的差别，通过对本章内容的翻译，我的收获很多，一些错误想法得到纠正，很多理论的理解也更清晰了。当然，不排除中间有用词不当语句不通甚至是理解不正确的情况，请各位读者多提意见。</p>
-<p>［<a href="https://docs.google.com/document/pub?id=1NO__9thOb8V1mM3iQID3IUmwGh9wtra7xkpmvCZIvoU" target="_blank"><strong>HTML版</strong></a>］［<strong><a href="http://blog.nosqlfan.com/wp-content/uploads/2011/nosql_ecosystem.pdf" target="_blank">PDF版</a></strong>］</p>
-<p>声明：本文在NoSQLFan首发，一切转载行为须注明作者及出处。</p>
-<p>下面就看正文吧～</p>
-<h1 id="nosql-">NoSQL生态系统</h1>
-<p>与本书中提到的其它主题不同，NoSQL不是一个工具，而是由一些具有互补性和竞争性的工具组成的一个概念，是一个生态圈。这些被称作NoSQL的工具，在存储数据的方式上，提供了一种与基于SQL语言的关系型数据截然不同的思路。要想了解NoSQL，我们必须先了解现有的这些工具，去理解那些让他们开拓出新的存储领域的设计思路。</p>
-<p>如果你正在考虑使用NoSQL，你应该会马上发现你有很多种选择。NoSQL系统舍弃了许了传统关系型数据库的方便之处，而把一些通常由关系型数据库本身来完成的任务交给了应用层来完成。这需要开发人员更深入的去了解存储系统的架构和具体实现。</p>
-<h2 id="13-1-nosql-">13.1 NoSQL其名</h2>
-<p>在给NoSQL下定义之前，我们先来试着从它的名字上做一下解读，顾名思义，NoSQL系统的数据操作接口应该是非SQL类型的。但在NoSQL社区，NoSQL被赋予了更具有包容性的含义，其意为Not Only SQL，即NoSQL提供了一种与传统关系型数据库不太一样的存储模式，这为开发者提供了在关系型数据库之外的另一种选择。有时候你可能会完全用NoSQL数据库代替关系型数据库，但你也可以同时使用关系型和非关系型存储来解决具体的问题。</p>
-<p>在进入NoSQL的大门之前，我们先来看看哪些场景下使用关系型数据库更合适，哪些使用NoSQL更合适。</p>
-<h3 id="13-1-1-sql-">13.1.1 SQL及其关联型结构</h3>
-<p>SQL是一种任务描述性的查询语言，所谓任务描述性的查询语言，就是说它只描述他需要系统做什么，而不告诉系统如何去做。例如：查出39号员工的信息，查出员工的名字和电话，只查找做会计工作的员工信息，计算出每个部门的员工总数，或者是对员工表和经理表做一个联合查询。</p>
-<p>简单的说，SQL让我们可以直接向数据库提出上述问题而不必考虑数据是如何在磁盘上存储的，使用哪些索引来查询数据，或者说用哪种算法来处理数据。在关系型数据库中有一个重要的组件，叫做查询优化器，正是它来推算用哪种操作方式能够更快的完成操作。查询优化器通常比一般的数据库用户更聪明，但是有时候由于没有充足的信息或者系统模型过于简单，也会导致查询优化器不能得出最有效的操作方式。</p>
-<p>作为目前应用最广的数据库系统，关系型数据库系统以其关联型的数据模型而命名。在关联型的数据模型中，在现实世界中的不同类型的个体被存储在不同的表里。比如有一个专门存员工的员工表，有一个专门存部门的部门表。每一行数据又包含多个列，比如员工表里可能包含了员工号，员工工资，生日以及姓名等，这些信息项被存在员工表中的某一列中。</p>
-<p>关联型的模型与SQL是紧密想连的。简单的查询操作，比如查询符合某个条件的所有行（例：employeeid = 3, 或者 salary &gt; $20000）。更复杂一些的任务会让数据库做一些额外的工作，比如跨表的联合查询（例：查出3号员的部门名称是什么）。一些复杂的查询，比如统计操作（例：算出所有员工的平均工资），甚至可能会导致全表扫描。</p>
-<p>关联型的数据模型定义了高度结构化的数据结构，以及对这些结构之间关系的严格定义。在这样的数据模型上执行的查询操作会比较局限，而且可能会导致复杂的数据遍历操作。数据结构的复杂性及查询的复杂性，会导致系统产生如下的一些限制：</p>
-<ul>
-<li>复杂导致不确定性。使用SQL的一个问题就是计算某个查询的代价或者产生的负载几乎是不可能的。使用简单的查询语言可能会导致应用层的逻辑更复杂，但是这样可以将存储系统的工作简单化，让它只需要响应一些简单的请求。</li>
-<li>对一个问题建模有很多种方式。其中关联型的数据模型是非常严格的一种：表结构的定义规定了表中每一行数据的存储内容。如果你的数据结构化并没有那么强，或者对每一行数据的要求比较灵活，那可能关联型的数据模型就太过严格了。类似的，应用层的开发人员可能对关联型的数据结构并不满意。比如很多应用程序是用面向对象的语言写的，数据在这些语言中通常是以列表、队列或集合的形式组织的，程序员们当然希望他们的数据存储层也能和应用层的数据模型一致。</li>
-<li>当数据量增长到一台机器已经不能容纳，我们需要将不同的数据表分布到不同的机器。而为了避免在不同机器上的数据表在进行联合查询时需要跨网络进行。我们必须进行反范式的数据库设计，这种设计方式要求我们把需要一次性查询到的数据存储在一起。这样做使得我们的系统变得就像一个主键查询系统一样，于是我们开始思考，是否有其它更适合我们数据的数据模型。</li>
-</ul>
-<p>通常来说，舍弃多年以来的设计思路是不明智的。当你要把数据存到数据库，当考虑到SQL与关联型的数据模型，这些都是数十年的研究的开发成果，提供丰富的数据模型，提供复杂操作的保证。而当你的问题涉及到大数据量，高负载或者说你的数据结构在SQL与关联型数据模型下很难得到优化，NoSQL可能是更好的选择。</p>
-<h3 id="13-1-2-nosql-">13.1.2 NoSQL的启示</h3>
-<p>NoSQL运动受到了很多相关研究论文的启示，这所有论文中，最核心的有两个。</p>
-<p>Google的BigTable[<a href="http://www.aosabook.org/en/bibliography.html#bib:bigtable" target="_blank">CDG+06</a>]提出了一种很有趣的数据模型，它将各列数据进行排序存储。数据值按范围分布在多台机器，数据更新操作有严格的一致性保证。</p>
-<p>Amazon的Dynamo[<a href="http://www.aosabook.org/en/bibliography.html#bib:amazon:dynamo" target="_blank">DHJ+07</a>]使用的是另外一种分布式模型。Dynamo的模型更简单，它将数据按key进行hash存储。其数据分片模型有比较强的容灾性，因此它实现的是相对松散的弱一致性：最终一致性。</p>
-<p>接下来我们会深入介绍这些设计思想，而实际上在现实中这些思想经常是混搭使用的。比如像HBase及其它一些NoSQL系统他们在设计上更接受BigTable的模型，而像Voldemort 系统它就和Dynamo更像。同时还有像Cassandra这种两种特性都具备的实现（它的数据模型和BigTable类似，分片策略和一致性机制和Dynamo类似）。</p>
-<h3 id="13-1-3-">13.1.3 特性概述</h3>
-<p>NoSQL系统舍弃了一些SQL标准中的功能，取而代之的是提供了一些简单灵活的功能。NoSQL 的构建思想就是尽量简化数据操作，尽量让执行操作的效率可预知。在很多NoSQL系统里，复杂的操作都是留给应用层来做的，这样的结果就是我们对数据层进行的操作得到简化，让操作效率可预知。</p>
-<p>NoSQL系统不仅舍弃了很多关系数据库中的操作。它还可能不具备关系数据库以下的一些特性：比如通常银行系统中要求的事务保证，一致性保证以及数据可靠性的保证等。事务机制提供了在执行多个命令时的all-or-nothing保证。一致性保证了如果一个数据更新后，那么在其之后的操作中都能看到这个更新。可靠性保证如果一个数据被更新，它就会被写到持久化的存储设备上（比如说磁盘），并且保证在数据库崩溃后数据可恢复。</p>
-<p>通过放宽对上述几点特性的要求，NoSQL系统可以为一些非银行类的业务提供以性能换稳定的策略。而同时，对这几点要求的放宽，又使得NoSQL系统能够轻松的实现分片策略，将远远超出单机容量的大量数据分布在多台机器上的。</p>
-<p>由于NoSQL系统还处在萌芽阶段，本章中提到的很多NoSQL架构都是用于满足各种不同用户的需求的。对这些架构进行总结不太可能，因为它们总在变化。所以希望你能记住的一点是，不同的NoSQL系统的特点是不同的，通过本章的内容，希望你能该根据自己的业务情况来选择合适的NoSQL系统，而本章内容不可能给你直接的答案。</p>
-<p>当你去考查一个NoSQL系统的时候，下面的的几点是值得注意的：</p>
-<ul>
-<li>数据模型及操作模型：你的应用层数据模型是行、对象还是文档型的呢？这个系统是否能支持你进行一些统计工作呢？</li>
-<li>可靠性：当你更新数据时，新的数据是否立刻写到持久化存储中去了？新的数据是否同步到多台机器上了？</li>
-<li>扩展性：你的数据量有多大，单机是否能容下？你的读写量求单机是否能支持？</li>
-<li>分区策略：考虑到你对扩展性，可用性或者持久性的要求，你是否需要一份数据被存在多台机器上？你是否需要知道数据在哪台机器上，以及你能否知道。</li>
-<li>一致性：你的数据是否被复制到了多台机器上，这些分布在不同点的数据如何保证一致性？</li>
-<li>事务机制：你的业务是否需要ACID的事务机制？</li>
-<li>单机性能：如果你打算持久化的将数据存在磁盘上，哪种数据结构能满足你的需求（你的需求是读多还是写多）？写操作是否会成为磁盘瓶颈？</li>
-<li>负载可评估：对于一个读多写少的应用，诸如响应用户请求的web应用，我们总会花很多精力来关注负载情况。你可能需要进行数据规模的监控，对多个用户的数据进行汇总统计。你的应用场景是否需要这样的功能呢？</li>
-</ul>
-<p>尽管后三点在本章没有独立的小节进行描述，但它们和其它几点一样重要，下面就让我们对以上的几点进行阐述。</p>
-<h2 id="13-2-nosql-">13.2 NoSQL数据模型及操作模型</h2>
-<p>数据库的数据模型指的是数据在数据库中的组织方式，数据库的操作模型指的是存取这些数据的方式。通常数据模型包括关系模型、键值模型以及各种图结构模型。的操作语言可能包括SQL、键值查询及MapReduce等。NoSQL通常结合了多种数据模型和操作模型，提供了不一样的架构方式。</p>
-<h3 id="13-2-1-key-nosql-">13.2.1 基于key值存储的NoSQL数据模型</h3>
-<p>在键值型系统中，复杂的联合操作以及满足多个条件的取数据操作就不那么容易了，需要我们创造性的建立和使用键名。如果一个程序员既想通过员工号查到员工信息，又想通过部门号查到员工信息，那么他必须建立两种类型的键值对。例如 emplyee:30 这个键用于指向员工号为30的员工信息。employee_departments:20 可能用到指向一个包含在20号部门工作的所有员工工号的列表。这样数据库中的联合操作就被转换成业务层的逻辑了：要获取部门号为20的所有员工的信息，应用层可以先获取employee_departments:20 这个列表，然后再循环地拿这个列表中的ID通过获取employee:ID得到所有员工的信息。</p>
-<p>键值查找的一个好处是，对数据库的操作模式是固定的，这些操作所产生的负载也是相对固定且可预知的。这样像分析整个应用中的性能瓶颈这种事，就变得简单多了。因为复杂的逻辑操作并不是放在数据库里面黑箱操作了。不过这样做之后，业务逻辑和数据逻辑可能就没那么容易分清了。</p>
-<p>下面我们快速地把各种键值模型的数据结构简单描述一下。看看不同的NoSQL系统的在这方面的不同实现方式。</p>
-<h3 id="key-value-">Key-Value 存储</h3>
-<p>Key-Value存储可以说是最简单的NoSQL存储。每个key值对应一个任意的数据值。对NoSQL 系统来说，这个任意的数据值是什么，它并不关心。比如在员工信念数据库里，exployee:30 这个key对应的可能就是一段包含员工所有信息的二进制数据。这个二进制的格式可能是<a href="http://code.google.com/p/protobuf/" target="_blank">Protocol Buffer</a>、<a href="http://thrift.apache.org/" target="_blank">Thrift</a>或者<a href="http://avro.apache.org/" target="_blank">Avro</a>都无所谓。</p>
-<p>如果你使用上面说的Key-Value存储来保存你的结构化数据，那么你就得在应用层来处理具体的数据结构：单纯的Key-Value存储是不提供针对数据中特定的某个属性值来进行操作。通常它只提供像set、get和delete这样的操作。以Dynamo为原型的Voldemort数据库，就只提供了分布式的Key-Value存储功能。BDB 是一个提供Key-Value操作的持久化数据存储引擎。</p>
-<h3 id="key-">Key – 结构化数据 存储</h3>
-<p>Key对应结构化数据存储，其典型代表是Redis，Redis将Key-Value存储的Value变成了结构化的数据类型。Value的类型包括数字、字符串、列表、集合以及有序集合。除了set/get/delete 操作以为，Redis还提供了很多针对以上数据类型的特殊操作，比如针对数字可以执行增、减操作，对list可以执行 push/pop 操作，而这些对特定数据类型的特定操作并没有对性能造成多大的影响。通过提供这种针对单个Value进行的特定类型的操作，Redis可以说实现了功能与性能的平衡。</p>
-<h3 id="key-">Key – 文档 存储</h3>
-<p>Key – 文档存储的代表有CouchDB、MongoDB和Riak。这种存储方式下Key-Value的Value是结构化的文档，通常这些文档是被转换成JSON或者类似于JSON的结构进行存储。文档可以存储列表，键值对以及层次结构复杂的文档。</p>
-<p>MongoDB 将Key按业务分到各个collection里，这样以collection作为命名空间，员工信息和部门信息的Key就被隔开了。CouchDB和Riak把类型跟踪这种事留给了开发者去完成。文档型存储的灵活性和复杂性是一把双刃剑：一方面，开发者可以任意组织文档的结构，另一方面，应用层的查询需求会变得比较复杂。</p>
-<h3 id="bigtable-">BigTable 的列簇式存储</h3>
-<p>HBase和Cassandra的数据模型都借鉴自Google 的BigTable。这种数据模型的特点是列式存储，每一行数据的各项被存储在不同的列中（这些列的集合称作列簇）。而每一列中每一个数据都包含一个时间戳属性，这样列中的同一个数据项的多个版本都能保存下来。</p>
-<p>列式存储可以理解成这样，将行ID、列簇号，列号以及时间戳一起，组成一个Key，然后将Value按Key的顺序进行存储。Key值的结构化使这种数据结构能够实现一些特别的功能。最常用的就是将一个数据的多个版本存成时间戳不同的几个值，这样就能很方便的保存历史数据。这种结构也能天然地进行高效的松散列数据（在很多行中并没有某列的数据）存储。当然，另一方面，对于那些很少有某一行有NULL值的列，由于每一个数据必须包含列标识，这又会造成空间的浪费。</p>
-<p>这些NoSQL系统对BigTable数据模型的实现多少有些差别，这其中以Cassandra进行的变更最为显著。Cassandra引入了超级列（supercolumn）的概念，通过将列组织到相应的超级列中，可以在更高层级上进行数据的组织，索引等。这一做法也取代了locality groups的概念（这一概念的实现可以让相关的几个行的数据存储在一起，以提高存取性能）。</p>
-<h3 id="13-2-2-">13.2.2 图结构存储</h3>
-<p>图结构存储是NoSQL的另一种存储实现。图结构存储的一个指导思想是：数据并非对等的，关系型的存储或者键值对的存储，可能都不是最好的存储方式。图结构是计算机科学的基础结构之一，Neo4j和HyperGraphDB是当前最流行的图结构数据库。图结构的存储与我们之前讨论过的几种存储方式很不同，这种不同几乎体现在每一个方面，包括：数据模型、数据查询方式、数据在磁盘上的组织方式、在多个结点上的分布方式，甚至包括对事务机制的实现等等。由于篇幅的限制，对这些方面我们暂时不做深入的讨论，这里需要你了解的是，某些数据结构使用图结构的数据库进行存储可能会更好。</p>
-<h3 id="13-2-3-">13.2.3 复杂查询</h3>
-<p>在NoSQL存储系统中，有很多比键值查找更复杂的操作。比如MongoDB可以在任意数据行上建立索引，可以使用Javascript语法设定复杂的查询条件。BigTable型的系统通常支持对单独某一行的数据进行遍历，允许对单列的数据进行按特定条件地筛选。CouchDB允许你创建同一份数据的多个视图，通过运行MapReduce任务来实现一些更为复杂的查询或者更新操作。很多NoSQL系统都支持与Hadoop或者其它一些MapReduce框架结合来进行一些大规模数据分析工作。</p>
-<h3 id="13-2-4-">13.2.4 事务机制</h3>
-<p>传统的关系型数据库在功能支持上通常很宽泛，从简单的键值查询，到复杂的多表联合查询再到事务机制的支持。而与之不同的是，NoSQL系统通常注重性能和扩展性，而非事务机制。</p>
-<p>传统的SQL数据库的事务通常都是支持ACID的强事务机制。A代表原子性，即在事务中执行多个操作是原子性的，要么事务中的操作全部执行，要么一个都不执行;C代表一致性，即保证进行事务的过程中整个数据加的状态是一致的，不会出现数据花掉的情况;I代表隔离性，即两个事务不会相互影响，覆盖彼此数据等;D表示持久化，即事务一量完成，那么数据应该是被写到安全的，持久化存储的设备上（比如磁盘）。</p>
-<p>ACID的支持使得应用者能够很清楚他们当前的数据状态。即使如对于多个事务同时执行的情况下也能够保证数据状态的正常性。但是如果要保证数据的一致性，通常多个事务是不可能交叉执行的，这样就导致了可能一个很简单的操作需要等等一个复杂操作完成才能进行的情况。</p>
-<p>对很多NoSQL系统来说，对性能的考虑远在ACID的保证之上。通常NoSQL系统仅提供对行级别的原子性保证，也就是说同时对同一个Key下的数据进行的两个操作，在实际执行的时候是会串行的执行，保证了每一个Key-Value对不会被破坏。对绝大多数应用场景来说，这样的保证并不会引起多大的问题，但其换来的执行效率却是非常可观的。当然，使用这样的系统可能需要我们在应用层的设计上多做容错性和修正机制的考虑。</p>
-<p>在NoSQL中，Redis在事务支持这方面上不太一样，它提供了一个MULTI命令用来将多个命令进行组合式的操作，通过一个WATCH命令提供操作隔离性。这和其它一些提供test-and-set这样的低层级的隔离机制类似。</p>
-<h3 id="13-2-5-schema-free-">13.2.5 Schema-free的存储</h3>
-<p>还有一个很多NoSQL都有的共同点，就是它通常并没有强制的数据结构约束。即使是在文档型存储或者列式存储上，也不会要求某一个数据列在每一行数据上都必须存在。这在非结构化数据的存储上更方便，同时也省去了修改表结构的代价。而这一机制对应用层的容错性要求可能会更高。比如程序可能得确定如果某一个员工的信息里缺少lastname这一项，是否算是错误。或者说某个表结构的变更是否对所有数据行起了作用。还有一个问题，就是数据库的表结构可能会因为项目的多次迭代而变得混乱不堪。</p>
-<h2 id="13-3-">13.3 数据可靠性</h2>
-<p>最理想状态是，数据库会把所有写操作立刻写到持久化存储的设备，同时复制多个副本到不同地理位置的不同节点上以防止数据丢失。但是这种对数据安全性的要求对性能是有影响的，所以不同的NoSQL系统在自身性能的考虑下，在数据安全上采取了不太一样的策略。</p>
-<p>一种典型的出错情况是重启机器或者机器断电了，这时候需要让数据从内存转存到磁盘才能保证数据的安全性，因为磁盘数据不会因断电而丢失。而要避免磁盘损坏这种故障，就需要将数据冗余的存在其它磁盘上，比如使用RAID来做镜像，或者将数据同步到不同机器。但是有些时候针对同一个数据中心来说，是不可能做到完全的数据安全的，比如一旦发生飓风地震这种天灾，整个机房机器可能都会损坏，所以，在这种情况下要保证数据的安全性，就必须将数据备份存储到其它地理位置上比较远的数据中心。所以，具体各个NoSQL系统在数据安全性和性能上的权衡策略也不太一样。</p>
-<h3 id="13-3-1-">13.3.1 单机可靠性</h3>
-<p>单机可靠性理解起来非常简单，它的定义是写操作不会由于机器重启或者断电而丢失。通常单机可靠性的保证是通过把数据写到磁盘来完成的，而这通常会造成磁盘IO成为整个系统的瓶颈。而事实上，即使你的程序每次都把数据写到了磁盘，实际上由于操作系统buffer层的存在，数据还是不会立刻被写到物理磁盘上，只有当你调用fsync这个系统调用的时候，操作系统才会尽可能的把数据写到磁盘。</p>
-<p>一般的磁盘大概能进行每秒100-200次的随机访问，每秒30-100MB的顺序写入速度。而内存在这两方面的性能都有数量级上的提升。通过尽量减少随机写，取而代之的对每个磁盘设备进行顺序写，这样能够减少单机可靠性保证的代价。也就是说我们需要减少在两次fsync调用之间的写操作次数，而增加顺序写操作的数量。下面我们说一下一些在单机可靠性的保证下提高性能的方法。</p>
-<h3 id="-fsync-">控制fsync的调用频率</h3>
-<p>Memcached是一个纯内存的存储，由于其不进行磁盘上的持久化存储，从而换来了很高的性能。当然，在我们进行服务器重启或者服务器意外断电后，这些数据就全丢了。因此Memcached 是一个非常不错的缓存，但是做不了持久化存储。</p>
-<p>Redis则提供了几种对fsync调用频率的控制方法。应用开发者可以配置Redis在每次更新操作后都执行一次fsync，这样会比较安全，当然也就比较慢。Redis也可以设置成N秒种调用一次fsync，这样性能会更好一点。但这样的后果就是一旦出现故障，最多可能导致N秒内的数据丢失。而对一些可靠性要求不太高的场合（比如仅仅把Redis当Cache用的时候），应用开发者甚至可以直接关掉fsync的调用：让操作系统来决定什么时候需要把数据flush到磁盘。
-（译者：这只是Redis append only file的机制，Redis是可以关闭aof日志的，另外请注意：Redis 本身支持将内存中数据dump成rdb文件的机制，和上面说的不是一回事。）</p>
-<h3 id="-">使用日志型的数据结构</h3>
-<p>像B+ 树这样的一些数据结构，使得NoSQL系统能够快速的定位到磁盘上的数据，但是通常这些数据结构的更新操作是随机写操作，如果你在每次操作后再调用一次fsync，那就会造成频繁的磁盘随机访问了。为了避免产生这样的问题，像Cassandra、HBase、Redis和Riak都会把写操作顺序的写入到一个日志文件中。相对于存储系统中的其它数据结构，上面说到的日志文件可以频繁的进行fsync操作。这个日志文件记录了操作行为，可以用于在出现故障后恢复丢失那段时间的数据，这样就把随机写变成顺序写了。</p>
-<p>虽然有的NoSQL系统，比如MongoDB，是直接在原数据上进行更新操作的，但也有许多NoSQL系统是采用了上面说到的日志策略。Cassandra和HBase借鉴了BigTable的做法，在数据结构上实现了一个日志型的查找树。Riak也使用了类似的方法实现了一个日志型的hash表（译者：也就是Riak的<a href="http://downloads.basho.com/papers/bitcask-intro.pdf" target="_blank">BitCask</a>模型）。CouchDB对传统的B+树结构进行了修改，使得对树的更新可以使用顺序的追加写操作来实现（译者：这种B+树被称作<a href="http://jchrisa.net/drl/nosql-oakland/btree-nosql-oak.pdf" target="_blank">append-only B-Tree</a>）。这些方法的使用，使得存储系统的写操作承载力更高，但同时为了防止数据异构后膨胀得过大，需要定时进行一些合并操作。</p>
-<h3 id="-">通过合并写操作提高吞吐性能</h3>
-<p>Cassandra有一个机制，它会把一小段时间内的几个并发的写操作放在一起进行一次fsync调用。这种做法叫group commit，它导致的一个结果就是更新操作的返回时间可能会变长，因为一个更新操作需要等就近的几个更新操作一起进行提交。这样做的好处是能够提高写操作承载力。作为HBase底层数据支持的Hadoop 分布式文件系统HDFS，它最近的一些补丁也在实现一些顺序写和group commit的机制。</p>
-<h3 id="13-3-2-">13.3.2 多机可靠性</h3>
-<p>由于硬件层面有时候会造成无法恢复的损坏，单机可靠性的保证在这方面就鞭长莫及了。对于一些重要数据，跨机器做备份保存是必备的安全措施。一些NoSQL系统提供了多机可靠性的支持。</p>
-<p>Redis采用了传统的主从数据同步的方式。所有在master上执行的操作，都会通过类似于操作日志的结构顺序地传递给slave上再执行一遍。如果master发生宕机等事故，slave可以继续执行完master传来的操作日志并且成为新的master。可能这中间会导致一些数据丢失，因为master同步操作到slave是非阻塞的，master并不知道操作是否已经同步线slave了。CouchDB 实现了一个类似的指向性的同步功能，它使得一个写操作可以同步到其它节点上。</p>
-<p>MongoDB提供了一个叫Replica Sets的架构方制，这个架构策略使得每一个文档都会保存在组成Replica Sets的所有机器上。MongoDB提供了一些选项，让开发者可以确定一个写操作是否已经同步到了所有节点上，也可以在节点数据并不是最新的情况下执行一些操作。很多其它的分布式NoSQL存储都提供了类似的多机可靠性支持。由于HBase的底层存储是HDFS，它也就自然的获得了HDFS提供的多机可靠性保证。HDFS的多机可靠性保证是通过把每个写操作都同步到两个以上的节点来实现的。</p>
-<p>Riak、Cassandra和Voldemort提供了一些更灵活的可配置策略。这三个系统提供一个可配置的参数N，代表每一个数据会被备份的份数，然后还可以配置一个参数W，代表每个写操作需要同步到多少能机器上才返回成功。当然W是小于N的。</p>
-<p>为了应对整个数据中心出现故障的情况，需要实现跨数据中心的多机备份功能。Cassandra、HBase和Voldemort都实现了一个机架位置可知的配置，这种配置方式使得整个分布式系统可以了解各个节点的地理位置分布情况。如果一个操作需要等待另外的数据中心的同步操作成功才返回给用户，那时间就太长了，所以通常跨数据中心的同步备份操作都是异步进行的。用户并不需要等待另一个数据中心同步的同步操作执行成功。</p>
-<h2 id="13-4-">13.4 横向扩展带来性能提升</h2>
-<p>上面我们讨论了对出错情况的处理，下面我们讨论另一种情况：成功！如果数据存储操作成功执行了，那么你的系统就要负责对这些数据进行处理。就要承担数据带来的负载。一个比较粗暴的解决方法是通过升级你的机器来提升单机性能：通过加大内存和添加硬盘来应对越来越大的负载。但是随着数据量的增大，投入在升级机器上的钱将将不会产生原来那么大的效果。这时候你就必须考虑把数据同步到不同的机器上，利用横向扩展来分担访问压力。</p>
-<p>横向扩展的目标是达到线性的效果，即如果你增加一倍的机器，那么负载能力应该也能相应的增加一倍。其主要需要解决的问题是如何让数据在多台机器间分布。数据分片技术实际上就是将对数据和读写请求在多个机器节点上进行分配的技术，分片技术在很多NoSQL系统中都有实现，比如Cassandra、HBase、Voldemort和Riak等等，最近MongoDB和Redis也在做相应的实现。而有的项目并不提供内置的分片支持，比如CouchDB更加注重单机性能的提升。对于这些项目，通常我们可以借助一些其它的技术在上层来进行负载分配。</p>
-<p>下面让我们来整理一些通用的概念。对于数据分片和分区，我们可以做同样的理解。对机器，服务器或者节点，我们可以统一的理解成物理上的存储数据的机器。最后，集群或者机器环都可以理解成为是组成你存储系统的集合。</p>
-<p>分片的意思是，没有任何一台机器可以处理所有写请求，也没有任何一台机器可以处理对所有数据的读请求。很多NoSQL系统都是基于键值模型的，因此其查询条件也基本上是基于键值的查询，基本不会有对整个数据进行查询的时候。由于基本上所有的查询操作都是基本键值形式的，因此分片通常也基于数据的键来做：键的一些属性会决定这个键值对存储在哪台机器上。下面我们将会对hash分片和范围分片两种分片方式进行描述。</p>
-<h3 id="13-4-1-">13.4.1 如非必要，请勿分片</h3>
-<p>分片会导致系统复杂程序大增，所以，如果没有必要，请不要使用分片。下面我们先讲两种不用分片就能让系统具有扩展性的方法。</p>
-<h3 id="-">读写分离</h3>
-<p>大多数应用场景都是读多写少的场景。所以在这种情况下，可以用一个简单的方法来分担负载，就是把数据同步到多台机器上。这时候写请求还是由master机器处理，而读请求则可以分担给那些同步到数据的机器了。而同步数据的操作，通常是不会对master带来多大的压力的。</p>
-<p>如果你已经使用了主从配置，将数据同步到多台机器以提供高可靠性了，那么你的slave机器应该能够为master分担不少压力了。对有些实时性要求不是非常高的查询请求，比如一些统计操作，你完全可以放到slave上来执行。通常来说，你的应用对实时性要求越低，你的slave机器就能承担越多的任务。</p>
-<h3 id="-">使用缓存</h3>
-<p>将一些经常访问的数据放到缓存层中，通常会带来很好的效果。Memcached 主要的作用就是将数据层的数据进行分布式的缓存。Memcached 通过客户端的算法（译者： 常见的一致性hash算法）来实现横向扩展，这样当你想增大你缓存池的大小时，只需要添加一台新的缓存机器即可。</p>
-<p>由于Memcached仅仅是一个缓存存储，它并不具备一些持久存储的复杂特性。当你在考虑使用复杂的扩展方案时，希望你先考虑一下使用缓存来解决你的负载问题。注意，缓存并不是临时的处理方案：Facebook 就部署了总容量达到几十TB的Memcahced内存池。</p>
-<p>通过读写分离和构建有效的缓存层，通常可以大大分担系统的读负载，但是当你的写请求越来越频繁的时候，你的master机器还是会承受越来越大的压力。对于这种情况，我们可能就要用到下面说到的数据分片技术了。</p>
-<h3 id="13-4-2-">13.4.2 通过协调器进行数据分片</h3>
-<p>由于CouchDB专注于单机性能，没有提供类似的横向扩展方案，于是出现了两个项目：Lounge 和 BigCouch，他们通过提供一个proxy层来对CouchDB中的数据进行分片。在这种架构中，proxy作为CouchDB集群的前端机器，接受和分配请求到后端的多台CouchDB上。后端的CouchDB 之间并没有交互。协调器会将按操作的key值将请求分配到下层的具体某台机器。</p>
-<p>Twitter 自己实现了一个叫Gizzard的协调器，可以实现数据分片和备份功能。Gizzard不关心数据类型，它使用树结构来存储数据范围标识，你可以用它来对SQL或者NoSQL系统进行封装。通过对 Gizzard 进行配置，可以实现将特定范围内的数据进行冗余存储，以提高系统的容灾能力。</p>
-<h3 id="13-4-3-hash-">13.4.3 一致性hash环算法</h3>
-<p>好的hash算法可以使数据保持比较均匀的分布。这使得我们可以按这种分布将数据保存布多台机器上。一致性hash是一种被广泛应用的技术，其最早在一个叫distributed hash tables (DHTs)的系统中进行使用。那些类Dynamo的应用，比如Cassandra、Voldemort和Riak，基本上都使用了一致性hash算法。</p>
-<h3 id="hash-">Hash环图</h3>
-<p><a href="http://blog.nosqlfan.com/wp-content/uploads/2011/06/A-Distributed-Hash-Table-Ring.png" target="_blank"><img src="&quot;[A Distributed Hash Table Ring]&quot;" alt=""></a></p>
-<p>一致性hash算法的工作原理如下：首先我们有一个hash函数H，可以通过数据的key值计算出一个数字型的hash值。然后我们将整个hash环的范围定义为［1，L］这个区间，我们将刚才算出的hash值对L进行取余，就能算出一个key值在这个环上的位置。而每一台真实服务器结点就会负责［1-L］之间的某个区间的数据。如上图，就是一个五个结点的hash环。</p>
-<p>上面hash环的L值为1000，然后我们对ABCDE 5个点分别进行hash运算，H(A) mod L = 7, H(B) mod L = 234, H(C) mod L = 447, H(D) mod L = 660, and H(E) mod L = 875 ，这样，hash值在7-233之间的所有数据，我们都让它保存在A节点上。在实际动作中，我们对数据进行hash，算出其应该在哪个节点存储即可，例：H(‘employee30′) mod L = 899 那么它应该在E节点上，H(‘employee31′) mod L = 234 那么这个数据应该在B节点上。</p>
-<h3 id="-">备份数据</h3>
-<p>一致性hash下的数据备份通常采用下面的方法：将数据冗余的存在其归属的节点的顺序往下的节点，例如你的冗余系数为3（即数据会在不同节点中保存三份），那么如果通过hash计算你的数据在A区间［7，233］，你的数据会被同时保存在A，B，C三个节点上。这样如果A节点出现故障，那么B，C节点就能处理这部分数据的请求了。而某些设计会使E节点将自己的范围扩大到A233，以接受对出故障的A节点的请求。</p>
-<h3 id="-">优化的数据分配策略</h3>
-<p>虽然hash算法能够产生相对均匀的hash值。而且通常是节点数量越多，hash算法会越平均的分配key值。然而通常在项目初期不会有太多的数据，当然也不需要那么多的机器节点，这时候就会造成数据分配不平均的问题。比如上面的5个节点，其中A节点需要负责的hash区间范围大小为227，而E节点负责的区间范围为132。同时在这种情况下，出故障后数据请求转移到相邻节点的策略也可能不好实施了。</p>
-<p>为了解决由于节点比较少导致数据分配不均的问题，很多DHT系统都实现了一种叫做虚拟节点的技术。例如4个虚拟节点的系统中，A节点可能被虚拟化成A_1，A_2，A_3，A_4这四个虚拟节点，然后对这四个虚拟节点再进行hash运算，A节点负责的key值区间就比较分散了。Voldemort 使用了与上面类似的策略，它允许对虚拟节点数进行配置，通常这个节点数会大于真实节点数，这样每个真实节点实际上是负责了N个虚拟节点上的数据。</p>
-<p>Cassandra 并没有使用虚拟节点到真实节点映射的方法。这导致它的数据分配是不均匀的。为了解决这种不平衡，Cassandra 利用一个异步的进程根据各节点的历史负载情况来调节数据的分布。</p>
-<h3 id="13-4-4-">13.4.4 连续范围分区</h3>
-<p>使用连续范围分区的方法进行数据分片，需要我们保存一份映射关系表，标明哪一段key值对应存在哪台机器上。和一致性hash类似，连续范围分区会把key值按连续的范围分段，每段数据会被指定保存在某个节点上，然后会被冗余备份到其它的节点。和一致性hash不同的是，连续范围分区使得key值上相邻的两个数据在存储上也基本上是在同一个数据段。这样数据路由表只需记录某段数据的开始和结束点［start，end］就可以了。</p>
-<p>通过动态调整数据段到机器结点的映射关系，可以更精确的平衡各节点机器负载。如果某个区段的数据负载比较大，那么负载控制器就可以通过缩短其所在节点负责的数据段，或者直接减少其负责的数据分片数目。通过添加这样一个监控和路由模块，使我们能够更好的对数据节点进行负载均衡。</p>
-<h3 id="bigtable-">BigTable的处理方式</h3>
-<p>Google BigTable 论文中描述了一种范围分区方式，它将数据切分成一个个的tablet数据块。每个tablet保存一定数量的键值对。然后每个Tablet 服务器会存储多个tablet块，具体每个Tablet服务器保存的tablet数据块数，则是由服务器压力来决定的。</p>
-<p>每个tablet大概100-200MB大。如果tablet的尺寸变小，那么两个tablet可能会合并成一个tablet，同样的如果一个tablet过大，它也会被分裂成两个tablet，以保持每个tablet的大小在一定范围内。在整个系统中有一个master机器，会根据tablet的大小、负载情况以及机器的负载能力等因素动态地调整tablet在各个机器上的分布。</p>
-<p><a href="http://blog.nosqlfan.com/wp-content/uploads/2011/06/BigTable-based-Range-Partitioning.png" target="_blank"><img src="&quot;[BigTable-based Range Partitioning]&quot;" alt=""></a>
-master服务器会把 tablet 的归属关系存在元数据表里。当数据量非常大时，这个元数据表实际也会变得非常大，所以归属关系表实际上也是被切分成一个个的tablet保存在tablet服务器中的。这样整个数据存储就被分成了如上图的三层模型。</p>
-<p>下面我们解释一下上面图中的例子。当某个客户端要从BigTable系统中获取key值为900的数据时，首先他会到第一级元数据服务器A（METADATA0）去查询，第一级元数据服务器查询自己的元数据表，500-1500这个区间中的所有元数据都存在B服务器中，于是会返回客户端说去B服务器查询，客户端再到B服务器中进行查询，B服务器判断到850-950这个区间中的数据都存在tablet服务器C中，于是会告知客户端到具体的tablet服务器C去查询。然后客户端再发起一次向C服务器的请求，就能获取到900对应的数据了。然后，客户端会把这个查询结果进行缓存，以避免对元数据服务器的频繁请求。在这样的三层架构下，只需要128MB的元数据存储，就能定位234 个tablet数据块了（按128MB一个数据块算，是261bytes的数据）。</p>
-<h3 id="-">故障处理</h3>
-<p>在BigTable中，master机器是一个故障单点，不过系统可以容忍短时间的master故障。另一方面，如果tablet 服务器故障，那么master可以把对其上tablet的所有请求分配到其它机器节点。</p>
-<p>为了监测和处理节点故障，BigTable实现了一个叫Chubby的模块，Chubby是一个分布式的锁系统，用于管理集群成员及检测各成员是否存活。ZooKeeper是Chubby的一个开源实现，有很多基于 Hadoop 的项目都使用它来进行二级master和tablet节点的调度。</p>
-<h3 id="-nosql-">基于范围分区的NoSQL项目</h3>
-<p>HBase 借鉴了BigTable的分层理论来实现范围分区策略。tablet相关的数据存在HDFS里。HDFS 会处理数据的冗余备份，并负责保证各备份的一致性。而像处理数据请求，修改存储结构或者执行tablet的分裂和合并这种事，是具体的tablet服务器来负责的。</p>
-<p>MongoDB也用了类似于BigTable的方案来实现范围分区。他用几台配置机器组成集群来管理数据在节点上的分布。这几台机器保存着一样的配置信息，他们采用 two-phase commit 协议来保证数据的一致性。这些配置节点实际上同时扮演了BigTable中的master的路由角色，及Chubby 的高可用性调度器的角色。而MongoDB具体的数据存储节点是通过其Replica Sets方案来实现数据冗余备份的。</p>
-<p>Cassandra 提供了一个有序的分区表，使你可以快速对数据进行范围查询。Cassandra也使用了一致性hash算法进行数据分配，但是不同的是，它不是直接按单条数据进行hash，而是对一段范围内的数据进行hash，也就是说20号数据和21号数据基本上会被分配在同一台机器节点上。</p>
-<p>Twitter的Gizzard框架也是通过使用范围分区来管理数据在多个节点间的备份与分配。路由服务器可以部署成多层，任何一层只负责对key值进行按范围的分配到下层的不同节点。也就是说路由服务器的下层既可以是真实的数据存储节点，也可能是下层的路由节点。Gizzard的数据备份机制是通过将写操作在多台机器上执行多次来实现的。Gizzard的路由节点处理失败的写操作的方式和其它NoSQL不太一样，他要求所有更新都是幂等的（意思是可以重复执行而不会出错）。于是当一个节点故障后，其上层的路由节点会把当前的写操作cache起来并且重复地让这个节点执行，直到其恢复正常。</p>
-<h3 id="13-4-5-">13.4.5 选择哪种分区策略</h3>
-<p>上面我们说到了Hash分区和范围分区两种策略，哪种更好呢？这要看情况了，如果你需要经常做范围查询，需要按顺序对key值进行操作，那么你选择范围分区会比较好。因为如果选择hash分区的话，要查询一个范围的数据可能就需要跨好几个节点来进行了。</p>
-<p>那如果我不会进行范围查询或者顺序查询呢？这时候hash分区相对来说可能更方便一点，而且hash分区时可能通过虚拟结点的设置来解决hash不均的问题。在hash分区中，基本上只要在客户端执行相应的hash函数就能知道对应的数据存在哪个节点上了。而如果考虑到节点故障后的数据转移情况，可能获取到数据存放节点就会麻烦一些了。</p>
-<p>范围分区要求在查询数据前对配置节点还要进行一次查询，如果没有特别好的高可用容灾方案，配置节点将会是一个危险的故障单点。当然，你可以把配置节点再进行一层负载均衡来减轻负载。而范围分区时如果某个节点故障了，它上面的数据可以被分配到多个节点上，而不像在一致性hash时，只能迁移到其顺序的后一个节点，造成下一个节点的负载飙升。</p>
-<h2 id="13-5-">13.5 一致性</h2>
-<p>上面我们讲到了通过将数据冗余存储到不同的节点来保证数据安全和减轻负载，下面我们来看看这样做引发的一个问题：保证数据在多个节点间的一致性是非常困难的。在实际应用中我们会遇到很多困难，同步节点可能会故障，甚至会无法恢复，网络可能会有延迟或者丢包，网络原因导致集群中的机器被分隔成两个不能互通的子域等等。在NoSQL中，通常有两个层次的一致性：第一种是强一致性，既集群中的所有机器状态同步保持一致。第二种是最终一致性，既可以允许短暂的数据不一致，但数据最终会保持一致。我们先来讲一下，在分布式集群中，为什么最终一致性通常是更合理的选择，然后再来讨论两种一致性的具体实现结节。</p>
-<h3 id="13-5-1-cap-">13.5.1 关于CAP理论</h3>
-<p>为什么我们会考虑削弱数据的一致性呢？其实这背后有一个关于分布式系统的理论依据。这个理论最早被 Eric Brewer 提出，称为CAP理论，尔后Gilbert 和 Lynch 对CAP进行了理论证明。这一理论首先把分布式系统中的三个特性进行了如下归纳：</p>
-<ul>
-<li>一致性（C）：在分布式系统中的所有数据备份，在同一时刻是否同样的值。</li>
-<li>可用性（A）：在集群中一部分节点故障后，集群整体是否还能响应客户端的读写请求。</li>
-<li>分区容忍性（P）：集群中的某些节点在无法联系后，集群整体是否还能继续进行服务。</li>
-</ul>
-<p>而CAP理论就是说在分布式存储系统中，最多只能实现上面的两点。而由于当前的网络硬件肯定会出现延迟丢包等问题，所以分区容忍性是我们必须需要实现的。所以我们只能在一致性和可用性之间进行权衡，没有NoSQL系统能同时保证这三点。</p>
-<p>要保证数据一致性，最简单的方法是令写操作在所有数据节点上都执行成功才能返回成功。而这时如果某个结点出现故障，那么写操作就成功不了了，需要一直等到这个节点恢复。也就是说，如果要保证强一致性，那么就无法提供7×24的高可用性。</p>
-<p>而要保证可用性的话，就意味着节点在响应请求时，不用完全考虑整个集群中的数据是否一致。只需要以自己当前的状态进行请求响应。由于并不保证写操作在所有节点都写成功，这可能会导致各个节点的数据状态不一致。</p>
-<p>CAP理论导致了最终一致性和强一致性两种选择。当然，事实上还有其它的选择，比如在Yahoo! 的PNUTS中，采用的就是松散的一致性和弱可用性结合的方法。但是我们讨论的NoSQL系统没有类似的实现，所以我们在后续不会对其进行讨论。</p>
-<h3 id="13-5-2-">13.5.2 强一致性</h3>
-<p>强一致性的保证，要求所有数据节点对同一个key值在同一时刻有同样的value值。虽然实际上可能某些节点存储的值是不一样的，但是作为一个整体，当客户端发起对某个key的数据请求时，整个集群对这个key对应的数据会达成一致。下面就举例说明这种一致性是如何实现的。</p>
-<p>假设在我们的集群中，一个数据会被备份到N个结点。这N个节点中的某一个可能会扮演协调器的作用。它会保证每一个数据写操作会在成功同步到W个节点后才向客户端返回成功。而当客户端读取数据时，需要至少R个节点返回同样的数据才能返回读操作成功。而NWR之间必须要满足下面关系：R＋W&gt;N</p>
-<p>下面举个实在的例子。比如我们设定N＝3（数据会备份到A、B、C三个结点）。比如值 employee30:salary 当前的值是20000，我们想将其修改为30000。我们设定W＝2，下面我们会对A、B、C三个节点发起写操作（employee30:salary, 30000），当A、B两个节点返回写成功后，协调器就会返回给客户端说写成功了。至于节点C，我们可以假设它从来没有收到这个写请求，他保存的依然是20000那个值。之后，当一个协调器执行一个对employee30:salary的读操作时，他还是会发三个请求给A、B、C三个节点：</p>
-<ul>
-<li>如果设定R＝1，那么当C节点先返回了20000这个值时，那我们客户端实际得到了一个错误的值。</li>
-<li>如果设定R＝2，则当协调器收到20000和30000两个值时，它会发现数据不太正确，并且会在收到第三个节点的30000的值后判断20000这个值是错误的。</li>
-</ul>
-<p>所以如果要保证强一致性，在上面的应用场景中，我们需要设定R＝2，W＝2</p>
-<p>如果写操作不能收到W个节点的成功返回，或者写操作不能得到R个一致的结果。那么协调器可能会在某个设定的过期时间之后向客户端返回操作失败，或者是等到系统慢慢调整到一致。这可能就导致系统暂时处于不可用状态。</p>
-<p>对于R和W的不同设定，会导致系统在进行不同操作时需要不同数量的机器节点可用。比如你设定在所有备份节点上都写入才算写成功，既W＝N，那么只要有一个备份节点故障，写操作就失败了。一般设定是R＋W = N+1，这是保证强一致性的最小设定了。一些强一致性的系统设定W＝N，R＝1，这样就根本不用考虑各个节点数据可能不一致的情况了。</p>
-<p>HBase是借助其底层的HDFS来实现其数据冗余备份的。HDFS采用的就是强一致性保证。在数据没有完全同步到N个节点前，写操作是不会返回成功的。也就是说它的W＝N，而读操作只需要读到一个值即可，也就是说它R＝1。为了不至于让写操作太慢，对多个节点的写操作是并发异步进行的。在直到所有的节点都收到了新的数据后，会自动执行一个swap操作将新数据写入。这个操作是原子性和一致性的。保证了数据在所有节点有一致的值。</p>
-<h3 id="13-5-3-">13.5.3 最终一致性</h3>
-<p>像Voldemort，Cassandra和Riak这些类Dynamo的系统，通常都允许用户按需要设置N，R，W三个值，即使是设置成W＋R&lt;= N也是可以的。也就是说他允许用户在强一致性和最终一致性之间自由选择。而在用户选择了最终一致性，或者是W&lt;N的强一致性时，则总会出现一段各个节点数据不同步导致系统处理不一致的时间。为了提供最终一致性的支持，这些系统会提供一些工具来使数据更新被最终同步到所有相关节点。</p>
-<p>下面我们会先讲一讲如何判断数据是最新的还是陈旧的，然后我们再讨论一下如何进行数据同步，最后我们再列举一些Dynamo里使用的加速同步过程的巧妙方法。</p>
-<h3 id="-">版本控制与冲突</h3>
-<p>由于同一份数据在不同的节点可能存在不同值，对数据的版本控制和冲突监测就变得尤为重要。类Dynamo的系统通常都使用了一种叫vector clock（向量时钟）的版本控制机制。一个vector clock可以理解成是一个向量，它包含了这个值在每一个备份节点中修改的次数。比如说有的数据会备份到A，B，C三个节点，那么这些值的vector clock值就是类似（NA，NB，NC），而其初始值为（0，0，0）。</p>
-<p>每次一个key的值被修改，其vector clock相应的值就会加1。比如有一个key值当前的vector clock值为（39，1，5），然后他在B节点被修改了一次，那么它的cector clock值就会相应的变成（39，2，5）。而当另一个节点C在收到B节点的同步请求时，他会先用自己保存的vector clock值与B传来的vector clock值进行对比，如果自己的vector clock值的每一项都小于等于B传来的这个值，那么说明这次的修改值是在自已保存的值上的修改，不会有冲突，直接进行相应的修改，并把自己的vector clock值更新。但是如果C发现自己的vector clock有些项比B大，而某些项比B小，比如B的是（39，2，5）C的是（39，1，6），那么这时候说明B的这次修改并不是在C的基础上改的，数据出现冲突了。</p>
-<h3 id="-">冲突解决</h3>
-<p>不同的系统有不同的冲突解决策略。Dynamo选择把冲突留给应用层来解决。如果是两个节点保存的购物车信息冲突了，可以选择简单的通过把两个数据合并进行解决。但如果是对同一份文档进行的修改冲突了，可能就需要人工来解决冲突了（译者：像我们在SVN中做的一样）。Voldemort就是采用的后者，它在发现冲突后，会把有冲突的几份数据一起返回给应用层，把冲突解决留给应用层来做。</p>
-<p>Cassandra通过为每一个操作保存一个时间戳的方法来解决冲突，在冲突的几个版本里，最后修改的一个会获胜成为新的值。相对于上面的方式，它减少了通过应用层解决冲突时需要的网络访问，同时也简化了客户端的操作API。但这种策略并不适合用来处理一些需要合并冲突的场合，比如上面的购物车的例子，或者是分布式的计数器这样的应用。而Riak把Voldemort和 Cassandra 的策略都实现了。CouchDB会把冲突的key进行标识，以便应用层可以主动进行人工修复，在修复完成前，客户端的请求是无法得到确定值的。</p>
-<h3 id="-">读时修复</h3>
-<p>在数据读取时，如果有R个节点返回了一致的数据，那么协调器就可以认为这个值是正确的并返回给客户端了。但是在总共返回的N个值中，如果协调器发现有的数据不是最新的。那么它可以通过读时修复机制来对这些节点进行处理。这种方式在Dynamo中有描述，在Voldemort 、 Cassandra和Riak中都得到了实现。当协调器发现有的节点数据不是最新时，它会在数据不一致的节点间启动一个冲突解决过程。这样主动的修复策略并不会有多大的工作量。因为读取操作时，各个节点都已经把数据返回给协调器了，所以解决冲突越快，实际上可能造成的后续的不一致的可能性也就越小。</p>
-<h3 id="hinted-handoff">Hinted Handoff</h3>
-<p>Cassandra、Riak和Voldemort都实现了一种叫Hinted Handoff的技术，用来保证在有节点故障后系统的写操作不受太大影响。它的过程是如果负责某个key值的某个节点宕机了，另一个节点会被选择作为其临时切换点，以临时保存在故障节点上面的写操作。这些写操作被单独保存起来，直到故障节点恢复正常，临时节点会把这些写操作重新迁移给刚刚恢复的节点。Dynamo 论文中提到一种叫“sloppy quorum”的方法，它会把通过 Hinted Handoff 写成功的临时节点也计算在成功写入数中。但是Cassandra和Voldemort并不会将临时节点也算在写入成功节点数内，如果写入操作并没有成功写在W个正式节点中，它们会返回写入失败。当然，Hinted Handoff 策略在这些系统中也有使用，不过只是用在加速节点恢复上。</p>
-<h3 id="anti-entropy">Anti-Entropy</h3>
-<p>如果一个节点故障时间太长，或者是其 Hinted Handoff 临时替代节点也故障了，那么新恢复的节点就需要从其它节点中同步数据了。（译者：实际上就是要找出经过这段时间造成的数据差异，并将差异部分同步过来）。这种情况下Cassandra和Riak都实现了在Dynamo文档中提到的一种方法，叫做anti-entropy。在anti-entropy过程中，节点间通过交换Merkle Tree来找出那些不一致的部分。Merkle Tree是一个分层的hash校验机制：如果包含某个key值范围的hash值在两个数据集中不相同，那么不同点就在这个key值范围，同理，如果顶层的hash值相同，那么其负责的所有key值范围内的值都认为是相同的。这种方法的好处是，在节点恢复时，不用把所有的值都传一遍来检查哪些值是有变化的。只需要传几个hash值就能找到不一致的数据，重传这个数据即可。</p>
-<h3 id="gossip">Gossip</h3>
-<p>当一个分布式系统越来越大，就很难搞清集群中的每个节点的状态了。上面说到的类Dynamo 应用都采用了Dynamo文档中说到的一种古老的方法：Gossip。通过这个方法，节点间能够互相保持联系并能够检测到故障节点。其具体做法是，每隔一段时间（比如一秒），一个节点就会随便找一个曾经有过通信的节点与其交换一下其它节点的健康状态。通过这种方式，节点能够比较快速的了解到集群中哪些节点故障了，从而把这些节点负责的数据分配到其它节点去。（译者：Gossip其实是仿生学的设计，Gossip意思为流言，节点传播其它节点的健康信息，就像一个小村镇里的无聊妇人们互相说别人的闲话一样，基本上谁家谁人出什么事了，都能比较快地被所有人知道）。</p>
-<h2 id="13-6-">13.6 写在最后的话</h2>
-<p>目前NoSQL系统来处在它的萌芽期，我们上面讨论到的很多NoSQL系统，他们的架构、设计和接口可能都会改变。本章的目的，不在于让你了解这些NoSQL系统目前是如何工作的，而在于让你理解这些系统之所以这样实现的原因。NoSQL系统把更多的设计工作留给了应用开发工作者来做。理解上面这些组件的架构，不仅能让您写出下一个NoSQL系统，更让您对现有系统应用得更好。</p>
-<h2 id="13-7-">13.7 致谢</h2>
-<p>非常感谢Jackie Carter, Mihir Kedia，以及所有对本章进行校对并且提出宝贵意见的人。没有这些年来NoSQL社区的专注工作，也不会有这一章内容的诞生。各位加油。</p>
-<h2 id="-">相关信息</h2>
-<p>原文: <a href="http://www.aosabook.org/en/nosql.html" target="_blank"><a href="http://www.aosabook.org/en/nosql.html">http://www.aosabook.org/en/nosql.html</a></a>
-原作者：<a href="http://www.aosabook.org/en/intro.html#marcus-adam" target="_blank">Adam Marcus</a>
-译者：<a href="http://lgone.com/" target="_blank">iammutex</a>
-组织：<a href="http://nosqlfan.com/" target="_blank">NoSQLFan</a>
-翻译时间：2011年6月</p>
-<p>42区 VPS</p>
-<p>42qu.com 云主机 , 卖给创业的你 。 <a href="http://vps.42qu.com/by/iammutex/rss" target="_blank">点击这里 , 查看详情</a></p>
-<p>anyShare<strong>一切看了好文章不转的行为，都是耍流氓！</strong> <img src="" alt=""> <a href="http://v.t.sina.com.cn/share/share.php?url=http%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html&amp;title=[%E8%AF%91] NoSQL%E7%94%9F%E6%80%81%E7%B3%BB%E7%BB%9F %E6%9D%A5%E8%87%AA%EF%BC%9A%40nosqlfan" title="新浪微博" target="_blank"> </a><a href="http://v.t.qq.com/share/share.php?appkey=2e295ab2ff8245229d96fa3768a9f779&amp;url=http%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html&amp;title=[%E8%AF%91] NoSQL%E7%94%9F%E6%80%81%E7%B3%BB%E7%BB%9F %E6%9D%A5%E8%87%AA%EF%BC%9A%40nosqlfan" title="腾讯微博" target="_blank"> </a><a href="http://sns.qzone.qq.com/cgi-bin/qzshare/cgi_qzshare_onekey?url=http%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" title="腾讯空间" target="_blank"> </a><a href="http://share.renren.com/share/buttonshare.do?link=http%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html&amp;title=[%E8%AF%91] NoSQL%E7%94%9F%E6%80%81%E7%B3%BB%E7%BB%9F %E6%9D%A5%E8%87%AA%EF%BC%9A%40nosqlfan" title="人人社区" target="_blank"> </a><a href="http://www.kaixin001.com/repaste/share.php?rurl=http%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html&amp;rtitle=[%E8%AF%91] NoSQL%E7%94%9F%E6%80%81%E7%B3%BB%E7%BB%9F %E6%9D%A5%E8%87%AA%EF%BC%9A%40nosqlfan" title="开心社区" target="_blank"> </a><a href="http://www.douban.com/recommend/?url=http%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html&amp;title=[%E8%AF%91] NoSQL%E7%94%9F%E6%80%81%E7%B3%BB%E7%BB%9F %E6%9D%A5%E8%87%AA%EF%BC%9A%40nosqlfan" title="豆瓣社区" target="_blank"> </a><a href="http://cang.baidu.com/do/add?iu=http%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html&amp;it=[%E8%AF%91] NoSQL%E7%94%9F%E6%80%81%E7%B3%BB%E7%BB%9F %E6%9D%A5%E8%87%AA%EF%BC%9A%40nosqlfan" title="百度搜藏" target="_blank"> </a><a href="http://www.follow5.com/f5/discuz/sharelogin.jsp?url=http%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html&amp;title=[%E8%AF%91] NoSQL%E7%94%9F%E6%80%81%E7%B3%BB%E7%BB%9F %E6%9D%A5%E8%87%AA%EF%BC%9A%40nosqlfan" title="Follow5" target="_blank"> </a><a href="http://www.facebook.com/share.php?u=http%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" title="facebook" target="_blank"> </a><a href="http://twitter.com/home?status=[%E8%AF%91] NoSQL%E7%94%9F%E6%80%81%E7%B3%BB%E7%BB%9F %E6%9D%A5%E8%87%AA%EF%BC%9A%40nosqlfan -http%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" title="twitter" target="_blank"> </a></p>
-<p>相关文章：</p>
-<ul>
-<li><a href="http://blog.nosqlfan.com/html/3202.html" target="_blank">十五分钟介绍 Redis数据结构</a></li>
-<li><a href="http://blog.nosqlfan.com/html/3537.html" target="_blank">Redis资料汇总专题</a></li>
-<li><a href="http://blog.nosqlfan.com/html/3548.html" target="_blank">MongoDB资料汇总专题</a></li>
-<li><a href="http://blog.nosqlfan.com/html/2364.html" target="_blank">非同一般的Redis介绍</a></li>
-<li><a href="http://blog.nosqlfan.com/html/2925.html" target="_blank">redis 适用场景与实现</a></li>
-</ul>
-<p><a href="http://www.wumii.com/widget/relatedItems" title="无觅相关文章插件" target="_blank">无觅</a></p>
-<p><a href="http://www.wumii.com/widget/relatedItems.htm" target="_blank"><img src="" alt="无觅相关文章插件，快速提升流量"></a></p>
-<p>分类 <a href="http://blog.nosqlfan.com/topics/cassandra" title="查看 Cassandra 的全部文章" target="_blank">Cassandra</a>, <a href="http://blog.nosqlfan.com/topics/couchdb" title="查看 CouchDB 的全部文章" target="_blank">CouchDB</a>, <a href="http://blog.nosqlfan.com/topics/hadoophbase" title="查看 Hadoop&amp;HBase 的全部文章" target="_blank">Hadoop&amp;HBase</a>, <a href="http://blog.nosqlfan.com/topics/mongodb" title="查看 MongoDB 的全部文章" target="_blank">MongoDB</a>, <a href="http://blog.nosqlfan.com/topics/neo4j" title="查看 Neo4j 的全部文章" target="_blank">Neo4j</a>, <a href="http://blog.nosqlfan.com/topics/nosql%e6%9d%82%e8%b0%88" title="查看 NoSQL杂谈 的全部文章" target="_blank">NoSQL杂谈</a>, <a href="http://blog.nosqlfan.com/topics/redis" title="查看 Redis 的全部文章" target="_blank">Redis</a>, <a href="http://blog.nosqlfan.com/topics/%e7%90%86%e8%ae%ba%e5%8e%9f%e5%9c%b0" title="查看 理论原地 的全部文章" target="_blank">理论原地</a> · tag <a href="http://blog.nosqlfan.com/tags/nosql" target="_blank">nosql</a>, <a href="http://blog.nosqlfan.com/tags/nosql%e7%94%9f%e6%80%81%e7%b3%bb%e7%bb%9f" target="_blank">nosql生态系统</a>, <a href="http://blog.nosqlfan.com/tags/the-architecture-of-open-source-applications" target="_blank">The Architecture of Open Source Applications</a>, <a href="http://blog.nosqlfan.com/tags/the-nosql-ecosystem" target="_blank">The NoSQL Ecosystem</a></p>
-<p><a href=""></a> <a href=""></a></p>
-<p><a href="">最新</a><a href="">最早</a><a href="">最热</a></p>
-<ul>
-<li><a href="">6条评论</a></li>
-<li><p><a href="">277条新浪微博</a></p>
-</li>
-<li><p><img src="" alt="Parsifal"></p>
-</li>
-</ul>
-<p>Parsifal</p>
-<p>Tablet小块在 bigtable中占据了重要位置，应该是谷歌这帮人先搞出来的，感觉这个系统背后有模拟自然界微生物行为的意味。</p>
-<p>2011年6月27日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="372520302"></li>
-</ul>
-<p>372520302</p>
-<p>Nothing is impossible.</p>
-<p>2011年6月28日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="651729138"></li>
-</ul>
-<p>651729138</p>
-<p>so good.</p>
-<p>2011年9月20日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://zhouso.com/blog" title="小道" target="_blank"><img src="" alt="小道"></a></li>
-</ul>
-<p><a href="http://zhouso.com/blog" target="_blank">小道</a></p>
-<p>翻译的很完美。毫无一般译著的生硬感。</p>
-<p>2012年10月12日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a>
-<a href="">1</a><a href=""></a></p>
-<p>社交帐号登录:</p>
-<ul>
-<li><a href="http://nosqlfan.duoshuo.com/login/weibo/?sso=1&amp;redirect_uri=http%3A%2F%2Fblog.nosqlfan.com%2Fwp-login.php%3Faction%3Dduoshuo_login&amp;redirect_to%3Dhttp%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" target="_blank">微博</a></li>
-<li><a href="http://nosqlfan.duoshuo.com/login/qq/?sso=1&amp;redirect_uri=http%3A%2F%2Fblog.nosqlfan.com%2Fwp-login.php%3Faction%3Dduoshuo_login&amp;redirect_to%3Dhttp%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" target="_blank">QQ</a></li>
-<li><a href="http://nosqlfan.duoshuo.com/login/renren/?sso=1&amp;redirect_uri=http%3A%2F%2Fblog.nosqlfan.com%2Fwp-login.php%3Faction%3Dduoshuo_login&amp;redirect_to%3Dhttp%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" target="_blank">人人</a></li>
-<li><a href="http://nosqlfan.duoshuo.com/login/douban/?sso=1&amp;redirect_uri=http%3A%2F%2Fblog.nosqlfan.com%2Fwp-login.php%3Faction%3Dduoshuo_login&amp;redirect_to%3Dhttp%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" target="_blank">豆瓣</a></li>
-<li><p><a href="">更多»</a></p>
-</li>
-<li><p><a href="http://nosqlfan.duoshuo.com/login/kaixin/?sso=1&amp;redirect_uri=http%3A%2F%2Fblog.nosqlfan.com%2Fwp-login.php%3Faction%3Dduoshuo_login&amp;redirect_to%3Dhttp%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" target="_blank">开心</a></p>
-</li>
-<li><a href="http://nosqlfan.duoshuo.com/login/netease/?sso=1&amp;redirect_uri=http%3A%2F%2Fblog.nosqlfan.com%2Fwp-login.php%3Faction%3Dduoshuo_login&amp;redirect_to%3Dhttp%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" target="_blank">网易</a></li>
-<li><a href="http://nosqlfan.duoshuo.com/login/sohu/?sso=1&amp;redirect_uri=http%3A%2F%2Fblog.nosqlfan.com%2Fwp-login.php%3Faction%3Dduoshuo_login&amp;redirect_to%3Dhttp%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" target="_blank">搜狐</a></li>
-<li><a href="http://nosqlfan.duoshuo.com/login/baidu/?sso=1&amp;redirect_uri=http%3A%2F%2Fblog.nosqlfan.com%2Fwp-login.php%3Faction%3Dduoshuo_login&amp;redirect_to%3Dhttp%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" target="_blank">百度</a></li>
-<li><a href="http://nosqlfan.duoshuo.com/login/google/?sso=1&amp;redirect_uri=http%3A%2F%2Fblog.nosqlfan.com%2Fwp-login.php%3Faction%3Dduoshuo_login&amp;redirect_to%3Dhttp%3A%2F%2Fblog.nosqlfan.com%2Fhtml%2F2171.html" target="_blank">谷歌</a>
-<a href=""><img src="" alt=""></a></li>
-</ul>
-<p>发布</p>
-<p><a href="http://duoshuo.com/" target="_blank">Powered by 多说</a></p>
-<ol>
-<li>Hshqcn on <a href="http://blog.nosqlfan.com/html/2171.html/comment-page-1#comment-844" target="_blank">2011年06月25日 at 03:36</a> said:</li>
-</ol>
-<p>先支持再看。</p>
-<ol>
-<li>Parsifal on <a href="http://blog.nosqlfan.com/html/2171.html/comment-page-1#comment-848" target="_blank">2011年06月27日 at 09:04</a> said:</li>
-</ol>
-<p>Tablet小块在 bigtable中占据了重要位置，应该是谷歌这帮人先搞出来的，感觉这个系统背后有模拟自然界微生物行为的意味。</p>
-<ol>
-<li>372520302 on <a href="http://blog.nosqlfan.com/html/2171.html/comment-page-1#comment-849" target="_blank">2011年06月28日 at 06:14</a> said:</li>
-</ol>
-<p>Nothing is impossible.</p>
-<ol>
-<li>651729138 on <a href="http://blog.nosqlfan.com/html/2171.html/comment-page-1#comment-958" target="_blank">2011年09月20日 at 16:45</a> said:</li>
-</ol>
-<p>so good.</p>
-<ol>
-<li>Wangjinpeng0417 on <a href="http://blog.nosqlfan.com/html/2171.html/comment-page-1#comment-1074" target="_blank">2011年12月1日 at 04:57</a> said:</li>
-</ol>
-<p>原文： On the flip side, columns which have few or no NULL values must still store the column identifier with each row, which leads to greater space consumption.
-翻译：另一方面，对于那些很少有某一行有NULL值的列，由于每一个数据必须包含列标识，这又会造成空间的浪费
-意思应该是： 另一方面，对于某些拥有非NULL的小值的列（比如值为1byte），数据还是要存储完整的行和列标识（作为Key），这会造成空间浪费（Key值可能比Value大好多）。
-可能原文表达的本身不是特别清楚，我是根据BigTable数据模型来推断的。</p>
-<ol>
-<li><a href="http://zhouso.com/blog" target="_blank">小道</a> on <a href="http://blog.nosqlfan.com/html/2171.html/comment-page-1#comment-2473" target="_blank">2012年10月12日 at 17:44</a> said:</li>
-</ol>
-<p>翻译的很完美。毫无一般译著的生硬感。</p>
-<p>*</p>
-<ul>
-<li><h2 id="-">关注与订阅</h2>
-</li>
-</ul>
-<p><a href="http://twitter.com/nosqlfan" title="twitter" target="_blank"><img src="" alt=""></a> <a href="http://weibo.com/nosqlfan" title="新浪微博" target="_blank"><img src="" alt=""></a> <a href="http://t.qq.com/nosqlfan" title="腾迅微博" target="_blank"><img src="" alt=""></a> <a href="http://feed.feedsky.com/nosqlfan" title="RSS订阅" target="_blank"><img src="" alt=""></a></p>
-<ul>
-<li><h2 id="-">专题</h2>
-</li>
-<li><p><a href="http://blog.nosqlfan.com/html/3537.html" target="_blank">Redis资料汇总专题</a> new</p>
-</li>
-<li><a href="http://blog.nosqlfan.com/html/3548.html" target="_blank">MongoDB资料汇总专题</a> new</li>
-<li><h2 id="-">赞助商</h2>
-</li>
-</ul>
-<p>计算关于生命、宇宙以及一切的终极的答案。 <a href="http://vps.42qu.com/by/iammutex/sidebar" target="_blank"><img src="" alt=""></a> <a href="http://vps.42qu.com/by/iammutex/sidebar" target="_blank">42qu.com 主机空间</a></p>
-<ul>
-<li>中国 BGP 六线 / 美国五机房可选</li>
-<li>独立 IP / root 权限</li>
-<li><a href="http://www.vpsee.com/" target="_blank">vpsee</a> 专业技术支持</li>
-<li>XEN 虚拟机，卖给创业的你</li>
-<li><h2 id="nosql-">NoSQL问答</h2>
-</li>
-</ul>
-<p>SegmentFault - 专注于中文开发者的技术问答！ <a href="http://segmentfault.com/t/nosql" target="_blank"><img src="" alt=""></a></p>
-<ul>
-<li><a href="http://segmentfault.com/t/redis" target="_blank">Redis</a></li>
-<li><a href="http://segmentfault.com/t/mongodb" target="_blank">MongoDB</a></li>
-<li><h2 id="nosqlfan-">NoSQLFan图书频道</h2>
-</li>
-</ul>
-<p><a href="http://blog.nosqlfan.com/books" target="_blank"><img src="" alt=""></a></p>
-<ul>
-<li><h2 id="-">热门文章</h2>
-</li>
-<li><p><a href="http://blog.nosqlfan.com/html/3537.html" title="Redis资料汇总专题" target="_blank">Redis资料汇总专题</a></p>
-</li>
-<li><a href="http://blog.nosqlfan.com/html/3548.html" title="MongoDB资料汇总专题" target="_blank">MongoDB资料汇总专题</a></li>
-<li><a href="http://blog.nosqlfan.com/html/3202.html" title="十五分钟介绍 Redis数据结构" target="_blank">十五分钟介绍 Redis数据结构</a></li>
-<li><a href="http://blog.nosqlfan.com/html/2364.html" title="强烈推荐！非同一般的Redis介绍" target="_blank">强烈推荐！非同一般的Redis介绍</a></li>
-<li><a href="http://blog.nosqlfan.com/html/1282.html" title="Redis资料汇总" target="_blank">Redis资料汇总</a></li>
-<li><a href="http://blog.nosqlfan.com/html/213.html" title="MongoDB管理工具" target="_blank">MongoDB管理工具</a></li>
-<li><a href="http://blog.nosqlfan.com/html/3139.html" title="Redis系统性介绍" target="_blank">Redis系统性介绍</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4209.html" title="2013年中国数据库大会PPT" target="_blank">2013年中国数据库大会PPT</a></li>
-<li><a href="http://blog.nosqlfan.com/html/2395.html" title="一个很棒的Redis介绍PPT" target="_blank">一个很棒的Redis介绍PPT</a></li>
-<li><a href="http://blog.nosqlfan.com/html/2171.html" title="[译] NoSQL生态系统" target="_blank">[译] NoSQL生态系统</a></li>
-<li><h2 id="-">标签云</h2>
-</li>
-</ul>
-<p><a href="http://blog.nosqlfan.com/tags/%e7%9b%91%e6%8e%a7" title="12 个主题" target="_blank">监控</a> <a href="http://blog.nosqlfan.com/tags/riak" title="17 个主题" target="_blank">Riak</a> <a href="http://blog.nosqlfan.com/tags/%e4%bb%8b%e7%bb%8d" title="12 个主题" target="_blank">介绍</a> <a href="http://blog.nosqlfan.com/tags/couchdb" title="52 个主题" target="_blank">CouchDB</a> <a href="http://blog.nosqlfan.com/tags/%e6%80%a7%e8%83%bd" title="11 个主题" target="_blank">性能</a> <a href="http://blog.nosqlfan.com/tags/cassandra" title="47 个主题" target="_blank">Cassandra</a> <a href="http://blog.nosqlfan.com/tags/mongodb" title="204 个主题" target="_blank">MongoDB</a> <a href="http://blog.nosqlfan.com/tags/leveldb" title="10 个主题" target="_blank">LevelDB</a> <a href="http://blog.nosqlfan.com/tags/nosql" title="75 个主题" target="_blank">nosql</a> <a href="http://blog.nosqlfan.com/tags/mysql" title="11 个主题" target="_blank">MySQL</a> <a href="http://blog.nosqlfan.com/tags/%e6%ba%90%e7%a0%81" title="18 个主题" target="_blank">源码</a> <a href="http://blog.nosqlfan.com/tags/node-js" title="10 个主题" target="_blank">node.js</a> <a href="http://blog.nosqlfan.com/tags/%e6%95%99%e7%a8%8b" title="11 个主题" target="_blank">教程</a> <a href="http://blog.nosqlfan.com/tags/replica-sets" title="10 个主题" target="_blank">Replica Sets</a> <a href="http://blog.nosqlfan.com/tags/hadoop" title="47 个主题" target="_blank">hadoop</a> <a href="http://blog.nosqlfan.com/tags/mapreduce" title="17 个主题" target="_blank">mapreduce</a> <a href="http://blog.nosqlfan.com/tags/neo4j" title="13 个主题" target="_blank">Neo4j</a> <a href="http://blog.nosqlfan.com/tags/python" title="14 个主题" target="_blank">Python</a> <a href="http://blog.nosqlfan.com/tags/hbase" title="33 个主题" target="_blank">hbase</a> <a href="http://blog.nosqlfan.com/tags/redis" title="157 个主题" target="_blank">Redis</a></p>
-<ul>
-<li><h2 id="-">分类</h2>
-</li>
-<li><p><a href="http://blog.nosqlfan.com/topics/cassandra" title="查看 Cassandra 下的所有文章" target="_blank">Cassandra</a> (41)</p>
-</li>
-<li><a href="http://blog.nosqlfan.com/topics/couchdb" title="查看 CouchDB 下的所有文章" target="_blank">CouchDB</a> (55)</li>
-<li><a href="http://blog.nosqlfan.com/topics/hadoophbase" title="查看 Hadoop&amp;HBase 下的所有文章" target="_blank">Hadoop&amp;HBase</a> (57)</li>
-<li><a href="http://blog.nosqlfan.com/topics/hypertable" title="查看 Hypertable 下的所有文章" target="_blank">Hypertable</a> (4)</li>
-<li><a href="http://blog.nosqlfan.com/topics/kyoto-cabinet" title="查看 Kyoto Cabinet 下的所有文章" target="_blank">Kyoto Cabinet</a> (2)</li>
-<li><a href="http://blog.nosqlfan.com/topics/mongodb" title="查看 MongoDB 下的所有文章" target="_blank">MongoDB</a> (203)</li>
-<li><a href="http://blog.nosqlfan.com/topics/neo4j" title="查看 Neo4j 下的所有文章" target="_blank">Neo4j</a> (8)</li>
-<li><a href="http://blog.nosqlfan.com/topics/nosql%e6%9d%82%e8%b0%88" title="查看 NoSQL杂谈 下的所有文章" target="_blank">NoSQL杂谈</a> (113)</li>
-<li><a href="http://blog.nosqlfan.com/topics/redis" title="查看 Redis 下的所有文章" target="_blank">Redis</a> (160)</li>
-<li><a href="http://blog.nosqlfan.com/topics/%e6%9c%aa%e5%88%86%e7%b1%bb" title="查看 未分类 下的所有文章" target="_blank">未分类</a> (74)</li>
-<li><a href="http://blog.nosqlfan.com/topics/%e7%90%86%e8%ae%ba%e5%8e%9f%e5%9c%b0" title="查看 理论原地 下的所有文章" target="_blank">理论原地</a> (45)</li>
-<li><a href="http://blog.nosqlfan.com/topics/%e7%ab%99%e5%86%85%e4%ba%8b%e5%8a%a1" title="查看 站内事务 下的所有文章" target="_blank">站内事务</a> (3)</li>
-<li><h2 id="-">最近文章</h2>
-</li>
-<li><p><a href="http://blog.nosqlfan.com/html/4218.html" title="深入理解Redis主键失效原理及实现机制" target="_blank">深入理解Redis主键失效原理及实现机制</a></p>
-</li>
-<li><a href="http://blog.nosqlfan.com/html/4214.html" title="MongoDB 2.5版本将提供新的查询引擎" target="_blank">MongoDB 2.5版本将提供新的查询引擎</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4209.html" title="2013年中国数据库大会PPT" target="_blank">2013年中国数据库大会PPT</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4198.html" title="Redis核心解读系列" target="_blank">Redis核心解读系列</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4191.html" title="MongoDB 2.4版本发布" target="_blank">MongoDB 2.4版本发布</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4188.html" title="Redis核心解读–集群管理工具(Redis-sentinel)" target="_blank">Redis核心解读–集群管理工具(Redis-sentinel)</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4179.html" title="MapReduce的模式、算法和用例" target="_blank">MapReduce的模式、算法和用例</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4166.html" title="Redis监控技巧" target="_blank">Redis监控技巧</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4156.html" title="NoSQL反模式 – 文档数据库篇" target="_blank">NoSQL反模式 – 文档数据库篇</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4153.html" title="Redis如何处理客户端连接" target="_blank">Redis如何处理客户端连接</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4150.html" title="MongoDB查询迷题（1）" target="_blank">MongoDB查询迷题（1）</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4147.html" title="Twemproxy – Twitter 开源的 Redis proxy" target="_blank">Twemproxy – Twitter 开源的 Redis proxy</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4144.html" title="从MySQL到Redis，提升数据迁移的效率" target="_blank">从MySQL到Redis，提升数据迁移的效率</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4139.html" title="NoSQL数据库的分布式算法" target="_blank">NoSQL数据库的分布式算法</a></li>
-<li><p><a href="http://blog.nosqlfan.com/html/4135.html" title="【翻译】Redis协议" target="_blank">【翻译】Redis协议</a></p>
-</li>
-<li><h2 id="-">热门文章</h2>
-</li>
-<li><p><a href="http://blog.nosqlfan.com/html/3537.html" title="Redis资料汇总专题" target="_blank">Redis资料汇总专题</a></p>
-</li>
-<li><a href="http://blog.nosqlfan.com/html/3548.html" title="MongoDB资料汇总专题" target="_blank">MongoDB资料汇总专题</a></li>
-<li><a href="http://blog.nosqlfan.com/html/3202.html" title="十五分钟介绍 Redis数据结构" target="_blank">十五分钟介绍 Redis数据结构</a></li>
-<li><a href="http://blog.nosqlfan.com/html/2364.html" title="强烈推荐！非同一般的Redis介绍" target="_blank">强烈推荐！非同一般的Redis介绍</a></li>
-<li><a href="http://blog.nosqlfan.com/html/1282.html" title="Redis资料汇总" target="_blank">Redis资料汇总</a></li>
-<li><a href="http://blog.nosqlfan.com/html/213.html" title="MongoDB管理工具" target="_blank">MongoDB管理工具</a></li>
-<li><a href="http://blog.nosqlfan.com/html/3139.html" title="Redis系统性介绍" target="_blank">Redis系统性介绍</a></li>
-<li><a href="http://blog.nosqlfan.com/html/4209.html" title="2013年中国数据库大会PPT" target="_blank">2013年中国数据库大会PPT</a></li>
-<li><a href="http://blog.nosqlfan.com/html/2395.html" title="一个很棒的Redis介绍PPT" target="_blank">一个很棒的Redis介绍PPT</a></li>
-<li><a href="http://blog.nosqlfan.com/html/2171.html" title="[译] NoSQL生态系统" target="_blank">[译] NoSQL生态系统</a></li>
-<li><a href="http://blog.nosqlfan.com/html/2925.html" title="redis 适用场景与实现" target="_blank">redis 适用场景与实现</a></li>
-<li><a href="http://blog.nosqlfan.com/html/983.html" title="百度Hadoop分布式系统揭秘：4000节点集群" target="_blank">百度Hadoop分布式系统揭秘：4000节点集群</a></li>
-<li><a href="http://blog.nosqlfan.com/html/3295.html" title="新浪微博开放平台Redis实践" target="_blank">新浪微博开放平台Redis实践</a></li>
-<li><a href="http://blog.nosqlfan.com/html/2235.html" title="Redis作者谈Redis应用场景" target="_blank">Redis作者谈Redis应用场景</a></li>
-<li><a href="http://blog.nosqlfan.com/html/3729.html" title="Memcached真的过时了吗？" target="_blank">Memcached真的过时了吗？</a></li>
-<li><h2 id="-">文章索引模板</h2>
-</li>
-<li><p><a href="http://blog.nosqlfan.com/html/date/2013/07" title="2013年七月" target="_blank">2013年七月</a></p>
-</li>
-<li><a href="http://blog.nosqlfan.com/html/date/2013/05" title="2013年五月" target="_blank">2013年五月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2013/04" title="2013年四月" target="_blank">2013年四月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2013/03" title="2013年三月" target="_blank">2013年三月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2013/02" title="2013年二月" target="_blank">2013年二月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2013/01" title="2013年一月" target="_blank">2013年一月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2012/11" title="2012年十一月" target="_blank">2012年十一月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2012/09" title="2012年九月" target="_blank">2012年九月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2012/08" title="2012年八月" target="_blank">2012年八月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2012/07" title="2012年七月" target="_blank">2012年七月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2012/06" title="2012年六月" target="_blank">2012年六月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2012/05" title="2012年五月" target="_blank">2012年五月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2012/04" title="2012年四月" target="_blank">2012年四月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2012/03" title="2012年三月" target="_blank">2012年三月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2012/02" title="2012年二月" target="_blank">2012年二月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2012/01" title="2012年一月" target="_blank">2012年一月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/12" title="2011年十二月" target="_blank">2011年十二月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/11" title="2011年十一月" target="_blank">2011年十一月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/10" title="2011年十月" target="_blank">2011年十月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/09" title="2011年九月" target="_blank">2011年九月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/08" title="2011年八月" target="_blank">2011年八月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/07" title="2011年七月" target="_blank">2011年七月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/06" title="2011年六月" target="_blank">2011年六月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/05" title="2011年五月" target="_blank">2011年五月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/04" title="2011年四月" target="_blank">2011年四月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/03" title="2011年三月" target="_blank">2011年三月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/02" title="2011年二月" target="_blank">2011年二月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2011/01" title="2011年一月" target="_blank">2011年一月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2010/12" title="2010年十二月" target="_blank">2010年十二月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2010/11" title="2010年十一月" target="_blank">2010年十一月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2010/10" title="2010年十月" target="_blank">2010年十月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2010/09" title="2010年九月" target="_blank">2010年九月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2010/08" title="2010年八月" target="_blank">2010年八月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2010/07" title="2010年七月" target="_blank">2010年七月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2010/06" title="2010年六月" target="_blank">2010年六月</a></li>
-<li><a href="http://blog.nosqlfan.com/html/date/2010/05" title="2010年五月" target="_blank">2010年五月</a></li>
-<li><p><a href="http://blog.nosqlfan.com/html/date/2010/04" title="2010年四月" target="_blank">2010年四月</a></p>
-</li>
-<li><h2 id="-">链接表</h2>
-</li>
-<li><p><a href="http://10gt.com/" title="10GT分享社区-发现你未知的 分享你知道的" target="_blank">10GT</a></p>
-</li>
-<li><a href="http://www.3wzhaopin.com/" title="3w招聘–互联网招聘" target="_blank">3w招聘–互联网招聘</a></li>
-<li><a href="http://mongoic.grandcloud.cn/" title="盛大MongoDB云服务" target="_blank">Mongo IC – 盛大MongoDB云服务</a></li>
-<li><a href="http://simple-is-better.com/" title="python-cn 新闻 招聘 分享 酷站" target="_blank">python-cn 新闻 招聘 分享 酷站</a></li>
-<li><a href="http://www.searchdatabase.com.cn/" title="TechTarget数据库" target="_blank">TechTarget数据库</a></li>
-<li><a href="http://www.vpsee.com/" title="VPSee" target="_blank">VPSee</a></li>
-<li><a href="http://www.oschina.net/" title="开源中国社区" target="_blank">开源中国社区</a></li>
-<li><a href="http://www.yankay.com/" target="_blank">我自然-颜开的博客</a></li>
-<li><a href="http://blog.csdn.net/v_JULY_v" target="_blank">结构之法 算法之道</a></li>
-<li><a href="http://www.douban.com/group/nosql/" title="豆瓣NoSQL小组，讨论NoSQL相关话题。" target="_blank">豆瓣NoSQL小组</a></li>
-<li><a href="http://www.hoterran.info/" title="hoterran的技术博客" target="_blank">运维和开发</a></li>
-</ul>
-<p>© 2012 <a href="http://blog.nosqlfan.com/" target="_blank">NoSQLFan</a> · <a href="http://www.nosqlfan.com/" target="_blank">NoSQLFan</a> theme by @<a href="http://twitter.com/ninayan" target="_blank">ninayan</a> <a href="http://tongji.baidu.com/hm-web/welcome/ico?s=71f4346b63eebb9cf9c0390da32421a3" target="_blank"><img src="" alt=""></a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Nosql/">Nosql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Nosql/" class="label label-primary">Nosql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:31"datetime="2014-03-07 09:54:31"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-Nosql--译NoSQL生态系统/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-Nosql--译NoSQL生态系统" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -3245,7 +2884,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:55:37</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:28:50</em></span></div>
 </div>
 <div class="clearfix"></div>
 
