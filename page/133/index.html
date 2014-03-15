@@ -715,34 +715,87 @@ UDF 产生的大 BLOB 值会导致复制变慢；
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--MySQL运维笔记（一）——终止高负载SQL/">MySQL 运维笔记（一）—— 终止高负载SQL</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--MySQL语句级避免重复插入——InsertSelectNotExist/">MySQL 语句级避免重复插入—— Insert Select Not Exist</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--MySQL运维笔记（一）——终止高负载SQL/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--MySQL语句级避免重复插入——InsertSelectNotExist/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="mysql-sql">MySQL 运维笔记（一）—— 终止高负载SQL</h1>
-<p>数据库表体积大了，负载高了，难免一个sql出去耗时延长。半个月前，一个凌晨定时任务跑了8小时，突然手足无措。最后找DBA协助，直接干掉了这个sql进程。
-其实，这并不复杂。
-首先，找出占用CPU时间过长的SQL
+        <h1 id="mysql-insert-select-not-exist">MySQL 语句级避免重复插入—— Insert Select Not Exist</h1>
+<p>想要插入一条数据，要避免重复插入，又不想折腾两回数据库连接操作，可以参考如下办法。<img src="" alt="">
 Sql代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
 <ol>
-<li>show processlist;  </li>
+<li>INSERT INTO table(column1,column2,column3 ...columnN)  </li>
+<li>SELECT value1,value2,value3 ...valueN  </li>
+<li>FROM dual  </li>
+<li>WHERE NOT EXISTS(  </li>
+<li>SELECT /*  </li>
+<li>FROM table  </li>
+<li>WHERE value = ?  </li>
+<li>);  </li>
 </ol>
-<p>show processlist;</p>
-<p><img src="" alt="">
- 假定最后一条sql处于Query状态，且Time时间过长，就锁定它的ID，直接干掉即可。</p>
-<p>然后，杀死进程：</p>
-<p>Sql代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<p>INSERT INTO table(column1,column2,column3 ...columnN)</p>
+<p>SELECT value1,value2,value3 ...valueN
+FROM dual</p>
+<p>WHERE NOT EXISTS(
+      SELECT /*</p>
+<pre><code>  FROM table
+  WHERE value = ?
+</code></pre><p>);
+<strong>dual</strong>是为了构建查询语句而存在的表,Oracle中很常见,配合<strong>INSERT ... SELECT</strong>构建成我们需要的表,并指定了数据项.
+<strong>EXISTS</strong>通过这个判断是否存在的函数,就免去了我们做IF-ELSE的冗繁操作.<img src="" alt="">
+例:
+Sql代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
 <ol>
-<li>kill QUERY  4487855;  </li>
+<li>INSERT INTO content (  </li>
+<li>detail,  </li>
+<li>status,  </li>
+<li>beginTime,  </li>
+<li>endTime)   </li>
+<li>SELECT  </li>
+<li>@detail,  </li>
+<li>1,  </li>
+<li>NULL,  </li>
+<li>NULL  </li>
+<li>FROM DUAL  </li>
+<li>WHERE NOT EXISTS(  </li>
+<li>SELECT contentId   </li>
+<li>FROM content   </li>
+<li><p>WHERE detail=@detail);  </p>
+<p> INSERT INTO content (</p>
+<pre><code> detail,
+ status,
+
+ beginTime,
+ endTime)
+</code></pre><p> SELECT</p>
+<pre><code> @detail,
+
+ 1,
+ NULL,
+
+ NULL
+</code></pre><p> FROM DUAL</p>
+<p>  WHERE NOT EXISTS(</p>
+<pre><code>  SELECT contentId
+
+  FROM content
+  WHERE detail=@detail);
+</code></pre><p><strong>@detail</strong>是要存入的内容，这里对内容进行了检索，如果要这么做，最好对该字段做唯一约束，或加索引。<img src="" alt="">
+省掉了IF-ELSE，在iBatis配置一下就ok了，哈！<img src="" alt="">
+还有个更坚决的办法——replace into：
+Sql代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+</li>
+<li><p>replace into blacklist(userInfoId,uid)  </p>
+</li>
+<li>select userInfoId,uid from user_info u where uid in(  </li>
+<li>&#39;u303565440&#39;,&#39;u303566922&#39;,&#39;u303515112&#39;,&#39;u303559738&#39;);  </li>
 </ol>
-<p>kill QUERY  4487855;</p>
-<p> 这就大功告成了！</p>
-<p> 参考</p>
-<p>KILL [CONNECTION | QUERY] thread_id</p>
+<p>replace into blacklist(userInfoId,uid)</p>
+<p>select userInfoId,uid from user_info u where uid in(
+&#39;u303565440&#39;,&#39;u303566922&#39;,&#39;u303515112&#39;,&#39;u303559738&#39;);</p>
 
       
     </div>
@@ -753,7 +806,236 @@ Sql代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a>
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--MySQL运维笔记（一）——终止高负载SQL/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--MySQL运维笔记（一）——终止高负载SQL" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--MySQL语句级避免重复插入——InsertSelectNotExist/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--MySQL语句级避免重复插入——InsertSelectNotExist" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--如何优化MySQLinsert性能/">如何优化MySQL insert性能</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--如何优化MySQLinsert性能/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-mysql-insert-">如何优化MySQL insert性能</h1>
+<p>您还未登录！|<a href="https://passport.csdn.net/account/login" target="_blank">登录</a>|<a href="https://passport.csdn.net/account/register" target="_blank">注册</a>|<a href="https://passport.csdn.net/help/faq" target="_blank">帮助</a></p>
+<ul>
+<li><a href="http://www.csdn.net/" target="_blank">首页</a></li>
+<li><a href="http://news.csdn.net/" target="_blank">业界</a></li>
+<li><a href="http://mobile.csdn.net/" target="_blank">移动</a></li>
+<li><a href="http://cloud.csdn.net/" target="_blank">云计算</a></li>
+<li><a href="http://sd.csdn.net/" target="_blank">研发</a></li>
+<li><a href="http://bbs.csdn.net/" target="_blank">论坛</a></li>
+<li><a href="http://blog.csdn.net/" target="_blank">博客</a></li>
+<li><a href="http://download.csdn.net/" target="_blank">下载</a></li>
+<li><h2 id="-"><a href="">更多</a></h2>
+</li>
+</ul>
+<h1 id="-tigernorth-http-blog-csdn-net-tigernorth-"><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth的专栏</a></h1>
+<h2 id="beginning-linux-programming-">Beginning Linux Programming 笔记</h2>
+<ul>
+<li><a href="http://blog.csdn.net/tigernorth?viewmode=contents" target="_blank"><img src="" alt="">目录视图</a></li>
+<li><a href="http://blog.csdn.net/tigernorth?viewmode=list" target="_blank"><img src="" alt="">摘要视图</a></li>
+<li><a href="http://blog.csdn.net/tigernorth/rss/list" target="_blank"><img src="" alt="">订阅</a>
+<a href="https://code.csdn.net/blog/12" target="_blank">公告：博客新增直接引用代码功能</a>        <a href="http://www.csdn.net/article/2013-07-24/2816320" target="_blank">专访谭海燕：移动互联网开发的那些事</a>      <a href="http://blog.csdn.net/csdnproduct/article/details/9495139" target="_blank">CSDN博客频道自定义域名、标签搜索功能上线啦！</a>      <a href="http://blog.csdn.net/adali/article/details/9813651" target="_blank">独一无二的职位：开源社区经理</a></li>
+</ul>
+<h3 id="-mysql-insert-"><a href="">如何优化MySQL insert性能</a></h3>
+<p>分类： <a href="http://blog.csdn.net/tigernorth/article/category/1222822" target="_blank">MySQL</a>  2012-10-20 23:50 2602人阅读 <a href="">评论</a>(14) <a href="&quot;收藏&quot;">收藏</a> <a href="&quot;举报&quot;">举报</a>
+<a href="http://blog.csdn.net/tag/details.html?tag=insert" target="_blank">insert</a><a href="http://blog.csdn.net/tag/details.html?tag=mysql" target="_blank">mysql</a><a href="http://blog.csdn.net/tag/details.html?tag=%e4%bc%98%e5%8c%96" target="_blank">优化</a><a href="http://blog.csdn.net/tag/details.html?tag=sql" target="_blank">sql</a><a href="http://blog.csdn.net/tag/details.html?tag=%e6%b5%8b%e8%af%95" target="_blank">测试</a><a href="http://blog.csdn.net/tag/details.html?tag=table" target="_blank">table</a></p>
+<pre><code>对于一些数据量较大的系统，面临的问题除了是查询效率低下，还有一个很重要的问题就是插入时间长。我们就有一个业务系统，每天的数据导入需要4-5个钟。这种费时的操作其实是很有风险的，假设程序出了问题，想重跑操作那是一件痛苦的事情。因此，提高大数据量系统的MySQL insert效率是很有必要的。
+
+经过对MySQL的测试，发现一些可以提高insert效率的方法，供大家参考参考。
+</code></pre><p><strong>1. 一条SQL语句插入多条数据。</strong>
+常用的插入语句如：
+<strong>[sql]</strong> <a href="&quot;view plain&quot;">view plain</a><a href="&quot;copy&quot;">copy</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
+<ol>
+<li>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0);  </li>
+<li><p>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);<br>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0); INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);修改成：
+<strong>[sql]</strong> <a href="&quot;view plain&quot;">view plain</a><a href="&quot;copy&quot;">copy</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
+</li>
+<li><p>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0), (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);<br>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0), (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);</p>
+</li>
+</ol>
+<p>修改后的插入操作能够提高程序的插入效率。这里第二种SQL执行效率高的主要原因有两个，一是减少SQL语句解析的操作， 只需要解析一次就能进行数据的插入操作，二是SQL语句较短，可以减少网络传输的IO。</p>
+<p>这里提供一些测试对比数据，分别是进行单条数据的导入与转化成一条SQL语句进行导入，分别测试1百、1千、1万条数据记录。
+记录数 单条数据插入 多条数据插入 1百 0.149s 0.011s 1千 1.231s 0.047s 1万 11.678s 0.218s
+<strong>2. 在事务中进行插入处理。</strong>
+把插入修改成：
+<strong>[sql]</strong> <a href="&quot;view plain&quot;">view plain</a><a href="&quot;copy&quot;">copy</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
+<ol>
+<li>START TRANSACTION;  </li>
+<li>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0);  </li>
+<li>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);  </li>
+<li>...  </li>
+<li>COMMIT;<br>START TRANSACTION; INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0); INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1); ... COMMIT;</li>
+</ol>
+<p>使用事务可以提高数据的插入效率，这是因为进行一个INSERT操作时，MySQL内部会建立一个事务，在事务内进行真正插入处理。通过使用事务可以减少数据库执行插入语句时多次“创建事务，提交事务”的消耗，所有插入都在执行后才进行提交操作。</p>
+<p>这里也提供了测试对比，分别是不使用事务与使用事务在记录数为1百、1千、1万的情况。
+记录数 不使用事务 使用事务 1百 0.149s 0.033s 1千 1.231s 0.115s 1万 11.678s 1.050s
+<strong>性能测试：</strong>
+这里提供了同时使用上面两种方法进行INSERT效率优化的测试。即多条数据合并为同一个SQL，并且在事务中进行插入。
+记录数 单条数据插入 合并数据+事务插入 1万 0m15.977s 0m0.309s 10万 1m52.204s 0m2.271s 100万 18m31.317s 0m23.332s</p>
+<p>从测试结果可以看到，insert的效率大概有50倍的提高，这个一个很客观的数字。<em>**</em></p>
+<p><strong>注意事项：</strong></p>
+<ol>
+<li><p>SQL语句是有长度限制，在进行数据合并在同一SQL中务必不能超过SQL长度限制，通过max_allowed_packe配置可以修改，默认是1M。</p>
+</li>
+<li><p>事务需要控制大小，事务太大可能会影响执行的效率。MySQL有innodb_log_buffer_size配置项，超过这个值会日志会使用磁盘数据，这时，效率会有所下降。所以比较好的做法是，在事务大小达到配置项数据级前进行事务提交。</p>
+</li>
+</ol>
+<p>转载文章请注明来源： <a href="http://blog.csdn.net/tigernorth/article/details/8094277" target="_blank">http://blog.csdn.net/tigernorth/article/details/8094277</a>
+分享到： <a href="&quot;分享到新浪微博&quot;"></a><a href="&quot;分享到腾讯微博&quot;"></a></p>
+<ol>
+<li>上一篇：<a href="http://blog.csdn.net/tigernorth/article/details/7948539" target="_blank">MySQL锁的用法之行级锁</a></li>
+<li>下一篇：<a href="http://blog.csdn.net/tigernorth/article/details/8184924" target="_blank">MySQL 查询数据不一致</a>
+顶 7 踩 0
+查看评论<a href=""></a></li>
+</ol>
+<p>7楼 <a href="http://blog.csdn.net/kxxxxxxxb" target="_blank">kxxxxxxxb</a> 2013-05-21 15:19发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/kxxxxxxxb" target="_blank"><img src="" alt=""></a>楼主请教下，我一条sql语句一次性插入30000行数据出错，报的错误是mysql server has gone away ，插入25000行就可以，难道一行sql插入的大小是有限制的？（我已经调高了max_allowed_packet=16M）6楼 <a href="http://blog.csdn.net/huanggy001" target="_blank">huanggy001</a> 2012-11-28 10:03发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/huanggy001" target="_blank"><img src="" alt=""></a>多谢分享！5楼 <a href="http://blog.csdn.net/chunhaicao" target="_blank">chunhaicao</a> 2012-10-30 11:26发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/chunhaicao" target="_blank"><img src="" alt=""></a>方法很好啊
+只是我们大部分的备份数据都是“
+INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0);
+INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);”
+类的，这个有什么好的方法可以快速的转为一条Sql语句吗？Re: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-30 13:11发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复chunhaicao：使用mysqldump就能生成多行数据合并的sql的，用--extended-insert指定一个sql多条记录。4楼 <a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a> 2012-10-28 22:51发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dont27" target="_blank"><img src="" alt=""></a>最后一句：“转载文章请注明来源： <a href="http://blog.csdn.net/tigernorth/article/details/8094277”是你写的么？Re" target="_blank">http://blog.csdn.net/tigernorth/article/details/8094277”是你写的么？Re</a>: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-29 12:57发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复dont27：在百度搜博文标题，基本都只看到转载网站的搜索结果，CSND有事还看不到，很是郁闷。。Re: <a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a> 2012-10-29 23:26发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dont27" target="_blank"><img src="" alt=""></a>回复tigernorth：我勒个去，都是抓取的吧……话说那句话是你自己写的还是csdn自己加的？Re: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-29 23:43发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复dont27：自己写的。Re: <a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a> 2012-10-30 21:28发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dont27" target="_blank"><img src="" alt=""></a>回复tigernorth：之前百度一些技术的博客，貌似经常出现转载的情况，但都会留下最后“转载”的句子。我看那些抓取这文章的相当坑爹，都直接截取掉了……3楼 <a href="http://blog.csdn.net/dongfangling" target="_blank">dongfangling</a> 2012-10-23 22:45发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dongfangling" target="_blank"><img src="" alt=""></a>事物?还是事务?
+通过使用事物可以减少创建事物的消耗?Re: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-24 12:55发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复dongfangling：是“事务”，写错了，多谢提醒哈。
+是通过使用“事务”可以减少数据库插入数据时“创建事务，提交事务”的消耗，因为只需要开始创建一个事务，结束时提交即可。Re: <a href="http://blog.csdn.net/dongfangling" target="_blank">dongfangling</a> 2012-10-24 13:52发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dongfangling" target="_blank"><img src="" alt=""></a>回复tigernorth：COOL2楼 <a href="http://blog.csdn.net/tewuxiaoqiang" target="_blank">特务苹果</a> 2012-10-23 20:47发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tewuxiaoqiang" target="_blank"><img src="" alt=""></a>学习了。1楼 <a href="http://blog.csdn.net/limingchuan123456789" target="_blank">limingchuan123456789</a> 2012-10-22 11:07发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/limingchuan123456789" target="_blank"><img src="" alt=""></a>学习了。
+您还没有登录,请<a href="">[登录]</a>或<a href="http://passport.csdn.net/account/register?from=http%3A%2F%2Fblog.csdn.net%2Ftigernorth%2Farticle%2Fdetails%2F8094277" target="_blank">[注册]</a></p>
+<p>/* 以上用户言论只代表其个人观点，不代表CSDN网站的观点或立场<a href=""></a><a href=""></a>
+<a href="&quot;回到顶部&quot;"><img src="" alt="TOP"></a></p>
+<p>个人资料</p>
+<p><a href="http://my.csdn.net/tigernorth" target="_blank"><img src="&quot;访问我的空间&quot;" alt=""></a>
+<a href="http://my.csdn.net/tigernorth" target="_blank">tigernorth</a></p>
+<p><a href="&quot;[加关注]&quot;"></a> <a href="&quot;[发私信]&quot;"></a></p>
+<ul>
+<li>访问：16316次</li>
+<li>积分：430分</li>
+<li><p>排名：千里之外</p>
+</li>
+<li><p>原创：21篇</p>
+</li>
+<li>转载：1篇</li>
+<li>译文：0篇</li>
+<li>评论：24条</li>
+</ul>
+<p>文章搜索</p>
+<p><a href=""></a></p>
+<p>文章分类</p>
+<ul>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/806238" target="_blank">Beginning Linux Programming 笔记</a>(7)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/806236" target="_blank">TCP/IP相关工具命令</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/816887" target="_blank">Thinking in C++</a>(3)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/811054" target="_blank">微博开发平台</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/1073888" target="_blank">PHP</a>(2)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/1080760" target="_blank">linux</a>(2)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/1222822" target="_blank">MySQL</a>(5)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/1228827" target="_blank">锁机制</a>(1)</li>
+<li><p><a href="http://blog.csdn.net/tigernorth/article/category/1228828" target="_blank">MySQL锁</a>(2)
+文章存档</p>
+</li>
+<li><p><a href="http://blog.csdn.net/tigernorth/article/month/2012/11" target="_blank">2012年11月</a>(1)</p>
+</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/10" target="_blank">2012年10月</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/09" target="_blank">2012年09月</a>(2)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/08" target="_blank">2012年08月</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/06" target="_blank">2012年06月</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/02" target="_blank">2012年02月</a>(2)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2011/10" target="_blank">2011年10月</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2011/05" target="_blank">2011年05月</a>(3)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2011/04" target="_blank">2011年04月</a>(10)</li>
+</ul>
+<p>展开</p>
+<p>阅读排行</p>
+<ul>
+<li><a href="&quot;如何优化MySQL insert性能&quot;">如何优化MySQL insert性能</a>(2602)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/6331008" title="微博API：获取用户发布的微博" target="_blank">微博API：获取用户发布的微博</a>(2487)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7242146" title="如何使用CURL复用连接（PHP）" target="_blank">如何使用CURL复用连接（PHP）</a>(1094)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7272075" title="linux排重的方法" target="_blank">linux排重的方法</a>(832)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/6388604" title="C++循环变量定义生命周期" target="_blank">C++循环变量定义生命周期</a>(700)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7948539" title="MySQL锁的用法之行级锁" target="_blank">MySQL锁的用法之行级锁</a>(593)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7909951" title="PHP中MySQL连接管理" target="_blank">PHP中MySQL连接管理</a>(583)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/8184924" title="MySQL 查询数据不一致" target="_blank">MySQL 查询数据不一致</a>(576)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7670768" title="编写Linux定时处理程序" target="_blank">编写Linux定时处理程序</a>(515)</li>
+<li><p><a href="http://blog.csdn.net/tigernorth/article/details/7935766" title="MySQL锁的用法之表级锁" target="_blank">MySQL锁的用法之表级锁</a>(425)
+评论排行</p>
+</li>
+<li><p><a href="&quot;如何优化MySQL insert性能&quot;">如何优化MySQL insert性能</a>(14)</p>
+</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/6331008" title="微博API：获取用户发布的微博" target="_blank">微博API：获取用户发布的微博</a>(5)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7242146" title="如何使用CURL复用连接（PHP）" target="_blank">如何使用CURL复用连接（PHP）</a>(2)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/6388604" title="C++循环变量定义生命周期" target="_blank">C++循环变量定义生命周期</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/6844312" title="【转】如何才能做到网站高并发访问?" target="_blank">【转】如何才能做到网站高并发访问?</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7670768" title="编写Linux定时处理程序" target="_blank">编写Linux定时处理程序</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7272075" title="linux排重的方法" target="_blank">linux排重的方法</a>(0)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7909951" title="PHP中MySQL连接管理" target="_blank">PHP中MySQL连接管理</a>(0)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7935766" title="MySQL锁的用法之表级锁" target="_blank">MySQL锁的用法之表级锁</a>(0)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7948539" title="MySQL锁的用法之行级锁" target="_blank">MySQL锁的用法之行级锁</a>(0)</li>
+</ul>
+<p>推荐文章
+最新评论</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/kxxxxxxxb" target="_blank">kxxxxxxxb</a>: 楼主请教下，我一条sql语句一次性插入30000行数据出错，报的错误是mysql server ha...</p>
+<ul>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7670768#comments" target="_blank">编写Linux定时处理程序</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/u010138411" target="_blank">u010138411</a>: good</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/huanggy001" target="_blank">huanggy001</a>: 多谢分享！</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a>: @tigernorth:之前百度一些技术的博客，貌似经常出现转载的情况，但都会留下最后“转载”的句子...</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a>: @chunhaicao:使用mysqldump就能生成多行数据合并的sql的，用--extended...</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/chunhaicao" target="_blank">chunhaicao</a>: 方法很好啊只是我们大部分的备份数据都是“INSERT INTO <code>insert_table</code> (`d...</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a>: @dont27:自己写的。</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a>: @tigernorth:我勒个去，都是抓取的吧……话说那句话是你自己写的还是csdn自己加的？</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a>: @dont27:在百度搜博文标题，基本都只看到转载网站的搜索结果，CSND有事还看不到，很是郁闷。。</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a>: 最后一句：“转载文章请注明来源： <a href="http://blog.csdn.net/tigernorth/a" target="_blank">http://blog.csdn.net/tigernorth/a</a>...</p>
+<p><a href="http://www.csdn.net/company/about.html" target="_blank">公司简介</a>|<a href="http://www.csdn.net/company/recruit.html" target="_blank">招贤纳士</a>|<a href="http://www.csdn.net/company/marketing.html" target="_blank">广告服务</a>|<a href="http://www.csdn.net/company/account.html" target="_blank">银行汇款帐号</a>|<a href="http://www.csdn.net/company/contact.html" target="_blank">联系方式</a>|<a href="http://www.csdn.net/company/statement.html" target="_blank">版权声明</a>|<a href="http://www.csdn.net/company/layer.html" target="_blank">法律顾问</a>|<a href="mailto:webmaster@csdn.net">问题报告</a><a href="http://wpa.qq.com/msgrd?v=3&amp;uin=2355263776&amp;site=qq&amp;menu=yes" target="_blank">QQ客服</a> <a href="http://e.weibo.com/csdnsupport/profile" target="_blank">微博客服</a> <a href="http://bbs.csdn.net/forums/Service" target="_blank">论坛反馈</a> <a href="mailto:webmaster@csdn.net">联系邮箱：webmaster@csdn.net</a> 服务热线：400-600-2320京 ICP 证 070598 号北京创新乐知信息技术有限公司 版权所有世纪乐知(北京)网络技术有限公司 提供技术支持江苏乐知网络技术有限公司 提供商务支持Copyright © 1999-2012, CSDN.NET, All Rights Reserved <a href="http://www.hd315.gov.cn/beian/view.asp?bianhao=010202001032100010" target="_blank"><img src="" alt="GongshangLogo"></a>
+<img src="http://counter.csdn.net/pv.aspx?id=24" alt=""></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--如何优化MySQLinsert性能/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--如何优化MySQLinsert性能" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1086,235 +1368,6 @@ Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代�
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--如何优化MySQLinsert性能/">如何优化MySQL insert性能</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--如何优化MySQLinsert性能/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-mysql-insert-">如何优化MySQL insert性能</h1>
-<p>您还未登录！|<a href="https://passport.csdn.net/account/login" target="_blank">登录</a>|<a href="https://passport.csdn.net/account/register" target="_blank">注册</a>|<a href="https://passport.csdn.net/help/faq" target="_blank">帮助</a></p>
-<ul>
-<li><a href="http://www.csdn.net/" target="_blank">首页</a></li>
-<li><a href="http://news.csdn.net/" target="_blank">业界</a></li>
-<li><a href="http://mobile.csdn.net/" target="_blank">移动</a></li>
-<li><a href="http://cloud.csdn.net/" target="_blank">云计算</a></li>
-<li><a href="http://sd.csdn.net/" target="_blank">研发</a></li>
-<li><a href="http://bbs.csdn.net/" target="_blank">论坛</a></li>
-<li><a href="http://blog.csdn.net/" target="_blank">博客</a></li>
-<li><a href="http://download.csdn.net/" target="_blank">下载</a></li>
-<li><h2 id="-"><a href="">更多</a></h2>
-</li>
-</ul>
-<h1 id="-tigernorth-http-blog-csdn-net-tigernorth-"><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth的专栏</a></h1>
-<h2 id="beginning-linux-programming-">Beginning Linux Programming 笔记</h2>
-<ul>
-<li><a href="http://blog.csdn.net/tigernorth?viewmode=contents" target="_blank"><img src="" alt="">目录视图</a></li>
-<li><a href="http://blog.csdn.net/tigernorth?viewmode=list" target="_blank"><img src="" alt="">摘要视图</a></li>
-<li><a href="http://blog.csdn.net/tigernorth/rss/list" target="_blank"><img src="" alt="">订阅</a>
-<a href="https://code.csdn.net/blog/12" target="_blank">公告：博客新增直接引用代码功能</a>        <a href="http://www.csdn.net/article/2013-07-24/2816320" target="_blank">专访谭海燕：移动互联网开发的那些事</a>      <a href="http://blog.csdn.net/csdnproduct/article/details/9495139" target="_blank">CSDN博客频道自定义域名、标签搜索功能上线啦！</a>      <a href="http://blog.csdn.net/adali/article/details/9813651" target="_blank">独一无二的职位：开源社区经理</a></li>
-</ul>
-<h3 id="-mysql-insert-"><a href="">如何优化MySQL insert性能</a></h3>
-<p>分类： <a href="http://blog.csdn.net/tigernorth/article/category/1222822" target="_blank">MySQL</a>  2012-10-20 23:50 2602人阅读 <a href="">评论</a>(14) <a href="&quot;收藏&quot;">收藏</a> <a href="&quot;举报&quot;">举报</a>
-<a href="http://blog.csdn.net/tag/details.html?tag=insert" target="_blank">insert</a><a href="http://blog.csdn.net/tag/details.html?tag=mysql" target="_blank">mysql</a><a href="http://blog.csdn.net/tag/details.html?tag=%e4%bc%98%e5%8c%96" target="_blank">优化</a><a href="http://blog.csdn.net/tag/details.html?tag=sql" target="_blank">sql</a><a href="http://blog.csdn.net/tag/details.html?tag=%e6%b5%8b%e8%af%95" target="_blank">测试</a><a href="http://blog.csdn.net/tag/details.html?tag=table" target="_blank">table</a></p>
-<pre><code>对于一些数据量较大的系统，面临的问题除了是查询效率低下，还有一个很重要的问题就是插入时间长。我们就有一个业务系统，每天的数据导入需要4-5个钟。这种费时的操作其实是很有风险的，假设程序出了问题，想重跑操作那是一件痛苦的事情。因此，提高大数据量系统的MySQL insert效率是很有必要的。
-
-经过对MySQL的测试，发现一些可以提高insert效率的方法，供大家参考参考。
-</code></pre><p><strong>1. 一条SQL语句插入多条数据。</strong>
-常用的插入语句如：
-<strong>[sql]</strong> <a href="&quot;view plain&quot;">view plain</a><a href="&quot;copy&quot;">copy</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
-<ol>
-<li>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0);  </li>
-<li><p>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);<br>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0); INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);修改成：
-<strong>[sql]</strong> <a href="&quot;view plain&quot;">view plain</a><a href="&quot;copy&quot;">copy</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
-</li>
-<li><p>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0), (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);<br>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0), (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);</p>
-</li>
-</ol>
-<p>修改后的插入操作能够提高程序的插入效率。这里第二种SQL执行效率高的主要原因有两个，一是减少SQL语句解析的操作， 只需要解析一次就能进行数据的插入操作，二是SQL语句较短，可以减少网络传输的IO。</p>
-<p>这里提供一些测试对比数据，分别是进行单条数据的导入与转化成一条SQL语句进行导入，分别测试1百、1千、1万条数据记录。
-记录数 单条数据插入 多条数据插入 1百 0.149s 0.011s 1千 1.231s 0.047s 1万 11.678s 0.218s
-<strong>2. 在事务中进行插入处理。</strong>
-把插入修改成：
-<strong>[sql]</strong> <a href="&quot;view plain&quot;">view plain</a><a href="&quot;copy&quot;">copy</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
-<ol>
-<li>START TRANSACTION;  </li>
-<li>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0);  </li>
-<li>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);  </li>
-<li>...  </li>
-<li>COMMIT;<br>START TRANSACTION; INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0); INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1); ... COMMIT;</li>
-</ol>
-<p>使用事务可以提高数据的插入效率，这是因为进行一个INSERT操作时，MySQL内部会建立一个事务，在事务内进行真正插入处理。通过使用事务可以减少数据库执行插入语句时多次“创建事务，提交事务”的消耗，所有插入都在执行后才进行提交操作。</p>
-<p>这里也提供了测试对比，分别是不使用事务与使用事务在记录数为1百、1千、1万的情况。
-记录数 不使用事务 使用事务 1百 0.149s 0.033s 1千 1.231s 0.115s 1万 11.678s 1.050s
-<strong>性能测试：</strong>
-这里提供了同时使用上面两种方法进行INSERT效率优化的测试。即多条数据合并为同一个SQL，并且在事务中进行插入。
-记录数 单条数据插入 合并数据+事务插入 1万 0m15.977s 0m0.309s 10万 1m52.204s 0m2.271s 100万 18m31.317s 0m23.332s</p>
-<p>从测试结果可以看到，insert的效率大概有50倍的提高，这个一个很客观的数字。<em>**</em></p>
-<p><strong>注意事项：</strong></p>
-<ol>
-<li><p>SQL语句是有长度限制，在进行数据合并在同一SQL中务必不能超过SQL长度限制，通过max_allowed_packe配置可以修改，默认是1M。</p>
-</li>
-<li><p>事务需要控制大小，事务太大可能会影响执行的效率。MySQL有innodb_log_buffer_size配置项，超过这个值会日志会使用磁盘数据，这时，效率会有所下降。所以比较好的做法是，在事务大小达到配置项数据级前进行事务提交。</p>
-</li>
-</ol>
-<p>转载文章请注明来源： <a href="http://blog.csdn.net/tigernorth/article/details/8094277" target="_blank">http://blog.csdn.net/tigernorth/article/details/8094277</a>
-分享到： <a href="&quot;分享到新浪微博&quot;"></a><a href="&quot;分享到腾讯微博&quot;"></a></p>
-<ol>
-<li>上一篇：<a href="http://blog.csdn.net/tigernorth/article/details/7948539" target="_blank">MySQL锁的用法之行级锁</a></li>
-<li>下一篇：<a href="http://blog.csdn.net/tigernorth/article/details/8184924" target="_blank">MySQL 查询数据不一致</a>
-顶 7 踩 0
-查看评论<a href=""></a></li>
-</ol>
-<p>7楼 <a href="http://blog.csdn.net/kxxxxxxxb" target="_blank">kxxxxxxxb</a> 2013-05-21 15:19发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/kxxxxxxxb" target="_blank"><img src="" alt=""></a>楼主请教下，我一条sql语句一次性插入30000行数据出错，报的错误是mysql server has gone away ，插入25000行就可以，难道一行sql插入的大小是有限制的？（我已经调高了max_allowed_packet=16M）6楼 <a href="http://blog.csdn.net/huanggy001" target="_blank">huanggy001</a> 2012-11-28 10:03发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/huanggy001" target="_blank"><img src="" alt=""></a>多谢分享！5楼 <a href="http://blog.csdn.net/chunhaicao" target="_blank">chunhaicao</a> 2012-10-30 11:26发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/chunhaicao" target="_blank"><img src="" alt=""></a>方法很好啊
-只是我们大部分的备份数据都是“
-INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0);
-INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);”
-类的，这个有什么好的方法可以快速的转为一条Sql语句吗？Re: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-30 13:11发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复chunhaicao：使用mysqldump就能生成多行数据合并的sql的，用--extended-insert指定一个sql多条记录。4楼 <a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a> 2012-10-28 22:51发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dont27" target="_blank"><img src="" alt=""></a>最后一句：“转载文章请注明来源： <a href="http://blog.csdn.net/tigernorth/article/details/8094277”是你写的么？Re" target="_blank">http://blog.csdn.net/tigernorth/article/details/8094277”是你写的么？Re</a>: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-29 12:57发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复dont27：在百度搜博文标题，基本都只看到转载网站的搜索结果，CSND有事还看不到，很是郁闷。。Re: <a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a> 2012-10-29 23:26发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dont27" target="_blank"><img src="" alt=""></a>回复tigernorth：我勒个去，都是抓取的吧……话说那句话是你自己写的还是csdn自己加的？Re: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-29 23:43发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复dont27：自己写的。Re: <a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a> 2012-10-30 21:28发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dont27" target="_blank"><img src="" alt=""></a>回复tigernorth：之前百度一些技术的博客，貌似经常出现转载的情况，但都会留下最后“转载”的句子。我看那些抓取这文章的相当坑爹，都直接截取掉了……3楼 <a href="http://blog.csdn.net/dongfangling" target="_blank">dongfangling</a> 2012-10-23 22:45发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dongfangling" target="_blank"><img src="" alt=""></a>事物?还是事务?
-通过使用事物可以减少创建事物的消耗?Re: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-24 12:55发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复dongfangling：是“事务”，写错了，多谢提醒哈。
-是通过使用“事务”可以减少数据库插入数据时“创建事务，提交事务”的消耗，因为只需要开始创建一个事务，结束时提交即可。Re: <a href="http://blog.csdn.net/dongfangling" target="_blank">dongfangling</a> 2012-10-24 13:52发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dongfangling" target="_blank"><img src="" alt=""></a>回复tigernorth：COOL2楼 <a href="http://blog.csdn.net/tewuxiaoqiang" target="_blank">特务苹果</a> 2012-10-23 20:47发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tewuxiaoqiang" target="_blank"><img src="" alt=""></a>学习了。1楼 <a href="http://blog.csdn.net/limingchuan123456789" target="_blank">limingchuan123456789</a> 2012-10-22 11:07发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/limingchuan123456789" target="_blank"><img src="" alt=""></a>学习了。
-您还没有登录,请<a href="">[登录]</a>或<a href="http://passport.csdn.net/account/register?from=http%3A%2F%2Fblog.csdn.net%2Ftigernorth%2Farticle%2Fdetails%2F8094277" target="_blank">[注册]</a></p>
-<p>/* 以上用户言论只代表其个人观点，不代表CSDN网站的观点或立场<a href=""></a><a href=""></a>
-<a href="&quot;回到顶部&quot;"><img src="" alt="TOP"></a></p>
-<p>个人资料</p>
-<p><a href="http://my.csdn.net/tigernorth" target="_blank"><img src="&quot;访问我的空间&quot;" alt=""></a>
-<a href="http://my.csdn.net/tigernorth" target="_blank">tigernorth</a></p>
-<p><a href="&quot;[加关注]&quot;"></a> <a href="&quot;[发私信]&quot;"></a></p>
-<ul>
-<li>访问：16316次</li>
-<li>积分：430分</li>
-<li><p>排名：千里之外</p>
-</li>
-<li><p>原创：21篇</p>
-</li>
-<li>转载：1篇</li>
-<li>译文：0篇</li>
-<li>评论：24条</li>
-</ul>
-<p>文章搜索</p>
-<p><a href=""></a></p>
-<p>文章分类</p>
-<ul>
-<li><a href="http://blog.csdn.net/tigernorth/article/category/806238" target="_blank">Beginning Linux Programming 笔记</a>(7)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/category/806236" target="_blank">TCP/IP相关工具命令</a>(1)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/category/816887" target="_blank">Thinking in C++</a>(3)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/category/811054" target="_blank">微博开发平台</a>(1)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/category/1073888" target="_blank">PHP</a>(2)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/category/1080760" target="_blank">linux</a>(2)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/category/1222822" target="_blank">MySQL</a>(5)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/category/1228827" target="_blank">锁机制</a>(1)</li>
-<li><p><a href="http://blog.csdn.net/tigernorth/article/category/1228828" target="_blank">MySQL锁</a>(2)
-文章存档</p>
-</li>
-<li><p><a href="http://blog.csdn.net/tigernorth/article/month/2012/11" target="_blank">2012年11月</a>(1)</p>
-</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/10" target="_blank">2012年10月</a>(1)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/09" target="_blank">2012年09月</a>(2)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/08" target="_blank">2012年08月</a>(1)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/06" target="_blank">2012年06月</a>(1)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/02" target="_blank">2012年02月</a>(2)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/month/2011/10" target="_blank">2011年10月</a>(1)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/month/2011/05" target="_blank">2011年05月</a>(3)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/month/2011/04" target="_blank">2011年04月</a>(10)</li>
-</ul>
-<p>展开</p>
-<p>阅读排行</p>
-<ul>
-<li><a href="&quot;如何优化MySQL insert性能&quot;">如何优化MySQL insert性能</a>(2602)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/6331008" title="微博API：获取用户发布的微博" target="_blank">微博API：获取用户发布的微博</a>(2487)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7242146" title="如何使用CURL复用连接（PHP）" target="_blank">如何使用CURL复用连接（PHP）</a>(1094)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7272075" title="linux排重的方法" target="_blank">linux排重的方法</a>(832)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/6388604" title="C++循环变量定义生命周期" target="_blank">C++循环变量定义生命周期</a>(700)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7948539" title="MySQL锁的用法之行级锁" target="_blank">MySQL锁的用法之行级锁</a>(593)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7909951" title="PHP中MySQL连接管理" target="_blank">PHP中MySQL连接管理</a>(583)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/8184924" title="MySQL 查询数据不一致" target="_blank">MySQL 查询数据不一致</a>(576)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7670768" title="编写Linux定时处理程序" target="_blank">编写Linux定时处理程序</a>(515)</li>
-<li><p><a href="http://blog.csdn.net/tigernorth/article/details/7935766" title="MySQL锁的用法之表级锁" target="_blank">MySQL锁的用法之表级锁</a>(425)
-评论排行</p>
-</li>
-<li><p><a href="&quot;如何优化MySQL insert性能&quot;">如何优化MySQL insert性能</a>(14)</p>
-</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/6331008" title="微博API：获取用户发布的微博" target="_blank">微博API：获取用户发布的微博</a>(5)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7242146" title="如何使用CURL复用连接（PHP）" target="_blank">如何使用CURL复用连接（PHP）</a>(2)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/6388604" title="C++循环变量定义生命周期" target="_blank">C++循环变量定义生命周期</a>(1)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/6844312" title="【转】如何才能做到网站高并发访问?" target="_blank">【转】如何才能做到网站高并发访问?</a>(1)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7670768" title="编写Linux定时处理程序" target="_blank">编写Linux定时处理程序</a>(1)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7272075" title="linux排重的方法" target="_blank">linux排重的方法</a>(0)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7909951" title="PHP中MySQL连接管理" target="_blank">PHP中MySQL连接管理</a>(0)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7935766" title="MySQL锁的用法之表级锁" target="_blank">MySQL锁的用法之表级锁</a>(0)</li>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7948539" title="MySQL锁的用法之行级锁" target="_blank">MySQL锁的用法之行级锁</a>(0)</li>
-</ul>
-<p>推荐文章
-最新评论</p>
-<ul>
-<li><a href="">如何优化MySQL insert性能</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/kxxxxxxxb" target="_blank">kxxxxxxxb</a>: 楼主请教下，我一条sql语句一次性插入30000行数据出错，报的错误是mysql server ha...</p>
-<ul>
-<li><a href="http://blog.csdn.net/tigernorth/article/details/7670768#comments" target="_blank">编写Linux定时处理程序</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/u010138411" target="_blank">u010138411</a>: good</p>
-<ul>
-<li><a href="">如何优化MySQL insert性能</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/huanggy001" target="_blank">huanggy001</a>: 多谢分享！</p>
-<ul>
-<li><a href="">如何优化MySQL insert性能</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a>: @tigernorth:之前百度一些技术的博客，貌似经常出现转载的情况，但都会留下最后“转载”的句子...</p>
-<ul>
-<li><a href="">如何优化MySQL insert性能</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a>: @chunhaicao:使用mysqldump就能生成多行数据合并的sql的，用--extended...</p>
-<ul>
-<li><a href="">如何优化MySQL insert性能</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/chunhaicao" target="_blank">chunhaicao</a>: 方法很好啊只是我们大部分的备份数据都是“INSERT INTO <code>insert_table</code> (`d...</p>
-<ul>
-<li><a href="">如何优化MySQL insert性能</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a>: @dont27:自己写的。</p>
-<ul>
-<li><a href="">如何优化MySQL insert性能</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a>: @tigernorth:我勒个去，都是抓取的吧……话说那句话是你自己写的还是csdn自己加的？</p>
-<ul>
-<li><a href="">如何优化MySQL insert性能</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a>: @dont27:在百度搜博文标题，基本都只看到转载网站的搜索结果，CSND有事还看不到，很是郁闷。。</p>
-<ul>
-<li><a href="">如何优化MySQL insert性能</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a>: 最后一句：“转载文章请注明来源： <a href="http://blog.csdn.net/tigernorth/a" target="_blank">http://blog.csdn.net/tigernorth/a</a>...</p>
-<p><a href="http://www.csdn.net/company/about.html" target="_blank">公司简介</a>|<a href="http://www.csdn.net/company/recruit.html" target="_blank">招贤纳士</a>|<a href="http://www.csdn.net/company/marketing.html" target="_blank">广告服务</a>|<a href="http://www.csdn.net/company/account.html" target="_blank">银行汇款帐号</a>|<a href="http://www.csdn.net/company/contact.html" target="_blank">联系方式</a>|<a href="http://www.csdn.net/company/statement.html" target="_blank">版权声明</a>|<a href="http://www.csdn.net/company/layer.html" target="_blank">法律顾问</a>|<a href="mailto:webmaster@csdn.net">问题报告</a><a href="http://wpa.qq.com/msgrd?v=3&amp;uin=2355263776&amp;site=qq&amp;menu=yes" target="_blank">QQ客服</a> <a href="http://e.weibo.com/csdnsupport/profile" target="_blank">微博客服</a> <a href="http://bbs.csdn.net/forums/Service" target="_blank">论坛反馈</a> <a href="mailto:webmaster@csdn.net">联系邮箱：webmaster@csdn.net</a> 服务热线：400-600-2320京 ICP 证 070598 号北京创新乐知信息技术有限公司 版权所有世纪乐知(北京)网络技术有限公司 提供技术支持江苏乐知网络技术有限公司 提供商务支持Copyright © 1999-2012, CSDN.NET, All Rights Reserved <a href="http://www.hd315.gov.cn/beian/view.asp?bianhao=010202001032100010" target="_blank"><img src="" alt="GongshangLogo"></a>
-<img src="http://counter.csdn.net/pv.aspx?id=24" alt=""></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--如何优化MySQLinsert性能/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--如何优化MySQLinsert性能" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -1385,7 +1438,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:47:46</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:55:36</em></span></div>
 </div>
 <div class="clearfix"></div>
 

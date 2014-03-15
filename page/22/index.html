@@ -110,453 +110,124 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题/">使用XStream序列化、反序列化XML数据时遇到的各种问题</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/">HAProxy的独门武器：ebtree</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-xstream-xml-">使用XStream序列化、反序列化XML数据时遇到的各种问题</h1>
-<p>现在参与的项目是一个纯Application Server，整个Server都是自己搭建的，使用JMS消息实现客户端和服务器的交互，交互的数据格式采用XML。说来惭愧，开始为了赶进度，所有XML消息都是使用字符串拼接的，而XML的解析则是使用DOM方式查找的。我很早就看这些代码不爽了，可惜一直没有时间去重构，最近项目加了几个人，而且美国那边也开始渐渐的把这个项目开发的控制权交给我们了，所以我开始有一些按自己的方式开发的机会了。因而最近动手开始重构这些字符串拼接的代码。</p>
-<p>对XML到Java Bean的解析框架，熟悉一点的只有Digester和XStream，Digester貌似只能从XML文件解析成Java Bean对象，所以只能选择XStream来做了，而且同组的其他项目也有在用XStream。一直听说XStream的使用比较简单，而且我对ThoughtWorks这家公司一直比较有好感，所以还以为引入XStream不会花太多时间，然而使用以后才发现XStream并没有想象的你那么简单。不过这个也有可能是因为我不想改变原来的XML数据格式，而之前的XML数据格式的设计自然不会考虑到如何便利的使用XStream。因而记录在使用过程中遇到的问题，供后来人参考，也为自己以后如果打算开其源码提供参考。废话就到这里了，接下来步入正题。</p>
-<p>首先对于简单的引用，XStream使用起来确实比较简单，比如自定义标签的属性、使用属性和使用子标签的定义等：
-@XStreamAlias(&quot;request&quot;)
-public class XmlRequest1 {
-    private static XStream xstream;
-    static {
-        xstream = new XStream();
-        xstream.autodetectAnnotations(true);
-    }</p>
-<pre><code>@XStreamAsAttribute
-private String from;
-
-@XStreamAsAttribute
-@XStreamAlias(&quot;calculate-method&quot;)
-private String calculateMethod;
-
-@XStreamAlias(&quot;request-time&quot;)
-private Date requestTime;
-
-@XStreamAlias(&quot;input-files&quot;)
-private List&lt;InputFileInfo&gt; inputFiles;
-
-public static String toXml(XmlRequest1 request) {
-    StringWriter writer = new StringWriter();
-    writer.append(Constants.XML_HEADER);
-    xstream.toXML(request, writer);
-    return writer.toString();
-}
-public static XmlRequest1 toInstance(String xmlContent) {
-    return (XmlRequest1)xstream.fromXML(xmlContent);
-</code></pre><p>}
-<img src="" alt="">
-    @XStreamAlias(&quot;input-file&quot;)
-    public static class InputFileInfo {
-        private String type;
-        private String fileName;
-        <img src="" alt="">
-    }
-    public static void main(String[] args) {
-        XmlRequest1 request = buildXmlRequest();
-        System.out.println(XmlRequest1.toXml(request));
-    }
-    private static XmlRequest1 buildXmlRequest() {
-        <img src="" alt="">
-    }
-}</p>
-<p> 对以上Request定义，我们可以得到如下结果：</p>
-<p>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;</p>
-<request from="levin@host" calculate-method="advanced">
- <request-time>2012-11-28 17:11:54.664 UTC</request-time>
- <input-files>
-    <input-file>
-      <type>DATA</type>
-      <fileName>data.2012.11.29.dat</fileName>
-    </input-file>
-    <input-file>
-      <type>CALENDAR</type>
-      <fileName>calendar.2012.11.29.dat</fileName>
-    </input-file>
- </input-files>
-</request>
-
-<p>可惜这个世界不会那么清净，这个格式有些时候貌似并不符合要求，比如request-time的格式、input-files的格式，我们实际需要的格式是这样的：</p>
-<p>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;</p>
-<request from="levin@host" calculate-method="advanced">
- <request-time>20121128T17:51:05</request-time>
- <input-file type="DATA">data.2012.11.29.dat</input-file>
- <input-file type="CALENDAR">calendar.2012.11.29.dat</input-file>
-</request>
-
-<p>对不同Date格式的支持可以是用Converter实现，在XStream中默认使用自己实现的DateConverter，它支持的格式是：yyyy-MM-dd HH:mm:ss.S &#39;UTC&#39;，然而我们现在需要的格式是yyyy-MM-dd’T’HH:mm:ss，如果使用XStream直接注册DateConverter，可以使用配置自己的DateConverter，但是由于DateConverter的构造函数的定义以及@XStreamConverter的构造函数参数的支持方式的限制，貌似DateConverter不能很好的支持注解方式的注册，因而我时间了一个自己的DateConverter以支持注解：</p>
-<p>public class LevinDateConverter extends DateConverter {
-    public LevinDateConverter(String dateFormat) {
-        super(dateFormat, new String[] { dateFormat });
-    }
-}</p>
-<p>在requestTime字段中需要加入以下注解定义：</p>
-<p>@XStreamConverter(value=LevinDateConverter.class, strings={&quot;yyyyMMdd&#39;T&#39;HH:mm:ss&quot;})
-@XStreamAlias(&quot;request-time&quot;)
-private Date requestTime;</p>
-<p>对集合类，XStream提供了@XStreamImplicit注解，以将集合中的内容摊平到上一层XML元素中，其中itemFieldName的值为其使用的标签名，此时InputFileInfo类中不需要@XStreamAlias标签的定义：</p>
-<p>@XStreamImplicit(itemFieldName=&quot;input-file&quot;)
-private List<InputFileInfo> inputFiles;</p>
-<p>对InputFileInfo中的字段，type作为属性很容易，只要为它加上@XStreamAsAttribute注解即可，而将fileName作为input-file标签的一个内容字符串，则需要使用ToAttributedValueConverter，其中Converter的参数为需要作为字符串内容的字段名：</p>
-<p>@XStreamConverter(value=ToAttributedValueConverter.class, strings={&quot;fileName&quot;})
-public static class InputFileInfo {
-    @XStreamAsAttribute
-    private String type;
-private String fileName;
-<img src="" alt="">
-}</p>
-<p>XStream对枚举类型的支持貌似不怎么好，默认注册的EnumSingleValueConverter只是使用了Enum提供的name()和静态的valueOf()方法将enum转换成String或将String转换回enum。然而有些时候XML的字符串和类定义的enum值并不完全匹配，最常见的就是大小写的不匹配，此时需要写自己的Converter。在这种情况下，我一般会在enum中定义一个name属性，这样就可以自定义enum的字符串表示。比如有TimePeriod的enum：</p>
-<p>public enum TimePeriod {
-    MONTHLY(&quot;monthly&quot;), WEEKLY(&quot;weekly&quot;), DAILY(&quot;daily&quot;);</p>
-<pre><code>private String name;
-
-public String getName() {
-    return name;
-}
-
-private TimePeriod(String name) {
-    this.name = name;
-}
-
-public static TimePeriod toEnum(String timePeriod) {
-    try {
-        return Enum.valueOf(TimePeriod.class, timePeriod);
-    } catch(Exception ex) {
-        for(TimePeriod period : TimePeriod.values()) {
-            if(period.getName().equalsIgnoreCase(timePeriod)) {
-                return period;
-            }
-        }
-        throw new IllegalArgumentException(&quot;Cannot convert &lt;&quot; + timePeriod + &quot;&gt; to TimePeriod enum&quot;);
-    }
-}
-</code></pre><p>}</p>
-<p>我们可以编写以下Converter以实现对枚举类型的更宽的容错性：</p>
-<p>public class LevinEnumSingleNameConverter extends EnumSingleValueConverter {
-    private static final String CUSTOM_ENUM_NAME_METHOD = &quot;getName&quot;;
-    private static final String CUSTOM_ENUM_VALUE_OF_METHOD = &quot;toEnum&quot;;</p>
-<pre><code>private Class&lt;? extends Enum&lt;?&gt;&gt; enumType;
-
-public LevinEnumSingleNameConverter(Class&lt;? extends Enum&lt;?&gt;&gt; type) {
-    super(type);
-    this.enumType = type;
-}
-
-@Override
-public String toString(Object obj) {
-    Method method = getCustomEnumNameMethod();
-    if(method == null) {
-        return super.toString(obj);
-    } else {
-        try {
-            return (String)method.invoke(obj, (Object[])null);
-        } catch(Exception ex) {
-            return super.toString(obj);
-        }
-    }
-}
-
-@Override
-public Object fromString(String str) {
-    Method method = getCustomEnumStaticValueOfMethod();
-    if(method == null) {
-        return enhancedFromString(str);
-    }
-    try {
-        return method.invoke(null, str);
-    } catch(Exception ex) {
-        return enhancedFromString(str);
-    }
-}
-
-private Method getCustomEnumNameMethod() {
-    try {
-        return enumType.getMethod(CUSTOM_ENUM_NAME_METHOD, (Class&lt;?&gt;[])null);
-    } catch(Exception ex) {
-        return null;
-    }
-}
-
-private Method getCustomEnumStaticValueOfMethod() {
-    try {
-        Method method = enumType.getMethod(CUSTOM_ENUM_VALUE_OF_METHOD, (Class&lt;?&gt;[])null);
-        if(method.getModifiers() == Modifier.STATIC) {
-            return method;
-        }
-        return null;
-    } catch(Exception ex) {
-        return null;
-    }
-}
-
-private Object enhancedFromString(String str) {
-    try {
-        return super.fromString(str);
-    } catch(Exception ex) {
-        for(Enum&lt;?&gt; item : enumType.getEnumConstants()) {
-            if(item.name().equalsIgnoreCase(str)) {
-                return item;
-            }
-        }
-        throw new IllegalStateException(&quot;Cannot converter &lt;&quot; + str + &quot;&gt; to enum &lt;&quot; + enumType + &quot;&gt;&quot;);
-    }
-}
-</code></pre><p>}</p>
-<p>如下方式使用即可：</p>
-<p>@XStreamAsAttribute
-@XStreamAlias(&quot;time-period&quot;)
-@XStreamConverter(value=LevinEnumSingleNameConverter.class)
-private TimePeriod timePeriod;</p>
-<p>对double类型，貌似默认的DoubleConverter实现依然不给力，它不支持自定义的格式，比如我们想在序列化的时候用一下格式：” /#/#/#,/#/#0.0/#/#/#/#/#/#/#/#”，此时又需要编写自己的Converter：</p>
-<p>public class FormatableDoubleConverter extends DoubleConverter {
-    private String pattern;
-    private DecimalFormat formatter;</p>
-<pre><code>public FormatableDoubleConverter(String pattern) {
-    this.pattern = pattern;
-    this.formatter = new DecimalFormat(pattern);
-}
-
-@Override
-public String toString(Object obj) {
-    if(formatter == null) {
-        return super.toString(obj);
-    } else {
-        return formatter.format(obj);
-    }
-}
-
-@Override
-public Object fromString(String str) {
-    try {
-        return super.fromString(str);
-    } catch(Exception ex) {
-        if(formatter != null) {
-            try {
-                return formatter.parse(str);
-            } catch(Exception e) {
-                throw new IllegalArgumentException(&quot;Cannot parse &lt;&quot; + str + &quot;&gt; to double value&quot;, e);
-            }
-        }
-        throw new IllegalArgumentException(&quot;Cannot parse &lt;&quot; + str + &quot;&gt; to double value&quot;, ex);
-    }
-}
-
-public String getPattern() {
-    return pattern;
-}
-</code></pre><p>}</p>
-<p>使用方式和之前的Converter类似：</p>
-<p>@XStreamAsAttribute
-@XStreamConverter(value=FormatableDoubleConverter.class, strings={&quot;/#/#/#,/#/#0.0/#/#/#/#/#/#/#/#&quot;})
-private double value;</p>
-<p>最后，还有两个XStream没法实现的，或者说我没有找到一个更好的实现方式的场景。<strong>第一种场景是**</strong>XStream<strong>**不能很好的处理对象组合问题：</strong></p>
-<p>在面向对象编程中，一般尽量的倾向于抽取相同的数据成一个类，而通过组合的方式构建整个数据结构。比如Student类中有name、address，Address是一个类，它包含city、code、street等信息，此时如果要对Student对象做如下格式序列化：</p>
-<student name=”Levin”>
- <city>shanghai</city>
- <street>zhangjiang</street>
- <code>201203</code>
-</student>
-
-<p>貌似我没有找到可以实现的方式，XStream能做是在中间加一层address标签。对这种场景的解决方案，一种是将Address中的属性平摊到Student类中，另一种是让Student继承自Address类。不过貌似这两种都不是比较理想的办法。</p>
-<p><strong>第二种场景是XStream**</strong>不能很好的处理多态问题：**</p>
-<p>比如我们有一个Trade类，它可能表示不同的产品：
-public class Trade {
-    private String tradeId;
-    private Product product;
-<img src="" alt="">
-}
-abstract class Product {
-    private String name;
-    public Product(String name) {
-        this.name = name;
-}
-<img src="" alt="">
-}
-class FX extends Product {
-    private double ratio;
-    public FX() {
-        super(&quot;fx&quot;);
-    }
-    <img src="" alt="">
-}
-class Future extends Product {
-    private double maturity;
-    public Future() {
-        super(&quot;future&quot;);
-    }
-    <img src="" alt="">
-}</p>
-<p>通过一些简单的设置，我们能得到如下XML格式：</p>
-<trades>
- <trade trade-id="001">
-    <product class="levin.xstream.blog.FX" name="fx" ratio="0.59"/>
- </trade>
- <trade trade-id="002">
-    <product class="levin.xstream.blog.Future" name="future" maturity="2.123"/>
- </trade>
-</trades>
-
-<p>作为数据文件，对Java类的定义显然是不合理的，因而简单一些，我们可以编写自己的Converter将class属性从product中去除：</p>
-<p>xstream.registerConverter(new ProductConverter(
-        xstream.getMapper(), xstream.getReflectionProvider()));</p>
-<pre><code>public ProductConverter(Mapper mapper, ReflectionProvider reflectionProvider) {
-    super(mapper, reflectionProvider);
-}
-
-@Override
-public boolean canConvert(@SuppressWarnings(&quot;rawtypes&quot;) Class type) {
-    return Product.class.isAssignableFrom(type);
-}
-
-@Override
-protected Object instantiateNewInstance(HierarchicalStreamReader reader, UnmarshallingContext context) {
-    Object currentObject = context.currentObject();
-    if(currentObject != null) {
-        return currentObject;
-    }
-
-    String name = reader.getAttribute(&quot;name&quot;);
-    if(&quot;fx&quot;.equals(name)) {
-        return reflectionProvider.newInstance(FX.class);
-    } else if(&quot;future&quot;.equals(name)) {
-        return reflectionProvider.newInstance(Future.class);
-    }
-    throw new IllegalStateException(&quot;Cannot convert &lt;&quot; + name + &quot;&gt; product&quot;);
-}
-</code></pre><p>}</p>
-<p>在所有Production上定义@XStreamAlias(“product”)注解。这时的XML输出结果为：</p>
-<trades>
- <trade trade-id="001">
-    <product name="fx" ratio="0.59"/>
- </trade>
- <trade trade-id="002">
-    <product name="future" maturity="2.123"/>
- </trade>
-</trades>
-
-<p>然而如果有人希望XML的输出结果如下呢?</p>
-<trades>
- <trade trade-id="001">
-    <fx ratio="0.59"/>
- </trade>
- <trade trade-id="002">
-    <future maturity="2.123"/>
- </trade>
-</trades>
-
-<p>大概找了一下，可能可以定义自己的Mapper来解决，不过XStream的源码貌似比较复杂，没有时间深究这个问题，留着以后慢慢解决吧。</p>
-<p><strong>补充：</strong></p>
-<p>对Map类型数据，XStream默认使用以下格式显示：</p>
-<map class="linked-hash-map">
-    <entry>
-      <string>key1</string>
-      <string>value1</string>
-    </entry>
-    <entry>
-      <string>key2</string>
-      <string>value2</string>
-    </entry>
- </map>
-
-
-
-<p>但是对一些简单的Map，我们希望如下显示：
- <map>
-    <entry key="key1" value="value1"/>
-    <entry key="key2" value="value2"/>
- </map></p>
-<p>对这种需求需要通过编写Converter解决，继承自MapConverter，覆盖以下函数，这里的Map默认key和value都是String类型，如果他们不是String类型，需要另外添加逻辑：
-@SuppressWarnings(&quot;rawtypes&quot;)
-@Override
-public void marshal(Object source, HierarchicalStreamWriter writer,
-        MarshallingContext context) {
-    Map map = (Map) source;
-    for (Iterator iterator = map.entrySet().iterator(); iterator.hasNext();) {
-        Entry entry = (Entry) iterator.next();
-        ExtendedHierarchicalStreamWriterHelper.startNode(writer, mapper()
-                .serializedClass(Map.Entry.class), entry.getClass());</p>
-<pre><code>    writer.addAttribute(&quot;key&quot;, entry.getKey().toString());
-    writer.addAttribute(&quot;value&quot;, entry.getValue().toString());
-    writer.endNode();
-}
-</code></pre><p>}</p>
-<p>@Override
-@SuppressWarnings({ &quot;unchecked&quot;, &quot;rawtypes&quot; })
-protected void putCurrentEntryIntoMap(HierarchicalStreamReader reader,
-        UnmarshallingContext context, Map map, Map target) {
-    Object key = reader.getAttribute(&quot;key&quot;);
-    Object value = reader.getAttribute(&quot;value&quot;);</p>
-<pre><code>target.put(key, value);
-</code></pre><p>}</p>
-<p>但是只是使用Converter，得到的结果多了一个class属性：
- <map class="linked-hash-map">
-    <entry key="key1" value="value1"/>
-    <entry key="key2" value="value2"/>
- </map></p>
-<p>在XStream中，如果定义的字段是一个父类或接口，在序列化是会默认加入class属性以确定反序列化时用的类，为了去掉这个class属性，可以定义默认的实现类来解决（虽然感觉这种解决方案不太好，但是目前还没有找到更好的解决方案）。</p>
-<p><em>*
-</em>xstream.addDefaultImplementation(LinkedHashMap.class, Map.class);*</p>
-<p>来源： <a href="[http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html](http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html)">[http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html](http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/xml/">xml</a></li></span><span class="breadcrumb"><li><a href="/categories/xml/">xml</a></li><li><a href="/categories/xml/xstream/">xstream</a></li></span></span> | <span class="tags">Tagged <a href="/tags/xml/" class="label label-primary">xml</a><a href="/tags/xstream/" class="label label-success">xstream</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">How Does Google Work  Learn How Google Works  Sear</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="how-does-google-work-learn-how-google-works-search-engine-adwords">How Does Google Work Learn How Google Works Search Engine + AdWords</h1>
+        <h1 id="haproxy-ebtree">HAProxy的独门武器：ebtree</h1>
+<h1 id="1-haproxy-ebtree-">1. HAProxy和ebtree简介</h1>
+<p>HAProxy是法国人Willy Tarreau个人开发的一个开源软件，目标是应对客户端10000以上的同时连接，为后端应用服务器、数据库服务器提供高性能的负载均衡服务。
+在底层数据结构方面，旧版本HAProxy曾经使用过红黑树，用于任务调度、负载均衡等方面。但是Willy Tarreau认为，在事件响应非常频繁的情况下，任务插入、删除的频率非常高，这时候使用红黑树存在性能瓶颈，尤其不能接受红黑树删除节点的时间复杂度为O(log n)。因此，他发明了一种新的数据结构，叫做<strong>弹性二叉树（elastic binary tree）</strong>，简称ebtree。
+目前新版本的HAProxy（本文编写时最新版本为1.4.23）已使用ebtree，而除了HAProxy之外，还没有其它著名的开源软件使用ebtree。可以这么说，HAProxy最有特色的地方就是ebtree，ebtree名符其实是HAProxy的独门武器。
+ebtree是不平衡的二叉搜索树（BST），而红黑树、AVL树等都是平衡的BST。传统的BST最怕的就是退化成线性搜索，因此，红黑树等BST插入、删除时都需要对树进行平衡化，而平衡化是一个从叶子节点开始，向根节点方向递归向上的过程，时间复杂度是O(log n)。
+有鉴于此，ebtree为了实现删除节点时O(1)的时间复杂度，必然放弃保持树的平衡，为了拒绝由此而来的副作用——退化成线性搜索（或者更准确地说，退化成不受限制的线性搜索），不可避免地引入了一些新的成员和新的思路，且待我慢慢道来。</p>
+<h1 id="2-ebtree-">2. ebtree节点的组成</h1>
+<p>一个ebtree的节点（以下简称ebnode）分为node部分和leaf部分（Willy Tarreau是这样描述的，但我觉得称为树干部分和叶子部分更合适一些，以下就按我的理解来叙述）。<strong>树干</strong>负责关联其它ebnode，由父指针（node_p）和分支（Willy Tarreau称之为root，包括左分支L和右分支R），以及一个控制树的高度的特殊成员（bit）组成，<strong>叶子</strong>负责携带数据（data，一般是数据的键值，所以下文都称为key），另外包含一个指向上层的指针（leaf_p）。
+一棵ebtree只有一个根节点（root），包含两个左右分支的指针（L、R）。所有的ebnode总是挂在根节点的左分支下面，根节点的右分支总是为空。在ebtree的遍历过程中，判断当前节点是否根节点就是判断其右指针是否为空。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/Ebnode.png" target="_blank"><img src="" alt="Ebnode"></a></p>
+<p>-</p>
+<h1 id="3-">3. 各个指针的附加属性</h1>
+<p>在32位平台中，一个指针占用4个字节，例如，地址值0xaabbcc00的下一个地址值是0xaabbcc04，再下一个是0xaabbcc08，也就是说，指针的值的最后两个比特不能表示一个合法地址。因此，Willy Tarreau充分利用这一点，来保存上述几个指针的特殊属性。这是一个很重要的优化，每个ebnode可以节省几个成员，整个ebtree就节省大量存储空间。
+1）L和R既可以指向其它ebnode的树干，也可以指向其它ebnode的叶子，还可以指向自己的叶子。在ebtree的遍历过程中，对树干和叶子有不同的处理逻辑，L和R有必要知道自己所指向的是树干还是叶子。
+2）可以知道node_p和leaf_p究竟挂在其它ebnode的左分支下面，还是挂在其右分支下面。
+3）根节点右分支不挂任何树干和叶子，可以把它也利用上，指示该ebtree是否允许重复键值。
+熟悉红黑树的读者都知道，红黑树也有同样的优化方法，表示红黑树节点颜色的属性并不占用内存空间。</p>
+<h1 id="4-bit-">4. bit的定义</h1>
+<p>引入bit就是为了<strong>限制树的高度</strong>，避免极端不平衡。在一棵不允许重复键值的ebtree中，key是32位的情况下，bit的取值范围是从0到31，此时，它的定义是：<strong>子树所有的键中，第一个不同的二进制位的位置</strong>。允许重复键值的ebtree稍后再详细介绍。
+例如，下图的右下角子树中只有两个键，左边叶子节点的键值为300，右边叶子节点的键值为400，300的二进制是100101100，400的二进制是110010000，从右边数起第7位起（注意，程序员都是从0开始数数的），300和400左边的位都相同，所以，bit等于7。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/bit.png" target="_blank"><img src="" alt="bit"></a></p>
+<p>这时候，读者可能会问，这样定义bit为什么能够限制树的高度呢？不用着急，马上隆重介绍bit的两个重要意义！</p>
+<h1 id="5-bit-">5. bit的第一个重要意义</h1>
+<p>这里只讨论键值大于等于零的情况，事实上，ebtree可以支持键值为负数，不过，我还没有仔细研究过这种情况，应该是对符号位进行某些转换处理。
+bit的第一个重要意义：<strong>同一个ebnode中的bit和key，联合决定该ebnode属下的子树内，所有key的取值范围</strong>。
+先看下图挂在根节点下面，key = 300的那个ebnode，bit = 8，300的二进制为100101100，从右边数起第8位是最高位那个1，参考bit的定义，也就是说，该子树所有的键，第8位左边都是0，所以，它们的取值范围是从0到511（二进制111111111）。
+再看最下面那个ebnode，bit = 5，250的二进制为11111010，从右边数起第5位是第三个1，再对照bit的定义，该子树的键，第5位左边都是11，所以，它们的取值范围是从192（二进制11000000）到255（二进制11111111）。
+同理，最右边那个ebnode，bit = 7，key = 400，取值范围是256-511。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/bit1.png" target="_blank"><img src="" alt="bit1"></a></p>
+<h1 id="6-bit-">6. bit的第二个重要意义和查找过程</h1>
+<p>bit的第二个重要意义：<strong>如果要查找的数据x在该子树的取值范围内，bit可以指示其可能会在左分支下面还是右分支下面</strong>。
+ebtree的具体查找过程是，遍历到某个ebnode时，如果key = x，返回查找结果；如果x已经超出bit规定的取值范围，返回查找失败；否则，取x的第bit位，如果bit = 0，那么从该ebnode的左分支查找，反之，从右分支查找；如果已到达叶子还是没有匹配，返回查找失败。
+还是上一节那个图，假如要找的键x = 249，二进制为11111001，从根节点左分支开始查找，bit = 8，右边数起第8位为0，于是从它的左分支继续查找，bit = 5，249右边数起第5位为1，于是从它的右分支继续查找，此时已到达叶子，且250 != 249，本次查找失败。
+假如要找的键x = 300，因为就在查找路径的节点上，直接返回结果。
+假如要找的键x = 600，已经超出该子树中bit规定的取值范围，返回查找失败。</p>
+<h1 id="7-">7. 插入不可重复的键值</h1>
+<p>首先，要介绍的是空树的情况。由前面的叙述可以得知，一棵ebtree为空树当且仅当它的根节点的左分支为空。所以，此时插入的ebnode就直接挂在根节点的左分支下面，由于新插入的ebnode不存在左右分支，也没有父节点（上层ebnode），显然也不需要bit来控制树的高度，因此，该ebnode的树干都没有使用。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert0.png" target="_blank"><img src="" alt="insert0"></a></p>
+<p>其次，介绍ebtree只有一个ebnode时，再插入一个ebnode的情况。此时，新的ebnode必定插入在根节点与旧的ebnode之间，如果新的键值大于原来的键值，旧的ebnode挂在新的ebnode的左分支下面，新的ebnode的叶子挂在自己的右分支下面，再计算bit；反之，则左右相反，再计算bit。
+下图的例子，是已有key = 200，再插入key = 300的情形。读者可以根据上面的描述画出已有key = 200，再插入key = 100的情形。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert1.png" target="_blank"><img src="" alt="insert1"></a></p>
+<p>然后，就可以介绍在ebtree中插入新的ebnode的<strong>五种基本情形</strong>。在这里，都以上图为初始状态。任何具有更多ebnode的情形，都可以通过对ebtree的遍历，递推到其中一种情形。</p>
+<p>1) <strong>新的键值可以插入子树中，而且小于子树中的最小键值。</strong></p>
+<p>假如新插入ebnode的key为100，根据bit的第二个重要意义，100应该在该子树的左分支下面，而且，100小于200，于是，该ebnode插入在原图的左分支上，自己的左分支指向自己的叶子，自己的右分支指向原来子树的左分支。如下图所示。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_1.png" target="_blank"><img src="" alt="insert2_1"></a></p>
+<p>键值范围[0, 200)都属于这种情形。</p>
+<p>2) <strong>新的键值可以插入子树中，该键值在确定要插入的两个ebnode的键值之间，且应该在该子树的左分支下面。</strong></p>
+<p>假如新插入ebnode的key为225，根据bit的第二个重要意义，225应该在该子树的左分支下面，而且，225大于200，于是，该ebnode插入在原图的左分支上，自己的左分支指向原来子树的左分支，自己的右分支指向自己的叶子。如下图所示。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_2.png" target="_blank"><img src="" alt="insert2_2"></a></p>
+<p>键值范围(200, 255]都属于这种情形。</p>
+<p>3) <strong>新的键值可以插入子树中，该键值在确定要插入的两个ebnode的键值之间，且应该在该子树的右分支下面。</strong></p>
+<p>假如新插入ebnode的key为275，根据bit的第二个重要意义，275应该在该子树的右分支下面，而且，275小于300，于是，该ebnode插入在原图的右分支上，自己的左分支指向自己的叶子，自己的右分支指向原来子树的右分支。如下图所示。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_3.png" target="_blank"><img src="" alt="insert2_3"></a></p>
+<p>键值范围(255, 300)都属于这种情形。</p>
+<p>4) <strong>新的键值可以插入子树中，而且大于子树中的最大键值。</strong></p>
+<p>假如新插入ebnode的key为400，根据bit的第二个重要意义，400应该在该子树的右分支下面，而且，400大于300，于是，该ebnode插入在原图的右分支上，自己的左分支指向原来子树的右分支，自己的右分支指向自己的叶子。如下图所示。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_4.png" target="_blank"><img src="" alt="insert2_4"></a></p>
+<p>键值范围(300, 511]都属于这种情形。</p>
+<p>5) <strong>新的键值不可以插入子树中。</strong></p>
+<p>假如新插入ebnode的key为600，根据bit的第一个重要意义，600不可插入到子树中，于是，该ebnode插入在原图的子树之上，自己的左分支指向原来的子树，自己的右分支指向自己的叶子。如下图所示。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_5.png" target="_blank"><img src="" alt="insert2_5"></a></p>
+<p>键值范围(511, +∞)都属于这种情形。</p>
+<h1 id="8-bit-">8. bit的第三个重要意义和插入重复的键值</h1>
+<p>ebtree是专门为任务调度而生的，同样的优先级，必须保证能够按照任务触发的次序来进行访问。所以，ebtree支持存储重复的键值，这一点并不是所有的BST都支持，可以说是ebtree的优点。而且，解决键值冲突不会退化成链表。
+bit的第三个重要意义：<strong>bit为负值表示该子树下所有的键都是重复的，而且，该值表示重复子树的层次</strong>。当然，必须要在根节点右指针允许的情况下。
+插入第一个重复键值，例如300（ebnode底纹为点点），可以参考上一节的第二种和第四种基本情形，不同的是，bit为-1。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup1.png" target="_blank"><img src="" alt="insert_dup1"></a></p>
+<p>如果再插入一个重复键值300（ebnode底纹为方格），应该在重复键值子树上插入，而且是向上生长。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup2.png" target="_blank"><img src="" alt="insert_dup2"></a></p>
+<p>上图已经有四个ebnode，信息量较大，为了后续叙述方便，把它简化，去掉几个指针域，保留bit和key，得到下图。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup2s.png" target="_blank"><img src="" alt="insert_dup2s"></a></p>
+<p>再插入一个300（ebnode底纹为斜方格），得到下面的ebtree。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup3s.png" target="_blank"><img src="" alt="insert_dup3s"></a></p>
+<p>再插入两个300（ebnode底纹分别为左斜线和右斜线），得到下面的ebtree。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup5s.png" target="_blank"><img src="" alt="insert_dup5s"></a></p>
+<p>读者可以思考一下，如果再来一个、两个、三个300，应该在哪里插入？如果插入不同于300的其它键值，应该在哪里插入？
+从上面几张图，大家可以看到，一个ebnode的树干和叶子会随着树的增长而拉长到不同的层次上，好像很有弹性的样子，这就是弹性二叉树名字的由来。</p>
+<h1 id="9-">9. 删除节点</h1>
+<p>删除一个ebnode，概括起来比较简单，就是把要删除的叶子和该叶子的父亲（树干部分）删除，然后把兄弟挂到祖父下面。因为不需要对树进行平衡化，不需要访问其它ebnode，效率很高。
+具体操作，分为两种情况：
+1）被删除的叶子直连自己的树干，可直接删除该ebnode，然后对它的兄弟重新指派原来的祖父为父亲。
+2）被删除的叶子不是直连自己的树干，以该叶子的父亲（其它ebnode的树干）替换该ebnode的树干，然后删除该ebnode，再把它的兄弟重新指派原来的祖父为父亲。</p>
+<h1 id="10-">10. 总结</h1>
+<p>没有最好的数据结构，只有最合适的数据结构。ebtree有它的优点：
+1）支持存储重复的键值，而且，在此情况下，也不会退化成线性操作。
+2）删除节点时，不需要对树进行平衡化。
+3）插入键值时，很可能不需要深入到树的叶子，当然，很多BST都这样。
+4）查询键值时，可以预知子树的取值范围，从而可以选择访问还是不访问该子树。
+缺点也很明显：
+1）逻辑比较复杂，熟悉的人不多（希望读者看完本文之后都有茅塞顿开的感觉）。
+2）ebnode占用空间比较多，如果把bit也算一个指针，相当于花了5个指针才携带1个数据。
+3）键值严重依赖于可以进行位运算的数据类型。
+总而言之，ebtree适合有高频率插入、删除操作（例如50万次/秒）的使用场合，不适合查询较多、插入、删除较少的场合，非常不适合用于缓存。</p>
+<h1 id="11-">11. 参考资料</h1>
 <ul>
-<li><a href="http://ppcblog.com/blog" target="_blank">Blog</a></li>
-<li><a href="http://ppcblog.com/ppc-assets" target="_blank">Free PPC Assets</a></li>
-<li><a href="http://ppcblog.com/about" target="_blank">About Us</a></li>
-<li><a href="http://ppcblog.com/member-tour-new-users-1" target="_blank">PPC Training Tour</a></li>
-<li><a href="https://ppcblog.com/amember/member.php" target="_blank">Member Login »</a></li>
+<li><a href="http://1wt.eu/articles/ebtree/" target="_blank"><a href="http://1wt.eu/articles/ebtree/">http://1wt.eu/articles/ebtree/</a></a></li>
+<li>Willy Tarreau个人网站对ebtree的介绍，不过存在不少误导的地方</li>
+<li><a href="http://blog.nklike.com/%E5%BC%80%E6%BA%90%E8%BD%AF%E4%BB%B6/ebtree%E4%BB%8B%E7%BB%8D/" target="_blank"><a href="http://blog.nklike.com/开源软件/ebtree介绍/">http://blog.nklike.com/开源软件/ebtree介绍/</a></a></li>
+<li>淘宝空见对上文的翻译，也有不够准确的地方</li>
+<li><a href="http://wenku.it168.com/d_000555847.shtml" target="_blank"><a href="http://wenku.it168.com/d_000555847.shtml">http://wenku.it168.com/d_000555847.shtml</a></a></li>
+<li><p>对ebtree的描述错误比较多</p>
+<h3 id="-">您可能感兴趣的文章</h3>
+</li>
+<li><p><a href="http://tech.uc.cn/?p=696" target="_blank">使用搜索技术实现URL智能匹配</a></p>
+</li>
+<li><a href="http://tech.uc.cn/?p=1738" target="_blank">HAProxy几个重要的结构体</a></li>
+<li><a href="http://tech.uc.cn/?p=300" target="_blank">Nginx的http配置结构体的组织结构</a></li>
 </ul>
-<h1 id="-ppc-blog-http-ppcblog-com-"><a href="http://ppcblog.com/" target="_blank">PPC Blog</a></h1>
-<h1 id="learn-how-google-works-in-gory-detail">Learn How Google Works: in Gory Detail</h1>
-<p><a href="http://pinterest.com/pin/create/button/?url=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2F&amp;media=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2Fhow-google-works.jpg&amp;description=How%20Google%20Works" target="_blank">888</a>  <a href="http://twitter.com/share" target="_blank">Tweet</a> 388
-<a href="">inShare</a>  <a href="">digg</a></p>
-<p><img src="" alt="How Google Works."></p>
-<p><a href="http://news.ycombinator.com/item?id=1472981" target="_blank">Vote on Hacker News</a>, or <img src="http://static.delicious.com/img/delicious.small.gif" alt="Delicious"> <a href="http://delicious.com/save" target="_blank">Bookmark this on Delicious</a></p>
-<h2 id="free-add-this-infographic-to-your-website-">FREE: add this infographic to your website!</h2>
-<h3 id="600-pixel-wide-version">600 Pixel Wide Version</h3>
-<p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/600.jpg" border="0" alt="How Google Works." /></a></p><p>Infographic by the <a href="http://ppcblog.com/" target="_blank">Pay Per Click Blog</a></p>
-
-<h3 id="large-version">Large Version</h3>
-<p><p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/how-google-works.jpg" border="0" alt="How Does Google Work?" /></a></p><p>Infographic by <a href="http://ppcblog.com/" target="_blank">PPCBlog</a></p>
-Copyright 2011 - 2013 PPC Training Inc. - All Rights Reserved</p>
+<p>来源： <a href="[http://tech.uc.cn/?p=1031](http://tech.uc.cn/?p=1031)">[http://tech.uc.cn/?p=1031](http://tech.uc.cn/?p=1031)</a></p>
 
       
     </div>
@@ -566,8 +237,8 @@ Copyright 2011 - 2013 PPC Training Inc. - All Rights Reserved</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -787,155 +458,170 @@ Copyright © pasha</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--HeapSort/">HeapSort</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">How Does Google Work  Learn How Google Works  Sear</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--HeapSort/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="heapsort">HeapSort</h1>
-<h1 id="-algorithm-gossip-heap-"><a href="">Algorithm Gossip: Heap 排序法 - 改良的选择排序</a></h1>
+        <h1 id="how-does-google-work-learn-how-google-works-search-engine-adwords">How Does Google Work Learn How Google Works Search Engine + AdWords</h1>
+<ul>
+<li><a href="http://ppcblog.com/blog" target="_blank">Blog</a></li>
+<li><a href="http://ppcblog.com/ppc-assets" target="_blank">Free PPC Assets</a></li>
+<li><a href="http://ppcblog.com/about" target="_blank">About Us</a></li>
+<li><a href="http://ppcblog.com/member-tour-new-users-1" target="_blank">PPC Training Tour</a></li>
+<li><a href="https://ppcblog.com/amember/member.php" target="_blank">Member Login »</a></li>
+</ul>
+<h1 id="-ppc-blog-http-ppcblog-com-"><a href="http://ppcblog.com/" target="_blank">PPC Blog</a></h1>
+<h1 id="learn-how-google-works-in-gory-detail">Learn How Google Works: in Gory Detail</h1>
+<p><a href="http://pinterest.com/pin/create/button/?url=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2F&amp;media=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2Fhow-google-works.jpg&amp;description=How%20Google%20Works" target="_blank">888</a>  <a href="http://twitter.com/share" target="_blank">Tweet</a> 388
+<a href="">inShare</a>  <a href="">digg</a></p>
+<p><img src="" alt="How Google Works."></p>
+<p><a href="http://news.ycombinator.com/item?id=1472981" target="_blank">Vote on Hacker News</a>, or <img src="http://static.delicious.com/img/delicious.small.gif" alt="Delicious"> <a href="http://delicious.com/save" target="_blank">Bookmark this on Delicious</a></p>
+<h2 id="free-add-this-infographic-to-your-website-">FREE: add this infographic to your website!</h2>
+<h3 id="600-pixel-wide-version">600 Pixel Wide Version</h3>
+<p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/600.jpg" border="0" alt="How Google Works." /></a></p><p>Infographic by the <a href="http://ppcblog.com/" target="_blank">Pay Per Click Blog</a></p>
+
+<h3 id="large-version">Large Version</h3>
+<p><p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/how-google-works.jpg" border="0" alt="How Does Google Work?" /></a></p><p>Infographic by <a href="http://ppcblog.com/" target="_blank">PPCBlog</a></p>
+Copyright 2011 - 2013 PPC Training Inc. - All Rights Reserved</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--GrayCode/">GrayCode</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--GrayCode/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="graycode">GrayCode</h1>
+<h1 id="-algorithm-gossip-gray-code-"><a href="">Algorithm Gossip: 格雷码（Gray Code）</a></h1>
 <h2 id="-">说明</h2>
-<p>选择排序法的概念简单，每次从未排序部份选一最小值，插入已排序部份的后端，其时间主要花费于在整个未排序部份寻找最小值，如果能让搜寻最小值的方式加 快，选择排序法的速率也就可以加快，Heap排序法让搜寻的路径由树根至最后一个树叶，而不是整个未排序部份，因而称之为改良的选择排序法。</p>
+<p>Gray Code是一个数列集合，每个数使用二进位来表示，假设使用n位元来表示每个数好了，任两个数之间只有一个位元值不同，例如以下为3位元的Gray Code：
+000 001 011 010 110 111 101 100
+由定义可以知道，Gray Code的顺序并不是唯一的，例如将上面的数列反过来写，也是一组Gray Code：
+100 101 111 110 010 011 001 000
+Gray Code是由贝尔实验室的Frank Gray在1940年代提出的，用来在使用PCM（Pusle Code Modulation）方法传送讯号时避免出错，并于1953年三月十七日取得美国专利。</p>
 <h2 id="-">解法</h2>
-<p>Heap排序法使用Heap Tree（堆积树），树是一种资料结构，而堆积树是一个二元树，也就是每一个父节点最多只有两个子节点（关于树的详细定义还请见资料结构书籍），堆积树的 父节点若小于子节点，则称之为最小堆积（Min Heap），父节点若大于子节点，则称之为最大堆积（Max Heap），而同一层的子节点则无需理会其大小关系，例如下面就是一个堆积树：
-<img src="&quot;Heap 排序&quot;" alt="Heap 排序">
-可以使用一维阵列来储存堆积树的所有元素与其顺序，为了计算方便，使用的起始索引是1而不是0，索引1是树根位置，如果左子节点储存在阵列中的索引为s，则其父节点的索引为s/2，而右子节点为s+1，就如上图所示，将上图的堆积树转换为一维阵列之后如下所示：
-<img src="&quot;Heap 排序&quot;" alt="Heap 排序">
-首先必须知道如何建立堆积树，加至堆积树的元素会先放置在最后一个树叶节点位置，然后检查父节点是否小于子节点（最小堆积），将小的元素不断与父节点交换，直到满足堆积树的条件为止，例如在上图的堆积加入一个元素12，则堆积树的调整方式如下所示：
-<img src="&quot;Heap 排序&quot;" alt="Heap 排序">
-建立好堆积树之后，树根一定是所有元素的最小值，您的目的就是：</p>
-<ol>
-<li>将最小值取出</li>
-<li>然后调整树为堆积树
-不断重复以上的步骤，就可以达到排序的效果，最小值的取出方式是将树根与最后一个树叶节点交换，然后切下树叶节点，重新调整树为堆积树，如下所示：
-<img src="&quot;Heap 排序&quot;" alt="Heap 排序">
-调整完毕后，树根节点又是最小值了，于是我们可以重覆这个步骤，再取出最小值，并调整树为堆积树，如下所示：
-<img src="&quot;Heap 排序&quot;" alt="Heap 排序">
-如此重覆步骤之后，由于使用一维阵列来储存堆积树，每一次将树叶与树根交换的动作就是将最小值放至后端的阵列，所以最后阵列就是变为已排序的状态。
-其实堆积在调整的过程中，就是一个选择的行为，每次将最小值选至树根，而选择的路径并不是所有的元素，而是由树根至树叶的路径，因而可以加快选择的过程， 所以Heap排序法才会被称之为改良的选择排序法。</li>
-</ol>
+<p>由于Gray Code相邻两数之间只改变一个位元，所以可观 察Gray Code从1变0或从0变1时的位置，假设有4位元的Gray Code如下：
+0000 0001 0011 0010 0110 0111 0101 0100
+1100 1101 1111 1110 1010 1011 1001 1000
+观察奇数项的变化时，我们发现无论它是第几个Gray Code，永远只改变最右边的位元，如果是1就改为0，如果是0就改为1。
+观察偶数项的变化时，我们发现所改变的位元，是由右边算来第一个1的左边位元。
+以上两个变化规则是固定的，无论位元数为何；所以只要判断位元的位置是奇数还是偶数，就可以决定要改变哪一个位元的值，为了程式撰写方便，将阵列索引 0当作最右边的值，而在列印结果时，是由索引数字大的开始反向列印。
+将2位元的Gray Code当作平面座标来看，可以构成一个四边形，您可以发现从任一顶点出发，绕四边形周长绕一圈，所经过的顶点座标就是一组Gray Code，所以您可以得到四组Gray Code。
+同样的将3位元的Gray Code当作平面座标来看的话，可以构成一个正立方体，如果您可以从任一顶点出发，将所有的边长走过，并不重复经过顶点的话，所经过的顶点座标顺序之组合也就是一组Gray Code。</p>
 <h2 id="-">实作</h2>
 <ul>
 <li><p>C
 /#include <stdio.h>
 /#include <stdlib.h>
-/#include <time.h>
-/#define MAX 10
-/#define SWAP(x,y) {int t; t = x; x = y; y = t;}
-void createheap(int[]);
-void heapsort(int[]);
+/#define MAXBIT 20
+/#define TRUE 1
+/#define CHANGE_BIT(x) x = ((x) == &#39;0&#39; ? &#39;1&#39; : &#39;0&#39;)
+/#define NEXT(x) x = (1 - (x))
 int main(void) {
-int number[MAX+1] = {-1};
-int i, num;
-srand(time(NULL));
-printf(&quot;排序前：&quot;);
-for(i = 1; i &lt;= MAX; i++) {
-number[i] = rand() % 100;
-printf(&quot;%d &quot;, number[i]);
+char digit[MAXBIT];
+int i, bits, odd;
+printf(&quot;输入位元数：&quot;);
+scanf(&quot;%d&quot;, &amp;bits);
+for(i = 0; i &lt; bits; i++) {
+digit[i] = &#39;0&#39;;
+printf(&quot;0&quot;);
 }
-printf(&quot;\n建立堆积树：&quot;);
-createheap(number);
-for(i = 1; i &lt;= MAX; i++)
-printf(&quot;%d &quot;, number[i]);
 printf(&quot;\n&quot;);
-heapsort(number);
-printf(&quot;\n&quot;);
-return 0;
-}
-void createheap(int number[]) {
-int i, s, p;
-int heap[MAX+1] = {-1};
-for(i = 1; i &lt;= MAX; i++) {
-heap[i] = number[i];
-s = i;
-p = i / 2;
-while(s &gt;= 2 &amp;&amp; heap[p] &gt; heap[s]) {
-SWAP(heap[p], heap[s]);
-s = p;
-p = s / 2;
-}
-}
-for(i = 1; i &lt;= MAX; i++)
-number[i] = heap[i];
-}
-void heapsort(int number[]) {
-int i, m, p, s;
-m = MAX;
-while(m &gt; 1) {
-SWAP(number[1], number[m]);
-m--;
-p = 1;
-s = 2 /<em> p;
-while(s &lt;= m) {
-if(s &lt; m &amp;&amp; number[s+1] &lt; number[s])
-s++;
-if(number[p] &lt;= number[s])
+odd = TRUE;
+while(1) {
+if(odd)
+CHANGE_BIT(digit[0]);
+else {
+// 计算第一个1的位置
+for(i = 0; i &lt; bits &amp;&amp; digit[i] == &#39;0&#39;; i++) ;
+if(i == bits - 1) // 最后一个Gray Code
 break;
-SWAP(number[p], number[s]);
-p = s;
-s = 2 /</em> p;
+CHANGE_BIT(digit[i+1]);
 }
-printf(&quot;\n排序中：&quot;);
-for(i = MAX; i &gt; 0; i--)
-printf(&quot;%d &quot;, number[i]);
+for(i = bits - 1; i &gt;= 0; i--)
+printf(&quot;%c&quot;, digit[i]);
+printf(&quot;\n&quot;);
+NEXT(odd);
 }
+return 0;
 }</p>
 </li>
 <li><p>Java
-public class HeapSort {
-public static void sort(int[] number) {
-int[] tmp = new int[number.length + 1];
-// 配合说明，使用一个有遍移的暂存阵列
-for(int i = 1; i &lt; tmp.length; i++) {
-tmp[i] = number[i-1];
+public class GrayCode {
+private char[] digit;
+private boolean first;
+private boolean odd;
+private int count;
+public GrayCode(int length) {
+digit = new char[length];
+for(int i = 0; i &lt; length; i++) {
+digit[i] = &#39;0&#39;;
 }
-createHeap(tmp);
-int m = number.length;
-while(m &gt; 1) {
-swap(tmp, 1, m);
-m--;
-int p = 1;
-int s = 2 /<em> p;
-while(s &lt;= m) {
-if(s &lt; m &amp;&amp; tmp[s+1] &lt; tmp[s])
-s++;
-if(tmp[p] &lt;= tmp[s])
-break;
-swap(tmp, p, s);
-p = s;
-s = 2 /</em> p;
+first = true;
+odd = true;
 }
+public boolean hasNext() {
+// 计算第一个1的位置
+for(count = 0;
+(count &lt; digit.length) &amp;&amp; (digit[count] == &#39;0&#39;);
+count++) ;
+return count != digit.length - 1;
 }
-// 这边将排序好的暂存阵列设定回原阵列
-for(int i = 0; i &lt; number.length; i++) {
-number[i] = tmp[i+1];
+public char[] next() {
+if(first) {
+first = false;
+return digit;
 }
+if(odd)
+chargeBit(digit, 0);
+else {
+// 最后一个Gray Code 吗
+if(hasNext())
+chargeBit(digit, count+1);
 }
-private static void createHeap(int[] tmp) {
-int[] heap = new int[tmp.length];
-for(int i = 0; i &lt; heap.length; i++)
-heap[i] = -1;
-for(int i = 1; i &lt; heap.length; i++) {
-heap[i] = tmp[i];
-int s = i;
-int p = i / 2;
-while(s &gt;= 2 &amp;&amp; heap[p] &gt; heap[s]) {
-swap(heap, p, s);
-s = p;
-p = s / 2;
+odd = ((odd == true) ? false : true);
+return digit;
 }
+private void chargeBit(char[] digit, int i) {
+digit[i] = ((digit[i] == &#39;0&#39;) ? &#39;1&#39; : &#39;0&#39;);
 }
-for(int i = 1; i &lt; tmp.length; i++)
-tmp[i] = heap[i];
+public static void main(String[] args) {
+GrayCode code = new GrayCode(4);
+while(code.hasNext()) {
+char[] digit = code.next();
+for(int i = digit.length - 1; i &gt;= 0; i--)
+System.out.print(digit[i]);
+System.out.println();
 }
-private static void swap(int[] number, int i, int j) {
-int t;
-t = number[i];
-number[i] = number[j];
-number[j] = t;
 }
 }</p>
 </li>
@@ -949,8 +635,8 @@ number[j] = t;
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:37:38"datetime="2014-03-07 10:37:38"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--HeapSort/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--HeapSort" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:37:44"datetime="2014-03-07 10:37:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--GrayCode/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--GrayCode" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1030,7 +716,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:47:45</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:55:36</em></span></div>
 </div>
 <div class="clearfix"></div>
 
