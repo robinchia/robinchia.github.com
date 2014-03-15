@@ -110,6 +110,715 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--mapreduce-osdi04/">mapreduce</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--mapreduce-osdi04/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="mapreduce-osdi04">mapreduce-osdi04</h1>
+<p>MapReduce: Simpliﬁed Data Processing on Large Clusters
+Jeffrey Dean and Sanjay Ghemawat
+jeff@google.com, sanjay@google.com
+Google, Inc.
+Abstract
+MapReduce is a programming model and an associated implementation for processing and generating large data sets. Users specify a map function that processes a key/value pair to generate a set of intermediate key/value pairs, and a reduce function that merges all intermediate values associated with the same intermediate key. Many real world tasks are expressible in this model, as shown in the paper. Programs written in this functional style are automatically parallelized and executed on a large cluster of commodity machines. The run-time system takes care of the details of partitioning the input data, scheduling the program’s execution across a set of machines, handling machine failures, and managing the required inter-machine communication. This allows programmers without any experience with parallel and distributed systems to easily utilize the resources of a large distributed system. Our implementation of MapReduce runs on a large cluster of commodity machines and is highly scalable: a typical MapReduce computation processes many terabytes of data on thousands of machines. Programmers ﬁnd the system easy to use: hundreds of MapReduce programs have been implemented and upwards of one thousand MapReduce jobs are executed on Google’s clusters every day.
+1 Introduction
+Over the past ﬁve years, the authors and many others at Google have implemented hundreds of special-purpose computations that process large amounts of raw data, such as crawled documents, web request logs, etc., to compute various kinds of derived data, such as inverted indices, various representations of the graph structure of web documents, summaries of the number of pages crawled per host, the set of most frequent queries in a To appear in OSDI 2004
+given day, etc. Most such computations are conceptually straightforward. However, the input data is usually large and the computations have to be distributed across hundreds or thousands of machines in order to ﬁnish in a reasonable amount of time. The issues of how to parallelize the computation, distribute the data, and handle failures conspire to obscure the original simple computation with large amounts of complex code to deal with these issues. As a reaction to this complexity, we designed a new abstraction that allows us to express the simple computations we were trying to perform but hides the messy details of parallelization, fault-tolerance, data distribution and load balancing in a library. Our abstraction is inspired by the map and reduce primitives present in Lisp and many other functional languages. We realized that most of our computations involved applying a map operation to each logical “record” in our input in order to compute a set of intermediate key/value pairs, and then applying a reduce operation to all the values that shared the same key, in order to combine the derived data appropriately. Our use of a functional model with userspeciﬁed map and reduce operations allows us to parallelize large computations easily and to use re-execution as the primary mechanism for fault tolerance. The major contributions of this work are a simple and powerful interface that enables automatic parallelization and distribution of large-scale computations, combined with an implementation of this interface that achieves high performance on large clusters of commodity PCs. Section 2 describes the basic programming model and gives several examples. Section 3 describes an implementation of the MapReduce interface tailored towards our cluster-based computing environment. Section 4 describes several reﬁnements of the programming model that we have found useful. Section 5 has performance measurements of our implementation for a variety of tasks. Section 6 explores the use of MapReduce within Google including our experiences in using it as the basis 1
+for a rewrite of our production indexing system. Section 7 discusses related and future work.
+2.2 Types
+Even though the previous pseudo-code is written in terms of string inputs and outputs, conceptually the map and reduce functions supplied by the user have associated types: map reduce (k1,v1) (k2,list(v2)) → list(k2,v2) → list(v2)
+2 Programming Model
+The computation takes a set of input key/value pairs, and produces a set of output key/value pairs. The user of the MapReduce library expresses the computation as two functions: Map and Reduce. Map, written by the user, takes an input pair and produces a set of intermediate key/value pairs. The MapReduce library groups together all intermediate values associated with the same intermediate key I and passes them to the Reduce function. The Reduce function, also written by the user, accepts an intermediate key I and a set of values for that key. It merges together these values to form a possibly smaller set of values. Typically just zero or one output value is produced per Reduce invocation. The intermediate values are supplied to the user’s reduce function via an iterator. This allows us to handle lists of values that are too large to ﬁt in memory.
+I.e., the input keys and values are drawn from a different domain than the output keys and values. Furthermore, the intermediate keys and values are from the same domain as the output keys and values. Our C++ implementation passes strings to and from the user-deﬁned functions and leaves it to the user code to convert between strings and appropriate types.
+2.3 More Examples
+Here are a few simple examples of interesting programs that can be easily expressed as MapReduce computations. Distributed Grep: The map function emits a line if it matches a supplied pattern. The reduce function is an identity function that just copies the supplied intermediate data to the output. Count of URL Access Frequency: The map function processes logs of web page requests and outputs URL, 1 . The reduce function adds together all values for the same URL and emits a URL, total count pair. Reverse Web-Link Graph: The map function outputs target, source pairs for each link to a target URL found in a page named source. The reduce function concatenates the list of all source URLs associated with a given target URL and emits the pair: target, list(source) Term-Vector per Host: A term vector summarizes the most important words that occur in a document or a set of documents as a list of word, f requency pairs. The map function emits a hostname, term vector pair for each input document (where the hostname is extracted from the URL of the document). The reduce function is passed all per-document term vectors for a given host. It adds these term vectors together, throwing away infrequent terms, and then emits a ﬁnal hostname, term vector pair. 2
+2.1 Example
+Consider the problem of counting the number of occurrences of each word in a large collection of documents. The user would write code similar to the following pseudo-code:
+map(String key, String value): // key: document name // value: document contents for each word w in value: EmitIntermediate(w, &quot;1&quot;); reduce(String key, Iterator values): // key: a word // values: a list of counts int result = 0; for each v in values: result += ParseInt(v); Emit(AsString(result));
+The map function emits each word plus an associated count of occurrences (just ‘1’ in this simple example). The reduce function sums together all counts emitted for a particular word. In addition, the user writes code to ﬁll in a mapreduce speciﬁcation object with the names of the input and output ﬁles, and optional tuning parameters. The user then invokes the MapReduce function, passing it the speciﬁcation object. The user’s code is linked together with the MapReduce library (implemented in C++). Appendix A contains the full program text for this example. To appear in OSDI 2004
+User Program
+(1) fork (1) fork (1) fork
+Master
+(2) assign map
+(2) assign reduce
+worker split 0 split 1 split 2 split 3 split 4 worker Input files Map phase Intermediate files (on local disks) Reduce phase Output files
+(3) read (5) remote read
+worker worker
+(6) write
+output file 0 output file 1
+worker
+(4) local write
+Figure 1: Execution overview Inverted Index: The map function parses each document, and emits a sequence of word, document ID pairs. The reduce function accepts all pairs for a given word, sorts the corresponding document IDs and emits a word, list(document ID) pair. The set of all output pairs forms a simple inverted index. It is easy to augment this computation to keep track of word positions. Distributed Sort: The map function extracts the key from each record, and emits a key, record pair. The reduce function emits all pairs unchanged. This computation depends on the partitioning facilities described in Section 4.1 and the ordering properties described in Section 4.2. large clusters of commodity PCs connected together with switched Ethernet [4]. In our environment: (1) Machines are typically dual-processor x86 processors running Linux, with 2-4 GB of memory per machine. (2) Commodity networking hardware is used – typically either 100 megabits/second or 1 gigabit/second at the machine level, but averaging considerably less in overall bisection bandwidth. (3) A cluster consists of hundreds or thousands of machines, and therefore machine failures are common. (4) Storage is provided by inexpensive IDE disks attached directly to individual machines. A distributed ﬁle system [8] developed in-house is used to manage the data stored on these disks. The ﬁle system uses replication to provide availability and reliability on top of unreliable hardware. (5) Users submit jobs to a scheduling system. Each job consists of a set of tasks, and is mapped by the scheduler to a set of available machines within a cluster.
+3 Implementation
+Many different implementations of the MapReduce interface are possible. The right choice depends on the environment. For example, one implementation may be suitable for a small shared-memory machine, another for a large NUMA multi-processor, and yet another for an even larger collection of networked machines. This section describes an implementation targeted to the computing environment in wide use at Google: To appear in OSDI 2004
+3.1 Execution Overview
+The Map invocations are distributed across multiple machines by automatically partitioning the input data 3
+into a set of M splits. The input splits can be processed in parallel by different machines. Reduce invocations are distributed by partitioning the intermediate key space into R pieces using a partitioning function (e.g., hash(key) mod R). The number of partitions (R) and the partitioning function are speciﬁed by the user. Figure 1 shows the overall ﬂow of a MapReduce operation in our implementation. When the user program calls the MapReduce function, the following sequence of actions occurs (the numbered labels in Figure 1 correspond to the numbers in the list below): 1. The MapReduce library in the user program ﬁrst splits the input ﬁles into M pieces of typically 16 megabytes to 64 megabytes (MB) per piece (controllable by the user via an optional parameter). It then starts up many copies of the program on a cluster of machines. 2. One of the copies of the program is special – the master. The rest are workers that are assigned work by the master. There are M map tasks and R reduce tasks to assign. The master picks idle workers and assigns each one a map task or a reduce task. 3. A worker who is assigned a map task reads the contents of the corresponding input split. It parses key/value pairs out of the input data and passes each pair to the user-deﬁned Map function. The intermediate key/value pairs produced by the Map function are buffered in memory. 4. Periodically, the buffered pairs are written to local disk, partitioned into R regions by the partitioning function. The locations of these buffered pairs on the local disk are passed back to the master, who is responsible for forwarding these locations to the reduce workers. 5. When a reduce worker is notiﬁed by the master about these locations, it uses remote procedure calls to read the buffered data from the local disks of the map workers. When a reduce worker has read all intermediate data, it sorts it by the intermediate keys so that all occurrences of the same key are grouped together. The sorting is needed because typically many different keys map to the same reduce task. If the amount of intermediate data is too large to ﬁt in memory, an external sort is used. 6. The reduce worker iterates over the sorted intermediate data and for each unique intermediate key encountered, it passes the key and the corresponding set of intermediate values to the user’s Reduce function. The output of the Reduce function is appended to a ﬁnal output ﬁle for this reduce partition. To appear in OSDI 2004</p>
+<ol>
+<li>When all map tasks and reduce tasks have been completed, the master wakes up the user program. At this point, the MapReduce call in the user program returns back to the user code. After successful completion, the output of the mapreduce execution is available in the R output ﬁles (one per reduce task, with ﬁle names as speciﬁed by the user). Typically, users do not need to combine these R output ﬁles into one ﬁle – they often pass these ﬁles as input to another MapReduce call, or use them from another distributed application that is able to deal with input that is partitioned into multiple ﬁles.
+3.2 Master Data Structures
+The master keeps several data structures. For each map task and reduce task, it stores the state (idle, in-progress, or completed), and the identity of the worker machine (for non-idle tasks). The master is the conduit through which the location of intermediate ﬁle regions is propagated from map tasks to reduce tasks. Therefore, for each completed map task, the master stores the locations and sizes of the R intermediate ﬁle regions produced by the map task. Updates to this location and size information are received as map tasks are completed. The information is pushed incrementally to workers that have in-progress reduce tasks.
+3.3 Fault Tolerance
+Since the MapReduce library is designed to help process very large amounts of data using hundreds or thousands of machines, the library must tolerate machine failures gracefully. Worker Failure The master pings every worker periodically. If no response is received from a worker in a certain amount of time, the master marks the worker as failed. Any map tasks completed by the worker are reset back to their initial idle state, and therefore become eligible for scheduling on other workers. Similarly, any map task or reduce task in progress on a failed worker is also reset to idle and becomes eligible for rescheduling. Completed map tasks are re-executed on a failure because their output is stored on the local disk(s) of the failed machine and is therefore inaccessible. Completed reduce tasks do not need to be re-executed since their output is stored in a global ﬁle system. When a map task is executed ﬁrst by worker A and then later executed by worker B (because A failed), all 4
+workers executing reduce tasks are notiﬁed of the reexecution. Any reduce task that has not already read the data from worker A will read the data from worker B. MapReduce is resilient to large-scale worker failures. For example, during one MapReduce operation, network maintenance on a running cluster was causing groups of 80 machines at a time to become unreachable for several minutes. The MapReduce master simply re-executed the work done by the unreachable worker machines, and continued to make forward progress, eventually completing the MapReduce operation. Master Failure It is easy to make the master write periodic checkpoints of the master data structures described above. If the master task dies, a new copy can be started from the last checkpointed state. However, given that there is only a single master, its failure is unlikely; therefore our current implementation aborts the MapReduce computation if the master fails. Clients can check for this condition and retry the MapReduce operation if they desire. Semantics in the Presence of Failures When the user-supplied map and reduce operators are deterministic functions of their input values, our distributed implementation produces the same output as would have been produced by a non-faulting sequential execution of the entire program. We rely on atomic commits of map and reduce task outputs to achieve this property. Each in-progress task writes its output to private temporary ﬁles. A reduce task produces one such ﬁle, and a map task produces R such ﬁles (one per reduce task). When a map task completes, the worker sends a message to the master and includes the names of the R temporary ﬁles in the message. If the master receives a completion message for an already completed map task, it ignores the message. Otherwise, it records the names of R ﬁles in a master data structure. When a reduce task completes, the reduce worker atomically renames its temporary output ﬁle to the ﬁnal output ﬁle. If the same reduce task is executed on multiple machines, multiple rename calls will be executed for the same ﬁnal output ﬁle. We rely on the atomic rename operation provided by the underlying ﬁle system to guarantee that the ﬁnal ﬁle system state contains just the data produced by one execution of the reduce task. The vast majority of our map and reduce operators are deterministic, and the fact that our semantics are equivalent to a sequential execution in this case makes it very To appear in OSDI 2004
+easy for programmers to reason about their program’s behavior. When the map and/or reduce operators are nondeterministic, we provide weaker but still reasonable semantics. In the presence of non-deterministic operators, the output of a particular reduce task R1 is equivalent to the output for R1 produced by a sequential execution of the non-deterministic program. However, the output for a different reduce task R2 may correspond to the output for R2 produced by a different sequential execution of the non-deterministic program. Consider map task M and reduce tasks R1 and R2 . Let e(Ri ) be the execution of Ri that committed (there is exactly one such execution). The weaker semantics arise because e(R1 ) may have read the output produced by one execution of M and e(R2 ) may have read the output produced by a different execution of M .
+3.4 Locality
+Network bandwidth is a relatively scarce resource in our computing environment. We conserve network bandwidth by taking advantage of the fact that the input data (managed by GFS [8]) is stored on the local disks of the machines that make up our cluster. GFS divides each ﬁle into 64 MB blocks, and stores several copies of each block (typically 3 copies) on different machines. The MapReduce master takes the location information of the input ﬁles into account and attempts to schedule a map task on a machine that contains a replica of the corresponding input data. Failing that, it attempts to schedule a map task near a replica of that task’s input data (e.g., on a worker machine that is on the same network switch as the machine containing the data). When running large MapReduce operations on a signiﬁcant fraction of the workers in a cluster, most input data is read locally and consumes no network bandwidth.
+3.5 Task Granularity
+We subdivide the map phase into M pieces and the reduce phase into R pieces, as described above. Ideally, M and R should be much larger than the number of worker machines. Having each worker perform many different tasks improves dynamic load balancing, and also speeds up recovery when a worker fails: the many map tasks it has completed can be spread out across all the other worker machines. There are practical bounds on how large M and R can be in our implementation, since the master must make O(M + R) scheduling decisions and keeps O(M ∗ R) state in memory as described above. (The constant factors for memory usage are small however: the O(M ∗ R) piece of the state consists of approximately one byte of data per map task/reduce task pair.) 5
+Furthermore, R is often constrained by users because the output of each reduce task ends up in a separate output ﬁle. In practice, we tend to choose M so that each individual task is roughly 16 MB to 64 MB of input data (so that the locality optimization described above is most effective), and we make R a small multiple of the number of worker machines we expect to use. We often perform MapReduce computations with M = 200, 000 and R = 5, 000, using 2,000 worker machines.
+3.6 Backup Tasks
+One of the common causes that lengthens the total time taken for a MapReduce operation is a “straggler”: a machine that takes an unusually long time to complete one of the last few map or reduce tasks in the computation. Stragglers can arise for a whole host of reasons. For example, a machine with a bad disk may experience frequent correctable errors that slow its read performance from 30 MB/s to 1 MB/s. The cluster scheduling system may have scheduled other tasks on the machine, causing it to execute the MapReduce code more slowly due to competition for CPU, memory, local disk, or network bandwidth. A recent problem we experienced was a bug in machine initialization code that caused processor caches to be disabled: computations on affected machines slowed down by over a factor of one hundred. We have a general mechanism to alleviate the problem of stragglers. When a MapReduce operation is close to completion, the master schedules backup executions of the remaining in-progress tasks. The task is marked as completed whenever either the primary or the backup execution completes. We have tuned this mechanism so that it typically increases the computational resources used by the operation by no more than a few percent. We have found that this signiﬁcantly reduces the time to complete large MapReduce operations. As an example, the sort program described in Section 5.3 takes 44% longer to complete when the backup task mechanism is disabled.
+the intermediate key. A default partitioning function is provided that uses hashing (e.g. “hash(key) mod R”). This tends to result in fairly well-balanced partitions. In some cases, however, it is useful to partition data by some other function of the key. For example, sometimes the output keys are URLs, and we want all entries for a single host to end up in the same output ﬁle. To support situations like this, the user of the MapReduce library can provide a special partitioning function. For example, using “hash(Hostname(urlkey)) mod R” as the partitioning function causes all URLs from the same host to end up in the same output ﬁle.
+4.2 Ordering Guarantees
+We guarantee that within a given partition, the intermediate key/value pairs are processed in increasing key order. This ordering guarantee makes it easy to generate a sorted output ﬁle per partition, which is useful when the output ﬁle format needs to support efﬁcient random access lookups by key, or users of the output ﬁnd it convenient to have the data sorted.
+4.3 Combiner Function
+In some cases, there is signiﬁcant repetition in the intermediate keys produced by each map task, and the userspeciﬁed Reduce function is commutative and associative. A good example of this is the word counting example in Section 2.1. Since word frequencies tend to follow a Zipf distribution, each map task will produce hundreds or thousands of records of the form <the, 1>. All of these counts will be sent over the network to a single reduce task and then added together by the Reduce function to produce one number. We allow the user to specify an optional Combiner function that does partial merging of this data before it is sent over the network. The Combiner function is executed on each machine that performs a map task. Typically the same code is used to implement both the combiner and the reduce functions. The only difference between a reduce function and a combiner function is how the MapReduce library handles the output of the function. The output of a reduce function is written to the ﬁnal output ﬁle. The output of a combiner function is written to an intermediate ﬁle that will be sent to a reduce task. Partial combining signiﬁcantly speeds up certain classes of MapReduce operations. Appendix A contains an example that uses a combiner.
+4 Reﬁnements
+Although the basic functionality provided by simply writing Map and Reduce functions is sufﬁcient for most needs, we have found a few extensions useful. These are described in this section.
+4.1 Partitioning Function
+The users of MapReduce specify the number of reduce tasks/output ﬁles that they desire (R). Data gets partitioned across these tasks using a partitioning function on To appear in OSDI 2004
+4.4 Input and Output Types
+The MapReduce library provides support for reading input data in several different formats. For example, “text” 6
+mode input treats each line as a key/value pair: the key is the offset in the ﬁle and the value is the contents of the line. Another common supported format stores a sequence of key/value pairs sorted by key. Each input type implementation knows how to split itself into meaningful ranges for processing as separate map tasks (e.g. text mode’s range splitting ensures that range splits occur only at line boundaries). Users can add support for a new input type by providing an implementation of a simple reader interface, though most users just use one of a small number of predeﬁned input types. A reader does not necessarily need to provide data read from a ﬁle. For example, it is easy to deﬁne a reader that reads records from a database, or from data structures mapped in memory. In a similar fashion, we support a set of output types for producing data in different formats and it is easy for user code to add support for new output types.
+the signal handler sends a “last gasp” UDP packet that contains the sequence number to the MapReduce master. When the master has seen more than one failure on a particular record, it indicates that the record should be skipped when it issues the next re-execution of the corresponding Map or Reduce task.
+4.7 Local Execution
+Debugging problems in Map or Reduce functions can be tricky, since the actual computation happens in a distributed system, often on several thousand machines, with work assignment decisions made dynamically by the master. To help facilitate debugging, proﬁling, and small-scale testing, we have developed an alternative implementation of the MapReduce library that sequentially executes all of the work for a MapReduce operation on the local machine. Controls are provided to the user so that the computation can be limited to particular map tasks. Users invoke their program with a special ﬂag and can then easily use any debugging or testing tools they ﬁnd useful (e.g. gdb).
+4.5 Side-effects
+In some cases, users of MapReduce have found it convenient to produce auxiliary ﬁles as additional outputs from their map and/or reduce operators. We rely on the application writer to make such side-effects atomic and idempotent. Typically the application writes to a temporary ﬁle and atomically renames this ﬁle once it has been fully generated. We do not provide support for atomic two-phase commits of multiple output ﬁles produced by a single task. Therefore, tasks that produce multiple output ﬁles with cross-ﬁle consistency requirements should be deterministic. This restriction has never been an issue in practice.
+4.8 Status Information
+The master runs an internal HTTP server and exports a set of status pages for human consumption. The status pages show the progress of the computation, such as how many tasks have been completed, how many are in progress, bytes of input, bytes of intermediate data, bytes of output, processing rates, etc. The pages also contain links to the standard error and standard output ﬁles generated by each task. The user can use this data to predict how long the computation will take, and whether or not more resources should be added to the computation. These pages can also be used to ﬁgure out when the computation is much slower than expected. In addition, the top-level status page shows which workers have failed, and which map and reduce tasks they were processing when they failed. This information is useful when attempting to diagnose bugs in the user code.
+4.6 Skipping Bad Records
+Sometimes there are bugs in user code that cause the Map or Reduce functions to crash deterministically on certain records. Such bugs prevent a MapReduce operation from completing. The usual course of action is to ﬁx the bug, but sometimes this is not feasible; perhaps the bug is in a third-party library for which source code is unavailable. Also, sometimes it is acceptable to ignore a few records, for example when doing statistical analysis on a large data set. We provide an optional mode of execution where the MapReduce library detects which records cause deterministic crashes and skips these records in order to make forward progress. Each worker process installs a signal handler that catches segmentation violations and bus errors. Before invoking a user Map or Reduce operation, the MapReduce library stores the sequence number of the argument in a global variable. If the user code generates a signal, To appear in OSDI 2004
+4.9 Counters
+The MapReduce library provides a counter facility to count occurrences of various events. For example, user code may want to count total number of words processed or the number of German documents indexed, etc. To use this facility, user code creates a named counter object and then increments the counter appropriately in the Map and/or Reduce function. For example: 7
+Input (MB/s)
+Counter/<em> uppercase; uppercase = GetCounter(&quot;uppercase&quot;); map(String name, String contents): for each word w in contents: if (IsCapitalized(w)): uppercase-&gt;Increment(); EmitIntermediate(w, &quot;1&quot;);
+30000 20000 10000 0 20 40 60 80 100
+The counter values from individual worker machines are periodically propagated to the master (piggybacked on the ping response). The master aggregates the counter values from successful map and reduce tasks and returns them to the user code when the MapReduce operation is completed. The current counter values are also displayed on the master status page so that a human can watch the progress of the live computation. When aggregating counter values, the master eliminates the effects of duplicate executions of the same map or reduce task to avoid double counting. (Duplicate executions can arise from our use of backup tasks and from re-execution of tasks due to failures.) Some counter values are automatically maintained by the MapReduce library, such as the number of input key/value pairs processed and the number of output key/value pairs produced. Users have found the counter facility useful for sanity checking the behavior of MapReduce operations. For example, in some MapReduce operations, the user code may want to ensure that the number of output pairs produced exactly equals the number of input pairs processed, or that the fraction of German documents processed is within some tolerable fraction of the total number of documents processed.
+Seconds
+Figure 2: Data transfer rate over time disks, and a gigabit Ethernet link. The machines were arranged in a two-level tree-shaped switched network with approximately 100-200 Gbps of aggregate bandwidth available at the root. All of the machines were in the same hosting facility and therefore the round-trip time between any pair of machines was less than a millisecond. Out of the 4GB of memory, approximately 1-1.5GB was reserved by other tasks running on the cluster. The programs were executed on a weekend afternoon, when the CPUs, disks, and network were mostly idle.
+5.2 Grep
+The grep program scans through 1010 100-byte records, searching for a relatively rare three-character pattern (the pattern occurs in 92,337 records). The input is split into approximately 64MB pieces (M = 15000), and the entire output is placed in one ﬁle (R = 1). Figure 2 shows the progress of the computation over time. The Y-axis shows the rate at which the input data is scanned. The rate gradually picks up as more machines are assigned to this MapReduce computation, and peaks at over 30 GB/s when 1764 workers have been assigned. As the map tasks ﬁnish, the rate starts dropping and hits zero about 80 seconds into the computation. The entire computation takes approximately 150 seconds from start to ﬁnish. This includes about a minute of startup overhead. The overhead is due to the propagation of the program to all worker machines, and delays interacting with GFS to open the set of 1000 input ﬁles and to get the information needed for the locality optimization.
+5 Performance
+In this section we measure the performance of MapReduce on two computations running on a large cluster of machines. One computation searches through approximately one terabyte of data looking for a particular pattern. The other computation sorts approximately one terabyte of data. These two programs are representative of a large subset of the real programs written by users of MapReduce – one class of programs shufﬂes data from one representation to another, and another class extracts a small amount of interesting data from a large data set.
+5.3 Sort
+The sort program sorts 1010 100-byte records (approximately 1 terabyte of data). This program is modeled after the TeraSort benchmark [10]. The sorting program consists of less than 50 lines of user code. A three-line Map function extracts a 10-byte sorting key from a text line and emits the key and the 8
+5.1 Cluster Conﬁguration
+All of the programs were executed on a cluster that consisted of approximately 1800 machines. Each machine had two 2GHz Intel Xeon processors with HyperThreading enabled, 4GB of memory, two 160GB IDE To appear in OSDI 2004
+20000
+Input (MB/s)
+Input (MB/s)
+15000 10000 5000 0 500 1000
+Input (MB/s)
+Done
+20000 15000 10000 5000 0 500 1000
+20000
+Done
+Done
+15000 10000 5000 0 500 1000
+Shuffle (MB/s)
+15000 10000 5000 0 500 1000
+Shuffle (MB/s)
+500 1000
+20000
+Shuffle (MB/s)
+20000 15000 10000 5000 0
+20000 15000 10000 5000 0 500 1000
+Output (MB/s)
+Output (MB/s)
+15000 10000 5000 0 500 1000
+15000 10000 5000 0 500 1000
+Output (MB/s)
+20000
+20000
+20000 15000 10000 5000 0 500 1000
+Seconds
+Seconds
+Seconds
+(a) Normal execution
+(b) No backup tasks
+(c) 200 tasks killed
+Figure 3: Data transfer rates over time for different executions of the sort program original text line as the intermediate key/value pair. We used a built-in Identity function as the Reduce operator. This functions passes the intermediate key/value pair unchanged as the output key/value pair. The ﬁnal sorted output is written to a set of 2-way replicated GFS ﬁles (i.e., 2 terabytes are written as the output of the program). As before, the input data is split into 64MB pieces (M = 15000). We partition the sorted output into 4000 ﬁles (R = 4000). The partitioning function uses the initial bytes of the key to segregate it into one of R pieces. Our partitioning function for this benchmark has builtin knowledge of the distribution of keys. In a general sorting program, we would add a pre-pass MapReduce operation that would collect a sample of the keys and use the distribution of the sampled keys to compute splitpoints for the ﬁnal sorting pass. Figure 3 (a) shows the progress of a normal execution of the sort program. The top-left graph shows the rate at which input is read. The rate peaks at about 13 GB/s and dies off fairly quickly since all map tasks ﬁnish before 200 seconds have elapsed. Note that the input rate is less than for grep. This is because the sort map tasks spend about half their time and I/O bandwidth writing intermediate output to their local disks. The corresponding intermediate output for grep had negligible size. The middle-left graph shows the rate at which data is sent over the network from the map tasks to the reduce tasks. This shufﬂing starts as soon as the ﬁrst map task completes. The ﬁrst hump in the graph is for To appear in OSDI 2004 the ﬁrst batch of approximately 1700 reduce tasks (the entire MapReduce was assigned about 1700 machines, and each machine executes at most one reduce task at a time). Roughly 300 seconds into the computation, some of these ﬁrst batch of reduce tasks ﬁnish and we start shufﬂing data for the remaining reduce tasks. All of the shufﬂing is done about 600 seconds into the computation. The bottom-left graph shows the rate at which sorted data is written to the ﬁnal output ﬁles by the reduce tasks. There is a delay between the end of the ﬁrst shufﬂing period and the start of the writing period because the machines are busy sorting the intermediate data. The writes continue at a rate of about 2-4 GB/s for a while. All of the writes ﬁnish about 850 seconds into the computation. Including startup overhead, the entire computation takes 891 seconds. This is similar to the current best reported result of 1057 seconds for the TeraSort benchmark [18]. A few things to note: the input rate is higher than the shufﬂe rate and the output rate because of our locality optimization – most data is read from a local disk and bypasses our relatively bandwidth constrained network. The shufﬂe rate is higher than the output rate because the output phase writes two copies of the sorted data (we make two replicas of the output for reliability and availability reasons). We write two replicas because that is the mechanism for reliability and availability provided by our underlying ﬁle system. Network bandwidth requirements for writing data would be reduced if the underlying ﬁle system used erasure coding [14] rather than replication. 9
+In Figure 3 (b), we show an execution of the sort program with backup tasks disabled. The execution ﬂow is similar to that shown in Figure 3 (a), except that there is a very long tail where hardly any write activity occurs. After 960 seconds, all except 5 of the reduce tasks are completed. However these last few stragglers don’t ﬁnish until 300 seconds later. The entire computation takes 1283 seconds, an increase of 44% in elapsed time.
+Number of instances in source tree
+5.4 Effect of Backup Tasks
+1000 800 600 400 200 0 2003/03 2003/06 2003/09 2003/12 2004/03 2004/06 2004/09
+5.5 Machine Failures
+In Figure 3 (c), we show an execution of the sort program where we intentionally killed 200 out of 1746 worker processes several minutes into the computation. The underlying cluster scheduler immediately restarted new worker processes on these machines (since only the processes were killed, the machines were still functioning properly). The worker deaths show up as a negative input rate since some previously completed map work disappears (since the corresponding map workers were killed) and needs to be redone. The re-execution of this map work happens relatively quickly. The entire computation ﬁnishes in 933 seconds including startup overhead (just an increase of 5% over the normal execution time).
+Figure 4: MapReduce instances over time
+Number of jobs Average job completion time Machine days used Input data read Intermediate data produced Output data written Average worker machines per job Average worker deaths per job Average map tasks per job Average reduce tasks per job Unique map implementations Unique reduce implementations Unique map/reduce combinations 29,423 634 secs 79,186 days 3,288 TB 758 TB 193 TB 157 1.2 3,351 55 395 269 426
+6 Experience
+We wrote the ﬁrst version of the MapReduce library in February of 2003, and made signiﬁcant enhancements to it in August of 2003, including the locality optimization, dynamic load balancing of task execution across worker machines, etc. Since that time, we have been pleasantly surprised at how broadly applicable the MapReduce library has been for the kinds of problems we work on. It has been used across a wide range of domains within Google, including: • large-scale machine learning problems, • clustering problems for the Google News and Froogle products, • extraction of data used to produce reports of popular queries (e.g. Google Zeitgeist), • extraction of properties of web pages for new experiments and products (e.g. extraction of geographical locations from a large corpus of web pages for localized search), and • large-scale graph computations. To appear in OSDI 2004
+Table 1: MapReduce jobs run in August 2004 Figure 4 shows the signiﬁcant growth in the number of separate MapReduce programs checked into our primary source code management system over time, from 0 in early 2003 to almost 900 separate instances as of late September 2004. MapReduce has been so successful because it makes it possible to write a simple program and run it efﬁciently on a thousand machines in the course of half an hour, greatly speeding up the development and prototyping cycle. Furthermore, it allows programmers who have no experience with distributed and/or parallel systems to exploit large amounts of resources easily. At the end of each job, the MapReduce library logs statistics about the computational resources used by the job. In Table 1, we show some statistics for a subset of MapReduce jobs run at Google in August 2004.
+6.1 Large-Scale Indexing
+One of our most signiﬁcant uses of MapReduce to date has been a complete rewrite of the production index10
+ing system that produces the data structures used for the Google web search service. The indexing system takes as input a large set of documents that have been retrieved by our crawling system, stored as a set of GFS ﬁles. The raw contents for these documents are more than 20 terabytes of data. The indexing process runs as a sequence of ﬁve to ten MapReduce operations. Using MapReduce (instead of the ad-hoc distributed passes in the prior version of the indexing system) has provided several beneﬁts: • The indexing code is simpler, smaller, and easier to understand, because the code that deals with fault tolerance, distribution and parallelization is hidden within the MapReduce library. For example, the size of one phase of the computation dropped from approximately 3800 lines of C++ code to approximately 700 lines when expressed using MapReduce. • The performance of the MapReduce library is good enough that we can keep conceptually unrelated computations separate, instead of mixing them together to avoid extra passes over the data. This makes it easy to change the indexing process. For example, one change that took a few months to make in our old indexing system took only a few days to implement in the new system. • The indexing process has become much easier to operate, because most of the problems caused by machine failures, slow machines, and networking hiccups are dealt with automatically by the MapReduce library without operator intervention. Furthermore, it is easy to improve the performance of the indexing process by adding new machines to the indexing cluster.
+7 Related Work
+Many systems have provided restricted programming models and used the restrictions to parallelize the computation automatically. For example, an associative function can be computed over all preﬁxes of an N element array in log N time on N processors using parallel preﬁx computations [6, 9, 13]. MapReduce can be considered a simpliﬁcation and distillation of some of these models based on our experience with large real-world computations. More signiﬁcantly, we provide a fault-tolerant implementation that scales to thousands of processors. In contrast, most of the parallel processing systems have only been implemented on smaller scales and leave the details of handling machine failures to the programmer. Bulk Synchronous Programming [17] and some MPI primitives [11] provide higher-level abstractions that To appear in OSDI 2004
+make it easier for programmers to write parallel programs. A key difference between these systems and MapReduce is that MapReduce exploits a restricted programming model to parallelize the user program automatically and to provide transparent fault-tolerance. Our locality optimization draws its inspiration from techniques such as active disks [12, 15], where computation is pushed into processing elements that are close to local disks, to reduce the amount of data sent across I/O subsystems or the network. We run on commodity processors to which a small number of disks are directly connected instead of running directly on disk controller processors, but the general approach is similar. Our backup task mechanism is similar to the eager scheduling mechanism employed in the Charlotte System [3]. One of the shortcomings of simple eager scheduling is that if a given task causes repeated failures, the entire computation fails to complete. We ﬁx some instances of this problem with our mechanism for skipping bad records. The MapReduce implementation relies on an in-house cluster management system that is responsible for distributing and running user tasks on a large collection of shared machines. Though not the focus of this paper, the cluster management system is similar in spirit to other systems such as Condor [16]. The sorting facility that is a part of the MapReduce library is similar in operation to NOW-Sort [1]. Source machines (map workers) partition the data to be sorted and send it to one of R reduce workers. Each reduce worker sorts its data locally (in memory if possible). Of course NOW-Sort does not have the user-deﬁnable Map and Reduce functions that make our library widely applicable. River [2] provides a programming model where processes communicate with each other by sending data over distributed queues. Like MapReduce, the River system tries to provide good average case performance even in the presence of non-uniformities introduced by heterogeneous hardware or system perturbations. River achieves this by careful scheduling of disk and network transfers to achieve balanced completion times. MapReduce has a different approach. By restricting the programming model, the MapReduce framework is able to partition the problem into a large number of ﬁnegrained tasks. These tasks are dynamically scheduled on available workers so that faster workers process more tasks. The restricted programming model also allows us to schedule redundant executions of tasks near the end of the job which greatly reduces completion time in the presence of non-uniformities (such as slow or stuck workers). BAD-FS [5] has a very different programming model from MapReduce, and unlike MapReduce, is targeted to 11
+the execution of jobs across a wide-area network. However, there are two fundamental similarities. (1) Both systems use redundant execution to recover from data loss caused by failures. (2) Both use locality-aware scheduling to reduce the amount of data sent across congested network links. TACC [7] is a system designed to simplify construction of highly-available networked services. Like MapReduce, it relies on re-execution as a mechanism for implementing fault-tolerance.
+8 Conclusions
+The MapReduce programming model has been successfully used at Google for many different purposes. We attribute this success to several reasons. First, the model is easy to use, even for programmers without experience with parallel and distributed systems, since it hides the details of parallelization, fault-tolerance, locality optimization, and load balancing. Second, a large variety of problems are easily expressible as MapReduce computations. For example, MapReduce is used for the generation of data for Google’s production web search service, for sorting, for data mining, for machine learning, and many other systems. Third, we have developed an implementation of MapReduce that scales to large clusters of machines comprising thousands of machines. The implementation makes efﬁcient use of these machine resources and therefore is suitable for use on many of the large computational problems encountered at Google. We have learned several things from this work. First, restricting the programming model makes it easy to parallelize and distribute computations and to make such computations fault-tolerant. Second, network bandwidth is a scarce resource. A number of optimizations in our system are therefore targeted at reducing the amount of data sent across the network: the locality optimization allows us to read data from local disks, and writing a single copy of the intermediate data to local disk saves network bandwidth. Third, redundant execution can be used to reduce the impact of slow machines, and to handle machine failures and data loss.
+David Kramer, Shun-Tak Leung, and Josh Redstone for their work in developing GFS. We would also like to thank Percy Liang and Olcan Sercinoglu for their work in developing the cluster management system used by MapReduce. Mike Burrows, Wilson Hsieh, Josh Levenberg, Sharon Perl, Rob Pike, and Debby Wallach provided helpful comments on earlier drafts of this paper. The anonymous OSDI reviewers, and our shepherd, Eric Brewer, provided many useful suggestions of areas where the paper could be improved. Finally, we thank all the users of MapReduce within Google’s engineering organization for providing helpful feedback, suggestions, and bug reports.
+References
+[1] Andrea C. Arpaci-Dusseau, Remzi H. Arpaci-Dusseau, David E. Culler, Joseph M. Hellerstein, and David A. Patterson. High-performance sorting on networks of workstations. In Proceedings of the 1997 ACM SIGMOD International Conference on Management of Data, Tucson, Arizona, May 1997. [2] Remzi H. Arpaci-Dusseau, Eric Anderson, Noah Treuhaft, David E. Culler, Joseph M. Hellerstein, David Patterson, and Kathy Yelick. Cluster I/O with River: Making the fast case common. In Proceedings of the Sixth Workshop on Input/Output in Parallel and Distributed Systems (IOPADS ’99), pages 10–22, Atlanta, Georgia, May 1999. [3] Arash Baratloo, Mehmet Karaul, Zvi Kedem, and Peter Wyckoff. Charlotte: Metacomputing on the web. In Proceedings of the 9th International Conference on Parallel and Distributed Computing Systems, 1996. [4] Luiz A. Barroso, Jeffrey Dean, and Urs H¨ lzle. Web o search for a planet: The Google cluster architecture. IEEE Micro, 23(2):22–28, April 2003. [5] John Bent, Douglas Thain, Andrea C.Arpaci-Dusseau, Remzi H. Arpaci-Dusseau, and Miron Livny. Explicit control in a batch-aware distributed ﬁle system. In Proceedings of the 1st USENIX Symposium on Networked Systems Design and Implementation NSDI, March 2004. [6] Guy E. Blelloch. Scans as primitive parallel operations. IEEE Transactions on Computers, C-38(11), November 1989. [7] Armando Fox, Steven D. Gribble, Yatin Chawathe, Eric A. Brewer, and Paul Gauthier. Cluster-based scalable network services. In Proceedings of the 16th ACM Symposium on Operating System Principles, pages 78– 91, Saint-Malo, France, 1997. [8] Sanjay Ghemawat, Howard Gobioff, and Shun-Tak Leung. The Google ﬁle system. In 19th Symposium on Operating Systems Principles, pages 29–43, Lake George, New York, 2003.
+Acknowledgements
+Josh Levenberg has been instrumental in revising and extending the user-level MapReduce API with a number of new features based on his experience with using MapReduce and other people’s suggestions for enhancements. MapReduce reads its input from and writes its output to the Google File System [8]. We would like to thank Mohit Aron, Howard Gobioff, Markus Gutschke, To appear in OSDI 2004
+12
+[9] S. Gorlatch. Systematic efﬁcient parallelization of scan and other list homomorphisms. In L. Bouge, P. Fraigniaud, A. Mignotte, and Y. Robert, editors, Euro-Par’96. Parallel Processing, Lecture Notes in Computer Science 1124, pages 401–408. Springer-Verlag, 1996. [10] Jim Gray. Sort benchmark home page. <a href="http://research.microsoft.com/barc/SortBenchmark/" target="_blank">http://research.microsoft.com/barc/SortBenchmark/</a>. [11] William Gropp, Ewing Lusk, and Anthony Skjellum. Using MPI: Portable Parallel Programming with the Message-Passing Interface. MIT Press, Cambridge, MA, 1999. [12] L. Huston, R. Sukthankar, R. Wickremesinghe, M. Satyanarayanan, G. R. Ganger, E. Riedel, and A. Ailamaki. Diamond: A storage architecture for early discard in interactive search. In Proceedings of the 2004 USENIX File and Storage Technologies FAST Conference, April 2004. [13] Richard E. Ladner and Michael J. Fischer. Parallel preﬁx computation. Journal of the ACM, 27(4):831–838, 1980. [14] Michael O. Rabin. Efﬁcient dispersal of information for security, load balancing and fault tolerance. Journal of the ACM, 36(2):335–348, 1989. [15] Erik Riedel, Christos Faloutsos, Garth A. Gibson, and David Nagle. Active disks for large-scale data processing. IEEE Computer, pages 68–74, June 2001. [16] Douglas Thain, Todd Tannenbaum, and Miron Livny. Distributed computing in practice: The Condor experience. Concurrency and Computation: Practice and Experience, 2004. [17] L. G. Valiant. A bridging model for parallel computation. Communications of the ACM, 33(8):103–111, 1997. [18] Jim Wyllie. Spsort: How to sort a terabyte quickly. <a href="http://alme1.almaden.ibm.com/cs/spsort.pdf" target="_blank">http://alme1.almaden.ibm.com/cs/spsort.pdf</a>.
+if (start &lt; i) Emit(text.substr(start,i-start),&quot;1&quot;); } } }; REGISTER_MAPPER(WordCounter); // User’s reduce function class Adder : public Reducer { virtual void Reduce(ReduceInput/</em> input) { // Iterate over all entries with the // same key and add the values int64 value = 0; while (!input-&gt;done()) { value += StringToInt(input-&gt;value()); input-&gt;NextValue(); } // Emit sum for input-&gt;key() Emit(IntToString(value)); } }; REGISTER_REDUCER(Adder); int main(int argc, char/<em>/</em> argv) { ParseCommandLineFlags(argc, argv); MapReduceSpecification spec; // Store list of input files into &quot;spec&quot; for (int i = 1; i &lt; argc; i++) { MapReduceInput/<em> input = spec.add_input(); input-&gt;set_format(&quot;text&quot;); input-&gt;set_filepattern(argv[i]); input-&gt;set_mapper_class(&quot;WordCounter&quot;); } // Specify the output files: // /gfs/test/freq-00000-of-00100 // /gfs/test/freq-00001-of-00100 // ... MapReduceOutput/</em> out = spec.output(); out-&gt;set_filebase(&quot;/gfs/test/freq&quot;); out-&gt;set_num_tasks(100); out-&gt;set_format(&quot;text&quot;); out-&gt;set_reducer_class(&quot;Adder&quot;); // Optional: do partial sums within map // tasks to save network bandwidth out-&gt;set_combiner_class(&quot;Adder&quot;); // Tuning parameters: use at most 2000 // machines and 100 MB of memory per task spec.set_machines(2000); spec.set_map_megabytes(100); spec.set_reduce_megabytes(100); // Now run it MapReduceResult result; if (!MapReduce(spec, &amp;result)) abort(); // Done: ’result’ structure contains info // about counters, time taken, number of // machines used, etc. return 0; }
+A
+Word Frequency
+This section contains a program that counts the number of occurrences of each unique word in a set of input ﬁles speciﬁed on the command line.
+/#include &quot;mapreduce/mapreduce.h&quot; // User’s map function class WordCounter : public Mapper { public: virtual void Map(const MapInput&amp; input) { const string&amp; text = input.value(); const int n = text.size(); for (int i = 0; i &lt; n; ) { // Skip past leading whitespace while ((i &lt; n) &amp;&amp; isspace(text[i])) i++; // Find word end int start = i; while ((i &lt; n) &amp;&amp; !isspace(text[i])) i++;
+To appear in OSDI 2004
+13</li>
+</ol>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--mapreduce-osdi04/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--mapreduce-osdi04" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--mapred_tutorial/">mapred_tutorial</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--mapred_tutorial/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="mapred_tutorial">mapred_tutorial</h1>
+<p>Map/Reduce Tutorial
+Table of contents
+1 2 3 4 5
+Purpose...............................................................................................................................2 Pre-requisites......................................................................................................................2 Overview............................................................................................................................2 Inputs and Outputs............................................................................................................. 3 Example: WordCount v1.0................................................................................................ 3
+5.1 5.2 5.3
+Source Code...................................................................................................................3 Usage............................................................................................................................. 6 Walk-through.................................................................................................................7 Payload.......................................................................................................................... 9 Job Configuration........................................................................................................ 13 Task Execution &amp; Environment.................................................................................. 14 Job Submission and Monitoring..................................................................................21 Job Input...................................................................................................................... 22 Job Output................................................................................................................... 23 Other Useful Features..................................................................................................25 Source Code.................................................................................................................31 Sample Runs................................................................................................................37 Highlights.................................................................................................................... 39
+6
+Map/Reduce - User Interfaces............................................................................................9
+6.1 6.2 6.3 6.4 6.5 6.6 6.7
+7
+Example: WordCount v2.0.............................................................................................. 30
+7.1 7.2 7.3
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial</p>
+<ol>
+<li>Purpose
+This document comprehensively describes all user-facing facets of the Hadoop Map/Reduce framework and serves as a tutorial.</li>
+<li>Pre-requisites
+Ensure that Hadoop is installed, configured and is running. More details: • Hadoop Quick Start for first-time users. • Hadoop Cluster Setup for large, distributed clusters.</li>
+<li>Overview
+Hadoop Map/Reduce is a software framework for easily writing applications which process vast amounts of data (multi-terabyte data-sets) in-parallel on large clusters (thousands of nodes) of commodity hardware in a reliable, fault-tolerant manner. A Map/Reduce job usually splits the input data-set into independent chunks which are processed by the map tasks in a completely parallel manner. The framework sorts the outputs of the maps, which are then input to the reduce tasks. Typically both the input and the output of the job are stored in a file-system. The framework takes care of scheduling tasks, monitoring them and re-executes the failed tasks. Typically the compute nodes and the storage nodes are the same, that is, the Map/Reduce framework and the Hadoop Distributed File System (see HDFS Architecture ) are running on the same set of nodes. This configuration allows the framework to effectively schedule tasks on the nodes where data is already present, resulting in very high aggregate bandwidth across the cluster. The Map/Reduce framework consists of a single master JobTracker and one slave TaskTracker per cluster-node. The master is responsible for scheduling the jobs&#39; component tasks on the slaves, monitoring them and re-executing the failed tasks. The slaves execute the tasks as directed by the master. Minimally, applications specify the input/output locations and supply map and reduce functions via implementations of appropriate interfaces and/or abstract-classes. These, and other job parameters, comprise the job configuration. The Hadoop job client then submits the job (jar/executable etc.) and configuration to the JobTracker which then assumes the responsibility of distributing the software/configuration to the slaves, scheduling tasks and monitoring them, providing status and diagnostic information to the job-client.
+Page 2
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+Although the Hadoop framework is implemented in JavaTM, Map/Reduce applications need not be written in Java. • Hadoop Streaming is a utility which allows users to create and run jobs with any executables (e.g. shell utilities) as the mapper and/or the reducer. • Hadoop Pipes is a SWIG- compatible C++ API to implement Map/Reduce applications (non JNITM based).</li>
+<li>Inputs and Outputs
+The Map/Reduce framework operates exclusively on <key, value> pairs, that is, the framework views the input to the job as a set of <key, value> pairs and produces a set of <key, value> pairs as the output of the job, conceivably of different types. The key and value classes have to be serializable by the framework and hence need to implement the Writable interface. Additionally, the key classes have to implement the WritableComparable interface to facilitate sorting by the framework. Input and Output types of a Map/Reduce job: (input) <k1, v1> -&gt; map -&gt; <k2, v2> -&gt; combine -&gt; <k2, v2> -&gt; reduce -&gt; <k3, v3> (output)</li>
+<li>Example: WordCount v1.0
+Before we jump into the details, lets walk through an example Map/Reduce application to get a flavour for how they work. WordCount is a simple application that counts the number of occurences of each word in a given input set. This works with a local-standalone, pseudo-distributed or fully-distributed Hadoop installation(see Hadoop Quick Start).
+5.1. Source Code
+WordCount.java 1. 2. 3. 4. import java.io.IOException; import java.util./*; package org.myorg;
+Page 3
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial</li>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li>public static class Map extends MapReduceBase implements Mapper<LongWritable, Text, Text, IntWritable> { private final static IntWritable one = new IntWritable(1); private Text word = new Text(); public class WordCount { import org.apache.hadoop.fs.Path; import org.apache.hadoop.conf./<em>; import org.apache.hadoop.io./</em>; import org.apache.hadoop.mapred./<em>; import org.apache.hadoop.util./</em>;</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li>18.
+public void map(LongWritable key, Text value, OutputCollector<Text, IntWritable> output, Reporter reporter) throws IOException { String line = value.toString(); StringTokenizer tokenizer = new StringTokenizer(line); while (tokenizer.hasMoreTokens()) { word.set(tokenizer.nextToken());</li>
+</ol>
+</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li>25.
+output.collect(word, one); } }
+Page 4
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+<li><ol>
+<li>28.
+}
+public static class Reduce extends MapReduceBase implements Reducer<Text, IntWritable, Text, IntWritable> { public void reduce(Text key, Iterator<IntWritable> values, OutputCollector<Text, IntWritable> output, Reporter reporter) throws IOException { int sum = 0; while (values.hasNext()) { sum += values.next().get(); } output.collect(key, new IntWritable(sum)); } }
+29.</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li>42.
+public static void main(String[] args) throws Exception { JobConf conf = new JobConf(WordCount.class); conf.setJobName(&quot;wordcount&quot;);
+conf.setOutputKeyClass(Text.class); 43. conf.setOutputValueClass(IntWritable.class); 44. 45. conf.setMapperClass(Map.class);
+Page 5
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+<li>conf.setCombinerClass(Reduce.class); 47. conf.setReducerClass(Reduce.class); 48. 49. conf.setInputFormat(TextInputFormat.class); 50. conf.setOutputFormat(TextOutputFormat.class); 51. 52. FileInputFormat.setInputPaths(conf, new Path(args[0])); 53. FileOutputFormat.setOutputPath(conf, new Path(args[1])); 54. 55. 57. 58. 59. } JobClient.runJob(conf); }
+5.2. Usage
+Assuming HADOOP_HOME is the root of the installation and HADOOP_VERSION is the Hadoop version installed, compile WordCount.java and create a jar: $ mkdir wordcount_classes $ javac -classpath ${HADOOP_HOME}/hadoop-${HADOOP_VERSION}-core.jar -d wordcount_classes WordCount.java $ jar -cvf /usr/joe/wordcount.jar -C wordcount_classes/ . Assuming that: • /usr/joe/wordcount/input - input directory in HDFS
+Page 6
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+•
+/usr/joe/wordcount/output - output directory in HDFS
+Sample text-files as input: $ bin/hadoop dfs -ls /usr/joe/wordcount/input/ /usr/joe/wordcount/input/file01 /usr/joe/wordcount/input/file02 $ bin/hadoop dfs -cat /usr/joe/wordcount/input/file01 Hello World Bye World $ bin/hadoop dfs -cat /usr/joe/wordcount/input/file02 Hello Hadoop Goodbye Hadoop Run the application: $ bin/hadoop jar /usr/joe/wordcount.jar org.myorg.WordCount /usr/joe/wordcount/input /usr/joe/wordcount/output Output: $ bin/hadoop dfs -cat /usr/joe/wordcount/output/part-00000 Bye 1 Goodbye 1 Hadoop 2 Hello 2 World 2 Applications can specify a comma separated list of paths which would be present in the current working directory of the task using the option -files. The -libjars option allows applications to add jars to the classpaths of the maps and reduces. The -archives allows them to pass archives as arguments that are unzipped/unjarred and a link with name of the jar/zip are created in the current working directory of tasks. More details about the command line options are available at Hadoop Command Guide. Running wordcount example with -libjars and -files: hadoop jar hadoop-examples.jar wordcount -files cachefile.txt -libjars mylib.jar input output
+5.3. Walk-through
+The WordCount application is quite straight-forward. The Mapper implementation (lines 14-26), via the map method (lines 18-25), processes one line at a time, as provided by the specified TextInputFormat (line 49). It then splits the line into tokens separated by whitespaces, via the StringTokenizer, and emits a
+Page 7
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+key-value pair of &lt; <word>, 1&gt;. For the given sample input the first map emits: &lt; Hello, 1&gt; &lt; World, 1&gt; &lt; Bye, 1&gt; &lt; World, 1&gt; The second map emits: &lt; Hello, 1&gt; &lt; Hadoop, 1&gt; &lt; Goodbye, 1&gt; &lt; Hadoop, 1&gt; We&#39;ll learn more about the number of maps spawned for a given job, and how to control them in a fine-grained manner, a bit later in the tutorial. WordCount also specifies a combiner (line 46). Hence, the output of each map is passed through the local combiner (which is same as the Reducer as per the job configuration) for local aggregation, after being sorted on the keys. The output of the first map: &lt; Bye, 1&gt; &lt; Hello, 1&gt; &lt; World, 2&gt; The output of the second map: &lt; Goodbye, 1&gt; &lt; Hadoop, 2&gt; &lt; Hello, 1&gt; The Reducer implementation (lines 28-36), via the reduce method (lines 29-35) just sums up the values, which are the occurence counts for each key (i.e. words in this example). Thus the output of the job is: &lt; Bye, 1&gt; &lt; Goodbye, 1&gt; &lt; Hadoop, 2&gt; &lt; Hello, 2&gt; &lt; World, 2&gt; The run method specifies various facets of the job, such as the input/output paths (passed via the command line), key/value types, input/output formats etc., in the JobConf. It then calls the JobClient.runJob (line 55) to submit the and monitor its progress.
+Page 8
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+We&#39;ll learn more about JobConf, JobClient, Tool and other interfaces and classes a bit later in the tutorial.</li>
+<li>Map/Reduce - User Interfaces
+This section provides a reasonable amount of detail on every user-facing aspect of the Map/Reduce framwork. This should help users implement, configure and tune their jobs in a fine-grained manner. However, please note that the javadoc for each class/interface remains the most comprehensive documentation available; this is only meant to be a tutorial. Let us first take the Mapper and Reducer interfaces. Applications typically implement them to provide the map and reduce methods. We will then discuss other core interfaces including JobConf, JobClient, Partitioner, OutputCollector, Reporter, InputFormat, OutputFormat, OutputCommitter and others. Finally, we will wrap up by discussing some useful features of the framework such as the DistributedCache, IsolationRunner etc.
+6.1. Payload
+Applications typically implement the Mapper and Reducer interfaces to provide the map and reduce methods. These form the core of the job. 6.1.1. Mapper Mapper maps input key/value pairs to a set of intermediate key/value pairs. Maps are the individual tasks that transform input records into intermediate records. The transformed intermediate records do not need to be of the same type as the input records. A given input pair may map to zero or many output pairs. The Hadoop Map/Reduce framework spawns one map task for each InputSplit generated by the InputFormat for the job. Overall, Mapper implementations are passed the JobConf for the job via the JobConfigurable.configure(JobConf) method and override it to initialize themselves. The framework then calls map(WritableComparable, Writable, OutputCollector, Reporter) for each key/value pair in the InputSplit for that task. Applications can then override the Closeable.close() method to perform any required cleanup. Output pairs do not need to be of the same types as input pairs. A given input pair may map
+Page 9
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+to zero or many output pairs. Output pairs are collected with calls to OutputCollector.collect(WritableComparable,Writable). Applications can use the Reporter to report progress, set application-level status messages and update Counters, or just indicate that they are alive. All intermediate values associated with a given output key are subsequently grouped by the framework, and passed to the Reducer(s) to determine the final output. Users can control the grouping by specifying a Comparator via JobConf.setOutputKeyComparatorClass(Class). The Mapper outputs are sorted and then partitioned per Reducer. The total number of partitions is the same as the number of reduce tasks for the job. Users can control which keys (and hence records) go to which Reducer by implementing a custom Partitioner. Users can optionally specify a combiner, via JobConf.setCombinerClass(Class), to perform local aggregation of the intermediate outputs, which helps to cut down the amount of data transferred from the Mapper to the Reducer. The intermediate, sorted outputs are always stored in a simple (key-len, key, value-len, value) format. Applications can control if, and how, the intermediate outputs are to be compressed and the CompressionCodec to be used via the JobConf.
+6.1.1.1. How Many Maps?
+The number of maps is usually driven by the total size of the inputs, that is, the total number of blocks of the input files. The right level of parallelism for maps seems to be around 10-100 maps per-node, although it has been set up to 300 maps for very cpu-light map tasks. Task setup takes awhile, so it is best if the maps take at least a minute to execute. Thus, if you expect 10TB of input data and have a blocksize of 128MB, you&#39;ll end up with 82,000 maps, unless setNumMapTasks(int) (which only provides a hint to the framework) is used to set it even higher. 6.1.2. Reducer Reducer reduces a set of intermediate values which share a key to a smaller set of values. The number of reduces for the job is set by the user via JobConf.setNumReduceTasks(int). Overall, Reducer implementations are passed the JobConf for the job via the JobConfigurable.configure(JobConf) method and can override it to initialize themselves. The
+Page 10
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+framework then calls reduce(WritableComparable, Iterator, OutputCollector, Reporter) method for each <key, (list of values)> pair in the grouped inputs. Applications can then override the Closeable.close() method to perform any required cleanup. Reducer has 3 primary phases: shuffle, sort and reduce.
+6.1.2.1. Shuffle
+Input to the Reducer is the sorted output of the mappers. In this phase the framework fetches the relevant partition of the output of all the mappers, via HTTP.
+6.1.2.2. Sort
+The framework groups Reducer inputs by keys (since different mappers may have output the same key) in this stage. The shuffle and sort phases occur simultaneously; while map-outputs are being fetched they are merged.
+Secondary Sort
+If equivalence rules for grouping the intermediate keys are required to be different from those for grouping keys before reduction, then one may specify a Comparator via JobConf.setOutputValueGroupingComparator(Class). Since JobConf.setOutputKeyComparatorClass(Class) can be used to control how intermediate keys are grouped, these can be used in conjunction to simulate secondary sort on values.
+6.1.2.3. Reduce
+In this phase the reduce(WritableComparable, Iterator, OutputCollector, Reporter) method is called for each <key, (list of values)> pair in the grouped inputs. The output of the reduce task is typically written to the FileSystem via OutputCollector.collect(WritableComparable, Writable). Applications can use the Reporter to report progress, set application-level status messages and update Counters, or just indicate that they are alive. The output of the Reducer is not sorted.
+6.1.2.4. How Many Reduces?
+The right number of reduces seems to be 0.95 or 1.75 multiplied by (<no. of nodes> /<em> mapred.tasktracker.reduce.tasks.maximum).
+Page 11
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+With 0.95 all of the reduces can launch immediately and start transfering map outputs as the maps finish. With 1.75 the faster nodes will finish their first round of reduces and launch a second wave of reduces doing a much better job of load balancing. Increasing the number of reduces increases the framework overhead, but increases load balancing and lowers the cost of failures. The scaling factors above are slightly less than whole numbers to reserve a few reduce slots in the framework for speculative-tasks and failed tasks.
+6.1.2.5. Reducer NONE
+It is legal to set the number of reduce-tasks to zero if no reduction is desired. In this case the outputs of the map-tasks go directly to the FileSystem, into the output path set by setOutputPath(Path). The framework does not sort the map-outputs before writing them out to the FileSystem. 6.1.3. Partitioner Partitioner partitions the key space. Partitioner controls the partitioning of the keys of the intermediate map-outputs. The key (or a subset of the key) is used to derive the partition, typically by a hash function. The total number of partitions is the same as the number of reduce tasks for the job. Hence this controls which of the m reduce tasks the intermediate key (and hence the record) is sent to for reduction. HashPartitioner is the default Partitioner. 6.1.4. Reporter Reporter is a facility for Map/Reduce applications to report progress, set application-level status messages and update Counters. Mapper and Reducer implementations can use the Reporter to report progress or just indicate that they are alive. In scenarios where the application takes a significant amount of time to process individual key/value pairs, this is crucial since the framework might assume that the task has timed-out and kill that task. Another way to avoid this is to set the configuration parameter mapred.task.timeout to a high-enough value (or even set it to zero for no time-outs). Applications can also update Counters using the Reporter.
+Page 12
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+6.1.5. OutputCollector OutputCollector is a generalization of the facility provided by the Map/Reduce framework to collect data output by the Mapper or the Reducer (either the intermediate outputs or the output of the job). Hadoop Map/Reduce comes bundled with a library of generally useful mappers, reducers, and partitioners.
+6.2. Job Configuration
+JobConf represents a Map/Reduce job configuration. JobConf is the primary interface for a user to describe a Map/Reduce job to the Hadoop framework for execution. The framework tries to faithfully execute the job as described by JobConf, however: • f Some configuration parameters may have been marked as final by administrators and hence cannot be altered. • While some job parameters are straight-forward to set (e.g. setNumReduceTasks(int)), other parameters interact subtly with the rest of the framework and/or job configuration and are more complex to set (e.g. setNumMapTasks(int)). JobConf is typically used to specify the Mapper, combiner (if any), Partitioner, Reducer, InputFormat, OutputFormat and OutputCommitter implementations. JobConf also indicates the set of input files (setInputPaths(JobConf, Path...) /addInputPath(JobConf, Path)) and (setInputPaths(JobConf, String) /addInputPaths(JobConf, String)) and where the output files should be written (setOutputPath(Path)). Optionally, JobConf is used to specify other advanced facets of the job such as the Comparator to be used, files to be put in the DistributedCache, whether intermediate and/or job outputs are to be compressed (and how), debugging via user-provided scripts (setMapDebugScript(String)/setReduceDebugScript(String)) , whether job tasks can be executed in a speculative manner (setMapSpeculativeExecution(boolean))/(setReduceSpeculativeExecution(boolean)) , maximum number of attempts per task (setMaxMapAttempts(int)/setMaxReduceAttempts(int)) , percentage of tasks failure which can be tolerated by the job (setMaxMapTaskFailuresPercent(int)/setMaxReduceTaskFailuresPercent(int)) etc. Of course, users can use set(String, String)/get(String, String) to set/get arbitrary parameters needed by applications. However, use the DistributedCache for large amounts of
+Page 13
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+(read-only) data.
+6.3. Task Execution &amp; Environment
+The TaskTracker executes the Mapper/ Reducer task as a child process in a separate jvm. The child-task inherits the environment of the parent TaskTracker. The user can specify additional options to the child-jvm via the mapred.child.java.opts configuration parameter in the JobConf such as non-standard paths for the run-time linker to search shared libraries via -Djava.library.path=&lt;&gt; etc. If the mapred.child.java.opts contains the symbol @taskid@ it is interpolated with value of taskid of the map/reduce task. Here is an example with multiple arguments and substitutions, showing jvm GC logging, and start of a passwordless JVM JMX agent so that it can connect with jconsole and the likes to watch child memory, threads and get thread dumps. It also sets the maximum heap-size of the child jvm to 512MB and adds an additional path to the java.library.path of the child-jvm. <property> <name>mapred.child.java.opts</name> <value> -Xmx512M -Djava.library.path=/home/mycompany/lib -verbose:gc -Xloggc:/tmp/@taskid@.gc -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false </value> </property> 6.3.1. Memory management Users/admins can also specify the maximum virtual memory of the launched child-task, and any sub-process it launches recursively, using mapred.child.ulimit. Note that the value set here is a per process limit. The value for mapred.child.ulimit should be specified in kilo bytes (KB). And also the value must be greater than or equal to the -Xmx passed to JavaVM, else the VM might not start. Note: mapred.child.java.opts are used only for configuring the launched child tasks from task tracker. Configuring the memory options for daemons is documented in cluster_setup.html The memory available to some parts of the framework is also configurable. In map and
+Page 14
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+reduce tasks, performance may be influenced by adjusting parameters influencing the concurrency of operations and the frequency with which data will hit disk. Monitoring the filesystem counters for a job- particularly relative to byte counts from the map and into the reduce- is invaluable to the tuning of these parameters. 6.3.2. Map Parameters A record emitted from a map will be serialized into a buffer and metadata will be stored into accounting buffers. As described in the following options, when either the serialization buffer or the metadata exceed a threshold, the contents of the buffers will be sorted and written to disk in the background while the map continues to output records. If either buffer fills completely while the spill is in progress, the map thread will block. When the map is finished, any remaining records are written to disk and all on-disk segments are merged into a single file. Minimizing the number of spills to disk can decrease map time, but a larger buffer also decreases the memory available to the mapper.
+Name io.sort.mb int Type Description The cumulative size of the serialization and accounting buffers storing records emitted from the map, in megabytes. The ratio of serialization to accounting space can be adjusted. Each serialized record requires 16 bytes of accounting information in addition to its serialized size to effect the sort. This percentage of space allocated from io.sort.mb affects the probability of a spill to disk being caused by either exhaustion of the serialization buffer or the accounting space. Clearly, for a map outputting small records, a higher value than the default will likely decrease the number of spills to disk. This is the threshold for the accounting and serialization buffers. When this percentage of either buffer has filled, their
+io.sort.record.percent
+float
+io.sort.spill.percent
+float
+Page 15
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+contents will be spilled to disk in the background. Let io.sort.record.percent be r, io.sort.mb be x, and this value be q. The maximum number of records collected before the collection thread will spill is r /</em> x /<em> q /</em> 2^16. Note that a higher value may decrease the number of- or even eliminate- merges, but will also increase the probability of the map task getting blocked. The lowest average map times are usually obtained by accurately estimating the size of the map output and preventing multiple spills.
+Other notes • If either spill threshold is exceeded while a spill is in progress, collection will continue until the spill is finished. For example, if io.sort.buffer.spill.percent is set to 0.33, and the remainder of the buffer is filled while the spill runs, the next spill will include all the collected records, or 0.66 of the buffer, and will not generate additional spills. In other words, the thresholds are defining triggers, not blocking. • A record larger than the serialization buffer will first trigger a spill, then be spilled to a separate file. It is undefined whether or not this record will first pass through the combiner. 6.3.3. Shuffle/Reduce Parameters As described previously, each reduce fetches the output assigned to it by the Partitioner via HTTP into memory and periodically merges these outputs to disk. If intermediate compression of map outputs is turned on, each output is decompressed into memory. The following options affect the frequency of these merges to disk prior to the reduce and the memory allocated to map output during the reduce.
+Name io.sort.factor int Type Description Specifies the number of segments on disk to be merged at the same time. It limits the number of open files and compression codecs during the merge. If the number of files
+Page 16
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+exceeds this limit, the merge will proceed in several passes. Though this limit also applies to the map, most jobs should be configured so that hitting this limit is unlikely there. mapred.inmem.merge.threshold int The number of sorted map outputs fetched into memory before being merged to disk. Like the spill thresholds in the preceding note, this is not defining a unit of partition, but a trigger. In practice, this is usually set very high (1000) or disabled (0), since merging in-memory segments is often less expensive than merging from disk (see notes following this table). This threshold influences only the frequency of in-memory merges during the shuffle. The memory threshold for fetched map outputs before an in-memory merge is started, expressed as a percentage of memory allocated to storing map outputs in memory. Since map outputs that can&#39;t fit in memory can be stalled, setting this high may decrease parallelism between the fetch and merge. Conversely, values as high as 1.0 have been effective for reduces whose input can fit entirely in memory. This parameter influences only the frequency of in-memory merges during the shuffle. The percentage of memoryrelative to the maximum heapsize as typically specified in mapred.child.java.optsthat can be allocated to storing
+mapred.job.shuffle.merge.percentfloat
+mapred.job.shuffle.input.buffer.percent float
+Page 17
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+map outputs during the shuffle. Though some memory should be set aside for the framework, in general it is advantageous to set this high enough to store large and numerous map outputs. mapred.job.reduce.input.buffer.percent float The percentage of memory relative to the maximum heapsize in which map outputs may be retained during the reduce. When the reduce begins, map outputs will be merged to disk until those that remain are under the resource limit this defines. By default, all map outputs are merged to disk before the reduce begins to maximize the memory available to the reduce. For less memory-intensive reduces, this should be increased to avoid trips to disk.
+Other notes • If a map output is larger than 25 percent of the memory allocated to copying map outputs, it will be written directly to disk without first staging through memory. • When running with a combiner, the reasoning about high merge thresholds and large buffers may not hold. For merges started before all map outputs have been fetched, the combiner is run while spilling to disk. In some cases, one can obtain better reduce times by spending resources combining map outputs- making disk spills small and parallelizing spilling and fetching- rather than aggressively increasing buffer sizes. • When merging in-memory map outputs to disk to begin the reduce, if an intermediate merge is necessary because there are segments to spill and at least io.sort.factor segments already on disk, the in-memory map outputs will be part of the intermediate merge. 6.3.4. Directory Structure The task tracker has local directory, ${mapred.local.dir}/taskTracker/ to create localized cache and localized job. It can define multiple local directories (spanning multiple disks) and then each filename is assigned to a semi-random local directory. When the job starts, task tracker creates a localized job directory relative to the local directory specified in
+Page 18
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+the configuration. Thus the task tracker directory structure looks the following: • ${mapred.local.dir}/taskTracker/archive/ : The distributed cache. This directory holds the localized distributed cache. Thus localized distributed cache is shared among all the tasks and jobs • ${mapred.local.dir}/taskTracker/jobcache/$jobid/ : The localized job directory • ${mapred.local.dir}/taskTracker/jobcache/$jobid/work/ : The job-specific shared directory. The tasks can use this space as scratch space and share files among them. This directory is exposed to the users through the configuration property job.local.dir. The directory can accessed through api JobConf.getJobLocalDir(). It is available as System property also. So, users (streaming etc.) can call System.getProperty(&quot;job.local.dir&quot;) to access the directory. • ${mapred.local.dir}/taskTracker/jobcache/$jobid/jars/ : The jars directory, which has the job jar file and expanded jar. The job.jar is the application&#39;s jar file that is automatically distributed to each machine. It is expanded in jars directory before the tasks for the job start. The job.jar location is accessible to the application through the api JobConf.getJar() . To access the unjarred directory, JobConf.getJar().getParent() can be called. • ${mapred.local.dir}/taskTracker/jobcache/$jobid/job.xml : The job.xml file, the generic job configuration, localized for the job. • ${mapred.local.dir}/taskTracker/jobcache/$jobid/$taskid : The task directory for each task attempt. Each task directory again has the following structure : • ${mapred.local.dir}/taskTracker/jobcache/$jobid/$taskid/job.xml : A job.xml file, task localized job configuration, Task localization means that properties have been set that are specific to this particular task within the job. The properties localized for each task are described below. • ${mapred.local.dir}/taskTracker/jobcache/$jobid/$taskid/output : A directory for intermediate output files. This contains the temporary map reduce data generated by the framework such as map output files etc. • ${mapred.local.dir}/taskTracker/jobcache/$jobid/$taskid/work : The curernt working directory of the task. With jvm reuse enabled for tasks, this directory will be the directory on which the jvm has started • ${mapred.local.dir}/taskTracker/jobcache/$jobid/$taskid/work/tmp : The temporary directory for the task. (User can specify the property mapred.child.tmp to set the value of temporary directory for map and reduce tasks. This defaults to ./tmp. If the value is not an absolute path, it is prepended with task&#39;s working directory. Otherwise, it is directly assigned. The directory will be created if it doesn&#39;t exist. Then, the child java tasks are executed
+Page 19
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+with option -Djava.io.tmpdir=&#39;the absolute path of the tmp dir&#39;. Anp pipes and streaming are set with environment variable, TMPDIR=&#39;the absolute path of the tmp dir&#39;). This directory is created, if mapred.child.tmp has the value ./tmp
+6.3.5. Task JVM Reuse Jobs can enable task JVMs to be reused by specifying the job configuration mapred.job.reuse.jvm.num.tasks. If the value is 1 (the default), then JVMs are not reused (i.e. 1 task per JVM). If it is -1, there is no limit to the number of tasks a JVM can run (of the same job). One can also specify some value greater than 1 using the api JobConf.setNumTasksToExecutePerJvm(int) The following properties are localized in the job configuration for each task&#39;s execution:
+Name mapred.job.id mapred.jar job.local.dir mapred.tip.id mapred.task.id mapred.task.is.map mapred.task.partition map.input.file map.input.start map.input.length mapred.work.output.dir String String String String String boolean int String long long String Type The job id job.jar location in job directory The job specific shared scratch space The task id The task attempt id Is this a map task The id of the task within the job The filename that the map is reading from The offset of the start of the map input split The number of bytes in the map input split The task&#39;s temporary output directory Description
+The standard output (stdout) and error (stderr) streams of the task are read by the TaskTracker and logged to ${HADOOP<em>LOG_DIR}/userlogs
+Page 20
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+The DistributedCache can also be used to distribute both jars and native libraries for use in the map and/or reduce tasks. The child-jvm always has its current working directory added to the java.library.path and LD_LIBRARY_PATH. And hence the cached libraries can be loaded via System.loadLibrary or System.load. More details on how to load shared libraries through distributed cache are documented at native_libraries.html
+6.4. Job Submission and Monitoring
+JobClient is the primary interface by which user-job interacts with the JobTracker. JobClient provides facilities to submit jobs, track their progress, access component-tasks&#39; reports and logs, get the Map/Reduce cluster&#39;s status information and so on. The job submission process involves: 1. Checking the input and output specifications of the job. 2. Computing the InputSplit values for the job. 3. Setting up the requisite accounting information for the DistributedCache of the job, if necessary. 4. Copying the job&#39;s jar and configuration to the Map/Reduce system directory on the FileSystem. 5. Submitting the job to the JobTracker and optionally monitoring it&#39;s status. Job history files are also logged to user specified directory hadoop.job.history.user.location which defaults to job output directory. The files are stored in &quot;_logs/history/&quot; in the specified directory. Hence, by default they will be in mapred.output.dir/_logs/history. User can stop logging by giving the value none for hadoop.job.history.user.location User can view the history logs summary in specified directory using the following command $ bin/hadoop job -history output-dir This command will print job details, failed and killed tip details. More details about the job such as successful tasks and task attempts made for each task can be viewed using the following command $ bin/hadoop job -history all output-dir User can use OutputLogFilter to filter log files from the output directory listing. Normally the user creates the application, describes various facets of the job via JobConf, and then uses the JobClient to submit the job and monitor its progress. 6.4.1. Job Control Users may need to chain Map/Reduce jobs to accomplish complex tasks which cannot be
+Page 21
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+done via a single Map/Reduce job. This is fairly easy since the output of the job typically goes to distributed file-system, and the output, in turn, can be used as the input for the next job. However, this also means that the onus on ensuring jobs are complete (success/failure) lies squarely on the clients. In such cases, the various job-control options are: • runJob(JobConf) : Submits the job and returns only after the job has completed. • submitJob(JobConf) : Only submits the job, then poll the returned handle to the RunningJob to query status and make scheduling decisions. • JobConf.setJobEndNotificationURI(String) : Sets up a notification upon job-completion, thus avoiding polling.
+6.5. Job Input
+InputFormat describes the input-specification for a Map/Reduce job. The Map/Reduce framework relies on the InputFormat of the job to: 1. Validate the input-specification of the job. 2. Split-up the input file(s) into logical InputSplit instances, each of which is then assigned to an individual Mapper. 3. Provide the RecordReader implementation used to glean input records from the logical InputSplit for processing by the Mapper. The default behavior of file-based InputFormat implementations, typically sub-classes of FileInputFormat, is to split the input into logical InputSplit instances based on the total size, in bytes, of the input files. However, the FileSystem blocksize of the input files is treated as an upper bound for input splits. A lower bound on the split size can be set via mapred.min.split.size. Clearly, logical splits based on input-size is insufficient for many applications since record boundaries must be respected. In such cases, the application should implement a RecordReader, who is responsible for respecting record-boundaries and presents a record-oriented view of the logical InputSplit to the individual task. TextInputFormat is the default InputFormat. If TextInputFormat is the InputFormat for a given job, the framework detects input-files with the .gz extensions and automatically decompresses them using the appropriate CompressionCodec. However, it must be noted that compressed files with the above extensions cannot be split and each compressed file is processed in its entirety by a single mapper.
+Page 22
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+6.5.1. InputSplit InputSplit represents the data to be processed by an individual Mapper. Typically InputSplit presents a byte-oriented view of the input, and it is the responsibility of RecordReader to process and present a record-oriented view. FileSplit is the default InputSplit. It sets map.input.file to the path of the input file for the logical split. 6.5.2. RecordReader RecordReader reads <key, value> pairs from an InputSplit. Typically the RecordReader converts the byte-oriented view of the input, provided by the InputSplit, and presents a record-oriented to the Mapper implementations for processing. RecordReader thus assumes the responsibility of processing record boundaries and presents the tasks with keys and values.
+6.6. Job Output
+OutputFormat describes the output-specification for a Map/Reduce job. The Map/Reduce framework relies on the OutputFormat of the job to: 1. Validate the output-specification of the job; for example, check that the output directory doesn&#39;t already exist. 2. Provide the RecordWriter implementation used to write the output files of the job. Output files are stored in a FileSystem. TextOutputFormat is the default OutputFormat. 6.6.1. OutputCommitter OutputCommitter describes the commit of task output for a Map/Reduce job. The Map/Reduce framework relies on the OutputCommitter of the job to: 1. Setup the job during initialization. For example, create the temporary output directory for the job during the initialization of the job. Job setup is done by a separate task when the job is in PREP state and after initializing tasks. Once the setup task completes, the job will be moved to RUNNING state. 2. Cleanup the job after the job completion. For example, remove the temporary output directory after the job completion. Job cleanup is done by a separate task at the end of the
+Page 23
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+job. Job is declared SUCCEDED/FAILED/KILLED after the cleanup task completes. 3. Setup the task temporary output. Task setup is done as part of the same task, during task initialization. 4. Check whether a task needs a commit. This is to avoid the commit procedure if a task does not need commit. 5. Commit of the task output. Once task is done, the task will commit it&#39;s output if required. 6. Discard the task commit. If the task has been failed/killed, the output will be cleaned-up. If task could not cleanup (in exception block), a separate task will be launched with same attempt-id to do the cleanup. FileOutputCommitter is the default OutputCommitter. Job setup/cleanup tasks occupy map or reduce slots, whichever is free on the TaskTracker. And JobCleanup task, TaskCleanup tasks and JobSetup task have the highest priority, and in that order. 6.6.2. Task Side-Effect Files In some applications, component tasks need to create and/or write to side-files, which differ from the actual job-output files. In such cases there could be issues with two instances of the same Mapper or Reducer running simultaneously (for example, speculative tasks) trying to open and/or write to the same file (path) on the FileSystem. Hence the application-writer will have to pick unique names per task-attempt (using the attemptid, say attempt_200709221812_0001_m_000000_0), not just per task. To avoid these issues the Map/Reduce framework, when the OutputCommitter is FileOutputCommitter, maintains a special ${mapred.output.dir}/_temporary/</em>${taskid} sub-directory accessible via ${mapred.work.output.dir} for each task-attempt on the FileSystem where the output of the task-attempt is stored. On successful completion of the task-attempt, the files in the ${mapred.output.dir}/<em>temporary/</em>${taskid} (only) are promoted to ${mapred.output.dir}. Of course, the framework discards the sub-directory of unsuccessful task-attempts. This process is completely transparent to the application. The application-writer can take advantage of this feature by creating any side-files required in ${mapred.work.output.dir} during execution of a task via FileOutputFormat.getWorkOutputPath(), and the framework will promote them similarly for succesful task-attempts, thus eliminating the need to pick unique paths per task-attempt. Note: The value of ${mapred.work.output.dir} during execution of a particular task-attempt is actually ${mapred.output.dir}/<em>temporary/</em>{$taskid}, and this value is set by the Map/Reduce framework. So, just create any side-files in the path returned by FileOutputFormat.getWorkOutputPath() from map/reduce task to take advantage
+Page 24
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+of this feature. The entire discussion holds true for maps of jobs with reducer=NONE (i.e. 0 reduces) since output of the map, in that case, goes directly to HDFS. 6.6.3. RecordWriter RecordWriter writes the output <key, value> pairs to an output file. RecordWriter implementations write the job outputs to the FileSystem.
+6.7. Other Useful Features
+6.7.1. Submitting Jobs to Queues Users submit jobs to Queues. Queues, as collection of jobs, allow the system to provide specific functionality. For example, queues use ACLs to control which users who can submit jobs to them. Queues are expected to be primarily used by Hadoop Schedulers. Hadoop comes configured with a single mandatory queue, called &#39;default&#39;. Queue names are defined in the mapred.queue.names property of the Hadoop site configuration. Some job schedulers, such as the Capacity Scheduler, support multiple queues. A job defines the queue it needs to be submitted to through the mapred.job.queue.name property, or through the setQueueName(String) API. Setting the queue name is optional. If a job is submitted without an associated queue name, it is submitted to the &#39;default&#39; queue. 6.7.2. Counters Counters represent global counters, defined either by the Map/Reduce framework or applications. Each Counter can be of any Enum type. Counters of a particular Enum are bunched into groups of type Counters.Group. Applications can define arbitrary Counters (of type Enum) and update them via Reporter.incrCounter(Enum, long) or Reporter.incrCounter(String, String, long) in the map and/or reduce methods. These counters are then globally aggregated by the framework. 6.7.3. DistributedCache DistributedCache distributes application-specific, large, read-only files efficiently. DistributedCache is a facility provided by the Map/Reduce framework to cache files
+Page 25
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+(text, archives, jars and so on) needed by applications. Applications specify the files to be cached via urls (hdfs://) in the JobConf. The DistributedCache assumes that the files specified via hdfs:// urls are already present on the FileSystem. The framework will copy the necessary files to the slave node before any tasks for the job are executed on that node. Its efficiency stems from the fact that the files are only copied once per job and the ability to cache archives which are un-archived on the slaves. DistributedCache tracks the modification timestamps of the cached files. Clearly the cache files should not be modified by the application or externally while the job is executing. DistributedCache can be used to distribute simple, read-only data/text files and more complex types such as archives and jars. Archives (zip, tar, tgz and tar.gz files) are un-archived at the slave nodes. Files have execution permissions set. The files/archives can be distributed by setting the property mapred.cache.{files|archives}. If more than one file/archive has to be distributed, they can be added as comma separated paths. The properties can also be set by APIs DistributedCache.addCacheFile(URI,conf)/ DistributedCache.addCacheArchive(URI,conf) and DistributedCache.setCacheFiles(URIs,conf)/ DistributedCache.setCacheArchives(URIs,conf) where URI is of the form hdfs://host:port/absolute-path/#link-name. In Streaming, the files can be distributed through command line option -cacheFile/-cacheArchive. Optionally users can also direct the DistributedCache to symlink the cached file(s) into the current working directory of the task via the DistributedCache.createSymlink(Configuration) api. Or by setting the configuration property mapred.create.symlink as yes. The DistributedCache will use the fragment of the URI as the name of the symlink. For example, the URI hdfs://namenode:port/lib.so.1/#lib.so will have the symlink name as lib.so in task&#39;s cwd for the file lib.so.1 in distributed cache. The DistributedCache can also be used as a rudimentary software distribution mechanism for use in the map and/or reduce tasks. It can be used to distribute both jars and native libraries. The DistributedCache.addArchiveToClassPath(Path, Configuration) or DistributedCache.addFileToClassPath(Path, Configuration) api can be used to cache files/jars and also add them to the classpath of child-jvm. The same can be done by setting the configuration properties mapred.job.classpath.{files|archives}. Similarly the cached files that are symlinked into the working directory of the task can be used to distribute native libraries and load them.
+Page 26
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+6.7.4. Tool The Tool interface supports the handling of generic Hadoop command-line options. Tool is the standard for any Map/Reduce tool or application. The application should delegate the handling of standard command-line options to GenericOptionsParser via ToolRunner.run(Tool, String[]) and only handle its custom arguments. The generic Hadoop command-line options are: -conf <configuration file> -D <property=value> -fs <local|namenode:port> -jt <local|jobtracker:port> 6.7.5. IsolationRunner IsolationRunner is a utility to help debug Map/Reduce programs. To use the IsolationRunner, first set keep.failed.tasks.files to true (also see keep.tasks.files.pattern). Next, go to the node on which the failed task ran and go to the TaskTracker&#39;s local directory and run the IsolationRunner: $ cd <local path>/taskTracker/${taskid}/work $ bin/hadoop org.apache.hadoop.mapred.IsolationRunner ../job.xml IsolationRunner will run the failed task in a single jvm, which can be in the debugger, over precisely the same input. 6.7.6. Profiling Profiling is a utility to get a representative (2 or 3) sample of built-in java profiler for a sample of maps and reduces. User can specify whether the system should collect profiler information for some of the tasks in the job by setting the configuration property mapred.task.profile. The value can be set using the api JobConf.setProfileEnabled(boolean). If the value is set true, the task profiling is enabled. The profiler information is stored in the user log directory. By default, profiling is not enabled for the job. Once user configures that profiling is needed, she/he can use the configuration property mapred.task.profile.{maps|reduces} to set the ranges of map/reduce tasks to
+Page 27
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+profile. The value can be set using the api JobConf.setProfileTaskRange(boolean,String). By default, the specified range is 0-2.
+User can also specify the profiler configuration arguments by setting the configuration property mapred.task.profile.params. The value can be specified using the api JobConf.setProfileParams(String). If the string contains a %s, it will be replaced with the name of the profiling output file when the task runs. These parameters are passed to the task child JVM on the command line. The default value for the profiling parameters is -agentlib:hprof=cpu=samples,heap=sites,force=n,thread=y,verbose=n,file=%s 6.7.7. Debugging The Map/Reduce framework provides a facility to run user-provided scripts for debugging. When a map/reduce task fails, a user can run a debug script, to process task logs for example. The script is given access to the task&#39;s stdout and stderr outputs, syslog and jobconf. The output from the debug script&#39;s stdout and stderr is displayed on the console diagnostics and also as part of the job UI. In the following sections we discuss how to submit a debug script with a job. The script file needs to be distributed and submitted to the framework.
+6.7.7.1. How to distribute the script file:
+The user needs to use DistributedCache to distribute and symlink the script file.
+6.7.7.2. How to submit the script:
+A quick way to submit the debug script is to set values for the properties mapred.map.task.debug.script and mapred.reduce.task.debug.script, for debugging map and reduce tasks respectively. These properties can also be set by using APIs JobConf.setMapDebugScript(String) and JobConf.setReduceDebugScript(String) . In streaming mode, a debug script can be submitted with the command-line options -mapdebug and -reducedebug, for debugging map and reduce tasks respectively. The arguments to the script are the task&#39;s stdout, stderr, syslog and jobconf files. The debug command, run on the node where the map/reduce task failed, is: $script $stdout $stderr $syslog $jobconf Pipes programs have the c++ program name as a fifth argument for the command. Thus for the pipes programs the command is $script $stdout $stderr $syslog $jobconf $program
+Page 28
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+6.7.7.3. Default Behavior:
+For pipes, a default script is run to process core dumps under gdb, prints stack trace and gives info about running threads. 6.7.8. JobControl JobControl is a utility which encapsulates a set of Map/Reduce jobs and their dependencies. 6.7.9. Data Compression Hadoop Map/Reduce provides facilities for the application-writer to specify compression for both intermediate map-outputs and the job-outputs i.e. output of the reduces. It also comes bundled with CompressionCodec implementation for the zlib compression algorithm. The gzip file format is also supported. Hadoop also provides native implementations of the above compression codecs for reasons of both performance (zlib) and non-availability of Java libraries. More details on their usage and availability are available here.
+6.7.9.1. Intermediate Outputs
+Applications can control compression of intermediate map-outputs via the JobConf.setCompressMapOutput(boolean) api and the CompressionCodec to be used via the JobConf.setMapOutputCompressorClass(Class) api.
+6.7.9.2. Job Outputs
+Applications can control compression of job-outputs via the FileOutputFormat.setCompressOutput(JobConf, boolean) api and the CompressionCodec to be used can be specified via the FileOutputFormat.setOutputCompressorClass(JobConf, Class) api. If the job outputs are to be stored in the SequenceFileOutputFormat, the required SequenceFile.CompressionType (i.e. RECORD / BLOCK - defaults to RECORD) can be specified via the SequenceFileOutputFormat.setOutputCompressionType(JobConf, SequenceFile.CompressionType) api. 6.7.10. Skipping Bad Records Hadoop provides an option where a certain set of bad input records can be skipped when processing map inputs. Applications can control this feature through the SkipBadRecords
+Page 29
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+class. This feature can be used when map tasks crash deterministically on certain input. This usually happens due to bugs in the map function. Usually, the user would have to fix these bugs. This is, however, not possible sometimes. The bug may be in third party libraries, for example, for which the source code is not available. In such cases, the task never completes successfully even after multiple attempts, and the job fails. With this feature, only a small portion of data surrounding the bad records is lost, which may be acceptable for some applications (those performing statistical analysis on very large data, for example). By default this feature is disabled. For enabling it, refer to SkipBadRecords.setMapperMaxSkipRecords(Configuration, long) and SkipBadRecords.setReducerMaxSkipGroups(Configuration, long). With this feature enabled, the framework gets into &#39;skipping mode&#39; after a certain number of map failures. For more details, see SkipBadRecords.setAttemptsToStartSkipping(Configuration, int). In &#39;skipping mode&#39;, map tasks maintain the range of records being processed. To do this, the framework relies on the processed record counter. See SkipBadRecords.COUNTER_MAP_PROCESSED_RECORDS and SkipBadRecords.COUNTER_REDUCE_PROCESSED_GROUPS. This counter enables the framework to know how many records have been processed successfully, and hence, what record range caused a task to crash. On further attempts, this range of records is skipped. The number of records skipped depends on how frequently the processed record counter is incremented by the application. It is recommended that this counter be incremented after every record is processed. This may not be possible in some applications that typically batch their processing. In such cases, the framework may skip additional records surrounding the bad record. Users can control the number of skipped records through SkipBadRecords.setMapperMaxSkipRecords(Configuration, long) and SkipBadRecords.setReducerMaxSkipGroups(Configuration, long). The framework tries to narrow the range of skipped records using a binary search-like approach. The skipped range is divided into two halves and only one half gets executed. On subsequent failures, the framework figures out which half contains bad records. A task will be re-executed till the acceptable skipped value is met or all task attempts are exhausted. To increase the number of task attempts, use JobConf.setMaxMapAttempts(int) and JobConf.setMaxReduceAttempts(int). Skipped records are written to HDFS in the sequence file format, for later analysis. The location can be changed through SkipBadRecords.setSkipOutputPath(JobConf, Path).</li>
+<li>Example: WordCount v2.0
+Page 30
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+Here is a more complete WordCount which uses many of the features provided by the Map/Reduce framework we discussed so far. This needs the HDFS to be up and running, especially for the DistributedCache-related features. Hence it only works with a pseudo-distributed or fully-distributed Hadoop installation.
+7.1. Source Code
+WordCount.java 1. 2. 3. 4. 5. 6. 7. 8. 9. 10. 11. 12. 13. 14. 15. public static class Map extends MapReduceBase implements Mapper<LongWritable, Text, Text, IntWritable> { public class WordCount extends Configured implements Tool { import org.apache.hadoop.fs.Path; import org.apache.hadoop.filecache.DistributedCache; import org.apache.hadoop.conf./<em>; import org.apache.hadoop.io./</em>; import org.apache.hadoop.mapred./<em>; import org.apache.hadoop.util./</em>; import java.io./<em>; import java.util./</em>; package org.myorg;</li>
+<li><ol>
+<li>static enum Counters { INPUT_WORDS }
+Page 31
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li>private boolean caseSensitive = true; private Set<String> patternsToSkip = new HashSet<String>(); private final static IntWritable one = new IntWritable(1); private Text word = new Text();</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li>public void configure(JobConf job) { caseSensitive = job.getBoolean(&quot;wordcount.case.sensitive&quot;, true); inputFile = job.get(&quot;map.input.file&quot;); private long numRecords = 0; private String inputFile;</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+<li><ol>
+<li>32.
+if (job.getBoolean(&quot;wordcount.skip.patterns&quot;, false)) { Path[] patternsFiles = new Path[0]; try { patternsFiles = DistributedCache.getLocalCacheFiles(job); } catch (IOException ioe) { System.err.println(&quot;Caught</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li><ol>
+<li>37.
+Page 32
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+exception while getting cached files: &quot; + StringUtils.stringifyException(ioe)); 38. 39. 40. 41. 42. 43. 44. 45. 46. 47. private void parseSkipFile(Path patternsFile) { try { BufferedReader fis = new BufferedReader(new FileReader(patternsFile.toString())); String pattern = null; while ((pattern = fis.readLine()) != null) { patternsToSkip.add(pattern); } } catch (IOException ioe) { System.err.println(&quot;Caught exception while parsing the cached file &#39;&quot; + patternsFile + &quot;&#39; : &quot; + StringUtils.stringifyException(ioe)); } } } for (Path patternsFile : patternsFiles) { parseSkipFile(patternsFile); } } }</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li>53.</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li>57.
+public void map(LongWritable key,
+Page 33
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+Text value, OutputCollector<Text, IntWritable> output, Reporter reporter) throws IOException { 58. String line = (caseSensitive) ? value.toString() : value.toString().toLowerCase();</li>
+</ol>
+</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li>&quot;&quot;); 62. 63. 64. 65. 66. word.set(tokenizer.nextToken()); 67. 68. reporter.incrCounter(Counters.INPUT_WORDS, 1); 69. 70. 71. 72. if ((++numRecords % 100) == 0) { reporter.setStatus(&quot;Finished processing &quot; + numRecords + &quot; records &quot; + &quot;from the input file: &quot; + inputFile); } } } } output.collect(word, one); StringTokenizer tokenizer = new StringTokenizer(line); while (tokenizer.hasMoreTokens()) { } for (String pattern : patternsToSkip) { line = line.replaceAll(pattern,</li>
+</ol>
+</li>
+</ol>
+</li>
+<li><ol>
+<li>75.
+Page 34
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial</li>
+</ol>
+</li>
+<li><ol>
+<li>public static class Reduce extends MapReduceBase implements Reducer<Text, IntWritable, Text, IntWritable> { public void reduce(Text key, Iterator<IntWritable> values, OutputCollector<Text, IntWritable> output, Reporter reporter) throws IOException { int sum = 0; while (values.hasNext()) { sum += values.next().get(); } output.collect(key, new IntWritable(sum)); } }
+78.</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li>91.
+public int run(String[] args) throws Exception { JobConf conf = new JobConf(getConf(), WordCount.class); conf.setJobName(&quot;wordcount&quot;);
+conf.setOutputKeyClass(Text.class); 92. conf.setOutputValueClass(IntWritable.class); 93. 94. 95. conf.setMapperClass(Map.class);
+Page 35
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+conf.setCombinerClass(Reduce.class); 96. conf.setReducerClass(Reduce.class); 97. 98. conf.setInputFormat(TextInputFormat.class); 99. conf.setOutputFormat(TextOutputFormat.class); 100. 101. 102. 103. 104. DistributedCache.addCacheFile(new Path(args[++i]).toUri(), conf); 105. conf.setBoolean(&quot;wordcount.skip.patterns&quot;, true); 106. 107. 108. 109. 110. 111. FileInputFormat.setInputPaths(conf, new Path(other_args.get(0))); 112. FileOutputFormat.setOutputPath(conf, new Path(other_args.get(1))); 113. } else { other_args.add(args[i]); } } List<String> other_args = new ArrayList<String>(); for (int i=0; i &lt; args.length; ++i) { if (&quot;-skip&quot;.equals(args[i])) {
+Page 36
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li><ol>
+<li><ol>
+<li>119.
+JobClient.runJob(conf); return 0; }
+public static void main(String[] args) throws Exception { int res = ToolRunner.run(new Configuration(), new WordCount(), args); System.exit(res); } }</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+</li>
+<li><ol>
+<li><ol>
+<li>123.
+7.2. Sample Runs
+Sample text-files as input: $ bin/hadoop dfs -ls /usr/joe/wordcount/input/ /usr/joe/wordcount/input/file01 /usr/joe/wordcount/input/file02 $ bin/hadoop dfs -cat /usr/joe/wordcount/input/file01 Hello World, Bye World! $ bin/hadoop dfs -cat /usr/joe/wordcount/input/file02 Hello Hadoop, Goodbye to hadoop. Run the application: $ bin/hadoop jar /usr/joe/wordcount.jar org.myorg.WordCount /usr/joe/wordcount/input /usr/joe/wordcount/output Output: $ bin/hadoop dfs -cat /usr/joe/wordcount/output/part-00000 Bye 1 Goodbye 1 Hadoop, 1 Hello 2
+Page 37
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+World! 1 World, 1 hadoop. 1 to 1 Notice that the inputs differ from the first version we looked at, and how they affect the outputs. Now, lets plug-in a pattern-file which lists the word-patterns to be ignored, via the DistributedCache. $ hadoop dfs -cat /user/joe/wordcount/patterns.txt . \, ! to Run it again, this time with more options: $ bin/hadoop jar /usr/joe/wordcount.jar org.myorg.WordCount -Dwordcount.case.sensitive=true /usr/joe/wordcount/input /usr/joe/wordcount/output -skip /user/joe/wordcount/patterns.txt As expected, the output: $ bin/hadoop dfs -cat /usr/joe/wordcount/output/part-00000 Bye 1 Goodbye 1 Hadoop 1 Hello 2 World 2 hadoop 1 Run it once more, this time switch-off case-sensitivity: $ bin/hadoop jar /usr/joe/wordcount.jar org.myorg.WordCount -Dwordcount.case.sensitive=false /usr/joe/wordcount/input /usr/joe/wordcount/output -skip /user/joe/wordcount/patterns.txt Sure enough, the output: $ bin/hadoop dfs -cat /usr/joe/wordcount/output/part-00000 bye 1
+Page 38
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+Map/Reduce Tutorial
+goodbye 1 hadoop 2 hello 2 world 2
+7.3. Highlights
+The second version of WordCount improves upon the previous one by using some features offered by the Map/Reduce framework: • Demonstrates how applications can access configuration parameters in the configure method of the Mapper (and Reducer) implementations (lines 28-43). • Demonstrates how the DistributedCache can be used to distribute read-only data needed by the jobs. Here it allows the user to specify word-patterns to skip while counting (line 104). • Demonstrates the utility of the Tool interface and the GenericOptionsParser to handle generic Hadoop command-line options (lines 87-116, 119). • Demonstrates how applications can use Counters (line 68) and how they can set application-specific status information via the Reporter instance passed to the map (and reduce) method (line 72). Java and JNI are trademarks or registered trademarks of Sun Microsystems, Inc. in the United States and other countries.
+Page 39
+Copyright © 2008 The Apache Software Foundation. All rights reserved.</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--mapred_tutorial/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--mapred_tutorial" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--基于Hadoop220的高可用性集群搭建步骤（64位）/">基于Hadoop 2.2.0的高可用性集群搭建步骤（64位）</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--基于Hadoop220的高可用性集群搭建步骤（64位）/">feb. 2 2014</a></time></span>      
@@ -1083,499 +1792,6 @@ $scp -r /mnt/hgfs/Data-shared/Archive/jdk-6u25-linux-i586.bin  cluster2:/home/gr
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--深入理解Hadoop集群和网络/">深入理解Hadoop集群和网络</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--深入理解Hadoop集群和网络/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-hadoop-">深入理解Hadoop集群和网络</h1>
-<p>原文出处： <a href="http://bradhedlund.com/2011/09/10/understanding-hadoop-clusters-and-the-network/" target="_blank">bradhedlund</a>   译文出处： <a href="http://blog.csdn.net/kickxxx/article/details/8230328" target="_blank">kickxxx</a></p>
-<p>本文侧重于Hadoop集群的体系结构和方法，以及它与网络和服务器基础设施的关系。文章的素材主要来自于研究工作以及同现实生活中运行Hadoop集群客户的讨论。如果你也在你的数据中心运行产品级的Hadoop集群，那么我希望你能写下有价值的评论。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl01.png" title="srljhjqhwl01" target="_blank"><img src="&quot;srljhjqhwl01&quot;" alt=""></a></p>
-<p>Hadoop集群部署时有三个角色：Client machines、 Master nodes和Slave nodes。</p>
-<p>Master nodes负责Hadoop的两个关键功能：数据存储（HDFS）；以及运行在这个数据之上的并行计算，又称为Map-Reduce。Name node负责调度数据存储，而Job Tracker则负责并行数据处理的调度（使用Map-Reduce技术）。Slave nodes由大量的机器组成，完成数据存储以及运行计算这样的脏活。每个slave node都运行Data node和Task Tracker daemon，这些slave daemon和master nodes的相应daemon进行通信。Task tracker daemon由Job Tracker管理，Data node Daemon由Name node管理。</p>
-<p>Client机器包含了Hadoop集群的所有设置，但是它既不是Master也不是Slave。Client的角色是向集群保存数据，提交Map-Reduce jobs（描述如何处理数据），获取查看MR jobs的计算结果。在小型集群中（40节点）你可能会发现一个物理机器扮演多个角色，比如既是Job Tracker又是Name node，在中等或者大规模集群中，一般都是用独立的服务器负责单独的角色。</p>
-<p>在真正的产品集群中，不存在虚拟服务器和虚拟机平台，因为他们仅会导致不必要的性能损耗。Hadoop最好运行在linux机器上，直接工作于底层硬件之上。换句话说，Hadoop可以工作在虚拟机之上，对于学习Hadoop是一个不错的廉价方法，我本身就有一个6-node的Hadoop cluster运行Windows 7 laptop的VMware Workstation之上</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl02.png" title="srljhjqhwl02" target="_blank"><img src="&quot;srljhjqhwl02&quot;" alt=""></a></p>
-<p>上图是Hadoop集群的典型架构。机架服务器（不是刀锋服务器）分布在多个机架中，连接到一个1GB(2GB)带宽的机架交换机，机架交换机连接到上一层的交换机，这样所有的节点通过最上层的交换机连接到一起。大部分的服务器都是Slave nodes配置有大的磁盘存储 中等的CPU和DRAM，少部分是Master nodes配置较少的存储空间 但是有强大的CPU和大DRAM</p>
-<p>本文中，我们不讨论网络设计的各种细节，而是把精力放在其他方面。首先我们看下应用的工作流程。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl03.png" title="srljhjqhwl03" target="_blank"><img src="&quot;srljhjqhwl03&quot;" alt=""></a></p>
-<p>为什么会出现Hadoop？ 它又解决了什么问题？ 简单的说，是由于商业和政府有大量的数据需要快速分析和处理，如果我们把这些巨大的数据切分为小的数据块分散到多台计算机中，并且用这些计算机并行处理分配给他们的小块数据，可以快速的得到结果，这就是Hadoop能做的事情。</p>
-<p>在我们的简单例子中，我们有一个大文件保存着所有发给客户服务部分的邮件，想要快速统计单词”Refund”被输入了多少次，这个结果有助于评估对退换货部门的需求，以指定相应对策。这是一个简单的单词计数练习。Client上传数据到集群(File.txt)，提交一个job来描述如何分析数据，集群存储结果到一个新文件(Result.txt)，然后Client读取结果文件。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl04.png" title="srljhjqhwl04" target="_blank"><img src="&quot;srljhjqhwl04&quot;" alt=""></a></p>
-<p>没有加载数据，Hadoop集群就没有任何用途。所以我们首先从加载大文件File.txt到集群中以便处理。目标是能够快速并行处理许多数据，为了达到这个目的需要尽可能多的机器能够同时操纵文件数据。Client把数据文件切分成许多小blocks，然后把他们分散到集群的不同机器上。块数越多，用来处理这些数据的机器就越多。同时这些机器一定会失效，所以要确保每个数据块保存到多个机器上以防止数据丢失。所以每个数据块在存入集群时会进行复制。Hadoop的标准设定是集群中的每个block有三份copy，这个配置可以由hdfs-site.xml的dfs.replication 参数设置</p>
-<p>Client把文件File.txt分成3块，对于每一块，Client和Name node协商获取可以保存它以及备份块的Data nodes列表。Client然后直接写block数据到Data node，Data node负责写入数据并且复制copy到其他的Data nodes。重复操作，直到所有的块写完。Name node本身不参与数据保存，Name node仅仅提供文件数据位置以及数据可用位置（文件系统元数据）</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl05.png" title="srljhjqhwl05" target="_blank"><img src="&quot;srljhjqhwl05&quot;" alt=""></a></p>
-<p>Hadoop引入了Rack Awareness的概念。作为Hadoop系统管理员，你能够手动定义集群中每一个slave Data node的rack号。为什么要把自己置于这种麻烦呢？有两个关键的原因：数据丢失和网络性能。记住每一个数据块都会被复制到多台Data node上，以防止某台机器失效导致数据丢失。有没有可能一份数据的所有备份恰好都在同一个机架上，而这个机架又出现了故障，比如交换机失效或者电源失效。为了防止这种情况，Name node需要知道Data nodes在网络拓扑中的位置，并且使用这个信息决定数据应该复制到集群的什么位置。</p>
-<p>我们还假定同一机架的两台机器间相比不同机架的两台机器间 有更高的带宽和更低的网络延迟，在大部分情况下是正确的。机架交换机的上行带宽通常小于下行带宽。此外，机架内延迟通常低于机架间延迟。如果上面的假定成立，那么采用Rack Awareness既可以通过优化位置保护数据，同时提升网络性能，岂不是太cool了。是的，的确是这样，非常cool，对不对。</p>
-<p>别急，Not cool的是Rack Awareness是需要手工定义的，并且要持续的更新它，并且保证这个信息精确。如果机架交换机可以自动提供它下面的Data node列表给Name node，那就更cool了。或者如果Data nodes可以自动告知Name node他们属于哪个交换机，一样很cool.</p>
-<p>此外，让人感兴趣的是<a href="http://bradhedlund.com/2011/04/21/data-center-scale-openflow-sdn/" target="_blank">OpenFlow</a> 网络，Name node可以请求OpenFlow控制器关于节点位置的拓扑情况。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl06.png" title="srljhjqhwl06" target="_blank"><img src="&quot;srljhjqhwl06&quot;" alt=""></a></p>
-<p>Client准备写文件File.txt到集群时，把文件划分为块，块A为第一个块。Client向Name node申请写文件File.txt，从Name node获得许可，并且接收到一个Data nodes列表（3个表项），每一个Data nodes用来写入块A的一个copy。Name node使用Rack Awareness来决定这个Data nodes列表。规则是：对于每一个数据块，两个 copy存放在一个机架上，另外一个copy存放在另外一个机架上。</p>
-<p>在Client写Block A之前，它要知道准备接受”Block A“ copy的Data nodes是否以及做好了准备。首先，Client选择list中的第一个节点Data Node1，打开一个TCP50010链接然后请求：“hey，准备接受一个block，这是一个Data nodes列表（2个表项），Data node5和Data node6”，请确保他们两个也准备好了“；于是Data Node1打开一个到Data node5的TCP500100连接然后说：”Hey，准备接受一个block，这是一个Data nodes列表（1个表项），Data node6”，请确保他准备好了“；Data Node5同样会问Data Node6：“Hey, 准备好接收一个block吗“</p>
-<p>”准备就绪“的响应通过已经创建好的TCP pipeline传回来，直到Data Node1发送一个”Ready”给Client。现在Client可以开始写入数据了。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl07.png" title="srljhjqhwl07" target="_blank"><img src="&quot;srljhjqhwl07&quot;" alt=""></a></p>
-<p>写入数据的过程中，在涉及写操作的Data nodes之间创建一个复制pipeline。也就是说一个数据节点接收数据的同时，同时会把这份数据通过pipeline push到下一个Node中。</p>
-<p>从上图可以看到，Rack Awareness起到了改善集群性能的做用。Data node5和Data node6在同一个机架上，因此pipeline的最后一步复制是发生在机架内，这就受益于机架内带宽以及低延迟。在Data node1, Data node5, Data node6完成block A之前，block B的操作不会开始。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl08.png" title="srljhjqhwl08" target="_blank"><img src="&quot;srljhjqhwl08&quot;" alt=""></a></p>
-<p>当三个Nodes成功的接收到Block A后，挥发送”Block received”报告给Name node，同时发送”Success”到pipeline中，然后关闭TCP事务。Client在接收到Success信息后，通知Name node数据块已经成功的写入。Name node更新File.txt中Block A的metadata信息（包含Name locations信息）</p>
-<p>Client现在可以开始Block B的传输了</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl09.png" title="srljhjqhwl09" target="_blank"><img src="&quot;srljhjqhwl09&quot;" alt=""></a></p>
-<p>随着File.txt的块被写入，越来越多的Data nodes涉及到pipeline中，散落到机架内的热点，以及跨机架的复制</p>
-<p>Hadoop占用了很多的网络带宽和存储空间。Hadoop专为处理大文件而生，比如TB级尺寸的文件。每一个文件在网络和存储中都被复制了三次。如果你有一个1TB的文件，那么将消耗3TB的网络带宽，同时要消耗3TB的磁盘空间存贮这个文件。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl10.png" title="srljhjqhwl10" target="_blank"><img src="&quot;srljhjqhwl10&quot;" alt=""></a></p>
-<p>随着每块的复制pipeline的完成，文件被成功的写入集群。文件散落在集群内的机器上，每个机器保存文件的一小部分数据。组成文件的块数目越多，数据散落的机器就越多，将来更多的CPU和磁盘驱动器就能参与到并行处理中来，提供更强大更快的处理能力。这也是建造巨大集群的原动力。当机器的数变多，集群则变得wide，网络也相应的需要扩展。</p>
-<p>扩展集群的另外一种方法是deep扩展。就是维持机器数据不便，而是增加机器的CPU处理能力和磁盘驱动器的数目。在这种情况下，需要提高网络的I/O吞吐量以适应增大的机器处理能力，因此如何让Hadoop集群运行10GB nodes称为一个重要的考虑。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl11.png" title="srljhjqhwl11" target="_blank"><img src="&quot;srljhjqhwl11&quot;" alt=""></a></p>
-<p>Name node保存集群内所有文件的metadata，监督Data nodes的健康以及协调数据的存取。Name node是HDFS的控制中心。它本身并不保存任何cluster data。Name node知道一个文件由哪些块组成以及这些块存放在集群内的什么地方。Name node告诉Client需要和哪些Data node交互，管理集群的存储容量，掌握Data node的健康状况，确保每一个数据块都符合系统备份策略。</p>
-<p>Data node每3秒钟发送一个heartbeats给Name node ，二者使用TCP9000端口的TCP握手来实现heartbeats。每十个heartbeats会有一个block report，Data node告知它所保存的数据块。block report使得Namenode能够重建它的metadata以确保每个数据block有足够的copy，并且分布在不同的机架上。</p>
-<p>Name node是Hadoop Distributed File System(HDFS)的关键部件。没有Name node，clients无法从HDFS读写数据，也无法执行Map Reduce jobs。因此Name node 最好配置为一台高冗余的企业级服务器：双电源，热插拔风扇，冗余NIC连接等。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl12.png" title="srljhjqhwl12" target="_blank"><img src="&quot;srljhjqhwl12&quot;" alt=""></a></p>
-<p>如果Name node收不到某Data node的heartbeats，那么Name node假定这个Data node死机并且Data node上的所有数据也丢失了。通过这台dead Data node的block report，Name node知道哪些block copies需要复制到其他Data nodes。Name node参考Rack Awareness数据来选择接收新copy的Data node，并遵守以下复制规则：一个机架保存两份copies，另一个机架保存第三份copy。</p>
-<p>考虑由于机架交换机或者机架电源失败导致的整个机架Data node都失效的情况。Name node将指导集群内的剩余Data nodes开始复制失效机架上的所有数据。如果失效机架上服务器的存储容量为12TB，那么这将导致数百TB的数据在网络中传输。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl13.png" title="srljhjqhwl13" target="_blank"><img src="&quot;srljhjqhwl13&quot;" alt=""></a></p>
-<p>Secondary Name node是Hadoop的一种服务器角色。一个很普遍的误解是它提供了对Name node的高可用性备份，实际上不是。</p>
-<p>Secondary Name node偶尔会连接到Name node(缺省为每小时)，同步Name node in-memory metadata以及保存metadata的文件。Secondary Name node合并这些信息到一个组新的文件中，保存到本地的同时把这些文件发送回Name Node。</p>
-<p>当Name node宕机，保存在Secondary Name node中的文件可以用来恢复Name node。在一个繁忙的集群中，系统管理员可以配置同步时间为更小的时间间隔，比如每分钟。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl14.png" title="srljhjqhwl14" target="_blank"><img src="&quot;srljhjqhwl14&quot;" alt=""></a></p>
-<p>当一个Client想要从HDFS获取一个文件时，比如job的输出结果。Client首先从Name node查询文件block的位置。Name node返回一个包含所有block位置的链表，每个block位置包含全部copies所在的Data node</p>
-<p>Client选取一个数据块的Data node位置，通过TCP50010端口从这个Data node读取一块，在读取完当前块之前，Client不会处理下一块。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl15.png" title="srljhjqhwl15" target="_blank"><img src="&quot;srljhjqhwl15&quot;" alt=""></a></p>
-<p>在某些情况下Data node daemon本身需要从HDFS读取数据块。比如Data Node被请求处理自身不存在的数据，因而它必须从网络上的其他Data node获得数据然后才能开始处理。</p>
-<p>另外一种情况是Name node的Rack Awareness信息提供的网络优化行为。当Data node向Name node查询数据块位置信息，Name node优先查看请求者所在的机架内的Data nodes包含这个数据块。如果包含，那么Name node把这个Data node提供给请求的Data node。这样可以保证数据仅在in-rack内流动，可以加快数据的处理速度以及job的完成速度</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl16.png" title="srljhjqhwl16" target="_blank"><img src="&quot;srljhjqhwl16&quot;" alt=""></a></p>
-<p>现在File.txt分散到集群的机器中这样就可以提供更快更有效的并行处理速度。Hadoop并行处理框架称为Map Reduce，名称来自于并行处理的两个重要步骤：Map和Reduce</p>
-<p>第一步是Map 过程，这个步骤同时请求所有包含数据的Data node运行计算。在我们的例子中则是请求这些Data node统计存储在他们上的File.txt数据块包含多少此Refund</p>
-<p>要达到这个目的，Client首先提交Map Reduce job给Job tracker，发送请求：“How many times does Refund occur in file.txt”。Job tracker向Name node查询哪些Data nodes包含文件File.txt的数据块。然后Job Tracker在这些Data nodes上运行Java代码 在Data node的本地数据上执行Map计算。Task Tracker启动一个Map task监测这些tasks的执行。Task Tracker通过heartbeats向Job Tracker汇报task的状态。</p>
-<p>当每一个Map task都完成后，计算结果保存在这些节点的临时存储区内，我们称之为”intermediate data”。下一步是把这些中间数据通过网络发送给运行Reduce的节点以便完成最后的计算。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl17.png" title="srljhjqhwl17" target="_blank"><img src="&quot;srljhjqhwl17&quot;" alt=""></a></p>
-<p>Job tracker总是尝试选择包含待处理数据的Data node做Map task，但是有时不会这样。比如，所有包含这块数据的Data node已经有太多的tasks正在运行，不再接收其他的task.</p>
-<p>这种情况下，Job Tracker将询问Name node，Name node会根据Rack Awareness建议一个in-rack Data node。Job tracker把task分配给这个in-rack Data node。这个Data node会在Name node的指导下从包含待处理数据的in-rack Data node获取数据。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl18.png" title="srljhjqhwl18" target="_blank"><img src="&quot;srljhjqhwl18&quot;" alt=""></a></p>
-<p>Map Reduce 框架的第二部分叫做Reduce。Map task已经完成了计算，计算结果保存在intermediate data。现在我们需要把所有的中间数据汇集到一起作进一步处理得到最终结果。</p>
-<p>Job Tracker可以在集群内的任意一个node上执行Reduce，它指导Reduce task从所有完成Map trasks的Data node获取中间数据。这些Map tasks可能同时响应Reducer，这就导致了很多nodes几乎同时向单一节点发起TCP连接。我们称之为incast或者fan-in(微突发流)。如果这种微突发流比较多，那么就要求网络交换机有良好的内部流量管理能力，以及相应的buffers。这种间歇性的buffers使用可能会影响其他的网络行为。这需要另开一篇详细讨论。</p>
-<p>Reducer task已经收集了所有intermediate data，现在可以做最后计算了。在这个例子中，我们只需简单的把数字相加就得到了最终结果，写入result.txt</p>
-<p>我们的这个例子并没有导致很多的intermediate data在网络间传输。然而其他的jobs可能会产生大量的intermediate data：比如，TB级数据的排序，输出的结果是原始数据集的重新排序，结果尺寸和原始文件大小一致。Map Reduce过程会产生多大的网络流量王权依赖于给定的Job类型。</p>
-<p>如果你对网络管理很感兴趣，那么你将了解更多Map Reduce和你运行集群的Jobs类型，以及这些Jobs类型如何影响到网络。如果你是一个Hadoop网络的狂热爱好者，那么你可能会建议写更好的Map Reduce jobs代码来优化网络性能，更快的完成Job</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl19.png" title="srljhjqhwl19" target="_blank"><img src="&quot;srljhjqhwl19&quot;" alt=""></a></p>
-<p>Hadoop通过在现有数据的基础上提供某种商业价值，从而在你的组织内获得成功。当人们意识到它的价值，那么你可能获得更多的资金购买更多的机架和服务器，来扩展现有的Hadoop集群。</p>
-<p>当增加一个装满服务器的新机架到Hadoop集群中时，你可能会面临集群不平衡的局面。在上图的例子中，Rack1和Rack2是已经存在的机器，保存着文件File.txt并且正在运行Map Reduce jogs。当我们增加两个新的机架到集群中时，File.txt 数据并不会神奇的自动散布到新的机架中。</p>
-<p>新的Data node服务器由于没有数据只能空闲着，直到Client开始保存新的数据到集群中。此外当Rack1和Rack2上的服务器都满负荷的工作，那么Job Tracker可能没有别的选择，只能把作用在File.txt上的Map task分配到这些没有数据的新服务器上，新服务器需要通过网络跨机架获取数据。这就导致更多的网络流量，更慢的处理速度。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl20.png" title="srljhjqhwl20" target="_blank"><img src="&quot;srljhjqhwl20&quot;" alt=""></a></p>
-<p>为了处理这种情况，Hadoop包含一个时髦的工具叫做 balancer</p>
-<p>Balancer查看节点可用存储的差异性，在达到特定的阀值后尝试执行balance。有很多空闲空间的新节点将被检测到，然后balancer开始从空闲空间很少的Data node拷贝数据到这个新节点。Balancer通过控制台的命令行启动，通过控制台取消或者关闭balancer</p>
-<p>Balancer可用的网络流量是非常低的，缺省设置为1MB/s。可以通过hdfs-site.xml的df.balance.bandwidthPerSec参数来修改。</p>
-<p>Balancer是你的集群的好管家。在你增加服务器时一定会用到它，定期（每周）运行一次也是一个好主意。Balancer使用缺省带宽可能会导致很长时间才能完成工作，比如几天或者几周。</p>
-<p>本文是基于<a href="http://www.cloudera.com/hadoop-training/" target="_blank">Training from Cloudera</a> 的学习 以及对我的Hadoop实验环境的观测。这里讨论的内容都是基于<a href="https://ccp.cloudera.com/display/SUPPORT/Downloads" target="_blank">latest stable release of Cloudera’s CDH3 distribution of Hadoop</a> 。本文并没有讨论Hadoop的新技术，比如：<a href="http://hadoop.apache.org/common/docs/r0.21.0/hod_scheduler.html#Introduction" target="_blank">Hadoop on Demand(HOD)</a>和<a href="http://www.hortonworks.com/an-introduction-to-hdfs-federation/" target="_blank">HDFS Federation</a> ，但是这些的确值得花时间去研究。
-<img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"> (<strong>*1</strong> 个评分，平均: <strong>5.00*</strong>)</p>
-<p><img src="&quot;Loading ...&quot;" alt="Loading ..."> Loading ...</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--深入理解Hadoop集群和网络/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--深入理解Hadoop集群和网络" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--漫步云中网络/">漫步云中网络</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--漫步云中网络/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-">漫步云中网络</h1>
-<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#author1" target="_blank">张 华</a>, 高级软件工程师, IBM</p>
-<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#author2" target="_blank">龚 永生</a>, 资深软件工程师, IBM</p>
-<p><strong>简介：</strong> 在生产环境中，云中的网络通常被划分为公共网络、管理网络和服务网络。本文首先通过三个小试验向您介绍了如何通过 TAP/TUN、NAT、Linux Bridge、VLAN 等技术实现云中网络的一般原理。有了这些基础，相信您会对接下来介绍的一个具体的 OpenStack 云的示例网络配置倍感亲切。同理，这些基础也将助您在其他云中网络中轻松漫步。
-来源： <a href="[http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/](http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/)">[http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/](http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/)</a> </p>
-<p>阅读本文前，最好能先了解以下的知识：</p>
-<ul>
-<li>了解 OpenStack 将有助于对本文的理解。本文讲解的是 Linux 虚拟网络中的一般原理方法 , 虽不仅限于应用在 OpenStack 之中 , 但本文的实验是以 OpenStack 为基础的。OpenStack 是一个开源的 IaaS 云 , 您可以从 devstack 脚本 (<a href="http://devstack.org/" target="_blank"><a href="http://devstack.org/">http://devstack.org/</a></a>) 开始熟悉它。</li>
-<li>了解 QEMU 也将有助于对本文的理解。QEMU 是一种支持多种 CPU 的机器模拟器 , 本文采用 QEMU 来创建虚拟机验证本文中的试验。</li>
-</ul>
-<p><a href="">什么是云？</a></p>
-<p>什么是云？我的理解是，为多租户提供各层次上的服务（如操作系统层、中间件层、应用软件层等）的可动态水平扩展的服务器集群称之为云。所以云具有大规模、高可扩展性、按需服务、自动化、节能环保、高可靠性等特点。下图１从软件堆栈视角勾画了云的架构：
-<a href=""><strong>图 1. 云的架构</strong></a>
-<img src="" alt="图 1. 云的架构"> </p>
-<ul>
-<li><strong>IaaS, Infrastructure as a Service，基础设施即服务：</strong>您可以简单理解为将可伸缩的操作系统（虚机或实机）实例作为基础设施服务卖给多租户，然后按需计算费用。当然，将操作系统作为基础设施服务只是 IaaS 中的一种，且是最主要的一种，我怕大家概念混淆所以就只重点提了这种。实际上，只要是基础设施提供服务了从概念上讲都应该叫 IaaS，比如说关系型数据库，如果是集群部署的话，它也是基础设施提供服务了，也应该叫 IaaS。这类产品如 IBM 的 Smart Cloud Entry，如开源的 OpenStack。</li>
-<li><strong>PaaS, Platform as a Service, 平台即服务：</strong>您可以简单理解为将可伸缩的中间件资源作为平台服务卖给多租户，然后按需计算费用。举个例子，如果 SaaS 应用程序的并发瞬间加大的话，PaaS 可以自动实时地启动一个由 IaaS 提供的操作系统实例，然后自动在它上面部署中间件应用服务器（如 IBM 的 WebSphere），最后再部署一套该 SaaS 应用实例，并自动将它们纳入到负载均衡体系之中，从而实现平台服务的自动伸缩，这就是 PaaS。这类产品如 IBM 的 IWD，如 Google 的 App Engine。</li>
-<li><strong>SaaS, Software as a Service, 软件即服务：</strong>您可以简单理解为可伸缩的分布式软件作为软件服务为用户提供某种在线服务，如视频服务，地图服务等。</li>
-<li><strong>XaaS, X as a Server, 一切即服务：</strong>只要是给多租户按需提供服务都可以叫 XaaS, 像在 OpenStack 中，将网络部分代码单独抽出来组成 Quantum 工程，就可以叫网络即服务（NaaS, Network as a Service)；像使用 xCat 自动部署裸机可以叫裸机即服务（MaaS, Bare-metal as a Service)。</li>
-</ul>
-<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#ibm-pcon" target="_blank">回页首</a></p>
-<p><a href="">什么是云中网络？</a></p>
-<p>在传统的数据中心中，每个网口对应唯一一个物理机；有了云，一台物理网卡可能会承载多个虚拟网卡。物理网卡与虚拟网卡之间的关系无外乎就是下列三种情况：</p>
-<ol>
-<li>一对一，一个物理网卡对应对一个虚拟网卡，是下面一对多情况的一种特例</li>
-<li>一对多，一个物理网卡对应多个虚拟网卡，是本文要介绍的情况</li>
-<li>多对一，多个物理网对应一个虚拟网卡，即我们常说的 Bonding，用作负载均衡
-<a href=""><strong>图 2. 虚拟网络的主要内容</strong></a>
-<img src="" alt="图 2. 虚拟网络的主要内容"> </li>
-</ol>
-<p>上图 2 显示了虚拟网络的主要内容：</p>
-<ol>
-<li>目前，对网络的虚拟化主要集中在第 2 层和第 3 层</li>
-<li>在 Linux 中，第 2 层通常使用 TAP 设备来实现虚拟网卡，使用 Linux Bridge 来实现虚拟交换机</li>
-<li>在 Linux 中，第 3 层通常是基于 Iptable 的 NAT，路由及转发</li>
-<li>对于网络隔离，可以采用传统的基于 802.1Q 协议的 VLAN 技术，但这受限于 VLAN ID 大小范围的限制，并且需要手动地在各物理交换机上配置 VLAN；也可以采用虚拟交换机软件，如 Openvswitch，它可以自动创建 GRE 隧道来避免手动去为物理交换机配置 VLAN。</li>
-</ol>
-<p>下面将结合一个生产环境中的网络实例来讲解如何实现一个虚拟网络。</p>
-<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#ibm-pcon" target="_blank">回页首</a></p>
-<p><a href="">云中网络实验</a></p>
-<p>在生产环境中，按通用做法一般将云中网络划分为三大部分，公共网络、管理&amp;存储网络、服务网络。</p>
-<p><strong>公共网络：</strong>用于云向外部租户提供 API 调用或者访问</p>
-<p><strong>管理网络：</strong>用于云中各物理机之间的通信</p>
-<p><strong>存储网络：</strong>用于 iSCSI 服务端与客户端之间的流量，一般与管理网络同</p>
-<p><strong>服务网络：</strong>虚机内部使用的网络</p>
-<p>为了将上述网络的实现原理讲清楚，我们选择了两台物理机做实验，并将采用 NAT、Linux Bridge、VLAN 技术分步实现一个典型的 OpenStack 云的网络拓扑。当然，这种网络的原理是通用的，并不仅限于 OpenStack 云。</p>
-<ol>
-<li>台式机 (node1)， 双有线网卡， 将作为控制节点、存储节点及一个计算节点</li>
-<li>笔记本 (node2)，一有线网卡，将作为一个计算节点</li>
-<li>路由器，家中 ADSL 宽带出口</li>
-<li>交换机 , 用于连接各物理机</li>
-</ol>
-<p>值得一提的是，如果采用了 VLAN 技术进行网络隔离，且想要两台物理机上的虚机能够互访的话，交换机必须是支持 VLAN 的，且需要手动将交换机相应的端口配置成 Trunk 模式。因为我没有支持 VLAN 的物理交换机，在本实验中，我是采用直连线直接连接两台实验机器的。</p>
-<p>下图 3 显示了实验网络拓扑：
-<a href=""><strong>图 3. OpenStack 实验网络拓扑</strong></a>
-<img src="" alt=""> </p>
-<p><strong>公共网络：</strong>192.168.99.0/24 网段，外网用户通过公共网络上提供的服务来访问云。注意：在实际的生产环境中，公共网络一般采用外网 IP，因为我没有外网 IP，所以用 192.168.99.0 网段模拟。将台式机的一有线网卡 eth1 与 TP-Link 路由器相连即可。</p>
-<p><strong>管理＆存储网络：</strong>172.16.99.0/24 网段，管理网络用于 OpenStack 各组件以及 DB、MQ 之间进行通信；存储网络用于存储节点和需要使用外部存储的计算节点之间的通信。将台式机的另一有线网卡 eth0 和笔记本电脑的有线网卡 eth0 连接到交换机即可。</p>
-<p><strong>服务网络：</strong>10.0.0.0/8 网段，用于虚机内部。</p>
-<p>两个节点的基本网络配置如下：
-<a href=""><strong>清单 1. node1 的基本网络配置</strong></a></p>
-<p>root@node1:/home/hua/# cat /etc/network/interfaces
-auto lo</p>
-<p>iface lo inet loopback
-auto eth1</p>
-<p>iface eth1 inet dhcp
-up iptables -t nat -A POSTROUTING -s 172.16.99.0/24 -o eth1 -j MASQUERADE</p>
-<p>auto eth0
-iface eth0 inet static</p>
-<p>address 172.16.99.108
-netmask 255.255.255.0</p>
-<p>network 172.16.99.0
-broadcast 172.16.99.255</p>
-<p><a href=""><strong>清单 2. node2 的基本网络配置</strong></a>
-[</p>
-<p>cat /etc/sysconfig/network-scripts/ifcfg-eth0
-DEVICE=eth0</p>
-<p>HWADDR=00:21:86:94:63:27
-ONBOOT=yes</p>
-<p>BOOTPROTO=static
-USERCTL=yes</p>
-<p>PEERDNS=yes
-IPV6INIT=no</p>
-<p>NM_CONTROLLED=yes
-TYPE=Ethernet</p>
-<p>NETMASK=255.255.255.0
-IPADDR=172.16.99.109</p>
-<p>NETWORK=172.16.99.0
-GATEWAY=172.16.99.108</p>
-<p>DNS1=202.106.195.68
-DNS2=202.106.46.151</p>
-<p>我虽然只用了两台物理机来模拟实际生产环境的部署模型， 但文中的这种部署结构是典型的，如果是大规模部署的话，只需要将控制节点上的每一个进程（如 DB、MQ、glance、keystone、nova-api、nova-schedule、nova-network 等）分布部署在每一台物理机即可。想要进一步的 HA 的话，可以：</p>
-<ul>
-<li>将 DB 配置成集群模式</li>
-<li>将 MQ 配置成集群模式</li>
-<li>采用 multi-host 模式，将 nova-network 同时安装在计算节点 (nova-compute) 上</li>
-<li>将 nova-api、nova-schedule 这些无状态的服务也同时部署在计算节点上，再加上负载均衡器分发负载</li>
-<li>采用多网卡做 Bonding
-]()</li>
-</ul>
-<p><a href=""></a><a href="">NAT</a></p>
-<p>node2 可以通过 NAT 方式访问外网，数据流向如下：</p>
-<ol>
-<li>node2 中需设置网关指向 node1 的 eth0，例： GATEWAY=172.16.99.108</li>
-<li>在 node1 中打开 ipv4 转发功能，这样，node1 会相当于一台路由器，在 eth0 收到来自 node2 的数据之后，会将数据包转发到其他网卡 eth1， sysctl -w net.ipv4.ip_forward=1</li>
-<li>在 node1 上设置 NAT 规则，这样，从 node2（172.16.99.0/24 网段）发出的数据包看来起就像从 node1 的 eth1 发出的一样： iptables -t nat -A POSTROUTING -s 172.16.99.0/24 -o eth1 -j MASQUERADE</li>
-</ol>
-<p><a href="">Linux Bridge</a></p>
-<p>网桥 ( Bridge ) 工作在二层，了解链路层协议，按帧转发数据。就是交我们常说的交换机，所以连接到网桥的设备处于同一网段。
-<a href=""><strong>图 4. 网桥示例</strong></a>
-<img src="" alt="图 4. 网桥示例"> </p>
-<p>上图 4 显示了 node1 网桥中的 VM1 与 node2 网桥中的 VM2 是如何通信的。在 openstack 中，这是典型的 multi-host 模式，即每一个计算节点均部署了网络服务来提供网关服务。Linux Bridge 充当了交换机的功能，而将 sysctl -w net.ipv4.ip_forward 设置为 1 也相当于 node1 同时充当了一个路由器（路由器的实质就是一个具有多个网卡的机器，因为它的多网卡同时具有这些不同网段的 IP 地址，所以它能将一个网络的流量路由转发到另一个网络）。</p>
-<p>网桥，交换机，是用来连接两个 LAN 的。 是根据 MAC 与端口的映射进行转发的，而在虚机的网卡都是知道的，若从转发数据库知道目的 MAC 地址，以太网帧就只会正确的网桥端口传输，否则，就会扩散到网桥设备的所有端口。</p>
-<p>因为网桥工作在第二层，所以 eth0.1, tap0, tap1 这些网卡均不需要设置 IP（因为对于上层路由器来说，它们是同一个子网，只需要将 IP 设置在 br1 上即可）。同时， 对 Linux 而言，网桥是虚拟设备，因此，除非将一个或多个真实设备绑定到网桥设备上，否则它就无法接收或传输任何东西。所以需要将一个真实设备（如 eth0）或者真实设备的 vlan 接口（如 eth0.1) 加入到网桥。对于前一种情况，将 eth0 加入到网桥之后，eth0 便不再具有 IP，这时候它与 tap0 这些虚拟网卡均通过 br1 处于 10.0.1.0/24 网络，当然我们也可以为网桥 br1 设置一个别名让它也具有 172.16.99.0/24 网管网段的 IP 地址。）</p>
-<p>下面，我们来实现这个示例网桥，在 node1 与 node2 上分别执行下述脚本（对重要命令的描述请参见注释）：
-<a href=""><strong>清单 3. node1 与 node2 的 Linux Bridge 配置脚本</strong></a></p>
-<p>/#!/bin/sh
-TAP=tap0</p>
-<p>BRIDGE=br1
-IFACE=eth0</p>
-<p><strong>MANAGE_IP=172.16.99.108</strong></p>
-<p>SERVICE_IP=10.0.1.1
-GATEWAY=10.0.1.1</p>
-<p>BROADCAST=10.0.1.255
-/# 设置物理网卡为混杂模式</p>
-<p>ifdown $IFACE
-ifconfig $IFACE 0.0.0.0 promisc up</p>
-<p>/# 创建网桥，并物理网卡加入网桥，同时设置网桥的 IP 为服务网络网段
-brctl addbr $BRIDGE</p>
-<p>brctl addif $BRIDGE $IFACE
-brctl stp $BRIDGE on</p>
-<p>ifconfig $BRIDGE $SERVICE_IP netmask 255.255.255.0 broadcast $BROADCAST
-route add default gw $GATEWAY</p>
-<p>/# 在网桥上设置多 IP，让它同时具有管理网段的 IP
-ifconfig ${BRIDGE}:0 $MANAGE_IP netmask 255.255.255.0 broadcast 172.16.99.255</p>
-<p>注意，上述黑体的一句在 node2 中需要作相应修改，其余不变，如下：
-MANAGE_IP=172.16.99.109</p>
-<p><a href="">VLAN</a></p>
-<p>图 4 同样适用于 VLAN 网络，下面我们来实现它。在 node1 与 node2 上分别执行下述脚本：
-<a href=""><strong>清单 4. node1 与 node2 的 VLAN 配置脚本</strong></a></p>
-<p><strong>MAC=c8:3a:35:d7:86:da</strong></p>
-<p>IP=10.0.1.1/24
-ip link add link eth1 name eth1.1 type vlan id 1</p>
-<p>ip link set eth1.1 up
-brctl addbr br1</p>
-<p>brctl setfd br1 0
-brctl stp br1 on</p>
-<p>ip link set br1 address $MAC
-ip link set br1 up</p>
-<p>brctl addif br1 eth1.1
-ip addr add $IP dev br1</p>
-<p>注意，上述黑体的一句在 node2 中需要作相应修改，其余不变，如下：
-MAC= c8:3a:35:d7:86:db</p>
-<p><a href="">测试</a></p>
-<p>我们采用 QEMU 创建虚拟机来进行测试，其中网络部分的配置为：
-  <interface type='bridge'></p>
-<p>   <mac address='52:54:00:00:01:89'/>
- 　　  <source bridge='br1'/></p>
-<p> 　　  <address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>
-  </interface></p>
-<p>我们使用一个现成的镜像，下载地址：
-curl <a href="http://wiki.qemu.org/download/linux-0.2.img.bz2" target="_blank">http://wiki.qemu.org/download/linux-0.2.img.bz2</a> -o /bak/kvmimages/linux-0.2.img</p>
-<p>在 node1 与 node2 上分别用下列配置定义两个虚机，注意，下面打粗体的部分（<mac address='52:54:00:00:01:89'/>）在两个节点中请设置不一样的值。</p>
-<p>cat /etc/libvirt/qemu/test.xml
-<a href=""><strong>清单 5. node1 与 node2 的虚机定义文件</strong></a></p>
-<domain type='qemu'>
- <strong><name>VM1</name></strong>
-
-<uuid></uuid>
-<memory>393216</memory>
-
-<currentMemory>393216</currentMemory>
-<vcpu>1</vcpu>
-
-<os>
-<type arch='i686' machine='pc-1.0'>hvm</type>
-
-<boot dev='hd'/>
-</os>
-
-<features>
-<acpi/>
-
-</features>
-<clock offset='utc'/>
-
-<on_poweroff>destroy</on_poweroff>
-<on_reboot>restart</on_reboot>
-
-<on_crash>destroy</on_crash>
-<devices>
-
-<emulator>/usr/bin/qemu-system-i386</emulator>
-<disk type='block' device='disk'>
-
-<driver name='qemu' type='raw'/>
-<source dev='/bak/kvmimages/linux-0.2.img'/>
-
-<target dev='hda' bus='ide'/>
-<address type='drive' controller='0' bus='0' unit='0'/>
-
-</disk>
-<controller type='ide' index='0'>
-
-<address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x1'/>
-</controller>
-
-<interface type='bridge'>
- <strong><mac address='52:54:00:00:01:89'/></strong>
-
-<source bridge='br1'/>
-<address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>
-
-</interface>
-<input type='tablet' bus='usb'/>
-
-<input type='mouse' bus='ps2'/>
-<graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'>
-
-<listen type='address' address='127.0.0.1'/>
-</graphics>
-
-<video>
-<model type='cirrus' vram='9216' heads='1'/>
-
-<address type='pci' domain='0x0000' bus='0x00' slot='0x02' function='0x0'/>
-</video>
-
-<memballoon model='virtio'>
-<address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>
-
-</memballoon>
-</devices>
-
-</domain>
-
-<p>然后用上述配置创建虚机（virsh define /etc/libvirt/qemu/test.xml ），接着启动虚机（ virsh start test ），最后设置虚机的 IP 和默认网关， 如下：</p>
-<p><strong>VM1：</strong></p>
-<p>ifconfig eth0 10.0.1.2 netmask 255.255.255.0 broadcast 10.0.1.255
-route add default gw 10.0.1.1</p>
-<p><strong>VM3：</strong>
-ifconfig eth0 10.0.1.3 netmask 255.255.255.0 broadcast 10.0.1.255</p>
-<p>route add default gw 10.0.1.1</p>
-<p>这时候在一虚机上 ping 另一虚机 , 如果能够 ping 通，成功。若想要 ping 外网的话，还需在 /etc/resolv.conf 文件中添加域名，如下图 5 所示：
-<a href=""><strong>图 5. 验证实验是否成功</strong></a>
-<img src="" alt="图 5. 验证实验是否成功"> </p>
-<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#ibm-pcon" target="_blank">回页首</a></p>
-<p><a href="">OpenStack 云中网络拓扑配置示例</a></p>
-<p>在掌握了上述基本原理之后，应该不难理解下面 OpenStack 云中的网络拓扑。</p>
-<p>在 OpenStack 中，目前存在着 nova-network 与 quantum 两种网络组件。nova-network 仅支持下列三种网络拓扑：</p>
-<ul>
-<li>FlatManager, 不支持 VLAN，也不支持 DHCP 的扁平网络</li>
-<li>FlatDHCPManager，不支持 VLAN，但支持 DHCP 的扁平网络</li>
-<li>VlanManager，支持 VLAN，也支持 DHCP 的 VLAN 隔离网络</li>
-</ul>
-<p>如今 nova-network 的代码已经全部挪到了 Quantum 工程中，但在网络拓扑方面，二者的原理是一致的，所以下面只给出一个典型的 nova-network 的网络配置，有了上面的基础，现在看这段配置是否会感到很亲切呢？
-<a href=""><strong>清单 6. /etc/nova/nova.conf 中的网络配置示例</strong></a></p>
-<p>/#/#/#/#/# nova-network /#/#/#/#/#
-network_manager=nova.network.manager.VlanManager</p>
-<p>public_interface=eth1
-vlan_interface=eth0</p>
-<p>network_host=node1
-fixed_range=10.0.0.0/8</p>
-<p>network_size=1024
-dhcpbridge_flagfile=/etc/nova/nova.conf</p>
-<p>dhcpbridge=/usr/bin/nova-dhcpbridge
-force_dhcp_release=True</p>
-<p>fixed_ip_disassociate_timeout=30
-my_ip=172.16.99.108</p>
-<p>routing_source_ip=192.168.99.108</p>
-<p>相关参数说明如下：</p>
-<ul>
-<li>network_manager，目前支持 VlanManager、FlatManager、FlatDHCPManager 三种拓扑</li>
-<li>public_interface, 接外网的物理网卡 , floating ip 功能需要用到它</li>
-<li>valn_interface, 用于划分 VLAN 的物理网卡</li>
-<li>fixed_range, 服务网络，即虚机内部所用的网络地址</li>
-<li>my_ip，管理网络，用于安装 Openstack 组件的物理机之间的通信。例如：本实验中的控制节点同时具有外网网络地址 192.168.99.108 与管理网络地址 172.16.99.108，另一计算节点的管理网络地址为 172.16.99.109，所以 my_ip 应该设置为 172.16.99.108</li>
-<li>routing_source_ip, NAT 映射后的公共网络 IP，设置了此参数，会自动执行 NAT 命令： iptables -t nat -A POSTROUTING -s 172.16.99.0/24 -o eth1 -j SNAT --to 192.168.99.108</li>
-</ul>
-<p>显然，如果没有区分公共网络与管理网络，即它们处于同一网段的话，并不需要配置 my_ip 及 routing_source_ip 两个参数。</p>
-<p><a href="http://www.ibm.com/developerworks/cn/cloud/library/1209_zhanghua_openstacknetwork/#ibm-pcon" target="_blank">回页首</a></p>
-<p><a href="">结论</a></p>
-<p>云中网络一般被划分为公共网络、管理网络 &amp; 存储网络与服务网络三大类。虚拟网络拓扑一般有 NAT、Bridge、VLAN 三种情形。我们手工一步一步地通过 NAT、Bridge、VLAN 三个试验简单实现了一个上述典型的云中网络。原理都是相通的，您再看 OpenStack 云中网络或才其他云的网络时都会倍感亲切。</p>
-<p><a href="">参考资料</a></p>
-<p><strong>学习</strong></p>
-<ul>
-<li>参考 <a href="http://devstack.org/" target="_blank">Devstack 官网</a>，您可以从 devstack 脚本快速上手 Openstack。 </li>
-<li>参考 <a href="http://docs.openstack.org/" target="_blank">Openstack 官网</a>，您可以获得更多关于 Openstack 的知识。 </li>
-<li>参考 <a href="http://wiki.openstack.org/Quantum-Linux-Bridge-Plugin/" target="_blank">Quantum Wiki</a>, 您可以获得关于 Linux Bridge 网络的一般原理。 </li>
-<li>“<a href="http://www.ibm.com/developerworks/cn/cloud/library/cl-openstack-cloud/" target="_blank">使用 OpenStack 实现云计算和存储</a>”（developerWorks，2012 年 9 月）：Infrastructure as a Service (IaaS) 云平台种类繁多，例如像 Nebula 和 Eucalyptus 这样为人熟知的解决方案。而此领域的一个新来者已展示了其不俗的增长，不仅包括用户数量的增长，还包括支持公司的数量的大量增长。在本文中，我们将了解这个开源平台 OpenStack，发现它是否真的是一种开源云操作系统。</li>
-<li><p><a href="https://www.ibm.com/developerworks/cn/cloud/index.html" target="_blank">developerWorks 云计算站点</a> 提供了有关云计算的更新资源，包括</p>
-</li>
-<li><p>云计算 <a href="http://www.ibm.com/developerworks/cn/cloud/newto.html" target="_blank">简介</a>。</p>
-</li>
-<li>更新的 <a href="http://www.ibm.com/developerworks/cn/cloud/resources.html" target="_blank">技术文章和教程，以及网络广播</a>，让您的开发变得轻松，<a href="http://www.ibm.com/developerworks/cn/cloud/events.html" target="_blank">专家研讨会和录制会议</a> 帮助您成为高效的云开发人员。</li>
-<li>连接转为云计算设计的 <a href="http://www.ibm.com/developerworks/cn/cloud/products.html" target="_blank">IBM 产品下载和信息</a>。</li>
-<li>关于 <a href="http://www.ibm.com/developerworks/cn/cloud/collaborate.html" target="_blank">社区最新话题</a> 的活动聚合。</li>
-<li>加入<a href="https://www.ibm.com/developerworks/mydeveloperworks/groups/service/html/communityview?communityUuid=e69e9c57-3210-49b0-a603-ca597c736557" target="_blank">云计算讨论组</a>，了解和讨论云计算的最新技术、解决方案、趋势等内容。 </li>
-</ul>
-<p><strong>讨论</strong></p>
-<ul>
-<li>加入 <a href="http://www.ibm.com/developerworks/cn/community/" target="_blank">developerWorks 中文社区</a>。查看开发人员推动的博客、论坛、组和维基，并与其他 developerWorks 用户交流。</li>
-</ul>
-<p><a href="">作者简介</a>
-<a href=""></a>张华，IBM 高级软件工程师热衷于技术钻研，拥有丰富的搜索引擎、应用服务器、互联网、云计算领域的行业经验，精通 Java、JavaEE、Linux、Network 等技术，目前正从事 OpenStack 相关的工作。</p>
-<p><a href=""></a>龚永生，IBM 资深软件工程师，热衷于开源软件，具有多年的 Linux，Java 和 JavaEE 经验。目前是 OpenStack 项目的积极贡献者。</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--漫步云中网络/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--漫步云中网络" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-linux-redhat--强制指定源更新firefox/">强制指定源更新firefox</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:35.000Z"> <a href="/2014/02/02/2014-02-02-linux-redhat--强制指定源更新firefox/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-firefox">强制指定源更新firefox</h1>
-<p>Centos6.5下到firefox经常菜单假死，故使用另外的源更新。</p>
-<p>使用remi源：
-/#/# Install Remi repository for RHEL/CentOS 6.5/6.4/6.3/6.2/6.1/6.0 /#/#/# wget <a href="http://rpms.famillecollet.com/enterprise/remi-release-6.rpm" target="_blank">http://rpms.famillecollet.com/enterprise/remi-release-6.rpm</a> /# rpm -Uvh remi-release-6.rpm/#/# Check Availability of Firefox 26 in RHEL/CentOS 6.5/6.4/6.3/6.2/6.1/6.0 and Fedora 15/14  /#/#/# yum --enablerepo=remi list firefox/#/# Install or Update Firefox 26 in RHEL/CentOS 6.5/6.4/6.3/6.2/6.1/6.0  /#/#/# yum --enablerepo=remi install firefox</p>
-<p>这是在未安装到情况下</p>
-<p>更新firefox：
-/#/# Update Firefox 26 in RHEL/CentOS 6.5/6.4/6.3/6.2/6.1/6.0  /#/#/# yum --enablerepo=remi update firefox</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/linux/">linux</a></li></span><span class="breadcrumb"><li><a href="/categories/linux/">linux</a></li><li><a href="/categories/linux/redhat/">redhat</a></li></span></span> | <span class="tags">Tagged <a href="/tags/linux/" class="label label-primary">linux</a><a href="/tags/redhat/" class="label label-success">redhat</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:35"datetime="2014-03-07 09:54:35"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-linux-redhat--强制指定源更新firefox/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-linux-redhat--强制指定源更新firefox" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-linux-redhat--redhat6更换本地软件管理工具/">redhat6更换本地软件管理工具</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:35.000Z"> <a href="/2014/02/02/2014-02-02-linux-redhat--redhat6更换本地软件管理工具/">feb. 2 2014</a></time></span>      
@@ -1896,6 +2112,46 @@ yum remove PackageKit</p>
 
 
 
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-linux-redhat--强制指定源更新firefox/">强制指定源更新firefox</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:35.000Z"> <a href="/2014/02/02/2014-02-02-linux-redhat--强制指定源更新firefox/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-firefox">强制指定源更新firefox</h1>
+<p>Centos6.5下到firefox经常菜单假死，故使用另外的源更新。</p>
+<p>使用remi源：
+/#/# Install Remi repository for RHEL/CentOS 6.5/6.4/6.3/6.2/6.1/6.0 /#/#/# wget <a href="http://rpms.famillecollet.com/enterprise/remi-release-6.rpm" target="_blank">http://rpms.famillecollet.com/enterprise/remi-release-6.rpm</a> /# rpm -Uvh remi-release-6.rpm/#/# Check Availability of Firefox 26 in RHEL/CentOS 6.5/6.4/6.3/6.2/6.1/6.0 and Fedora 15/14  /#/#/# yum --enablerepo=remi list firefox/#/# Install or Update Firefox 26 in RHEL/CentOS 6.5/6.4/6.3/6.2/6.1/6.0  /#/#/# yum --enablerepo=remi install firefox</p>
+<p>这是在未安装到情况下</p>
+<p>更新firefox：
+/#/# Update Firefox 26 in RHEL/CentOS 6.5/6.4/6.3/6.2/6.1/6.0  /#/#/# yum --enablerepo=remi update firefox</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/linux/">linux</a></li></span><span class="breadcrumb"><li><a href="/categories/linux/">linux</a></li><li><a href="/categories/linux/redhat/">redhat</a></li></span></span> | <span class="tags">Tagged <a href="/tags/linux/" class="label label-primary">linux</a><a href="/tags/redhat/" class="label label-success">redhat</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:35"datetime="2014-03-07 09:54:35"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-linux-redhat--强制指定源更新firefox/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-linux-redhat--强制指定源更新firefox" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -1966,7 +2222,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:47:11</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 20:45:44</em></span></div>
 </div>
 <div class="clearfix"></div>
 

@@ -110,6 +110,213 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--两个OOMCases排查过程的分享/">两个OOM Cases排查过程的分享</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--两个OOMCases排查过程的分享/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-oom-cases-">两个OOM Cases排查过程的分享</h1>
+<h1 id="-bluedavy-blog-https-blog-bluedavy-com-"><a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a></h1>
+<p>{互联网，OSGi，Java, High Scalability, High Performance,HA}</p>
+<ul>
+<li><a href="https://blog.bluedavy.com/" target="_blank">Home</a></li>
+<li><a href="https://blog.bluedavy.com/?page_id=2" target="_blank">About</a></li>
+<li><a href="https://blog.bluedavy.com/?page_id=81" target="_blank">Photos</a></li>
+</ul>
+<h2 id="-oom-cases-https-blog-bluedavy-com-p-205-oom-cases-"><a href="https://blog.bluedavy.com/?p=205" title="两个OOM Cases排查过程的分享" target="_blank">两个OOM Cases排查过程的分享</a></h2>
+<p>Jan 13</p>
+<p><a href="http://bluedavy.com/" title="Visit bluedavy’s website" target="_blank">bluedavy</a><a href="https://blog.bluedavy.com/?cat=13" title="View all posts in jvm" target="_blank">jvm</a> <a href="&quot;Comment on 两个OOM Cases排查过程的分享&quot;">5 Comments</a>
+分享一下两个OOM Cases的查找过程，一个应用是Native OOM；另外一个应用其实没有OOM，只是每隔一段时间就会出现频繁FGC的现象，OOM的查找已经具备了不错的工具，但有些时候还是会出现很难查的现象，希望这两个排查过程的分享能给需要的同学带来一些帮助。</p>
+<p><strong>Native OOM的排查Case</strong>
+之前的几个PPT里我都说到了，目前查找Native OOM最好的方法就是用google perftools了，于是挂上google perftools，等待应用再次native oom，很幸运，两天后，应用就再次native oom了，于是分析crash之前那段时间谁在不断的分配堆外的内存，pprof看到的结果主要是java.util.Inflater造成的，由于之前已经碰到过类似的case，知道如果使用了Inflater，但不显式的调用Inflater.end的话，确实会造成这个现象。
+于是剩下的问题就是找出代码里什么地方调用了Inflater，这种时候btrace这个神器就可以发挥作用了，一个简单的btrace脚本：
+<a href="">?</a>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13import</p>
+<p>static</p>
+<p>com.sun.btrace.BTraceUtils./*;</p>
+<p>import</p>
+<p>com.sun.btrace.annotations./*;</p>
+<p>@BTrace</p>
+<p>public</p>
+<p>class</p>
+<p>Trace{</p>
+<p>@OnMethod</p>
+<p>(</p>
+<p>clazz=</p>
+<p>&quot;java.util.zip.Inflater&quot;</p>
+<p>,</p>
+<p>method=</p>
+<p>&quot;/./*/&quot;</p>
+<p>)</p>
+<p>public</p>
+<p>static</p>
+<p>void</p>
+<p>traceExecute(</p>
+<p>@ProbeMethodName</p>
+<p>String methodName){</p>
+<p>println(concat(</p>
+<p>&quot;who call Inflater.&quot;</p>
+<p>,methodName));</p>
+<p>jstack();</p>
+<p>}
+}</p>
+<p>执行后很快就找到了代码什么地方调用了Inflater，于是加上了显式的调用Inflater.end，搞定收工。</p>
+<p><strong>偶尔频繁FGC的排查Case</strong>
+这个Case就没上面的那个那么顺利了，查了有接近一个月才查出最终的原因。
+当这个应用出现频繁FGC时，dump了内存，用MAT分析后，看到内存被消耗完的原因是由于几个线程内的ThreadLocalMap中有大量的数据，ThreadLocal中消耗最多内存的主要是一个HashMap，这里面有大量的数据。
+于是当时想到的第一个方法就是查查应用里面什么地方往ThreadLocal里放了HashMap，杯具的是，当查找代码后发现应用本身的代码并没有往ThreadLocal里放HashMap，那就只能是应用依赖的其他jar包做了这样的事了，但不可能去抓出这个应用依赖的所有的jar的源码来扫描，于是继续借助BTrace，写了个脚本来跟踪这类型的线程中谁调用了ThreadLocal.set，并且放的是HashMap，btrace脚本如下：
+<a href="">?</a>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13</p>
+<p>14
+15</p>
+<p>16
+import</p>
+<p>static</p>
+<p>com.sun.btrace.BTraceUtils./*;</p>
+<p>import</p>
+<p>com.sun.btrace.annotations./*;</p>
+<p>@BTrace</p>
+<p>public</p>
+<p>class</p>
+<p>Trace{</p>
+<p>@OnMethod</p>
+<p>(</p>
+<p>clazz=</p>
+<p>&quot;java.lang.ThreadLocal&quot;</p>
+<p>,</p>
+<p>method=</p>
+<p>&quot;set&quot;</p>
+<p>)</p>
+<p>public</p>
+<p>static</p>
+<p>void</p>
+<p>traceExecute(Object value){</p>
+<p>if</p>
+<p>(startsWith(name(currentThread()),</p>
+<p>&quot;xxx&quot;</p>
+<p>) &amp;&amp; startsWith(</p>
+<p>&quot;java.util.HashMap&quot;</p>
+<p>,name(classOf(value))) ){</p>
+<p>println(</p>
+<p>&quot;-------------------------&quot;</p>
+<p>);</p>
+<p>jstack();</p>
+<p>println();</p>
+<p>}</p>
+<p>}</p>
+<p>}</p>
+<p>OK，开始运行上面的脚本，发现竟然一直都没打印出什么内容，只能一直等了，杯具的是一直到了一周后再次出现频繁FGC时，这个脚本都没输出任何的东西，于是只好转换思路。</p>
+<p>既然是HashMap里put了大量的某种类型的数据，那干脆用btrace来看看是谁在往HashMap里put这些数据，于是又写了一个btrace脚本，执行后，很快就看到了是代码中什么地方在put这些数据，但是从抓到的调用者来看，不仅仅是目前有大量数据的这类型的线程会调，其他类型的线程也会调用，如果这个地方有问题的话，应该就全部有问题了，于是跳过这里。</p>
+<p>回到MAT看到的现象，会不会是因为代码什么地方用ThreadLocal的方式不对，又或是什么地方往ThreadLocal里放了东西，又忘了清除呢，因此要做的就是找出这个应用中所有属性为ThreadLocal的地方，来人肉分析了，于是写了一个jsp，扫描所有的classloader中的所有class，找出属性类型为ThreadLocal的，扫描后找到了一些，还真发现有一个和现在HashMap中放的数据一样的private ThreadLocal，这种用法在线程复用的情况下，如果是每次new ThreadLocal的话，会导致ThreadLocal放的东西一直不释放，兴奋的以为已经发现原因了，可惜和业务方一确认，这个类借助Spring保证了singleton的，因此不会有问题。
+好吧，到这一步，只能猜想是由于某种参数请求的时候造成业务上会获得大量的数据了，于是想着要找业务方来分析代码了，这个非常麻烦，于是到此就几乎停滞不前了。</p>
+<p>今天静下心来，重新仔细的看了下MAT分析的结果，决定仍然用btrace跟踪下之前往HashMap中put数据的那个业务代码，突然发现，在web类型的处理线程中它借助的是filter去clear数据的，而杯具的是出问题的这种类型线程的处理机制是没有filter机制的，因此猜测问题估计出在这里了，继续btrace，看看这种类型的线程中是不是只有人调put，没人调clear，btrace脚本运行，很快就验证了这个猜测，于是相应的解决掉了这个case，搞定收工。</p>
+<p>在这第二个case中，可见在频繁FGC或者OOM时，很有可能MAT只能告诉你初步的原因，但要对应到代码上到底是什么地方造成的，还得花很大精力分析了，这个时候BTrace通常能帮上很大的忙。</p>
+<p><a href="https://blog.bluedavy.com/?p=200" target="_blank">Sun JDK 1.6内存管理</a> <a href="https://blog.bluedavy.com/?p=210" target="_blank">服务框架演变过程</a></p>
+<h3 id="5-comments-add-yours-">5 Comments <em>(<a href="">+add yours?</a>)</em></h3>
+<ol>
+<li><img src="https://secure.gravatar.com/avatar/8a0a3550a77608414631e27fbda32c48?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> Jimmy
+<strong>Jan 18, 2011</strong> @ 15:40:15
+google perftools这个怎么用呢？能不能讲讲？</li>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Jan 18, 2011</strong> @ 21:04:09
+perftools装上后，只用设置上export LD_PRELOAD=[libtcmalloc所在的目录]/libtcmalloc.so，然后env HEAPPROFILE=dump的内存信息的文件名 java …，启动后就会每隔一段时间自动生成一些dump文件，最后通过perftools里面的pprof对dump文件进行分析就可以看到结果了。</li>
+<li><img src="https://secure.gravatar.com/avatar/ee65a80dc2effc685329d0630603a118?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://www.sandzhang.com/" target="_blank">sand</a>
+<strong>May 21, 2011</strong> @ 23:05:26
+要是能有人多分享一下这种实际案例就好了<h3 id="leave-a-reply">Leave a Reply</h3>
+</li>
+</ol>
+<p><a href="">Cancel</a></p>
+<p>Name (required)</p>
+<p>Mail (required)</p>
+<p>Website</p>
+<p><img src="&quot;CAPTCHA Image&quot;" alt="CAPTCHA Image"></p>
+<p><a href="&quot;Refresh Image&quot;"><img src="" alt="Refresh Image"></a></p>
+<p>CAPTCHA Code /*</p>
+<p><style type='text/css'>/#submit {display:none;}</style><br /> <input name="submit" type="submit" id="submit-alt" tabindex="6" value="Submit Comment" /></p>
+<p>July 2013 M T W T F S S <a href="https://blog.bluedavy.com/?m=201303" title="View posts for March 2013" target="_blank">« Mar</a>     1234567 891011121314 15161718192021 22232425262728 293031  </p>
+<h3 id="categories">Categories</h3>
+<ul>
+<li><a href="https://blog.bluedavy.com/?cat=63" title="View all posts filed under Java" target="_blank">Java</a> (10)</li>
+<li><a href="https://blog.bluedavy.com/?cat=13" title="View all posts filed under jvm" target="_blank">jvm</a> (19)</li>
+<li><a href="https://blog.bluedavy.com/?cat=56" title="View all posts filed under NoSQL" target="_blank">NoSQL</a> (7)</li>
+<li><a href="https://blog.bluedavy.com/?cat=4" title="View all posts filed under SOA" target="_blank">SOA</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=11" title="关于《分布式Java应用：基础与实践》书部分章节的公开、书内容的纠错以及补充完善。" target="_blank">书:分布式Java应用</a> (5)</li>
+<li><a href="https://blog.bluedavy.com/?cat=6" title="View all posts filed under 互联网" target="_blank">互联网</a> (5)</li>
+<li><a href="https://blog.bluedavy.com/?cat=46" title="View all posts filed under 产品总结" target="_blank">产品总结</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=18" title="View all posts filed under 优化案例" target="_blank">优化案例</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=12" title="View all posts filed under 圆桌交流" target="_blank">圆桌交流</a> (2)</li>
+<li><a href="https://blog.bluedavy.com/?cat=8" title="View all posts filed under 容量规划" target="_blank">容量规划</a> (2)</li>
+<li><a href="https://blog.bluedavy.com/?cat=97" title="View all posts filed under 迁户口" target="_blank">迁户口</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=52" title="View all posts filed under 高可用" target="_blank">高可用</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=3" title="View all posts filed under 高并发" target="_blank">高并发</a> (3)</li>
+<li><p><a href="https://blog.bluedavy.com/?cat=1" title="关于性能优化方面的一些东西。" target="_blank">高性能</a> (2)</p>
+<h3 id="recent-comments">Recent Comments</h3>
+</li>
+<li><p><a href="http://code1.riaos.com/?p=5030138" target="_blank">JVM调优 | code1（code1.riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16520" target="_blank">说说MaxTenuringThreshold这个参数</a></p>
+</li>
+<li><a href="http://architecture1.riaos.com/?p=3063358" target="_blank">JVM调优 | architecture（riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16519" target="_blank">说说MaxTenuringThreshold这个参数</a></li>
+<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16462" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+<li>xiaobo on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16460" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16459" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+</ul>
+<h3 id="tags">Tags</h3>
+<p><a href="https://blog.bluedavy.com/?tag=btrace" title="2 topics" target="_blank">btrace</a> <a href="https://blog.bluedavy.com/?tag=c1" title="1 topic" target="_blank">c1</a> <a href="https://blog.bluedavy.com/?tag=c2" title="1 topic" target="_blank">c2</a> <a href="https://blog.bluedavy.com/?tag=deflater" title="1 topic" target="_blank">Deflater</a> <a href="https://blog.bluedavy.com/?tag=facebook" title="2 topics" target="_blank">facebook</a> <a href="https://blog.bluedavy.com/?tag=gc" title="4 topics" target="_blank">gc</a> <a href="https://blog.bluedavy.com/?tag=gc-tuning" title="2 topics" target="_blank">gc tuning</a> <a href="https://blog.bluedavy.com/?tag=grizzly" title="2 topics" target="_blank">Grizzly</a> <a href="https://blog.bluedavy.com/?tag=hbase" title="6 topics" target="_blank">HBase</a> <a href="https://blog.bluedavy.com/?tag=hotspot" title="1 topic" target="_blank">hotspot</a> <a href="https://blog.bluedavy.com/?tag=inflater" title="1 topic" target="_blank">Inflater</a> <a href="https://blog.bluedavy.com/?tag=interpreter" title="1 topic" target="_blank">interpreter</a> <a href="https://blog.bluedavy.com/?tag=javac" title="1 topic" target="_blank">javac</a> <a href="https://blog.bluedavy.com/?tag=java-code-generation" title="1 topic" target="_blank">java code generation</a> <a href="https://blog.bluedavy.com/?tag=javaone" title="4 topics" target="_blank">JavaOne</a> <a href="https://blog.bluedavy.com/?tag=javaone-general-technical-session" title="1 topic" target="_blank">javaone general technical session</a> <a href="https://blog.bluedavy.com/?tag=java%e4%bb%a3%e7%a0%81%e6%89%a7%e8%a1%8c" title="1 topic" target="_blank">java代码执行</a> <a href="https://blog.bluedavy.com/?tag=java-%e5%b9%b6%e5%8f%91" title="1 topic" target="_blank">Java 并发</a> <a href="https://blog.bluedavy.com/?tag=jit" title="1 topic" target="_blank">jit</a> <a href="https://blog.bluedavy.com/?tag=jvm" title="12 topics" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=memory-management" title="1 topic" target="_blank">memory management</a> <a href="https://blog.bluedavy.com/?tag=native-memory-leak" title="1 topic" target="_blank">Native Memory Leak</a> <a href="https://blog.bluedavy.com/?tag=nosql" title="2 topics" target="_blank">NoSQL</a> <a href="https://blog.bluedavy.com/?tag=oom" title="1 topic" target="_blank">oom</a> <a href="https://blog.bluedavy.com/?tag=oracle-keynote" title="1 topic" target="_blank">oracle keynote</a> <a href="https://blog.bluedavy.com/?tag=pessimism-policy" title="1 topic" target="_blank">pessimism policy</a> <a href="https://blog.bluedavy.com/?tag=references" title="1 topic" target="_blank">references</a> <a href="https://blog.bluedavy.com/?tag=rpc" title="2 topics" target="_blank">RPC</a> <a href="https://blog.bluedavy.com/?tag=serial-gc" title="1 topic" target="_blank">serial gc</a> <a href="https://blog.bluedavy.com/?tag=soa" title="2 topics" target="_blank">SOA</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk" title="1 topic" target="_blank">sun jdk</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk-oom" title="1 topic" target="_blank">sun jdk oom</a> <a href="https://blog.bluedavy.com/?tag=web%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92%e7%9a%84%e8%89%ba%e6%9c%af" title="1 topic" target="_blank">Web容量规划的艺术</a> <a href="https://blog.bluedavy.com/?tag=yuanzhuo" title="1 topic" target="_blank">yuanzhuo</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6" title="1 topic" target="_blank">书:分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6%e8%af%84" title="1 topic" target="_blank">书评</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%92%e8%81%94%e7%bd%91%e6%8a%80%e6%9c%af" title="1 topic" target="_blank">互联网技术</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86" title="1 topic" target="_blank">内存管理</a> <a href="https://blog.bluedavy.com/?tag=%e5%88%86%e5%b8%83%e5%bc%8fjava%e5%ba%94%e7%94%a8" title="2 topics" target="_blank">分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e5%9c%86%e6%a1%8c%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">圆桌交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92" title="2 topics" target="_blank">容量规划</a> <a href="https://blog.bluedavy.com/?tag=%e6%82%b2%e8%a7%82%e7%ad%96%e7%95%a5" title="3 topics" target="_blank">悲观策略</a> <a href="https://blog.bluedavy.com/?tag=%e6%9c%8d%e5%8a%a1%e6%a1%86%e6%9e%b6" title="1 topic" target="_blank">服务框架</a> <a href="https://blog.bluedavy.com/?tag=%e7%a1%85%e8%b0%b7%e5%85%ac%e5%8f%b8" title="1 topic" target="_blank">硅谷公司</a></p>
+<h3 id="-">订阅</h3>
+<h3 id="-">推荐书籍</h3>
+<h3 id="my-book">My Book</h3>
+<p><a href="http://book.douban.com/subject/4848587/" title="分布式Java应用：基础与实践" target="_blank"><img src="" alt=""></a> <a href="http://book.douban.com/subject/3843896/" title="OSGi原理与最佳实践" target="_blank"><img src="" alt=""></a>
+© <a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a> 2013</p>
+<p><a href="http://icondock.com/" target="_blank">Icons</a> &amp; <a href="http://www.ndesign-studio.com/wp-themes" target="_blank">Wordpress Theme</a> by <a href="http://www.ndesign-studio.com/" target="_blank">N.Design</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--两个OOMCases排查过程的分享/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--两个OOMCases排查过程的分享" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--一个面试官对面试问题的分析JVM/">一个面试官对面试问题的分析(JVM)</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--一个面试官对面试问题的分析JVM/">feb. 2 2014</a></time></span>      
@@ -216,6 +423,112 @@ PS：加起来不到100%，是因为有确实少数直接说不知道，或者�
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
 <a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--一个面试官对面试问题的分析JVM/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--一个面试官对面试问题的分析JVM" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出/">perftools查看堆外内存并解决hbase内存溢出</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="perftools-hbase-">perftools查看堆外内存并解决hbase内存溢出</h1>
+<pre><code>最近线上运行的hbase发现分配了16g内存，但是实际使用了22g，堆外内存达到6g。感觉非常诡异。堆外内存用一般的工具很难查看，可以通过google-perftools来跟踪：
+</code></pre><p><a href="http://code.google.com/p/google-perftools/downloads/list" target="_blank"><a href="http://code.google.com/p/google-perftools/downloads/list">http://code.google.com/p/google-perftools/downloads/list</a></a>
+    它的原理是在java应用程序运行时，当调用malloc时换用它的libtcmalloc.so，这样就能做一些统计了</p>
+<ul>
+<li>下载<a href="http://download.savannah.gnu.org/releases/libunwind/libunwind-0.99-beta.tar.gz" target="_blank"><a href="http://download.savannah.gnu.org/releases/libunwind/libunwind-0.99-beta.tar.gz">http://download.savannah.gnu.org/releases/libunwind/libunwind-0.99-beta.tar.gz</a></a>，configure;make;sudo make install</li>
+<li>下载<a href="http://google-perftools.googlecode.com/files/google-perftools-1.8.1.tar.gz" target="_blank"><a href="http://google-perftools.googlecode.com/files/google-perftools-1.8.1.tar.gz">http://google-perftools.googlecode.com/files/google-perftools-1.8.1.tar.gz</a></a>, configure --prefix=/home/user/perftools;make;sudo make install</li>
+<li>在应用程序启动前加入：export LD_PRELOAD=/home/hadoop/perftools/lib/libtcmalloc.so以及export HEAPPROFILE=/home/user/perftools/test</li>
+<li>修改lc_config:sudo vi /etc/ld.so.conf.d/usr_local_lib.conf，加入/usr/local/lib(libunwind的lib所在目录)</li>
+<li>执行sudo /sbin/ldconfig，使libunwind生效</li>
+<li>启动应用程序，此时会在/home/user/perftools/下看到诸如test_pid.xxxx.heap的heap文件，可使用bin/pprof --text $JAVA_HOME/bin/java test_pid.xxxx.heap来查看
+  通过perftools查看到以下内容：
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></li>
+</ul>
+<ol>
+<li>Total: 3263.2 MB  </li>
+<li>3145.2  96.4%  96.4%   3145.2  96.4% zcalloc  </li>
+<li>83.8   2.6%  99.0%     83.8   2.6% os::malloc  </li>
+<li>30.0   0.9%  99.9%     30.0   0.9% init  </li>
+<li>2.2   0.1%  99.9%      2.2   0.1% ObjectSynchronizer::omAlloc  </li>
+<li>1.0   0.0% 100.0%   3144.1  96.4% Java_java_util_zip_Deflater_init  </li>
+<li>0.6   0.0% 100.0%      0.7   0.0% readCEN  </li>
+</ol>
+<p>Total: 3263.2 MB</p>
+<p>  3145.2  96.4%  96.4%   3145.2  96.4% zcalloc
+    83.8   2.6%  99.0%     83.8   2.6% os::malloc</p>
+<pre><code>30.0   0.9%  99.9%     30.0   0.9% init
+ 2.2   0.1%  99.9%      2.2   0.1% ObjectSynchronizer::omAlloc
+
+ 1.0   0.0% 100.0%   3144.1  96.4% Java_java_util_zip_Deflater_init
+ 0.6   0.0% 100.0%      0.7   0.0% readCEN
+可见调用了java.util.zip.Deflater占用绝大多数。了解到这个deflater存在无法释放内存的bug，于是编写btrace查看是否进入了这个函数：
+</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>import static com.sun.btrace.BTraceUtils./*;  </li>
+<li>import com.sun.btrace.annotations./*;  </li>
+<li></li>
+<li>import java.nio.ByteBuffer;  </li>
+<li>import java.lang.Thread;  </li>
+<li></li>
+<li>@BTrace public class TestRegion1{  </li>
+<li>@OnMethod(  </li>
+<li>clazz=&quot;java.util.zip.Deflater&quot;,  </li>
+<li>method=&quot;deflate&quot;  </li>
+<li>)  </li>
+<li>public static void traceCacheBlock(){  </li>
+<li>println(&quot;deflate?&quot;);  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>import static com.sun.btrace.BTraceUtils./*;</p>
+<p>import com.sun.btrace.annotations./*;</p>
+<p>import java.nio.ByteBuffer;
+import java.lang.Thread;</p>
+<p>@BTrace public class TestRegion1{</p>
+<p>   @OnMethod(
+      clazz=&quot;java.util.zip.Deflater&quot;,</p>
+<pre><code>  method=&quot;deflate&quot;
+</code></pre><p>   )</p>
+<p>   public static void traceCacheBlock(){
+println(&quot;deflate?&quot;);</p>
+<p>   }
+}
+    发现果然在不停调用这行代码。应该如何办呢？
+由于deflater是gzip需要使用的代码，查看用户创建的表，发现COMPRESSOR设置的是GZ，尝试调整为LZO，结果发现btrace无法进入上述代码，再通过perftools查看时，堆内存不再申请，完全不再申请...
+小插曲，perftools的作者是个老实人，提供了zip版下载，但是不提供安装文件，原因？在README中有以下一段话：
+Html代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>I don&#39;t know very much about how to install DLLs on Windows, so you&#39;ll  </li>
+<li>have to figure out that part for yourself.  </li>
+</ol>
+<p>I don&#39;t know very much about how to install DLLs on Windows, so you&#39;ll</p>
+<p>have to figure out that part for yourself.</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -598,762 +911,428 @@ Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代�
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出/">perftools查看堆外内存并解决hbase内存溢出</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java7的新特性一览表/">Java 7 的新特性一览表</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java7的新特性一览表/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="perftools-hbase-">perftools查看堆外内存并解决hbase内存溢出</h1>
-<pre><code>最近线上运行的hbase发现分配了16g内存，但是实际使用了22g，堆外内存达到6g。感觉非常诡异。堆外内存用一般的工具很难查看，可以通过google-perftools来跟踪：
-</code></pre><p><a href="http://code.google.com/p/google-perftools/downloads/list" target="_blank"><a href="http://code.google.com/p/google-perftools/downloads/list">http://code.google.com/p/google-perftools/downloads/list</a></a>
-    它的原理是在java应用程序运行时，当调用malloc时换用它的libtcmalloc.so，这样就能做一些统计了</p>
+        <h1 id="java-7-">Java 7 的新特性一览表</h1>
+<h1 id="java-7-">Java 7 的新特性一览表</h1>
+<p><a href="http://my.oschina.net/javayou" target="_blank">红薯</a> 发布于： 2011年07月27日 (<a href="">82评</a>)</p>
+<p><strong>分享到 </strong></p>
+<p><a href="&quot;分享到新浪微博&quot;">新浪微博</a><a href="&quot;分享到腾讯微博&quot;">腾讯微博</a>
+<a href="&quot;收藏此新闻&quot;">收藏</a>+72
+<img src="" alt=""></p>
+<p>官方说是 7月28日 正式发布 Java 7 ，正常的话我们应该在 7月29日 看到这个版本。很快了，就两天时间。</p>
+<p>发布之前让我们先来看看 Java 7 都有什么新特性吧。</p>
+<p>Java 7 的架构图：</p>
+<p><img src="" alt=""></p>
+<p>新特性一览表：</p>
+<p><strong>Swing</strong></p>
 <ul>
-<li>下载<a href="http://download.savannah.gnu.org/releases/libunwind/libunwind-0.99-beta.tar.gz" target="_blank"><a href="http://download.savannah.gnu.org/releases/libunwind/libunwind-0.99-beta.tar.gz">http://download.savannah.gnu.org/releases/libunwind/libunwind-0.99-beta.tar.gz</a></a>，configure;make;sudo make install</li>
-<li>下载<a href="http://google-perftools.googlecode.com/files/google-perftools-1.8.1.tar.gz" target="_blank"><a href="http://google-perftools.googlecode.com/files/google-perftools-1.8.1.tar.gz">http://google-perftools.googlecode.com/files/google-perftools-1.8.1.tar.gz</a></a>, configure --prefix=/home/user/perftools;make;sudo make install</li>
-<li>在应用程序启动前加入：export LD_PRELOAD=/home/hadoop/perftools/lib/libtcmalloc.so以及export HEAPPROFILE=/home/user/perftools/test</li>
-<li>修改lc_config:sudo vi /etc/ld.so.conf.d/usr_local_lib.conf，加入/usr/local/lib(libunwind的lib所在目录)</li>
-<li>执行sudo /sbin/ldconfig，使libunwind生效</li>
-<li>启动应用程序，此时会在/home/user/perftools/下看到诸如test_pid.xxxx.heap的heap文件，可使用bin/pprof --text $JAVA_HOME/bin/java test_pid.xxxx.heap来查看
-  通过perftools查看到以下内容：
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></li>
+<li>新增 <a href="http://download.oracle.com/javase/7/docs/api/javax/swing/JLayer.html">
+JLayer
+</a> 类，是一个灵活而且功能强大的Swing组件修饰器，使用方法：<a href="http://download.oracle.com/javase/tutorial/uiswing/misc/jlayer.html" target="_blank">How to Decorate Components with JLayer</a>.</li>
+<li><a href="http://download.oracle.com/javase/tutorial/uiswing/lookandfeel/nimbus.html" target="_blank">Nimbus Look and Feel</a> 外观从</li>
 </ul>
-<ol>
-<li>Total: 3263.2 MB  </li>
-<li>3145.2  96.4%  96.4%   3145.2  96.4% zcalloc  </li>
-<li>83.8   2.6%  99.0%     83.8   2.6% os::malloc  </li>
-<li>30.0   0.9%  99.9%     30.0   0.9% init  </li>
-<li>2.2   0.1%  99.9%      2.2   0.1% ObjectSynchronizer::omAlloc  </li>
-<li>1.0   0.0% 100.0%   3144.1  96.4% Java_java_util_zip_Deflater_init  </li>
-<li>0.6   0.0% 100.0%      0.7   0.0% readCEN  </li>
-</ol>
-<p>Total: 3263.2 MB</p>
-<p>  3145.2  96.4%  96.4%   3145.2  96.4% zcalloc
-    83.8   2.6%  99.0%     83.8   2.6% os::malloc</p>
-<pre><code>30.0   0.9%  99.9%     30.0   0.9% init
- 2.2   0.1%  99.9%      2.2   0.1% ObjectSynchronizer::omAlloc
-
- 1.0   0.0% 100.0%   3144.1  96.4% Java_java_util_zip_Deflater_init
- 0.6   0.0% 100.0%      0.7   0.0% readCEN
-可见调用了java.util.zip.Deflater占用绝大多数。了解到这个deflater存在无法释放内存的bug，于是编写btrace查看是否进入了这个函数：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>import static com.sun.btrace.BTraceUtils./*;  </li>
-<li>import com.sun.btrace.annotations./*;  </li>
-<li></li>
-<li>import java.nio.ByteBuffer;  </li>
-<li>import java.lang.Thread;  </li>
-<li></li>
-<li>@BTrace public class TestRegion1{  </li>
-<li>@OnMethod(  </li>
-<li>clazz=&quot;java.util.zip.Deflater&quot;,  </li>
-<li>method=&quot;deflate&quot;  </li>
-<li>)  </li>
-<li>public static void traceCacheBlock(){  </li>
-<li>println(&quot;deflate?&quot;);  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>import static com.sun.btrace.BTraceUtils./*;</p>
-<p>import com.sun.btrace.annotations./*;</p>
-<p>import java.nio.ByteBuffer;
-import java.lang.Thread;</p>
-<p>@BTrace public class TestRegion1{</p>
-<p>   @OnMethod(
-      clazz=&quot;java.util.zip.Deflater&quot;,</p>
-<pre><code>  method=&quot;deflate&quot;
-</code></pre><p>   )</p>
-<p>   public static void traceCacheBlock(){
-println(&quot;deflate?&quot;);</p>
-<p>   }
-}
-    发现果然在不停调用这行代码。应该如何办呢？
-由于deflater是gzip需要使用的代码，查看用户创建的表，发现COMPRESSOR设置的是GZ，尝试调整为LZO，结果发现btrace无法进入上述代码，再通过perftools查看时，堆内存不再申请，完全不再申请...
-小插曲，perftools的作者是个老实人，提供了zip版下载，但是不提供安装文件，原因？在README中有以下一段话：
-Html代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>I don&#39;t know very much about how to install DLLs on Windows, so you&#39;ll  </li>
-<li>have to figure out that part for yourself.  </li>
-</ol>
-<p>I don&#39;t know very much about how to install DLLs on Windows, so you&#39;ll</p>
-<p>have to figure out that part for yourself.</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--perftools查看堆外内存并解决hbase内存溢出" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--eden区没有发生minorgc，对象直接分配在了oldgen/">eden区没有发生minor gc，对象直接分配在了old gen</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--eden区没有发生minorgc，对象直接分配在了oldgen/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="eden-minor-gc-old-gen">eden区没有发生minor gc，对象直接分配在了old gen</h1>
-<p><a href="http://hllvm.group.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://hllvm.group.iteye.com/login" target="_blank">登录</a> <a href="http://hllvm.group.iteye.com/signup" target="_blank">注册</a></p>
-<p><a href="http://www.iteye.com/" target="_blank"><img src="&quot;ITeye-最棒的软件开发交流社区&quot;" alt="ITeye3.0"></a></p>
-<p><a href="http://www.iteye.com/groups" target="_blank">群组首页</a> → <a href="http://hllvm.group.iteye.com/groups/category/language" target="_blank">编程语言</a> → <a href="http://hllvm.group.iteye.com/" target="_blank">高级语言虚拟机</a> → <a href="http://hllvm.group.iteye.com/group/forum" target="_blank">论坛</a></p>
-<p><img src="" alt=""> <a href="http://hllvm.group.iteye.com/group/topic/38293/post/new" target="_blank">发表回复</a></p>
-<h3 id="-http-hllvm-group-iteye-com-group-forum-tag_id-690-eden-minor-gc-old-gen-"><a href="http://hllvm.group.iteye.com/group/forum?tag_id=690" target="_blank">[讨论]</a> <a href="">eden区没有发生minor gc，对象直接分配在了old gen</a></h3>
-<p><a href="http://zsl8544-163-com.iteye.com/" target="_blank"><img src="&quot;等待雨季的到来的博客: &quot;" alt="等待雨季的到来的博客"></a> <a href="http://zsl8544-163-com.iteye.com/" title="等待雨季的到来" target="_blank">等待雨季的到来</a> 2013-07-21</p>
-<p>我的测试代码如下
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>//<em>/</em> </li>
-<li>/* -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution </li>
-<li>/*/  </li>
-<li>public static void testAllocation(){  </li>
-<li>byte[] byte1 = new byte[_1MB/*5];  </li>
-<li>byte[] byte2 = new byte[_1MB/*10];  </li>
-<li>byte1 = null;  </li>
-<li>byte2 = null;                         </li>
-<li>byte[] byte3 = new byte[_1MB/*5];  </li>
-<li>byte[] byte4 = new byte[_1MB/*10];  </li>
-<li>byte3 = null;  </li>
-<li>byte4 = null;  </li>
-<li>byte[] byte5 = new byte[_1MB/*15];   </li>
-<li><p>}<br>//<em>/</em> /<em> -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution /</em>/ public static void testAllocation(){ byte[] byte1 = new byte[_1MB/<em>5]; byte[] byte2 = new byte[_1MB/</em>10]; byte1 = null; byte2 = null; byte[] byte3 = new byte[_1MB/<em>5]; byte[] byte4 = new byte[_1MB/</em>10]; byte3 = null; byte4 = null; byte[] byte5 = new byte[_1MB/*15]; }
-因为没有用NewSize限定新生代的初始大小，所以eden区的初始大小为20M，而我用MaxNewSize限定了新生代的初始大小为40M。
-GC Log
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>[GC  </p>
-</li>
-<li>Desired survivor size 3538944 bytes, new threshold 7 (max 15)  </li>
-<li>[PSYoungGen: 16194K-&gt;368K(24320K)] 16194K-&gt;368K(79872K), 0.0020460 secs] [Times: user=0.01 sys=0.00, real=0.00 secs]   </li>
-<li>Heap  </li>
-<li>PSYoungGen      total 24320K, used 17199K [0x0000000115490000, 0x0000000117c90000, 0x0000000117c90000)  </li>
-<li>eden space 20864K, 80% used [0x0000000115490000,0x00000001164ffe38,0x00000001168f0000)  </li>
-<li>from space 3456K, 10% used [0x00000001168f0000,0x000000011694c010,0x0000000116c50000)  </li>
-<li>to   space 3456K, 0% used [0x0000000117930000,0x0000000117930000,0x0000000117c90000)  </li>
-<li>ParOldGen       total 55552K, used 15360K [0x0000000111890000, 0x0000000114ed0000, 0x0000000115490000)  </li>
-<li>object space 55552K, 27% used [0x0000000111890000,0x0000000112790010,0x0000000114ed0000)  </li>
-<li>PSPermGen       total 21248K, used 2695K [0x000000010c690000, 0x000000010db50000, 0x0000000111890000)  </li>
-<li>object space 21248K, 12% used [0x000000010c690000,0x000000010c931ef0,0x000000010db50000)<br>[GC Desired survivor size 3538944 bytes, new threshold 7 (max 15) [PSYoungGen: 16194K-&gt;368K(24320K)] 16194K-&gt;368K(79872K), 0.0020460 secs] [Times: user=0.01 sys=0.00, real=0.00 secs] Heap PSYoungGen total 24320K, used 17199K <a href="http://rednaxelafx.iteye.com/">0x0000000115490000, 0x0000000117c90000, 0x0000000117c90000) eden space 20864K, 80% used [0x0000000115490000,0x00000001164ffe38,0x00000001168f0000) from space 3456K, 10% used [0x00000001168f0000,0x000000011694c010,0x0000000116c50000) to space 3456K, 0% used [0x0000000117930000,0x0000000117930000,0x0000000117c90000) ParOldGen total 55552K, used 15360K [0x0000000111890000, 0x0000000114ed0000, 0x0000000115490000) object space 55552K, 27% used [0x0000000111890000,0x0000000112790010,0x0000000114ed0000) PSPermGen total 21248K, used 2695K [0x000000010c690000, 0x000000010db50000, 0x0000000111890000) object space 21248K, 12% used [0x000000010c690000,0x000000010c931ef0,0x000000010db50000)
-现象：
-当分配byte3时触发了一次minor gc，byte1和byte2都被回收了，可是我分配byte5的时候，却直接分配在了老生代，byte3和byte4依旧在eden区，而byte5直接被分配在了老生代。
-问题：
-1、byte5为什么没有触发minor gc而是直接分配在老生代，byte3和byte4为什么没有被回收？
-2、eden区什么时候才会自动扩容到40M，当创建超过20M的对象时，都是直接分配在了老生，而创建大小超过老生代的对象时老生代会自动扩容。
-其他：
-我在用eclipse调试的时候发现，同样的测试代码在执行的时候输出的GC log居然会有很大的变化，有的时候eden区被初始化为8M有的时候初始化为20M。我工作在OS X下，JDK版本如下。
-java version &quot;1.7.0_25&quot;
-Java(TM) SE Runtime Environment (build 1.7.0_25-b15)
-Java HotSpot(TM) 64-Bit Server VM (build 23.25-b01, mixed mode)
-<img src="" alt="Spinner"> [<img src="&quot;RednaxelaFX的博客: Script Ahead, Code Behind&quot;" alt="RednaxelaFX的博客"></a> <a href="http://rednaxelafx.iteye.com/" title="RednaxelaFX" target="_blank">RednaxelaFX</a> 2013-07-25</li>
-</ol>
-<p>楼主是看了毕玄的实验之后自己动手测试么？
-把楼主的代码弄成可执行的，我用的测试代码是：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public class PSAllocTest {  </li>
-<li>private static final int _1KB = 1024;  </li>
-<li>private static final int _1MB = _1KB /* 1024;  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution </li>
-<li>/*/  </li>
-<li>public static void testAllocation() {  </li>
-<li>byte[] byte1 = new byte[_1MB/*5];  </li>
-<li>byte[] byte2 = new byte[_1MB/*10];  </li>
-<li>byte1 = null;  </li>
-<li>byte2 = null;                         </li>
-<li>byte[] byte3 = new byte[_1MB/*5];  </li>
-<li>byte[] byte4 = new byte[_1MB/*10];  </li>
-<li>byte3 = null;  </li>
-<li>byte4 = null;  </li>
-<li>byte[] byte5 = new byte[_1MB/*15];   </li>
-<li>}  </li>
-<li></li>
-<li>public static void main(String[] args) {  </li>
-<li>testAllocation();  </li>
-<li>}  </li>
-<li><p>}<br>public class PSAllocTest { private static final int _1KB = 1024; private static final int _1MB = _1KB /<em> 1024; //</em>/<em> /</em> -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution /<em>/ public static void testAllocation() { byte[] byte1 = new byte[_1MB/</em>5]; byte[] byte2 = new byte[_1MB/<em>10]; byte1 = null; byte2 = null; byte[] byte3 = new byte[_1MB/</em>5]; byte[] byte4 = new byte[_1MB/<em>10]; byte3 = null; byte4 = null; byte[] byte5 = new byte[_1MB/</em>15]; } public static void main(String[] args) { testAllocation(); } }
-我这边在JDK7u9 64-bit Server VM上跑看到的GC日志会有两次GC：
-Gc log代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>D:\test\pstest&gt;java -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M PSAllocTest  </p>
-</li>
-<li>[GC [PSYoungGen: 16002K-&gt;584K(18688K)] 16002K-&gt;584K(61376K), 0.0016857 secs] [Times: user=0.00 sys=0.00, real=0.00 secs]  </li>
-<li>[GC [PSYoungGen: 16648K-&gt;576K(34752K)] 32008K-&gt;15936K(77440K), 0.0014163 secs] [Times: user=0.00 sys=0.00, real=0.00 secs]  </li>
-<li>Heap  </li>
-<li>PSYoungGen      total 34752K, used 1218K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000)  </li>
-<li>eden space 32128K, 2% used [0x00000000fd800000,0x00000000fd8a0ab0,0x00000000ff760000)  </li>
-<li>from space 2624K, 21% used [0x00000000ff9f0000,0x00000000ffa80030,0x00000000ffc80000)  </li>
-<li>to   space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000)  </li>
-<li>ParOldGen       total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2505K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li><p>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c72638,0x00000000f5ec0000)<br>D:\test\pstest&gt;java -Xmx100M -XX:+PrintGCDetails -XX:MaxNewSize=40M PSAllocTest [GC [PSYoungGen: 16002K-&gt;584K(18688K)] 16002K-&gt;584K(61376K), 0.0016857 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] [GC [PSYoungGen: 16648K-&gt;576K(34752K)] 32008K-&gt;15936K(77440K), 0.0014163 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] Heap PSYoungGen total 34752K, used 1218K <a href="&quot;复制代码&quot;">0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000) eden space 32128K, 2% used [0x00000000fd800000,0x00000000fd8a0ab0,0x00000000ff760000) from space 2624K, 21% used [0x00000000ff9f0000,0x00000000ffa80030,0x00000000ffc80000) to space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000) ParOldGen total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000) PSPermGen total 21248K, used 2505K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c72638,0x00000000f5ec0000)
-第二次GC其实已经在第5个数组成功分配之后了，就楼主关心的部分看我这边看到的跟楼主实验看到的行为一致，只要关心日志里的第一次GC就好了。
-如果加上额外参数的话，可以看到更多GC信息：
-Java代码 [<img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>D:\test\pstest&gt;java -Xmx100M -XX:+PrintGCDetails -XX:+PrintHeapAtGC -XX:+PrintTLAB -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution PSAllocTest  </p>
-</li>
-<li>{Heap before GC invocations=1 (full 0):  </li>
-<li>PSYoungGen      total 18688K, used 16002K [0x00000000fd800000, 0x00000000fecd0000, 0x0000000100000000)  </li>
-<li>eden space 16064K, 99% used [0x00000000fd800000,0x00000000fe7a0b60,0x00000000fe7b0000)  </li>
-<li>from space 2624K, 0% used [0x00000000fea40000,0x00000000fea40000,0x00000000fecd0000)  </li>
-<li>to   space 2624K, 0% used [0x00000000fe7b0000,0x00000000fe7b0000,0x00000000fea40000)  </li>
-<li>ParOldGen       total 42688K, used 0K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 0% used [0x00000000f9c00000,0x00000000f9c00000,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2495K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c6fc80,0x00000000f5ec0000)  </li>
-<li>TLAB: gc thread: 0x000000000028c000 [id: 10344] desired_size: 321KB slow allocs: 3  refill waste: 5232B alloc: 0.99998    16003KB refills: 2 waste  6.2% gc: 40912B slow: 40B fast: 0B  </li>
-<li>TLAB totals: thrds: 1  refills: 2 max: 2 slow allocs: 3 max 3 waste:  6.2% gc: 40912B max: 40912B slow: 40B max: 40B fast: 0B max: 0B  </li>
-<li>[GC  </li>
-<li>Desired survivor size 2686976 bytes, new threshold 7 (max 15)  </li>
-<li>[PSYoungGen: 16002K-&gt;640K(18688K)] 16002K-&gt;640K(61376K), 0.0015035 secs] [Times: user=0.00 sys=0.00, real=0.00 secs]   </li>
-<li>Heap after GC invocations=1 (full 0):  </li>
-<li>PSYoungGen      total 18688K, used 640K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000)  </li>
-<li>eden space 16064K, 0% used [0x00000000fd800000,0x00000000fd800000,0x00000000fe7b0000)  </li>
-<li>from space 2624K, 24% used [0x00000000fe7b0000,0x00000000fe850030,0x00000000fea40000)  </li>
-<li>to   space 2624K, 0% used [0x00000000ff9f0000,0x00000000ff9f0000,0x00000000ffc80000)  </li>
-<li>ParOldGen       total 42688K, used 0K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 0% used [0x00000000f9c00000,0x00000000f9c00000,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2495K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c6fc80,0x00000000f5ec0000)  </li>
-<li>}  </li>
-<li>{Heap before GC invocations=2 (full 0):  </li>
-<li>PSYoungGen      total 18688K, used 16704K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000)  </li>
-<li>eden space 16064K, 100% used [0x00000000fd800000,0x00000000fe7b0000,0x00000000fe7b0000)  </li>
-<li>from space 2624K, 24% used [0x00000000fe7b0000,0x00000000fe850030,0x00000000fea40000)  </li>
-<li>to   space 2624K, 0% used [0x00000000ff9f0000,0x00000000ff9f0000,0x00000000ffc80000)  </li>
-<li>ParOldGen       total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2498K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c708a0,0x00000000f5ec0000)  </li>
-<li>TLAB: gc thread: 0x00000000022a5800 [id: 10100] desired_size: 321KB slow allocs: 0  refill waste: 5136B alloc: 0.99998    16064KB refills: 1 waste 100.0% gc: 328952B slow: 0B fast: 0B  </li>
-<li>TLAB: gc thread: 0x000000000229e800 [id: 3928] desired_size: 321KB slow allocs: 0  refill waste: 5136B alloc: 0.99998    16064KB refills: 1 waste 100.0% gc: 328984B slow: 0B fast: 0B  </li>
-<li>TLAB totals: thrds: 2  refills: 2 max: 1 slow allocs: 0 max 0 waste: 100.0% gc: 657936B max: 328984B slow: 0B max: 0B fast: 0B max: 0B  </li>
-<li>[GC  </li>
-<li>Desired survivor size 2686976 bytes, new threshold 7 (max 15)  </li>
-<li>[PSYoungGen: 16704K-&gt;520K(34752K)] 32064K-&gt;15880K(77440K), 0.0012669 secs] [Times: user=0.00 sys=0.00, real=0.00 secs]   </li>
-<li>Heap after GC invocations=2 (full 0):  </li>
-<li>PSYoungGen      total 34752K, used 520K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000)  </li>
-<li>eden space 32128K, 0% used [0x00000000fd800000,0x00000000fd800000,0x00000000ff760000)  </li>
-<li>from space 2624K, 19% used [0x00000000ff9f0000,0x00000000ffa72020,0x00000000ffc80000)  </li>
-<li>to   space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000)  </li>
-<li>ParOldGen       total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2498K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c708a0,0x00000000f5ec0000)  </li>
-<li>}  </li>
-<li>Heap  </li>
-<li>PSYoungGen      total 34752K, used 1162K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000)  </li>
-<li>eden space 32128K, 2% used [0x00000000fd800000,0x00000000fd8a0ab0,0x00000000ff760000)  </li>
-<li>from space 2624K, 19% used [0x00000000ff9f0000,0x00000000ffa72020,0x00000000ffc80000)  </li>
-<li>to   space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000)  </li>
-<li>ParOldGen       total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000)  </li>
-<li>object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000)  </li>
-<li>PSPermGen       total 21248K, used 2505K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000)  </li>
-<li><p>object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c72638,0x00000000f5ec0000)<br>D:\test\pstest&gt;java -Xmx100M -XX:+PrintGCDetails -XX:+PrintHeapAtGC -XX:+PrintTLAB -XX:MaxNewSize=40M -XX:+PrintTenuringDistribution PSAllocTest {Heap before GC invocations=1 (full 0): PSYoungGen total 18688K, used 16002K [0x00000000fd800000, 0x00000000fecd0000, 0x0000000100000000) eden space 16064K, 99% used [0x00000000fd800000,0x00000000fe7a0b60,0x00000000fe7b0000) from space 2624K, 0% used [0x00000000fea40000,0x00000000fea40000,0x00000000fecd0000) to space 2624K, 0% used [0x00000000fe7b0000,0x00000000fe7b0000,0x00000000fea40000) ParOldGen total 42688K, used 0K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 0% used [0x00000000f9c00000,0x00000000f9c00000,0x00000000fc5b0000) PSPermGen total 21248K, used 2495K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c6fc80,0x00000000f5ec0000) TLAB: gc thread: 0x000000000028c000 [id: 10344] desired_size: 321KB slow allocs: 3 refill waste: 5232B alloc: 0.99998 16003KB refills: 2 waste 6.2% gc: 40912B slow: 40B fast: 0B TLAB totals: thrds: 1 refills: 2 max: 2 slow allocs: 3 max 3 waste: 6.2% gc: 40912B max: 40912B slow: 40B max: 40B fast: 0B max: 0B [GC Desired survivor size 2686976 bytes, new threshold 7 (max 15) [PSYoungGen: 16002K-&gt;640K(18688K)] 16002K-&gt;640K(61376K), 0.0015035 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] Heap after GC invocations=1 (full 0): PSYoungGen total 18688K, used 640K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000) eden space 16064K, 0% used [0x00000000fd800000,0x00000000fd800000,0x00000000fe7b0000) from space 2624K, 24% used [0x00000000fe7b0000,0x00000000fe850030,0x00000000fea40000) to space 2624K, 0% used [0x00000000ff9f0000,0x00000000ff9f0000,0x00000000ffc80000) ParOldGen total 42688K, used 0K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 0% used [0x00000000f9c00000,0x00000000f9c00000,0x00000000fc5b0000) PSPermGen total 21248K, used 2495K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c6fc80,0x00000000f5ec0000) } {Heap before GC invocations=2 (full 0): PSYoungGen total 18688K, used 16704K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000) eden space 16064K, 100% used [0x00000000fd800000,0x00000000fe7b0000,0x00000000fe7b0000) from space 2624K, 24% used [0x00000000fe7b0000,0x00000000fe850030,0x00000000fea40000) to space 2624K, 0% used [0x00000000ff9f0000,0x00000000ff9f0000,0x00000000ffc80000) ParOldGen total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000) PSPermGen total 21248K, used 2498K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c708a0,0x00000000f5ec0000) TLAB: gc thread: 0x00000000022a5800 [id: 10100] desired_size: 321KB slow allocs: 0 refill waste: 5136B alloc: 0.99998 16064KB refills: 1 waste 100.0% gc: 328952B slow: 0B fast: 0B TLAB: gc thread: 0x000000000229e800 [id: 3928] desired_size: 321KB slow allocs: 0 refill waste: 5136B alloc: 0.99998 16064KB refills: 1 waste 100.0% gc: 328984B slow: 0B fast: 0B TLAB totals: thrds: 2 refills: 2 max: 1 slow allocs: 0 max 0 waste: 100.0% gc: 657936B max: 328984B slow: 0B max: 0B fast: 0B max: 0B [GC Desired survivor size 2686976 bytes, new threshold 7 (max 15) [PSYoungGen: 16704K-&gt;520K(34752K)] 32064K-&gt;15880K(77440K), 0.0012669 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] Heap after GC invocations=2 (full 0): PSYoungGen total 34752K, used 520K <a href="&quot;复制代码&quot;">0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000) eden space 32128K, 0% used [0x00000000fd800000,0x00000000fd800000,0x00000000ff760000) from space 2624K, 19% used [0x00000000ff9f0000,0x00000000ffa72020,0x00000000ffc80000) to space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000) ParOldGen total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000) PSPermGen total 21248K, used 2498K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c708a0,0x00000000f5ec0000) } Heap PSYoungGen total 34752K, used 1162K [0x00000000fd800000, 0x00000000ffc80000, 0x0000000100000000) eden space 32128K, 2% used [0x00000000fd800000,0x00000000fd8a0ab0,0x00000000ff760000) from space 2624K, 19% used [0x00000000ff9f0000,0x00000000ffa72020,0x00000000ffc80000) to space 2624K, 0% used [0x00000000ff760000,0x00000000ff760000,0x00000000ff9f0000) ParOldGen total 42688K, used 15360K [0x00000000f9c00000, 0x00000000fc5b0000, 0x00000000fd800000) object space 42688K, 35% used [0x00000000f9c00000,0x00000000fab00010,0x00000000fc5b0000) PSPermGen total 21248K, used 2505K [0x00000000f4a00000, 0x00000000f5ec0000, 0x00000000f9c00000) object space 21248K, 11% used [0x00000000f4a00000,0x00000000f4c72638,0x00000000f5ec0000)
-加上-XX:+PrintHeapAtGC可以看到每次GC前后堆布局的情况；加上-XX:+PrintTLAB可以看到TLAB的使用状况。
-从日志可以看到，这个线程的TLAB才只有321KB，不足以分配楼主例子里的任何一个数组。也就是说例子里的数组全部都不是在TLAB里分配的，而是直接分配在GC堆的共享部分。
-我们可以模拟一下楼主的例子的执行过程。整个例子都肯定是在解释器里跑的，所以我们就从解释器来切入。
-分配第一个5MB的数组时，解释器要执行newarray字节码指令，来到这里：
-hotspot/src/share/vm/interpreter/interpreterRuntime.cpp
-C++代码 [<img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>IRT_ENTRY(void, InterpreterRuntime::newarray(JavaThread/* thread, BasicType type, jint size))  </p>
-</li>
-<li>oop obj = oopFactory::new_typeArray(type, size, CHECK);  </li>
-<li>thread-&gt;set_vm_result(obj);  </li>
-<li><p>IRT_END<br>IRT_ENTRY(void, InterpreterRuntime::newarray(JavaThread/* thread, BasicType type, jint size)) oop obj = oopFactory::new_typeArray(type, size, CHECK); thread-&gt;set_vm_result(obj); IRT_END
-里面调用到：
-hotspot/src/share/vm/memory/oopFactory.cpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>typeArrayOop oopFactory::new_typeArray(BasicType type, int length, TRAPS) {  </p>
-</li>
-<li>klassOop type_asKlassOop = Universe::typeArrayKlassObj(type);  </li>
-<li>typeArrayKlass/* type_asArrayKlass = typeArrayKlass::cast(type_asKlassOop);  </li>
-<li>typeArrayOop result = type_asArrayKlass-&gt;allocate(length, THREAD);  </li>
-<li>return result;  </li>
-<li><p>}<br>typeArrayOop oopFactory::new_typeArray(BasicType type, int length, TRAPS) { klassOop type_asKlassOop = Universe::typeArrayKlassObj(type); typeArrayKlass/* type_asArrayKlass = typeArrayKlass::cast(type_asKlassOop); typeArrayOop result = type_asArrayKlass-&gt;allocate(length, THREAD); return result; }
-进一步调用到：
-hotspot/src/share/vm/oops/typeArrayKlass.cpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>typeArrayOop typeArrayKlass::allocate(int length, TRAPS) {  </p>
-</li>
-<li>assert(log2_element_size() &gt;= 0, &quot;bad scale&quot;);  </li>
-<li>if (length &gt;= 0) {  </li>
-<li>if (length &lt;= max_length()) {  </li>
-<li>size_t size = typeArrayOopDesc::object_size(layout_helper(), length);  </li>
-<li>KlassHandle h_k(THREAD, as_klassOop());  </li>
-<li>typeArrayOop t;  </li>
-<li>CollectedHeap/* ch = Universe::heap();  </li>
-<li>if (size &lt; ch-&gt;large_typearray_limit()) {  </li>
-<li>t = (typeArrayOop)CollectedHeap::array_allocate(h_k, (int)size, length, CHECK_NULL);  </li>
-<li>} else {  </li>
-<li>t = (typeArrayOop)CollectedHeap::large_typearray_allocate(h_k, (int)size, length, CHECK_NULL);  </li>
-<li>}  </li>
-<li>assert(t-&gt;is_parsable(), &quot;Don&#39;t publish unless parsable&quot;);  </li>
-<li>return t;  </li>
-<li>} else {  </li>
-<li>report_java_out_of_memory(&quot;Requested array size exceeds VM limit&quot;);  </li>
-<li>THROW_OOP_0(Universe::out_of_memory_error_array_size());  </li>
-<li>}  </li>
-<li>} else {  </li>
-<li>THROW_0(vmSymbols::java_lang_NegativeArraySizeException());  </li>
-<li>}  </li>
-<li><p>}<br>typeArrayOop typeArrayKlass::allocate(int length, TRAPS) { assert(log2_element_size() &gt;= 0, &quot;bad scale&quot;); if (length &gt;= 0) { if (length &lt;= max_length()) { size_t size = typeArrayOopDesc::object_size(layout_helper(), length); KlassHandle h_k(THREAD, as_klassOop()); typeArrayOop t; CollectedHeap/* ch = Universe::heap(); if (size &lt; ch-&gt;large_typearray_limit()) { t = (typeArrayOop)CollectedHeap::array_allocate(h_k, (int)size, length, CHECK_NULL); } else { t = (typeArrayOop)CollectedHeap::large_typearray_allocate(h_k, (int)size, length, CHECK_NULL); } assert(t-&gt;is_parsable(), &quot;Don&#39;t publish unless parsable&quot;); return t; } else { report_java_out_of_memory(&quot;Requested array size exceeds VM limit&quot;); THROW_OOP_0(Universe::out_of_memory_error_array_size()); } } else { THROW_0(vmSymbols::java_lang_NegativeArraySizeException()); } }
-这个地方我们看到代码根据要分配的数组是否大于large_typearray_limit()做了分支。那么这个界限是多大呢？
-hotspot/src/share/vm/gc_implementation/parallelScavenge/parallelScavengeHeap.hpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>size_t large_typearray_limit() { return FastAllocateSizeLimit; }<br>size_t large_typearray_limit() { return FastAllocateSizeLimit; }
-hotspot/src/share/vm/runtime/globals.hpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>develop(intx, FastAllocateSizeLimit, 128/*K,                               \  </p>
-</li>
-<li>//<em> Note:  This value is zero mod 1&lt;&lt;13 for a cheap sparc set. /</em>/  \  </li>
-<li><p>&quot;Inline allocations larger than this in doublewords must go slow&quot;)\<br>develop(intx, FastAllocateSizeLimit, 128/<em>K, \ //</em> Note: This value is zero mod 1&lt;&lt;13 for a cheap sparc set. /*/ \ &quot;Inline allocations larger than this in doublewords must go slow&quot;)\
-这里我们知道了如果对象大小大于128K个doubleword（8字节单元），也就是1MB，就不会进入快速分配路径，而会走慢速分配路径。楼主例子里的数组全部都大于1MB，所以都肯定会走满足分配路径。
-不过其实具体到现在HotSpot VM的实现，FastAllocateSizeLimit参数的影响甚微。
-它最明显的作用就是让HotSpot Server Compiler（C2）在编译Java方法时看到要分配大于该参数指定的大小的对象时不生成快速分配路径的代码，而直接调用回到VM的慢速分配路径。
-而对ParallelScanvege GC来说，这个参数其实设到多少都不影响该GC的行为：本来它就只间接影响到下面讲到的is_noref参数的值，但ParallelScavenge无视了is_noref参数。
-回到分配的模拟。接下来调用到：
-hotspot/src/share/vm/gc_interface/collectedHeap.inline.hpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>oop CollectedHeap::large_typearray_allocate(KlassHandle klass,  </p>
-</li>
-<li>int size,  </li>
-<li>int length,  </li>
-<li>TRAPS) {  </li>
-<li>debug_only(check_for_valid_allocation_state());  </li>
-<li>assert(!Universe::heap()-&gt;is_gc_active(), &quot;Allocation during gc not allowed&quot;);  </li>
-<li>assert(size &gt;= 0, &quot;int won&#39;t convert to size_t&quot;);  </li>
-<li>HeapWord/* obj = common_mem_allocate_init(size, true, CHECK_NULL);  </li>
-<li>post_allocation_setup_array(klass, obj, size, length);  </li>
-<li>NOT_PRODUCT(Universe::heap()-&gt;check_for_bad_heap_word_value(obj, size));  </li>
-<li>return (oop)obj;  </li>
-<li><p>}<br>oop CollectedHeap::large_typearray_allocate(KlassHandle klass, int size, int length, TRAPS) { debug_only(check_for_valid_allocation_state()); assert(!Universe::heap()-&gt;is_gc_active(), &quot;Allocation during gc not allowed&quot;); assert(size &gt;= 0, &quot;int won&#39;t convert to size_t&quot;); HeapWord/* obj = common_mem_allocate_init(size, true, CHECK_NULL); post_allocation_setup_array(klass, obj, size, length); NOT_PRODUCT(Universe::heap()-&gt;check_for_bad_heap_word_value(obj, size)); return (oop)obj; }
-这里留意它传给common_mem_allocate_init()的is_noref参数为true，就是说不要refill TLAB。
-同一文件里，
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>HeapWord/* CollectedHeap::common_mem_allocate_noinit(size_t size, bool is_noref, TRAPS) {  </p>
-</li>
-<li></li>
-<li>// Clear unhandled oops for memory allocation.  Memory allocation might  </li>
-<li>// not take out a lock if from tlab, so clear here.  </li>
-<li>CHECK_UNHANDLED_OOPS_ONLY(THREAD-&gt;clear_unhandled_oops();)  </li>
-<li></li>
-<li>if (HAS_PENDING_EXCEPTION) {  </li>
-<li>NOT_PRODUCT(guarantee(false, &quot;Should not allocate with exception pending&quot;));  </li>
-<li>return NULL;  // caller does a CHECK_0 too  </li>
-<li>}  </li>
-<li></li>
-<li>// We may want to update this, is_noref objects might not be allocated in TLABs.  </li>
-<li>HeapWord/* result = NULL;  </li>
-<li>if (UseTLAB) {  </li>
-<li>result = CollectedHeap::allocate_from_tlab(THREAD, size);  </li>
-<li>if (result != NULL) {  </li>
-<li>assert(!HAS_PENDING_EXCEPTION,  </li>
-<li>&quot;Unexpected exception, will result in uninitialized storage&quot;);  </li>
-<li>return result;  </li>
-<li>}  </li>
-<li>}  </li>
-<li>bool gc_overhead_limit_was_exceeded = false;  </li>
-<li>result = Universe::heap()-&gt;mem_allocate(size,  </li>
-<li>is_noref,  </li>
-<li>false,  </li>
-<li>&amp;gc_overhead_limit_was_exceeded);  </li>
-<li>if (result != NULL) {  </li>
-<li>NOT_PRODUCT(Universe::heap()-&gt;  </li>
-<li>check_for_non_bad_heap_word_value(result, size));  </li>
-<li>assert(!HAS_PENDING_EXCEPTION,  </li>
-<li>&quot;Unexpected exception, will result in uninitialized storage&quot;);  </li>
-<li>THREAD-&gt;incr_allocated_bytes(size /* HeapWordSize);  </li>
-<li>return result;  </li>
-<li>}  </li>
-<li></li>
-<li></li>
-<li>if (!gc_overhead_limit_was_exceeded) {  </li>
-<li>// -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support  </li>
-<li>report_java_out_of_memory(&quot;Java heap space&quot;);  </li>
-<li></li>
-<li>if (JvmtiExport::should_post_resource_exhausted()) {  </li>
-<li>JvmtiExport::post_resource_exhausted(  </li>
-<li>JVMTI_RESOURCE_EXHAUSTED_OOM_ERROR | JVMTI_RESOURCE_EXHAUSTED_JAVA_HEAP,  </li>
-<li>&quot;Java heap space&quot;);  </li>
-<li>}  </li>
-<li></li>
-<li>THROW_OOP_0(Universe::out_of_memory_error_java_heap());  </li>
-<li>} else {  </li>
-<li>// -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support  </li>
-<li>report_java_out_of_memory(&quot;GC overhead limit exceeded&quot;);  </li>
-<li></li>
-<li>if (JvmtiExport::should_post_resource_exhausted()) {  </li>
-<li>JvmtiExport::post_resource_exhausted(  </li>
-<li>JVMTI_RESOURCE_EXHAUSTED_OOM_ERROR | JVMTI_RESOURCE_EXHAUSTED_JAVA_HEAP,  </li>
-<li>&quot;GC overhead limit exceeded&quot;);  </li>
-<li>}  </li>
-<li></li>
-<li>THROW_OOP_0(Universe::out_of_memory_error_gc_overhead_limit());  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>HeapWord/* CollectedHeap::common_mem_allocate_init(size_t size, bool is_noref, TRAPS) {  </li>
-<li>HeapWord/* obj = common_mem_allocate_noinit(size, is_noref, CHECK_NULL);  </li>
-<li>init_obj(obj, size);  </li>
-<li>return obj;  </li>
-<li><p>}<br>HeapWord/<em> CollectedHeap::common_mem_allocate_noinit(size_t size, bool is_noref, TRAPS) { // Clear unhandled oops for memory allocation. Memory allocation might // not take out a lock if from tlab, so clear here. CHECK_UNHANDLED_OOPS_ONLY(THREAD-&gt;clear_unhandled_oops();) if (HAS_PENDING_EXCEPTION) { NOT_PRODUCT(guarantee(false, &quot;Should not allocate with exception pending&quot;)); return NULL; // caller does a CHECK_0 too } // We may want to update this, is_noref objects might not be allocated in TLABs. HeapWord/</em> result = NULL; if (UseTLAB) { result = CollectedHeap::allocate_from_tlab(THREAD, size); if (result != NULL) { assert(!HAS_PENDING_EXCEPTION, &quot;Unexpected exception, will result in uninitialized storage&quot;); return result; } } bool gc_overhead_limit_was_exceeded = false; result = Universe::heap()-&gt;mem_allocate(size, is_noref, false, &amp;gc_overhead_limit_was_exceeded); if (result != NULL) { NOT_PRODUCT(Universe::heap()-&gt; check_for_non_bad_heap_word_value(result, size)); assert(!HAS_PENDING_EXCEPTION, &quot;Unexpected exception, will result in uninitialized storage&quot;); THREAD-&gt;incr_allocated_bytes(size /<em> HeapWordSize); return result; } if (!gc_overhead_limit_was_exceeded) { // -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support report_java_out_of_memory(&quot;Java heap space&quot;); if (JvmtiExport::should_post_resource_exhausted()) { JvmtiExport::post_resource_exhausted( JVMTI_RESOURCE_EXHAUSTED_OOM_ERROR | JVMTI_RESOURCE_EXHAUSTED_JAVA_HEAP, &quot;Java heap space&quot;); } THROW_OOP_0(Universe::out_of_memory_error_java_heap()); } else { // -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support report_java_out_of_memory(&quot;GC overhead limit exceeded&quot;); if (JvmtiExport::should_post_resource_exhausted()) { JvmtiExport::post_resource_exhausted( JVMTI_RESOURCE_EXHAUSTED_OOM_ERROR | JVMTI_RESOURCE_EXHAUSTED_JAVA_HEAP, &quot;GC overhead limit exceeded&quot;); } THROW_OOP_0(Universe::out_of_memory_error_gc_overhead_limit()); } } HeapWord/</em> CollectedHeap::common_mem_allocate_init(size_t size, bool is_noref, TRAPS) { HeapWord/* obj = common_mem_allocate_noinit(size, is_noref, CHECK_NULL); init_obj(obj, size); return obj; }
-然后会先调用到：
-hotspot/src/share/vm/gc_interface/collectedHeap.inline.hpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>HeapWord/<em> CollectedHeap::allocate_from_tlab(Thread/</em> thread, size_t size) {  </p>
-</li>
-<li>assert(UseTLAB, &quot;should use UseTLAB&quot;);  </li>
-<li></li>
-<li>HeapWord/* obj = thread-&gt;tlab().allocate(size);  </li>
-<li>if (obj != NULL) {  </li>
-<li>return obj;  </li>
-<li>}  </li>
-<li>// Otherwise...  </li>
-<li>return allocate_from_tlab_slow(thread, size);  </li>
-<li><p>}<br>HeapWord/<em> CollectedHeap::allocate_from_tlab(Thread/</em> thread, size_t size) { assert(UseTLAB, &quot;should use UseTLAB&quot;); HeapWord/* obj = thread-&gt;tlab().allocate(size); if (obj != NULL) { return obj; } // Otherwise... return allocate_from_tlab_slow(thread, size); }
-前面已经说了，TLAB的大小不足以分配楼主例子里的数组，所以thread-&gt;tlab().allocate()肯定会返回NULL表示无法分配，于是调用到：
-hotspot/src/share/vm/gc_interface/collectedHeap.cpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>HeapWord/<em> CollectedHeap::allocate_from_tlab_slow(Thread/</em> thread, size_t size) {  </p>
-</li>
-<li></li>
-<li>// Retain tlab and allocate object in shared space if  </li>
-<li>// the amount free in the tlab is too large to discard.  </li>
-<li>if (thread-&gt;tlab().free() &gt; thread-&gt;tlab().refill_waste_limit()) {  </li>
-<li>thread-&gt;tlab().record_slow_allocation(size);  </li>
-<li>return NULL;  </li>
-<li>}  </li>
-<li>// ...  </li>
-<li><p>}<br>HeapWord/<em> CollectedHeap::allocate_from_tlab_slow(Thread/</em> thread, size_t size) { // Retain tlab and allocate object in shared space if // the amount free in the tlab is too large to discard. if (thread-&gt;tlab().free() &gt; thread-&gt;tlab().refill_waste_limit()) { thread-&gt;tlab().record_slow_allocation(size); return NULL; } // ... }
-例子里TLAB几乎是空的，所以这个if判断肯定会通过，TLAB就会记录下一次slow allocation。从GC日志中第一次minor GC的TLAB统计信息可以看到3次slow allocation，其实就是头两个数组（5MB和10MB那两个）成功分配后，第三个数组（又一个5MB的）尝试在TLAB分配失败后打出的日志。
-那么回到CollectedHeap::common_mem_allocate_noinit()，它会调用Universe::heap()-&gt;mem_allocate(...)进一步尝试分配，传入的is_noref为true，is_tlab为false：
-hotspot/src/share/vm/gc_implementation/parallelScavengeHeap.cpp
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>// There are two levels of allocation policy here.  </p>
-</li>
-<li>//  </li>
-<li>// When an allocation request fails, the requesting thread must invoke a VM  </li>
-<li>// operation, transfer control to the VM thread, and await the results of a  </li>
-<li>// garbage collection. That is quite expensive, and we should avoid doing it  </li>
-<li>// multiple times if possible.  </li>
-<li>//  </li>
-<li>// To accomplish this, we have a basic allocation policy, and also a  </li>
-<li>// failed allocation policy.  </li>
-<li>//  </li>
-<li>// The basic allocation policy controls how you allocate memory without  </li>
-<li>// attempting garbage collection. It is okay to grab locks and  </li>
-<li>// expand the heap, if that can be done without coming to a safepoint.  </li>
-<li>// It is likely that the basic allocation policy will not be very  </li>
-<li>// aggressive.  </li>
-<li>//  </li>
-<li>// The failed allocation policy is invoked from the VM thread after  </li>
-<li>// the basic allocation policy is unable to satisfy a mem_allocate  </li>
-<li>// request. This policy needs to cover the entire range of collection,  </li>
-<li>// heap expansion, and out-of-memory conditions. It should make every  </li>
-<li>// attempt to allocate the requested memory.  </li>
-<li></li>
-<li>// Basic allocation policy. Should never be called at a safepoint, or  </li>
-<li>// from the VM thread.  </li>
-<li>//  </li>
-<li>// This method must handle cases where many mem_allocate requests fail  </li>
-<li>// simultaneously. When that happens, only one VM operation will succeed,  </li>
-<li>// and the rest will not be executed. For that reason, this method loops  </li>
-<li>// during failed allocation attempts. If the java heap becomes exhausted,  </li>
-<li>// we rely on the size_policy object to force a bail out.  </li>
-<li>HeapWord/* ParallelScavengeHeap::mem_allocate(  </li>
-<li>size_t size,  </li>
-<li>bool is_noref,  </li>
-<li>bool is_tlab,  </li>
-<li>bool/* gc_overhead_limit_was_exceeded) {  </li>
-<li>assert(!SafepointSynchronize::is_at_safepoint(), &quot;should not be at safepoint&quot;);  </li>
-<li>assert(Thread::current() != (Thread/*)VMThread::vm_thread(), &quot;should not be in vm thread&quot;);  </li>
-<li>assert(!Heap_lock-&gt;owned_by_self(), &quot;this thread should not own the Heap_lock&quot;);  </li>
-<li></li>
-<li>// In general gc_overhead_limit_was_exceeded should be false so  </li>
-<li>// set it so here and reset it to true only if the gc time  </li>
-<li>// limit is being exceeded as checked below.  </li>
-<li>/*gc_overhead_limit_was_exceeded = false;  </li>
-<li></li>
-<li>HeapWord/* result = young_gen()-&gt;allocate(size, is_tlab);  </li>
-<li></li>
-<li>uint loop_count = 0;  </li>
-<li>uint gc_count = 0;  </li>
-<li></li>
-<li>while (result == NULL) {  </li>
-<li>// We don&#39;t want to have multiple collections for a single filled generation.  </li>
-<li>// To prevent this, each thread tracks the total_collections() value, and if  </li>
-<li>// the count has changed, does not do a new collection.  </li>
-<li>//  </li>
-<li>// The collection count must be read only while holding the heap lock. VM  </li>
-<li>// operations also hold the heap lock during collections. There is a lock  </li>
-<li>// contention case where thread A blocks waiting on the Heap_lock, while  </li>
-<li>// thread B is holding it doing a collection. When thread A gets the lock,  </li>
-<li>// the collection count has already changed. To prevent duplicate collections,  </li>
-<li>// The policy MUST attempt allocations during the same period it reads the  </li>
-<li>// total_collections() value!  </li>
-<li>{  </li>
-<li>MutexLocker ml(Heap_lock);  </li>
-<li>gc_count = Universe::heap()-&gt;total_collections();  </li>
-<li></li>
-<li>result = young_gen()-&gt;allocate(size, is_tlab);  </li>
-<li></li>
-<li>// (1) If the requested object is too large to easily fit in the  </li>
-<li>//     young_gen, or  </li>
-<li>// (2) If GC is locked out via GCLocker, young gen is full and  </li>
-<li>//     the need for a GC already signalled to GCLocker (done  </li>
-<li>//     at a safepoint),  </li>
-<li>// ... then, rather than force a safepoint and (a potentially futile)  </li>
-<li>// collection (attempt) for each allocation, try allocation directly  </li>
-<li>// in old_gen. For case (2) above, we may in the future allow  </li>
-<li>// TLAB allocation directly in the old gen.  </li>
-<li>if (result != NULL) {  </li>
-<li>return result;  </li>
-<li>}  </li>
-<li>if (!is_tlab &amp;&amp;  </li>
-<li>size &gt;= (young_gen()-&gt;eden_space()-&gt;capacity_in_words(Thread::current()) / 2)) {  </li>
-<li>result = old_gen()-&gt;allocate(size, is_tlab);  </li>
-<li>if (result != NULL) {  </li>
-<li>return result;  </li>
-<li>}  </li>
-<li>}  </li>
-<li>if (GC_locker::is_active_and_needs_gc()) {  </li>
-<li>// GC is locked out. If this is a TLAB allocation,  </li>
-<li>// return NULL; the requestor will retry allocation  </li>
-<li>// of an idividual object at a time.  </li>
-<li>if (is_tlab) {  </li>
-<li>return NULL;  </li>
-<li>}  </li>
-<li></li>
-<li>// If this thread is not in a jni critical section, we stall  </li>
-<li>// the requestor until the critical section has cleared and  </li>
-<li>// GC allowed. When the critical section clears, a GC is  </li>
-<li>// initiated by the last thread exiting the critical section; so  </li>
-<li>// we retry the allocation sequence from the beginning of the loop,  </li>
-<li>// rather than causing more, now probably unnecessary, GC attempts.  </li>
-<li>JavaThread/* jthr = JavaThread::current();  </li>
-<li>if (!jthr-&gt;in_critical()) {  </li>
-<li>MutexUnlocker mul(Heap_lock);  </li>
-<li>GC_locker::stall_until_clear();  </li>
-<li>continue;  </li>
-<li>} else {  </li>
-<li>if (CheckJNICalls) {  </li>
-<li>fatal(&quot;Possible deadlock due to allocating while&quot;  </li>
-<li>&quot; in jni critical section&quot;);  </li>
-<li>}  </li>
-<li>return NULL;  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>if (result == NULL) {  </li>
-<li></li>
-<li>// Generate a VM operation  </li>
-<li>VM_ParallelGCFailedAllocation op(size, is_tlab, gc_count);  </li>
-<li>VMThread::execute(&amp;op);  </li>
-<li></li>
-<li>// Did the VM operation execute? If so, return the result directly.  </li>
-<li>// This prevents us from looping until time out on requests that can  </li>
-<li>// not be satisfied.  </li>
-<li>if (op.prologue_succeeded()) {  </li>
-<li>assert(Universe::heap()-&gt;is_in_or_null(op.result()),  </li>
-<li>&quot;result not in heap&quot;);  </li>
-<li></li>
-<li>// If GC was locked out during VM operation then retry allocation  </li>
-<li>// and/or stall as necessary.  </li>
-<li>if (op.gc_locked()) {  </li>
-<li>assert(op.result() == NULL, &quot;must be NULL if gc_locked() is true&quot;);  </li>
-<li>continue;  // retry and/or stall as necessary  </li>
-<li>}  </li>
-<li></li>
-<li>// Exit the loop if the gc time limit has been exceeded.  </li>
-<li>// The allocation must have failed above (&quot;result&quot; guarding  </li>
-<li>// this path is NULL) and the most recent collection has exceeded the  </li>
-<li>// gc overhead limit (although enough may have been collected to  </li>
-<li>// satisfy the allocation).  Exit the loop so that an out-of-memory  </li>
-<li>// will be thrown (return a NULL ignoring the contents of  </li>
-<li>// op.result()),  </li>
-<li>// but clear gc_overhead_limit_exceeded so that the next collection  </li>
-<li>// starts with a clean slate (i.e., forgets about previous overhead  </li>
-<li>// excesses).  Fill op.result() with a filler object so that the  </li>
-<li>// heap remains parsable.  </li>
-<li>const bool limit_exceeded = size_policy()-&gt;gc_overhead_limit_exceeded();  </li>
-<li>const bool softrefs_clear = collector_policy()-&gt;all_soft_refs_clear();  </li>
-<li>assert(!limit_exceeded || softrefs_clear, &quot;Should have been cleared&quot;);  </li>
-<li>if (limit_exceeded &amp;&amp; softrefs_clear) {  </li>
-<li>/*gc_overhead_limit_was_exceeded = true;  </li>
-<li>size_policy()-&gt;set_gc_overhead_limit_exceeded(false);  </li>
-<li>if (PrintGCDetails &amp;&amp; Verbose) {  </li>
-<li>gclog_or_tty-&gt;print_cr(&quot;ParallelScavengeHeap::mem_allocate: &quot;  </li>
-<li>&quot;return NULL because gc_overhead_limit_exceeded is set&quot;);  </li>
-<li>}  </li>
-<li>if (op.result() != NULL) {  </li>
-<li>CollectedHeap::fill_with_object(op.result(), size);  </li>
-<li>}  </li>
-<li>return NULL;  </li>
-<li>}  </li>
-<li></li>
-<li>return op.result();  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>// The policy object will prevent us from looping forever. If the  </li>
-<li>// time spent in gc crosses a threshold, we will bail out.  </li>
-<li>loop_count++;  </li>
-<li>if ((result == NULL) &amp;&amp; (QueuedAllocationWarningCount &gt; 0) &amp;&amp;  </li>
-<li>(loop_count % QueuedAllocationWarningCount == 0)) {  </li>
-<li>warning(&quot;ParallelScavengeHeap::mem_allocate retries %d times \n\t&quot;  </li>
-<li>&quot; size=%d %s&quot;, loop_count, size, is_tlab ? &quot;(TLAB)&quot; : &quot;&quot;);  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>return result;  </li>
-<li><p>}<br>// There are two levels of allocation policy here. // // When an allocation request fails, the requesting thread must invoke a VM // operation, transfer control to the VM thread, and await the results of a // garbage collection. That is quite expensive, and we should avoid doing it // multiple times if possible. // // To accomplish this, we have a basic allocation policy, and also a // failed allocation policy. // // The basic allocation policy controls how you allocate memory without // attempting garbage collection. It is okay to grab locks and // expand the heap, if that can be done without coming to a safepoint. // It is likely that the basic allocation policy will not be very // aggressive. // // The failed allocation policy is invoked from the VM thread after // the basic allocation policy is unable to satisfy a mem_allocate // request. This policy needs to cover the entire range of collection, // heap expansion, and out-of-memory conditions. It should make every // attempt to allocate the requested memory. // Basic allocation policy. Should never be called at a safepoint, or // from the VM thread. // // This method must handle cases where many mem_allocate requests fail // simultaneously. When that happens, only one VM operation will succeed, // and the rest will not be executed. For that reason, this method loops // during failed allocation attempts. If the java heap becomes exhausted, // we rely on the size_policy object to force a bail out. HeapWord/<em> ParallelScavengeHeap::mem_allocate( size_t size, bool is_noref, bool is_tlab, bool/</em> gc_overhead_limit_was_exceeded) { assert(!SafepointSynchronize::is_at_safepoint(), &quot;should not be at safepoint&quot;); assert(Thread::current() != (Thread/<em>)VMThread::vm_thread(), &quot;should not be in vm thread&quot;); assert(!Heap_lock-&gt;owned_by_self(), &quot;this thread should not own the Heap_lock&quot;); // In general gc_overhead_limit_was_exceeded should be false so // set it so here and reset it to true only if the gc time // limit is being exceeded as checked below. /</em>gc_overhead_limit_was_exceeded = false; HeapWord/<em> result = young_gen()-&gt;allocate(size, is_tlab); uint loop_count = 0; uint gc_count = 0; while (result == NULL) { // We don&#39;t want to have multiple collections for a single filled generation. // To prevent this, each thread tracks the total_collections() value, and if // the count has changed, does not do a new collection. // // The collection count must be read only while holding the heap lock. VM // operations also hold the heap lock during collections. There is a lock // contention case where thread A blocks waiting on the Heap_lock, while // thread B is holding it doing a collection. When thread A gets the lock, // the collection count has already changed. To prevent duplicate collections, // The policy MUST attempt allocations during the same period it reads the // total_collections() value! { MutexLocker ml(Heap_lock); gc_count = Universe::heap()-&gt;total_collections(); result = young_gen()-&gt;allocate(size, is_tlab); // (1) If the requested object is too large to easily fit in the // young_gen, or // (2) If GC is locked out via GCLocker, young gen is full and // the need for a GC already signalled to GCLocker (done // at a safepoint), // ... then, rather than force a safepoint and (a potentially futile) // collection (attempt) for each allocation, try allocation directly // in old_gen. For case (2) above, we may in the future allow // TLAB allocation directly in the old gen. if (result != NULL) { return result; } if (!is_tlab &amp;&amp; size &gt;= (young_gen()-&gt;eden_space()-&gt;capacity_in_words(Thread::current()) / 2)) { result = old_gen()-&gt;allocate(size, is_tlab); if (result != NULL) { return result; } } if (GC_locker::is_active_and_needs_gc()) { // GC is locked out. If this is a TLAB allocation, // return NULL; the requestor will retry allocation // of an idividual object at a time. if (is_tlab) { return NULL; } // If this thread is not in a jni critical section, we stall // the requestor until the critical section has cleared and // GC allowed. When the critical section clears, a GC is // initiated by the last thread exiting the critical section; so // we retry the allocation sequence from the beginning of the loop, // rather than causing more, now probably unnecessary, GC attempts. JavaThread/</em> jthr = JavaThread::current(); if (!jthr-&gt;in_critical()) { MutexUnlocker mul(Heap_lock); GC_locker::stall_until_clear(); continue; } else { if (CheckJNICalls) { fatal(&quot;Possible deadlock due to allocating while&quot; &quot; in jni critical section&quot;); } return NULL; } } } if (result == NULL) { // Generate a VM operation VM_ParallelGCFailedAllocation op(size, is_tlab, gc_count); VMThread::execute(&amp;op); // Did the VM operation execute? If so, return the result directly. // This prevents us from looping until time out on requests that can // not be satisfied. if (op.prologue_succeeded()) { assert(Universe::heap()-&gt;is_in_or_null(op.result()), &quot;result not in heap&quot;); // If GC was locked out during VM operation then retry allocation // and/or stall as necessary. if (op.gc_locked()) { assert(op.result() == NULL, &quot;must be NULL if gc_locked() is true&quot;); continue; // retry and/or stall as necessary } // Exit the loop if the gc time limit has been exceeded. // The allocation must have failed above (&quot;result&quot; guarding // this path is NULL) and the most recent collection has exceeded the // gc overhead limit (although enough may have been collected to // satisfy the allocation). Exit the loop so that an out-of-memory // will be thrown (return a NULL ignoring the contents of // op.result()), // but clear gc_overhead_limit_exceeded so that the next collection // starts with a clean slate (i.e., forgets about previous overhead // excesses). Fill op.result() with a filler object so that the // heap remains parsable. const bool limit_exceeded = size_policy()-&gt;gc_overhead_limit_exceeded(); const bool softrefs_clear = collector_policy()-&gt;all_soft_refs_clear(); assert(!limit_exceeded || softrefs_clear, &quot;Should have been cleared&quot;); if (limit_exceeded &amp;&amp; softrefs_clear) { /*gc_overhead_limit_was_exceeded = true; size_policy()-&gt;set_gc_overhead_limit_exceeded(false); if (PrintGCDetails &amp;&amp; Verbose) { gclog_or_tty-&gt;print_cr(&quot;ParallelScavengeHeap::mem_allocate: &quot; &quot;return NULL because gc_overhead_limit_exceeded is set&quot;); } if (op.result() != NULL) { CollectedHeap::fill_with_object(op.result(), size); } return NULL; } return op.result(); } } // The policy object will prevent us from looping forever. If the // time spent in gc crosses a threshold, we will bail out. loop_count++; if ((result == NULL) &amp;&amp; (QueuedAllocationWarningCount &gt; 0) &amp;&amp; (loop_count % QueuedAllocationWarningCount == 0)) { warning(&quot;ParallelScavengeHeap::mem_allocate retries %d times \n\t&quot; &quot; size=%d %s&quot;, loop_count, size, is_tlab ? &quot;(TLAB)&quot; : &quot;&quot;); } } return result; }
-这里会先尝试在young gen里分配
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>// Allocation  </p>
-</li>
-<li>HeapWord/* allocate(size_t word_size, bool is_tlab) {  </li>
-<li>HeapWord/* result = eden_space()-&gt;cas_allocate(word_size);  </li>
-<li>return result;  </li>
-<li><p>}<br>// Allocation HeapWord/<em> allocate(size_t word_size, bool is_tlab) { HeapWord/</em> result = eden_space()-&gt;cas_allocate(word_size); return result; }
-实际上就是尝试在eden里做一次CAS分配。楼主例子里的头两个数组都会在这里分配成功，把eden占用到99%。然后到第三个数组触发GC前试图分配的时候，eden已经没有足够空间了，分配就会失败从而返回NULL。
-然后就开始进入“试图分配 -&gt; 不行的话GC -&gt; 再试图分配 -&gt; 不行的话再GC -&gt; 再试图分配”的循环。
-做了第一次minor GC后，头两个数组都被GC掉了，eden为空，于是再试图在young gen里分配第三个数组（5MB那个）就成功了。第四个数组（10MB那个）分配的状况与第二个数组类似，都不需要另外触发GC就可以成功。
-等到要分配第5个数组（15MB那个）时，堆的状况跟要分配第三个数组时类似，eden都是99%满，所以楼主可能会以为这个数组也会在GC后分配到eden里。实际状况却是它在young gen尝试分配失败后，真的进入GC前还会试图分配，来到ParallelScavengeHeap::mem_allocate()的这个分支：
-C++代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>if (!is_tlab &amp;&amp;  </p>
-</li>
-<li>size &gt;= (young_gen()-&gt;eden_space()-&gt;capacity_in_words(Thread::current()) / 2)) {  </li>
-<li>result = old_gen()-&gt;allocate(size, is_tlab);  </li>
-<li>if (result != NULL) {  </li>
-<li>return result;  </li>
-<li>}  </li>
-<li>}<br>if (!is_tlab &amp;&amp; size &gt;= (young_gen()-&gt;eden_space()-&gt;capacity_in_words(Thread::current()) / 2)) { result = old_gen()-&gt;allocate(size, is_tlab); if (result != NULL) { return result; } }
-此时eden的capacity有15MB多，一半就是不到8MB，第5个数组有15MB多一点，肯定超过了这个判断条件的限制，于是就直接在old gen尝试分配，成功，就不需要做GC，因而之前的第3和第4个数组就都还在。
-等待雨季的到来 写道</li>
-</ol>
-<p>1、byte5为什么没有触发minor gc而是直接分配在老生代，byte3和byte4为什么没有被回收？
-总结一下过程：
-第1个数组：
-大小5MB，慢速路径上在young gen分配直接成功；
-第2个数组：
-大小10MB，慢速路径上在young gen分配直接成功；
-第3个数组：
-大小5MB，慢速路径上在young gen分配失败，
-（进入循环）再尝试在young gen分配，还是失败，
-没达到去old gen分配的大小限制，
-于是真的触发一次minor GC，eden清空，
-再尝试在young gen分配，成功；
-第4个数组：
-大小10MB，慢速路径上在young gen分配直接成功；
-第5个数组：
-大小15MB，慢速路径上在young gen分配失败，
-（进入循环）再尝试在young gen分配，还是失败，</p>
-<h1 id="-old-gen-old-gen-gc-">达到了去old gen直接分配的大小限制，在old gen上分配成功。没有触发GC。</h1>
-<p>等待雨季的到来 写道</p>
-<p>2、eden区什么时候才会自动扩容到40M，当创建超过20M的对象时，都是直接分配在了老生，而创建大小超过老生代的对象时老生代会自动扩容。
-上面的过程已经很清楚了。如果创建20MB的对象，它在eden分配会失败（此时只有15MB多一点的容量），然后又满足了直接在old gen分配的条件（试图分配的大小大于eden的capacity的一半），就跑到old gen分配了。</p>
-<h1 id="-java-tlab-eden-gc-">如果是比较正常的Java程序，创建的多数对象都是小对象，都通过TLAB来分配，那就可以观察到eden经过几次GC后渐渐扩容到最大大小。</h1>
-<p>等待雨季的到来 写道</p>
-<p>其他：
-我在用eclipse调试的时候发现，同样的测试代码在执行的时候输出的GC log居然会有很大的变化，有的时候eden区被初始化为8M有的时候初始化为20M。
-这个问题我就不太清楚了。通过Eclipse来调试Java程序，在目标Java程序里会产生一些额外的垃圾，我不太肯定这跟您看到的抖动有没有关系。
-<img src="" alt="Spinner"> <a href="http://zsl8544-163-com.iteye.com/" target="_blank"><img src="&quot;等待雨季的到来的博客: &quot;" alt="等待雨季的到来的博客"></a> <a href="http://zsl8544-163-com.iteye.com/" title="等待雨季的到来" target="_blank">等待雨季的到来</a> 前天</p>
-<p>实在是太感谢R大神百忙之中能给出这么细致入微的解释了！受益匪浅！以前我的认识只是eden区会在GC之后分配内存，并不知道如果分配内存大于eden区capacity一半就会直接在old gen分配的规则。
-只是由于我对TLAB的具体细节只知甚少，对您下面的eden扩容的解释还是不是太清楚。
-引用</p>
-<p>如果是比较正常的Java程序，创建的多数对象都是小对象，都通过TLAB来分配，那就可以观察到eden经过几次GC后渐渐扩容到最大大小。
-为什么说创建小对象，通过TLAB来分配，eden就会渐渐扩容到最大了呢？
-还有一个比较傻的问题，内存区域扩容之后还会再缩小吗？有内存扩容这个设计的原因是不是capacity小得内存区域收集的会更快呢？
-<img src="" alt="Spinner"> <a href="http://zsl8544-163-com.iteye.com/" target="_blank"><img src="&quot;等待雨季的到来的博客: &quot;" alt="等待雨季的到来的博客"></a> <a href="http://zsl8544-163-com.iteye.com/" title="等待雨季的到来" target="_blank">等待雨季的到来</a> 前天</p>
-<p>对了，我没有看毕玄的实验，能给个链接吗？
-我看的是您推荐的周志明老师写的深入Java虚拟机。
-<img src="" alt="Spinner"> <a href="http://icyfenix.iteye.com/" target="_blank"><img src="&quot;IcyFenix的博客: FenixSoft 3.0&quot;" alt="IcyFenix的博客"></a> <a href="http://icyfenix.iteye.com/" title="IcyFenix" target="_blank">IcyFenix</a> 昨天</p>
-<p>等待雨季的到来 写道</p>
-<p>实在是太感谢R大神百忙之中能给出这么细致入微的解释了！受益匪浅！以前我的认识只是eden区会在GC之后分配内存，并不知道如果分配内存大于eden区capacity一半就会直接在old gen分配的规则。
-只是由于我对TLAB的具体细节只知甚少，对您下面的eden扩容的解释还是不是太清楚。
-引用</p>
-<p>如果是比较正常的Java程序，创建的多数对象都是小对象，都通过TLAB来分配，那就可以观察到eden经过几次GC后渐渐扩容到最大大小。
-为什么说创建小对象，通过TLAB来分配，eden就会渐渐扩容到最大了呢？
-还有一个比较傻的问题，内存区域扩容之后还会再缩小吗？有内存扩容这个设计的原因是不是capacity小得内存区域收集的会更快呢？
-赞R大的详细解答。我被召唤来回答楼上的2个问题“eden是如何扩容的？”，“eden扩容之后还会缩小吗？”
-也按照上面一步一步分析代码来解释，但过程有点多，我就只帖方法名，具体代码不粘上来了，代码可以到openjdk的repo上直接看。
-1.遇到分配内存指令（InterpreterRuntime中的new或者newarray这些字节码模版）
-2.开始分配内存（前面R大写的分配数组oopFactory::new_typeArray或者分配对象instanceKlass::allocate_instance）
-3.向CollectedHeap请求内存（入口是CollectedHeap::array_allocate或者CollectedHeap::obj_allocate，两者最终走到CollectedHeap::common_mem_allocate_noinit方法中）
-4.如果能够通过TLAB顺利分配（allocate_from_tlab方法）就在TLAB上划
-5.否则，通过mem_allocate方法在eden上划。这个是纯虚方法，因此要看CollectedHeap的子类ParallelScavengeHeap（LZ使用PS收集器）
-6.在men_allocate方法中，先通过cas_allocate在MutableSpace上划，不成功的话，堕入GC-尝试分配-GC-尝试分配……的循环中，这个R大在前面讲的很详细，其他就不多说了，着重讲GC。
-7.进入GC的过程不是直接方法调用，是通过发送VM_ParallelGCFailedAllocation信号给VM线程触发的，最终转到ParallelScavengeHeap::failed_mem_allocate()方法中。
-8.该通过PSScavenge::invoke()开始GC过程，实际GC的活是在PSScavenge::invoke_no_policy()做的。
-9.invoke_no_policy()方法可以看到，实际上每次GC都会重置eden大小，即调用了ParallelScavengeHeap::resize_young_gen()方法，eden是否会真正改变，取决于这个方法传入的参数，如果和eden的原本大小不一样，那就相当于增加或者缩小了eden了。
-10.这里关系有点烦，补一段说清楚一些。resize_young_gen()方法的参数值就是PSAdaptiveSizePolicy::calculated_eden_size_in_bytes()返回值，换句话说，GC是否要改变eden大小，完全是由PSAdaptiveSizePolicy控制的（这个方法在它的父类AdaptiveSizePolicy中，但calculated_eden_size_in_bytes只是简单返回一个数值，数值是在子类中计算的，PSScavenge::invoke_no_policy()中调用了PSAdaptiveSizePolicy::compute_generation_free_space()去改变这个数值）。
-11.到这里，eden如何改变就取决于PSAdaptiveSizePolicy::compute_generation_free_space()的计算结果了。PS收集器的特点是可以设置一些目标策略，譬如追求吞吐量，追求最小停顿时间等，这个方法会根据用户选定的目标，调用adjust_for_minor_pause_time()、adjust_eden_for_footprint()、adjust_for_pause_time()等方法去计算eden的值，具体就不一个一个细说了。即使不详细看方法内容，光从eden_increment_with_supplement_aligned_up、eden_decrement_aligned_down这些明显含有“increment”、“decrement”的方法名字，也可以回答“内存区域扩容之后还会再缩小吗？”这个问题了。
-PS：如果对这个确实感兴趣，可以加个PrintAdaptiveSizePolicy，在每次重新计算内存区域大小时输出一些信息看看。
-PSS：我把自己的理解写完了，但也木有搞清楚PS收集器eden的大小计算，和TLAB分配的联系在哪里，请R大继续讲解。
-<img src="" alt="Spinner"></p>
-<p><img src="" alt=""> <a href="http://hllvm.group.iteye.com/group/topic/38293/post/new" target="_blank">发表回复</a></p>
-<p><a href="http://hllvm.group.iteye.com/" target="_blank">&gt;&gt;返回群组首页</a></p>
-<p><a href="http://hllvm.group.iteye.com/" target="_blank"><img src="&quot;高级语言虚拟机: 关注各种高级语言虚拟机（high-level language virtual machine，HLL VM）的设计与实现，泛化至各种高级语言的运行时的设计与实现。讨论范围包括JVM、CLI、Parrot等当前流行的VM平台，也包括Python、Ruby、JavaScript、Lua、Perl、Forth、Smalltalk等众多语言的引擎，还有历史上有影响的各种高级语言虚拟机，如SECD等。&quot;" alt="高级语言虚拟机群组"></a></p>
-<h3 id="-">相关讨论</h3>
+<p>com.sun.java.swing
+包移到</p>
+<p>javax.swing
+包中，详情：<a href="http://download.oracle.com/javase/7/docs/api/javax/swing/plaf/nimbus/package-summary.html">
+javax.swing.plaf.nimbus
+</a></p>
 <ul>
-<li><a href="http://www.iteye.com/topic/802638" target="_blank">JVM内存管理：深入垃圾收集器与内存分配策略</a></li>
-<li><a href="http://www.iteye.com/topic/976522" target="_blank">java内存管理以及GC</a></li>
-<li><a href="http://www.iteye.com/topic/894148" target="_blank">HotSpot VM 内存堆的两个Servivor区</a></li>
-<li><a href="http://www.iteye.com/topic/814815" target="_blank">jvm crash,疑似GC的bug</a></li>
-<li><a href="http://www.iteye.com/topic/730461" target="_blank">借助HotSpot SA来一窥PermGen上的对象</a></li>
-<li><a href="http://www.iteye.com/" target="_blank">首页</a></li>
-<li><a href="http://www.iteye.com/news" target="_blank">资讯</a></li>
-<li><a href="http://www.iteye.com/magazines" target="_blank">精华</a></li>
-<li><a href="http://www.iteye.com/forums" target="_blank">论坛</a></li>
-<li><a href="http://www.iteye.com/ask" target="_blank">问答</a></li>
-<li><a href="http://www.iteye.com/blogs" target="_blank">博客</a></li>
-<li><a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a></li>
-<li><a href="http://www.iteye.com/groups" target="_blank">群组</a></li>
-<li><a href="http://job.iteye.com/iteye" target="_blank">招聘</a></li>
-<li><a href="http://www.iteye.com/search" target="_blank">搜索</a></li>
-<li><a href="http://hllvm.group.iteye.com/index/service" target="_blank">广告服务</a></li>
-<li><a href="http://webmaster.iteye.com/" target="_blank">ITeye黑板报</a></li>
-<li><a href="http://hllvm.group.iteye.com/index/contactus" target="_blank">联系我们</a></li>
-<li><a href="http://hllvm.group.iteye.com/index/friend_links" target="_blank">友情链接</a></li>
+<li><a href="http://java.sun.com/developer/technicalArticles/GUI/mixing_components/index.html" target="_blank">更轻松的重量级和轻量级组件的混合</a></li>
+<li>支持透明窗体以及非矩形窗体的图形界面，请看 <a href="http://download.oracle.com/javase/tutorial/uiswing/misc/trans_shaped_windows.html" target="_blank">How to Create Translucent and Shaped Windows</a></li>
+<li><a href="http://download.oracle.com/javase/7/docs/api/javax/swing/JColorChooser.html">
+JColorChooser
+</a> 类新增 HSV tab.</li>
 </ul>
-<p>© 2003-2012 ITeye.com. [ <a href="http://www.miibeian.gov.cn/" target="_blank">京ICP证110151号</a> 京公网安备110105010620 ]
-百联优力(北京)投资有限公司 版权所有 <img src="http://stat.iteye.com/?url=http%3A%2F%2Fhllvm.group.iteye.com%2Fgroup%2Ftopic%2F38293&amp;referrer=http%3A%2F%2Fhllvm.group.iteye.com%2F&amp;user_id=" alt=""></p>
+<p><strong>网络</strong></p>
+<ul>
+<li>新增
+<a href="http://download.oracle.com/javase/7/docs/api/java/net/URLClassLoader.html#close%28%29">
+URLClassLoader.close
+</a> 方法，请看 <a href="http://download.oracle.com/javase/7/docs/technotes/guides/net/ClassLoader.html" target="_blank">Closing a URLClassLoader</a>.</li>
+<li>支持 Sockets Direct Protocol (SDP) 提供高性能网络连接，详情请看 <a href="http://download.oracle.com/javase/tutorial/sdp/sockets/index.html" target="_blank">Understanding the Sockets Direct Protocol</a>.</li>
+</ul>
+<p><strong>集合</strong></p>
+<ul>
+<li>新增
+<a href="http://download.oracle.com/javase/7/docs/api/java/util/concurrent/TransferQueue.html">
+TransferQueue
+</a> 接口，是 <a href="http://download.oracle.com/javase/7/docs/api/java/util/concurrent/BlockingQueue.html">
+BlockingQueue
+</a> 的改进版，实现类为 <a href="http://download.oracle.com/javase/7/docs/api/java/util/concurrent/LinkedTransferQueue.html">
+LinkedTransferQueue
+</a></li>
+</ul>
+<p><strong>RIA/发布</strong></p>
+<ul>
+<li>拖拽的小程序使用一个默认或者定制的标题进行修饰，详情：<a href="http://download.oracle.com/javase/tutorial/deployment/applet/draggableApplet.html#decoration" target="_blank">Requesting and Customizing Applet Decoration in Draggable Applets</a>.</li>
+<li><p>JNLP 文件做了如下方面的增强，详情请看 <a href="http://download.oracle.com/javase/7/docs/technotes/guides/javaws/developersguide/syntax.html" target="_blank">JNLP File Syntax</a>:</p>
+</li>
+<li><p>The</p>
+</li>
+</ul>
+<p>os
+attribute in the</p>
+<p>information
+and</p>
+<p>resources
+elements can now contain specific versions of Windows, such as Windows Vista or Windows 7.</p>
+<ul>
+<li>Applications can use the</li>
+</ul>
+<p>install
+attribute in the</p>
+<p>shortcut
+element to specify their their desire to be installed. Installed applications are not removed when the Java Web Start cache is cleared, but can be explicitly removed using the Java Control Panel.</p>
+<ul>
+<li>Java Web Start applications can be deployed without specifying the</li>
+</ul>
+<p>codebase
+attribute; see <a href="http://download.oracle.com/javase/tutorial/deployment/deploymentInDepth/deployingWithoutCodebase.html" target="_blank">Deploying Without Codebase</a></p>
+<ul>
+<li>可直接在 HTML 中嵌入 JNLP 文件：<a href="http://download.oracle.com/javase/tutorial/deployment/deploymentInDepth/embeddingJNLPFileInWebPage.html" target="_blank">Embedding JNLP File in Applet Tag</a>.</li>
+<li>可在 JavaScript 代码中检查 Applet 是否已经加载完成：<a href="http://download.oracle.com/javase/tutorial/deployment/applet/appletStatus.html" target="_blank">Handling Initialization Status With Event Handlers</a>.</li>
+<li>可在 Applet 从快捷方式启动或者拖出浏览器时对窗口样式和标题进行控制：<a href="http://download.oracle.com/javase/tutorial/deployment/applet/draggableApplet.html#decoration" target="_blank">Requesting and Customizing Applet Decoration</a> in <a href="http://download.oracle.com/javase/tutorial/deployment/applet/draggableApplet.html" target="_blank">Developing Draggable Applets</a>.</li>
+</ul>
+<p><strong>XML</strong></p>
+<ul>
+<li>包含 <a href="http://jaxp.java.net/" target="_blank">Java API for XML Processing</a> (JAXP) 1.4.5, 支持 <a href="http://jaxb.java.net/" target="_blank">Java Architecture for XML Binding</a> (JAXB) 2.2.3, 和 <a href="http://jax-ws.java.net/" target="_blank">Java API for XML Web Services</a> (JAX-WS) 2.2.4.</li>
+</ul>
+<p><strong>java.lang 包</strong></p>
+<ul>
+<li>消除了在多线程环境下的非层次话类加载时导致的潜在死锁，详情：<a href="http://download.oracle.com/javase/7/docs/technotes/guides/lang/cl-mt.html" target="_blank">Multithreaded Custom Class Loaders in Java SE 7</a>.</li>
+</ul>
+<p><strong>Java 虚拟机</strong></p>
+<ul>
+<li><a href="http://download.oracle.com/javase/7/docs/technotes/guides/vm/multiple-language-support.html" target="_blank">支持非 Java 语言</a>: Java SE 7 引入一个新的 JVM 指令用于简化实现动态类型编程语言</li>
+<li><a href="http://download.oracle.com/javase/7/docs/technotes/guides/vm/G1.html" target="_blank">Garbage-First Collector</a> 是一个服务器端的垃圾收集器用于替换 Concurrent Mark-Sweep Collector (CMS).</li>
+<li><a href="http://download.oracle.com/javase/7/docs/technotes/guides/vm/performance-enhancements-7.html" target="_blank">提升了 Java HotSpot 虚拟机的性能</a></li>
+</ul>
+<p><strong>Java I/O</strong></p>
+<p><a href="http://download.oracle.com/javase/7/docs/api/java/nio/file/package-summary.html">
+java.nio.file
+</a> 包以及相关的包 <a href="http://download.oracle.com/javase/7/docs/api/java/nio/file/attribute/package-summary.html">
+java.nio.file.attribute
+</a> 提供对文件 I/O 以及访问文件系统的全面支持，请看 <a href="http://download.oracle.com/javase/tutorial/essential/io/fileio.html" target="_blank">File I/O (featuring NIO.2)</a>.</p>
+<ul>
+<li>目录</li>
+</ul>
+<p><em><Java home></em>/sample/nio/chatserver/
+包含使用 java.nio.file 包的演示程序</p>
+<ul>
+<li>目录</li>
+</ul>
+<p><em><Java home></em>/demo/nio/zipfs/
+包含 NIO.2 NFS 文件系统的演示程序</p>
+<p><strong>安全性</strong></p>
+<ul>
+<li>新的内置对多个基于 ECC 算法(ECDSA/ECDH)的支持，详情请看：<a href="http://download.oracle.com/javase/7/docs/technotes/guides/security/p11guide.html#ALG" target="_blank">Sun PKCS/#11 Provider&#39;s Supported Algorithms</a> in <a href="http://download.oracle.com/javase/7/docs/technotes/guides/security/p11guide.html" target="_blank">Java PKCS/#11 Reference Guide</a>.</li>
+<li>禁用了一些弱加密算法，详情请看 <a href="http://download.oracle.com/javase/7/docs/technotes/guides/security/certpath/CertPathProgGuide.html#AppD" target="_blank">Appendix D: Disabling Cryptographic Algorithms</a> in <a href="http://download.oracle.com/javase/7/docs/technotes/guides/security/certpath/CertPathProgGuide.html" target="_blank">Java PKI Programmer&#39;s Guide</a> and <a href="http://download.oracle.com/javase/7/docs/technotes/guides/security/jsse/JSSERefGuide.html#DisabledAlgorithms" target="_blank">Disabled Cryptographic Algorithms</a> in <a href="http://download.oracle.com/javase/7/docs/technotes/guides/security/jsse/JSSERefGuide.html" target="_blank">Java Secure Socket Extension (JSSE) Reference Guide</a>.</li>
+<li>Java 安全套接字扩展中对 SSL/TLS 的增强</li>
+</ul>
+<p><strong>并发</strong></p>
+<ul>
+<li><p>fork/join 框架，基于 <a href="http://download.oracle.com/javase/7/docs/api/java/util/concurrent/ForkJoinPool.html">
+ForkJoinPool
+</a> 类，是 <a href="http://download.oracle.com/javase/7/docs/api/java/util/concurrent/Executor.html">
+Executor
+</a> 接口的实现，设计它用来进行高效的运行大量任务；使用 work-stealing 技术用来保证大量的 worker 线程工作，特别适合多处理器环境，详情请看 <a href="http://download.oracle.com/javase/tutorial/essential/concurrency/forkjoin.html" target="_blank">Fork/Join</a></p>
+</li>
+<li><p>目录</p>
+</li>
+</ul>
+<p><em><Java home></em>/sample/forkjoin/
+包含了 fork/join 框架的演示程序</p>
+<ul>
+<li><a href="http://download.oracle.com/javase/7/docs/api/java/util/concurrent/ThreadLocalRandom.html">
+ThreadLocalRandom
+</a> 类class 消除了使用伪随机码线程的竞争，请看 <a href="http://download.oracle.com/javase/tutorial/essential/concurrency/threadlocalrandom.html" target="_blank">Concurrent Random Numbers</a>.</li>
+<li><a href="http://download.oracle.com/javase/7/docs/api/java/util/concurrent/Phaser.html">
+Phaser
+</a> 类是一个新的同步的屏障，与 <a href="http://download.oracle.com/javase/7/docs/api/java/util/concurrent/CyclicBarrier.html">
+CyclicBarrier
+</a> 类似.</li>
+</ul>
+<p><strong>Java 2D</strong></p>
+<ul>
+<li>一个新的基于 XRender 的 Java 2D 渲染管道支持现在的 X11 桌面，改善了图形性能，请看 <a href="http://download.oracle.com/javase/7/docs/technotes/guides/2d/flags.html#xrender" target="_blank">System Properties for Java 2D Technology</a> 中的</li>
+</ul>
+<p>xrender
+.</p>
+<ul>
+<li>JDK 可枚举并显示出已安装的 OpenType/CFF 字体，通过 <a href="http://download.oracle.com/javase/7/docs/api/java/awt/GraphicsEnvironment.html#getAvailableFontFamilyNames%28%29">
+GraphicsEnvironment.getAvailableFontFamilyNames
+</a> 方法 See <a href="http://download.oracle.com/javase/tutorial/2d/text/fonts.html" target="_blank">Selecting a Font</a>.</li>
+<li><a href="http://download.oracle.com/javase/7/docs/api/java/awt/font/TextLayout.html">
+TextLayout
+</a> 类支持西藏语脚本</li>
+<li>libfontconfig
+, 是一个字体配置 api ，see <a href="http://www.fontconfig.org/" target="_blank">Fontconfig</a>.</li>
+</ul>
+<p><strong>国际化</strong></p>
+<ul>
+<li><p>支持 <a href="http://www.unicode.org/versions/Unicode6.0.0" target="_blank">Unicode 6.0.0</a> </p>
+</li>
+<li><p>目录</p>
+</li>
+</ul>
+<p><em><Java home></em>/demo/jfc/Font2DTest/
+包含 Unicode 6.0 的演示程序</p>
+<ul>
+<li>Java SE 7 可容纳在 ISO 4217 中新的货币，详情请看 <a href="http://download.oracle.com/javase/7/docs/api/java/util/Currency.html">
+Currency
+</a> 类.</li>
+</ul>
+<p><strong>Java 编程语言特性</strong></p>
+<ul>
+<li><a href="http://download.oracle.com/javase/7/docs/technotes/guides/language/binary-literals.html" target="_blank">二进制数字表达方式</a></li>
+<li><a href="http://download.oracle.com/javase/7/docs/technotes/guides/language/underscores-literals.html" target="_blank">使用下划线对数字进行分隔表达，例如 1_322_222</a></li>
+<li><a href="http://download.oracle.com/javase/7/docs/technotes/guides/language/strings-switch.html" target="_blank">switch 语句支持字符串变量</a></li>
+<li><a href="http://download.oracle.com/javase/7/docs/technotes/guides/language/type-inference-generic-instance-creation.html" target="_blank">泛型实例创建的类型推断</a></li>
+<li><a href="http://download.oracle.com/javase/7/docs/technotes/guides/language/non-reifiable-varargs.html" target="_blank">使用可变参数时，提升编译器的警告和错误信息</a></li>
+<li><a href="http://download.oracle.com/javase/7/docs/technotes/guides/language/try-with-resources.html">try-with-resources 语句
+</a></li>
+<li><a href="http://download.oracle.com/javase/7/docs/technotes/guides/language/catch-multiple.html" target="_blank">同时捕获多个异常处理</a></li>
+</ul>
+<p><strong>JDBC 4.1</strong></p>
+<ul>
+<li>支持使用 <a href="http://download.oracle.com/javase/7/docs/technotes/guides/language/try-with-resources.html">
+try
+-with-resources</a> 语句进行自动的资源释放，包括连接、语句和结果集</li>
+<li>支持 RowSet 1.1</li>
+</ul>
+<p>Java 的详细介绍：<a href="http://www.oschina.net/p/java" target="_blank">请点这里</a>
+Java 的下载地址：<a href="http://www.oschina.net/action/project/go?id=16962&amp;p=download" target="_blank">请点这里</a>
+想通过手机客户端访问开源中国：<a href="http://www.oschina.net/app" target="_blank">请点这里</a>
+本站文章除注明转载外，均为本站原创或编译
+欢迎任何形式的转载，但请务必注明出处，尊重他人劳动共创开源社区
+转载请注明：文章转载自：<strong>开源中国社区</strong> [<a href="http://www.oschina.net/" target="_blank"><a href="http://www.oschina.net">http://www.oschina.net</a></a>]
+本文标题：Java 7 的新特性一览表
+本文地址：<a href="http://www.oschina.net/news/20119/new-features-of-java-7" target="_blank"><a href="http://www.oschina.net/news/20119/new-features-of-java-7">http://www.oschina.net/news/20119/new-features-of-java-7</a></a></p>
+<p><strong>旧一篇：<a href="http://www.oschina.net/news/20118/kohana-3-2" target="_blank">Kohana 3.2 分支发布</a> 2年前</strong>
+<strong>新一篇：<a href="http://www.oschina.net/news/20120/are-older-people-better" target="_blank">程序员越老越优秀吗？</a> 2年前</strong>
+<strong>相关资讯</strong></p>
+<ul>
+<li><a href="http://www.oschina.net/news/42676/apache-uima-java-sdk-2-4-1" title="Apache UIMA Java SDK 2.4.1 发布" target="_blank">Apache UIMA Java SDK 2.4.1 发布...</a>2天前</li>
+<li><a href="http://www.oschina.net/news/42651" title="Java Web快速开发平台 WebBuilder 6.8 发布" target="_blank">Java Web快速开发平台 WebBuilder 6...</a>3天前</li>
+<li><a href="http://www.oschina.net/news/42295/spring-amqp-1-2-0-for-java" title="Spring AMQP 1.2.0 for Java 发布" target="_blank">Spring AMQP 1.2.0 for Java 发布...</a>15天前</li>
+<li><a href="http://www.oschina.net/news/42225/fastjson-1-1-33" title="fastjson 1.1.33 发布，Java 的 JSON 库" target="_blank">fastjson 1.1.33 发布，Java 的 JS...</a>18天前</li>
+<li><a href="http://www.oschina.net/news/42112/demux-framework-0-6-1" title="DEMUX Framework 0.6.1 发布，Java 框架" target="_blank">DEMUX Framework 0.6.1 发布，Java ...</a>22天前</li>
+<li><a href="http://www.oschina.net/news/42092/aspose-email-for-java-3-1-0" title="Aspose.Email for Java 3.1.0 发布" target="_blank">Aspose.Email for Java 3.1.0 发布...</a>23天前</li>
+<li><a href="http://www.oschina.net/news/41946/mariadb-java-client-1-1-3" title="MariaDB Java Client 1.1.3 发布" target="_blank">MariaDB Java Client 1.1.3 发布...</a>29天前</li>
+<li><a href="http://www.oschina.net/news/41926/httl-1-0-10" title="HTTL 1.0.10 版本发布，Java 模版引擎" target="_blank">HTTL 1.0.10 版本发布，Java 模版引...</a>29天前</li>
+<li><a href="http://www.oschina.net/news/41916/beetl-1-24" title="Beetl 1.24 发布，java模板引擎" target="_blank">Beetl 1.24 发布，java模板引擎...</a>29天前</li>
+<li><p><a href="http://www.oschina.net/news/41863/freemarker-2-3-20" title="FreeMarker 2.3.20 发布，Java 模板引擎" target="_blank">FreeMarker 2.3.20 发布，Java 模板...</a>1个月前
+<strong>相关讨论话题</strong></p>
+</li>
+<li><p><a href="http://www.oschina.net/question/1177024_120104" title="这样的状态不知道该不该留下来，求指教" target="_blank">这样的状态不知道该不该留下来，求指教</a>15小时前</p>
+</li>
+<li><a href="http://www.oschina.net/question/571225_120116" title="快速排序，眉庄说这个思路是极好的，可惜就是死了个循环TUT（java）" target="_blank">快速排序，眉庄说这个思路是极好的，...</a>14小时前</li>
+<li><a href="http://www.oschina.net/question/817133_119906" title="每个职业都是有天花板的" target="_blank">每个职业都是有天花板的</a>2天前</li>
+<li><a href="http://www.oschina.net/question/1170472_120132" title="eclipse怎么设置中文版？" target="_blank">eclipse怎么设置中文版？</a>13小时前</li>
+<li><a href="http://www.oschina.net/question/49614_90267" title="android开发界面有什么好用的拖拽工具" target="_blank">android开发界面有什么好用的拖拽工...</a>5个月前</li>
+<li><a href="http://www.oschina.net/question/944819_120014" title="两张大表对比找出差集" target="_blank">两张大表对比找出差集</a>昨天(20:05)</li>
+<li><a href="http://www.oschina.net/question/571225_119905" title="疯狂JAVA里这段代码为什么first.count=3删除成功，为20就不成功了呢？" target="_blank">疯狂JAVA里这段代码为什么first.cou...</a>2天前</li>
+<li><a href="http://www.oschina.net/question/43796_120102" title="有没有像Highcharts,D3这样的可视化java包" target="_blank">有没有像Highcharts,D3这样的可视化...</a>15小时前</li>
+<li><a href="http://www.oschina.net/question/137332_120098" title="java 操作ldap, 怎么修改objectclass ， 或者定义自己的objectclass" target="_blank">java 操作ldap, 怎么修改objectcla...</a>15小时前</li>
+<li><a href="http://www.oschina.net/question/1050447_120054" title="java计算大文件的md5，有什么快速方法吗" target="_blank">java计算大文件的md5，有什么快速方...</a>20小时前</li>
+</ul>
+<p><strong><a href="">X</a>你也许会喜欢</strong></p>
+<ul>
+<li><a href="http://www.oschina.net/news/42676/apache-uima-java-sdk-2-4-1" title="Apache UIMA Java SDK 2.4.1 发布" target="_blank">Apache UIMA Java SDK 2.4.1 发布</a>2天前</li>
+<li><a href="http://www.oschina.net/news/42651" title="Java Web快速开发平台 WebBuilder 6.8 发布" target="_blank">Java Web快速开发平台 WebBuilder 6.8 发布...</a>3天前</li>
+<li><a href="http://www.oschina.net/news/42295/spring-amqp-1-2-0-for-java" title="Spring AMQP 1.2.0 for Java 发布" target="_blank">Spring AMQP 1.2.0 for Java 发布</a>15天前</li>
+</ul>
+<h2 id="-82-"><a href="">回到顶部</a><a href="">发表评论</a> 网友评论，共 82 条</h2>
+<ul>
+<li><a href="http://my.oschina.net/zhangthe9" target="_blank"><img src="&quot;ddatsh&quot;" alt="ddatsh"></a> 1楼：<strong>dd</strong>发表于 2011-07-27 23:04 <a href="">回复此评论</a></li>
+</ul>
+<p>目前不关心</p>
+<ul>
+<li><a href="http://my.oschina.net/seamanmei" target="_blank"><img src="&quot;梅公子&quot;" alt="梅公子"></a> 2楼：<strong>幽幽</strong> 发表于 2011-07-27 23:06 <a href="">回复此评论</a></li>
+</ul>
+<p>我不想做小白鼠啊~</p>
+<ul>
+<li><a href="http://my.oschina.net/haorizi" target="_blank"><img src="&quot;haorizi&quot;" alt="haorizi"></a> 3楼：<strong>haorizi</strong>发表于 2011-07-27 23:08 <a href="">回复此评论</a></li>
+</ul>
+<p>鼓掌！！！</p>
+<ul>
+<li><a href="http://my.oschina.net/WilliamShen" target="_blank"><img src="&quot;CheckStyle&quot;" alt="CheckStyle"></a> 4楼：<strong>CheckStyle</strong>发表于 2011-07-28 00:14 <a href="">回复此评论</a></li>
+</ul>
+<p>有几项还是非常值得期待的</p>
+<ul>
+<li><a href="http://my.oschina.net/u/158986" target="_blank"><img src="&quot;穿着马甲的鸟&quot;" alt="穿着马甲的鸟"></a> 5楼：<strong>穿着马甲的鸟</strong> 发表于 2011-07-28 05:14 <a href="">回复此评论</a></li>
+</ul>
+<p>期待做小白鼠。。。</p>
+<ul>
+<li><a href="http://my.oschina.net/yidao620c" target="_blank"><img src="&quot;一刀&quot;" alt="一刀"></a> 6楼：<strong>一刀</strong> 发表于 2011-07-28 06:47 <a href="">回复此评论</a></li>
+</ul>
+<p>不错不错~~ JAVA加油</p>
+<ul>
+<li><a href="http://my.oschina.net/szpengvictor" target="_blank"><img src="&quot;景德真人&quot;" alt="景德真人"></a> 7楼：<strong>景德真人</strong> 发表于 2011-07-28 07:15 <a href="">回复此评论</a></li>
+</ul>
+<p>又要努力学习了</p>
+<ul>
+<li><a href="http://my.oschina.net/jiahut" target="_blank"><img src="&quot;jazz&quot;" alt="jazz"></a> 8楼：<strong>jazz</strong>发表于 2011-07-28 08:42 <a href="">回复此评论</a></li>
+</ul>
+<p>都是些语法糖，用工具类有时候做的可能比这更好</p>
+<ul>
+<li><a href="http://my.oschina.net/heronote" target="_blank"><img src="&quot;heronote&quot;" alt="heronote"></a> 9楼：<strong>heronote</strong>发表于 2011-07-28 08:46 <a href="">回复此评论</a></li>
+</ul>
+<p>2000年以前Java走在其他语言之前（虚拟执行的概念以及隔离底层变化的机制）
+2005年以前Java和追上来的语言一起前行
+2005年以后Java......
+2005年以前做过几个Java的项目，包括B/S和桌面应用，从语言机制上说Exception机制很烦人，从类库上说太一般了，尤其是UI库和IO库：So Stupid，从打包机制来说浪费了大量的时间，从配置来说.....</p>
+<ul>
+<li><a href="http://my.oschina.net/lcx2007" target="_blank"><img src="&quot;douglarek&quot;" alt="douglarek"></a> 10楼：<strong>Java行者</strong> 发表于 2011-07-28 10:03 <a href="">回复此评论</a></li>
+</ul>
+<h3 id="-heronote-">引用来自“heronote”的评论</h3>
+<p>2000年以前Java走在其他语言之前（虚拟执行的概念以及隔离底层变化的机制）
+2005年以前Java和追上来的语言一起前行
+2005年以后Java......
+2005年以前做过几个Java的项目，包括B/S和桌面应用，从语言机制上说Exception机制很烦人，从类库上说太一般了，尤其是UI库和IO库：So Stupid，从打包机制来说浪费了大量的时间，从配置来说.....
+哥们，貌似你Java很厉害阿，不过看到你最后一段的评论，我还是感觉你太肤浅了，你说的Exception很烦人，我想问你哪种主流编程语言没有这一项？你说UI的设计一般，你也做个跨平台的UI类库，你说I/O库一般，正说明你连Java还不入门，I/O库是Java实现的接近完美的一个类库！打包机制浪费了时间，别跟我说这些没用的，那还不是为了方便程序员阿？</p>
+<ul>
+<li><a href="http://my.oschina.net/zhlmmc" target="_blank"><img src="&quot;虫虫&quot;" alt="虫虫"></a> 11楼：<strong>虫虫</strong> 发表于 2011-07-28 11:56 <a href="">回复此评论</a></li>
+</ul>
+<p>鼓掌！！！</p>
+<ul>
+<li><a href="http://my.oschina.net/zhlmmc" target="_blank"><img src="&quot;虫虫&quot;" alt="虫虫"></a> 12楼：<strong>虫虫</strong> 发表于 2011-07-28 12:05 <a href="">回复此评论</a></li>
+</ul>
+<h3 id="-java-">引用来自“Java行者”的评论</h3>
+<h3 id="-heronote-">引用来自“heronote”的评论</h3>
+<p>2000年以前Java走在其他语言之前（虚拟执行的概念以及隔离底层变化的机制）
+2005年以前Java和追上来的语言一起前行
+2005年以后Java......
+2005年以前做过几个Java的项目，包括B/S和桌面应用，从语言机制上说Exception机制很烦人，从类库上说太一般了，尤其是UI库和IO库：So Stupid，从打包机制来说浪费了大量的时间，从配置来说.....
+哥们，貌似你Java很厉害阿，不过看到你最后一段的评论，我还是感觉你太肤浅了，你说的Exception很烦人，我想问你哪种主流编程语言没有这一项？你说UI的设计一般，你也做个跨平台的UI类库，你说I/O库一般，正说明你连Java还不入门，I/O库是Java实现的接近完美的一个类库！打包机制浪费了时间，别跟我说这些没用的，那还不是为了方便程序员阿？</p>
+<p>这跟选老婆是一样的，各花入各眼。讨论技术还是不要扯到人身攻击上了……</p>
+<ul>
+<li><a href="http://my.oschina.net/WilliamShen" target="_blank"><img src="&quot;CheckStyle&quot;" alt="CheckStyle"></a> 13楼：<strong>CheckStyle</strong>发表于 2011-07-28 12:28 <a href="">回复此评论</a></li>
+</ul>
+<h3 id="-java-">引用来自“Java行者”的评论</h3>
+<h3 id="-heronote-">引用来自“heronote”的评论</h3>
+<p>2000年以前Java走在其他语言之前（虚拟执行的概念以及隔离底层变化的机制）
+2005年以前Java和追上来的语言一起前行
+2005年以后Java......
+2005年以前做过几个Java的项目，包括B/S和桌面应用，从语言机制上说Exception机制很烦人，从类库上说太一般了，尤其是UI库和IO库：So Stupid，从打包机制来说浪费了大量的时间，从配置来说.....
+哥们，貌似你Java很厉害阿，不过看到你最后一段的评论，我还是感觉你太肤浅了，你说的Exception很烦人，我想问你哪种主流编程语言没有这一项？你说UI的设计一般，你也做个跨平台的UI类库，你说I/O库一般，正说明你连Java还不入门，I/O库是Java实现的接近完美的一个类库！打包机制浪费了时间，别跟我说这些没用的，那还不是为了方便程序员阿？</p>
+<p>人家是指Checked Exception很烦人.
+Checked Exception目前我所知道,Java是唯一使用的语言.而那些后续更先进的语言,都没加入这个feature. 我也认为这是Java的败笔.</p>
+<ul>
+<li><a href="http://my.oschina.net/WilliamShen" target="_blank"><img src="&quot;CheckStyle&quot;" alt="CheckStyle"></a> 14楼：<strong>CheckStyle</strong>发表于 2011-07-28 12:29 <a href="">回复此评论</a></li>
+</ul>
+<h3 id="-java-">引用来自“Java行者”的评论</h3>
+<h3 id="-heronote-">引用来自“heronote”的评论</h3>
+<p>2000年以前Java走在其他语言之前（虚拟执行的概念以及隔离底层变化的机制）
+2005年以前Java和追上来的语言一起前行
+2005年以后Java......
+2005年以前做过几个Java的项目，包括B/S和桌面应用，从语言机制上说Exception机制很烦人，从类库上说太一般了，尤其是UI库和IO库：So Stupid，从打包机制来说浪费了大量的时间，从配置来说.....
+哥们，貌似你Java很厉害阿，不过看到你最后一段的评论，我还是感觉你太肤浅了，你说的Exception很烦人，我想问你哪种主流编程语言没有这一项？你说UI的设计一般，你也做个跨平台的UI类库，你说I/O库一般，正说明你连Java还不入门，I/O库是Java实现的接近完美的一个类库！打包机制浪费了时间，别跟我说这些没用的，那还不是为了方便程序员阿？</p>
+<p>你的水平不如被你拍的人. I/O完美么? Windows平台的Java,连NIO都没真正实现, 你敢说完美?</p>
+<ul>
+<li><a href="http://my.oschina.net/zantesu" target="_blank"><img src="&quot;Gmail.com&quot;" alt="Gmail.com"></a> 15楼：<strong>zantesu</strong>发表于 2011-07-28 13:10 <a href="">回复此评论</a></li>
+</ul>
+<p>我觉得Java的几个无法忍受的缺陷
+不是纯面向对象的
+不支持泛型
+不支持属性
+不支持匿名方法
+不支持方法对象传递
+不支持yield机制
+不支持lambda表达式
+不支持类型推断</p>
+<h2 id="-checked-exception">还有就是上面提到的Checked Exception</h2>
+<p>为什么Java的lambda表达式迟迟不能实装,估计就是因为Checked Exception的缘故
+为什么总是有人说建议学习Python/Ruby,就是相比落后的Java,Python/Ruby的编程思维,生产力能得到极大的解放</p>
+<ul>
+<li><a href="http://my.oschina.net/lcx2007" target="_blank"><img src="&quot;douglarek&quot;" alt="douglarek"></a> 16楼：<strong>Java行者</strong> 发表于 2011-07-28 13:40 <a href="">回复此评论</a></li>
+</ul>
+<h3 id="-checkstyle-">引用来自“CheckStyle”的评论</h3>
+<h3 id="-java-">引用来自“Java行者”的评论</h3>
+<h3 id="-heronote-">引用来自“heronote”的评论</h3>
+<p>2000年以前Java走在其他语言之前（虚拟执行的概念以及隔离底层变化的机制）
+2005年以前Java和追上来的语言一起前行
+2005年以后Java......
+2005年以前做过几个Java的项目，包括B/S和桌面应用，从语言机制上说Exception机制很烦人，从类库上说太一般了，尤其是UI库和IO库：So Stupid，从打包机制来说浪费了大量的时间，从配置来说.....
+哥们，貌似你Java很厉害阿，不过看到你最后一段的评论，我还是感觉你太肤浅了，你说的Exception很烦人，我想问你哪种主流编程语言没有这一项？你说UI的设计一般，你也做个跨平台的UI类库，你说I/O库一般，正说明你连Java还不入门，I/O库是Java实现的接近完美的一个类库！打包机制浪费了时间，别跟我说这些没用的，那还不是为了方便程序员阿？</p>
+<p>你的水平不如被你拍的人. I/O完美么? Windows平台的Java,连NIO都没真正实现, 你敢说完美?</p>
+<p>&quot;从JDK 1.4开始，Java的标准库中就包含了NIO，即所谓的“New IO”。其中最重要的功能就是提供了“非阻塞”的IO，当然包括了Socket。NonBlocking的IO就是对select(Unix平台下)以及 WaitForMultipleObjects(Windows平台)的封装，提供了高性能、易伸缩的服务架构。&quot; 你自己看吧，别跟我说没用的，我平时不用windows的。</p>
+<ul>
+<li><a href="http://my.oschina.net/lcx2007" target="_blank"><img src="&quot;douglarek&quot;" alt="douglarek"></a> 17楼：<strong>Java行者</strong> 发表于 2011-07-28 13:48 <a href="">回复此评论</a></li>
+</ul>
+<h3 id="-checkstyle-">引用来自“CheckStyle”的评论</h3>
+<h3 id="-java-">引用来自“Java行者”的评论</h3>
+<h3 id="-heronote-">引用来自“heronote”的评论</h3>
+<p>2000年以前Java走在其他语言之前（虚拟执行的概念以及隔离底层变化的机制）
+2005年以前Java和追上来的语言一起前行
+2005年以后Java......
+2005年以前做过几个Java的项目，包括B/S和桌面应用，从语言机制上说Exception机制很烦人，从类库上说太一般了，尤其是UI库和IO库：So Stupid，从打包机制来说浪费了大量的时间，从配置来说.....
+哥们，貌似你Java很厉害阿，不过看到你最后一段的评论，我还是感觉你太肤浅了，你说的Exception很烦人，我想问你哪种主流编程语言没有这一项？你说UI的设计一般，你也做个跨平台的UI类库，你说I/O库一般，正说明你连Java还不入门，I/O库是Java实现的接近完美的一个类库！打包机制浪费了时间，别跟我说这些没用的，那还不是为了方便程序员阿？</p>
+<p>人家是指Checked Exception很烦人.
+Checked Exception目前我所知道,Java是唯一使用的语言.而那些后续更先进的语言,都没加入这个feature. 我也认为这是Java的败笔.</p>
+<p>我想问一下，你怎么知道他指的是“Checked Exception”，你是他的马甲还是什么？至于你说的那些后续的语言都没有加进什么所谓的feature，那我想问你，Java发明之初，她能设计的那么齐全和周到吗？你可能会问，他为什么部把这个feature去掉，现在没法去了，兼容性是个大问题！还有那我问你，C语言没有运用面向对象的思想，是不是也是C语言的败笔？说了那么多，总而言之，言而总之就是：上面的那位哥们他明显的在评论语言的优劣，而我从没有说过哪种语言设计的非常好，我从没有比较过哪种语言谁好谁差，这种比较本身就是一种无知的表现！</p>
+<ul>
+<li><a href="http://my.oschina.net/free" target="_blank"><img src="&quot;SudyX&quot;" alt="SudyX"></a> 18楼：<strong>SudyX</strong>发表于 2011-07-28 14:43 <a href="">回复此评论</a></li>
+</ul>
+<h3 id="-zantesu-">引用来自“zantesu”的评论</h3>
+<p>我觉得Java的几个无法忍受的缺陷
+不是纯面向对象的
+不支持泛型
+不支持属性
+不支持匿名方法
+不支持方法对象传递
+不支持yield机制
+不支持lambda表达式
+不支持类型推断</p>
+<h2 id="-checked-exception">还有就是上面提到的Checked Exception</h2>
+<p>为什么Java的lambda表达式迟迟不能实装,估计就是因为Checked Exception的缘故
+为什么总是有人说建议学习Python/Ruby,就是相比落后的Java,Python/Ruby的编程思维,生产力能得到极大的解放
+没用过就别发言...</p>
+<ul>
+<li><a href="&quot;yissyo&quot;"><img src="&quot;非会员用户&quot;" alt="非会员用户"></a> 19楼：<strong>yissyo</strong>发表于 2011-07-28 15:00 (非会员)</li>
+</ul>
+<p>鼓掌围观高手</p>
+<ul>
+<li><a href="http://my.oschina.net/zantesu" target="_blank"><img src="&quot;Gmail.com&quot;" alt="Gmail.com"></a> 20楼：<strong>zantesu</strong>发表于 2011-07-28 15:10 <a href="">回复此评论</a></li>
+</ul>
+<h3 id="-sudyx-">引用来自“SudyX”的评论</h3>
+<h3 id="-zantesu-">引用来自“zantesu”的评论</h3>
+<p>我觉得Java的几个无法忍受的缺陷
+不是纯面向对象的
+不支持泛型
+不支持属性
+不支持匿名方法
+不支持方法对象传递
+不支持yield机制
+不支持lambda表达式
+不支持类型推断</p>
+<h2 id="-checked-exception">还有就是上面提到的Checked Exception</h2>
+<p>为什么Java的lambda表达式迟迟不能实装,估计就是因为Checked Exception的缘故
+为什么总是有人说建议学习Python/Ruby,就是相比落后的Java,Python/Ruby的编程思维,生产力能得到极大的解放
+没用过就别发言...</p>
+<p>敢问你来解释解释?还是就只有你用过Java么?</p>
+<ul>
+<li><a href="http://www.oschina.net/news/20119/?p=1" target="_blank">1</a></li>
+<li><a href="http://www.oschina.net/news/20119/?p=2#comments" target="_blank">2</a></li>
+<li><a href="http://www.oschina.net/news/20119/?p=3#comments" target="_blank">3</a></li>
+<li><a href="http://www.oschina.net/news/20119/?p=4#comments" target="_blank">4</a></li>
+<li><a href="http://www.oschina.net/news/20119/?p=5#comments" target="_blank">5</a></li>
+<li><a href="http://www.oschina.net/news/20119/?p=2#comments" target="_blank">&gt;</a>
+<a href=""></a>                            </li>
+</ul>
+<pre><code> [](http://www.51idc.com/activit/sale_hulan.html &quot;租服务器，就上51IDC&quot;)       
+</code></pre><p>网名： (必填) 邮箱： (必填，不公开) 网址：
+文明上网，理性发言</p>
+<p><a href=""></a> <a href=""></a><a href=""></a>
+<img src="" alt=""></p>
 
       
     </div>
@@ -1364,149 +1343,7 @@ PSS：我把自己的理解写完了，但也木有搞清楚PS收集器eden的�
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--eden区没有发生minorgc，对象直接分配在了oldgen/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--eden区没有发生minorgc，对象直接分配在了oldgen" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java虚拟机技术总结07年写的-原JavaEye精华帖/">Java虚拟机技术总结(07年写的</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java虚拟机技术总结07年写的-原JavaEye精华帖/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-07-javaeye-">Java虚拟机技术总结(07年写的,原JavaEye精华帖)</h1>
-<p>原文：IBM WebSphere Application Server 诊断和调优（一））
-大家可以google：“IBM WebSphere Application Server 诊断和调优”。
-近段时间，我们项目中用到的WebSphere应用服务器(WAS)，但在客户的production环境下极不稳定，经常宕机。给客户造成非常不好的影响，同时，也给项目组很大压力。为此，我们花了近一个月时间对其诊断，现在基本上稳定了，需要继续观察一段时间。现在我主要将工作做一个阶段性的总结。
-我们的产品环境是：WAS6.0＋DB2 8.1＋AIX5.3＋RS/6000。在该产品环境下，出现的问题非常多，现象如下：
-WAS经常不稳定、宕机几乎一天一次，经常报告OutOfMemory(内存泄漏吗？NO)。
-DB2连接数过大，有时把DB2撑死，有时也把AIX撑死。
-AIX虚拟内存报错、分页报错、IO也报错、还有很多其它莫名奇妙的错。
-总是，每次问题发生的现象和理论上的总是不一致，导致我们不知道从何入手，也无从检测自己的优化参数。咨询过多次IBM技术支持，只解决了某些局部问题。
-虽然问题依然存在，但我想，解决问题的思路、特别是理论基础，还是有一些规律和原则。
-对于WAS这块，我近段时间的主要时间集中在以下几个方面(时间顺序)：
-1、Java性能监测工具：Jprofiler，也用到Jprobe。后来发现Jprofiler在AIX下几乎不可用。
-2、IBM Java虚拟机和WAS技术细节，特别是IBM JVM的GC原理，我发现它和sun、bea的差别很大。
-3、IBM的heap分析器Heap Analyzer、GCCollector。这两个事后监测工具非常实用，特别是我们的产品运行环境，非测试环境。
-4、某些Application的怀疑和诊断。
-5、AIX诊断，我几乎没有这个能力，只能常规监测一下，需另请高人。
-我打算将本文分成以下几个部分总结：
-JVM原理、IBM JVM的GC策略和调优
-Jprofiler和IBM工具的实际体会
-WAS的诊断体会和AIX调优
-下面开始主题吧，可能比较零碎，另外，开始的理论篇基本上看书都可以，我只是总结一下，再添加一些自己的理解。
-以下是我参考的最重要的两本电子书和一些网站：
-《Inside Java Vrtual Machine》:半部分有约四章我认为非常棒，其它章节可能意义不大。
-《The Java Virtual Machine Specification, 2nd》：前半部分有两三章很不错，不过可以对照上一本书看。
-sun的hotspot虚拟机技术：[url]<a href="http://java.sun.com/javase/technologies/hotspot/" target="_blank">http://java.sun.com/javase/technologies/hotspot/</a> [/url]
-BEA的JRockit虚拟机技术：[url]<a href="http://edocs.bea.com/jrockit/geninfo/genintro/index.html" target="_blank">http://edocs.bea.com/jrockit/geninfo/genintro/index.html</a> [/url]JVM技术文档入口，虚拟机理论，内存泄漏诊断等的索引页。
-IBM诊断资料：<a href="http://www-128.ibm.com/developerworks/java/jdk/diagnosis/" target="_blank">http://www-128.ibm.com/developerworks/java/jdk/diagnosis/</a> 上面有一个500多页的pdf文档，对IBM JVM技术和诊断讲解很深入。
-我不得不提的是，在查资料这块，BEA和Sun都有很好的官方文档和论坛支持，并且官方文档导航非常好。虽然IBM的诊断资料也不少，但需要搜索，其搜索是很痛苦的。而且，IBM官方论坛很差。如果用IBM的产品出问题，切记：找IBM技术支持，千万不要蒙着头搞！反正它们的产品很少免费。说实话，它们的技术支持还是挺负责的，一般会为你推荐很多support资料，而该资料往往都在developerworks网站上，属于support那个频道，但你就是搜不着。
-<strong>Java虚拟机规范概要</strong>
-研究Java虚拟机，首先要了解Sun的Java虚拟机规范。现在，该实现版本很多，如比较有名的Sun、IBM、BEA、Apple、HP、MS、Apache Harmony。它们都实现了JVM规范，但有各自扩展。譬如，针对IBM虚拟机的堆碎片导致OutOfMemory（OOM），在Sun的虚拟机上就不会发生。Sun的JVM有maxPermSize的概念，IBM就没有，如果你设置这个参数，虚拟机根本就启动不了。
-比较有意思的是，学Java，就一定要了解各种规范，这和MS的风格很不一样。Sun总是在定义一些规范，实现都留给各厂商。我们除了理解规范本身外，一定要理解规范和实现之间的关系，譬如JDBC规范和JDBC驱动的关系，它们是怎么组合到一起的。要是你用过php的xml解析库，或db函数，就会体会深刻，它们可没有什么规范可言，所以每个数据库厂商的db函数用法都不一样。我推荐大家研读一下HSQLDB的jdbc和Tomcat的servlet相关实现，因为我认为它们还是比较好懂的。
-JVM规范只是定义一个虚拟机该做什么，但它并没有要求你该怎么做。例如我们最常见的Servlet规范，在该规范中，有HttpServletRequest、HttpServletResponse，HttpSession等接口，但它们的实现都留给了各个容器厂商。遗憾的是，规范留下的空白，会把我们这些开发人员给整惨了：容器间移植有时候就是恶梦。譬如J2EE并没有SSO规范，但它很重要，我以前专门针对它做过WebSphere AppServer和Weblogic AppServer的SSO项目，差别还是不小，不过还是有点共通，那就是都遵循JAAS规范。
-<strong>JVM的结构</strong>
-从功能上分，Java虚拟机主要由六个部分组成，可以分成三类：
-第一类：JVM API：就是我们最常用的Java API，它是开发人员和Java交互的入口，它主要是JAVA_HOME/jre/lib下的运行时类库rt.jar和编译相关的tools.jar
-第二类：JVM内部组件
-类装载器(ClassLoader)：将Byte Array的 .class文件装载、链接和初始化。
-内存管理(Memory Managent)：为对象分配内存，以及释放内存。后者就是垃圾回收Garbage Collector（GC）。由于JVM最复杂的、最影响性能的就是GC，所以内存管理一般就指垃圾回收。
-诊断接口(Diagostics Interface)：这主要体现在JVMTI(jdk1.4下的JVMPI和JVMDI)，它主要用来诊断程序的问题和性能，一般提供给工具厂商实现。如eclispe IDE下的debug功能，Jprofiler性能调优工具。
-类解释器(Interpreter)：解释装载进虚拟机的class对象，包括JIT等特性相关。
-第三类：平台相关接口(Platform Interface)：主要为了跨操作系统平台重用JVM代码，不过，它和我们开发人员关系不大。
-在以上六个组件中，我们开发人员最关心的是ClassLoader和GC，用Java做系统框架、容器和它们密切相关。做业务系统时一些基础代码也和它们打交道，譬如最常用的Class.forName(),Thread.currentThread.getContextClassLoader()。我们仔细想想，为什么是上面两个问题？因为，它和我们class的整个生命周期最为相关：怎么将一个class和相关class加载进来，class实例什么时候创建，什么时候被销毁？
-所以，下面的部分我们要专门讨论这些问题。
-<strong>ClassLoader</strong>
-JVM主要有三类ClassLoader：Bootstrap、Extention、Application，该三类ClassLoader从上到下是分级(hierarchy)结构，遵循代理模型(Delegation Model)。
-Tip：大家可以看看sun.misc.Launcher的源码，Bootstrap和Extention就在该文件里。该src可以在sun的网站上下载该压缩包，约60M(jdk-1_5_0-src-scsl.zip)，它不在jdk自带的那个src.zip里。
-Bootstrap ClassLoader：也称为primordial(root) class loader。主要是负责装载jre/lib下的jar文件，当然，你也可以通过-Xbootclasspath参数定义。该ClassLoader不能被Java代码实例化，因为它是JVM本身的一部分。
-Extention ClassLoader：该ClassLoader是Bootstrap classLoader的子class loader。它主要负责加载jre/lib/ext/下的所有jar文件。只要jar包放置这个位置，就会被虚拟机加载。一个常见的、类似的问题是，你将mysql的低版本驱动不小心放置在这儿，但你的Web应用程序的lib下有一个新的jdbc驱动，但怎么都报错，譬如不支持JDBC2.0的DataSource，这时你就要当心你的新jdbc可能并没有被加载。这就是ClassLoader的delegate现象。常见的有log4j、common-log、dbcp会出现问题，因为它们很容易被人塞到这个ext目录，或是Tomcat下的common/lib目录。
-Application ClassLoader：也称为System ClassLoaer。它负责加载CLASSPATH环境变量下的classes。缺省情况下，它是用户创建的任何ClassLoader的父ClassLoader，我们创建的standalone应用的main class缺省情况下也是由它加载(通过Thread.currentThread().getContextClassLoader()查看)。
-我们实际开发中，用ClassLoader更多时候是用其加载classpath下的资源，特别是配置文件，如ClassLoader.getResource()，比FileInputStream直接。
-ClassLoader是一种分级(hierarchy)的代理(delegation)模型。
-Delegation：其实是Parent Delegation，当需要加载一个class时，当前线程的ClassLoader首先会将请求代理到其父classLoader，递归向上，如果该class已经被父classLoader加载，那么直接拿来用，譬如典型的ArrayList，它最终由Bootstrap ClassLoader加载。并且，每个ClassLoader只有一个父ClassLoader。
-Class查找的位置和顺序依次是：Cache、parent、self。
-Hierarchy：上面的delegation已经暗示了一种分级结构，同时它也说明：一个ClassLoader只能看到被它自己加载的classes，或是看到其父(parent) ClassLoader或祖先(ancestor) ClassLoader加载的Classes。
-在一个单虚拟机环境下，标识一个类有两个因素：class的全路径名、该类的ClassLoader。
-我碰到的一个典型的例子是：在做WAS的SSO开发时，由于我们的类是由WAS在启动时加载，该ClassLoader比下面的部署的Applicaton的ClassLoader的级别高。所以，在我们自己的类中没法用到应用程序的连接池，必须自建。
-代理模型是Java安全模型的保证。譬如，我们自己写一个String.java，并且编译、package到自己的java.lang包下。按照代理模型，当前线程的ClassLoader会将其代理到父ClassLoader，父ClassLoader(最终会是Bootstrap)会找到rt.jar下的String.class，也就是说我们的String.class不会捣乱。
-<strong>自定义ClassLoader</strong>
-我们前面说过，自定义ClassLoader的缺省父ClassLoader是Application ClassLoader。一般的应用开发用不到它，但我们最好理解。因为在内存泄漏查找、应用程序部署出问题时，很多都和它有关。
-譬如，内存泄漏是怎么产生的？这就涉及到ClassLoader和Class的生命周期。我曾经碰到这样一个问题：我们的程序用到了Webwork和Spring框架，当部署到Tomcat下时没有任何问题，但部署到WAS下，报告找不到Webwork的xml的DTD文件，而且Spring的日志也总是失效。Why？因为解析xml dtd时，用的是IBM的Xerces，不是我们的。而Spring日志问题是因为应用程序用的是WAS的Common-log.jar，而不是我们的。将应用的ClassLoader从默认的Parent-First，改成Parent-Last就可以解决，不过我们项目中用到其它库，又发生了其它问题。
-<strong>一般来说，用到自定义ClassLoader有三种情况：</strong>
-1、应用框架可以自己控制Classes的目录，并且自动部署。
-我读过Jive公司的Wildfire(著名的即时通讯服务器)，它自己有一套应用框架，非常灵活，遵循该框架插件规范的的第三方的plug-in放置在指定目录可以自动部署，实现某些扩展功能，如文件传输、语音聊天。
-2、区分用户代码
-这被广泛应用在Servlet容器和类似容器，譬如EJB Container设计中，大家看到Tomcat下有common、server、share三个目录吧(ClassLoader顺序从左到有)，另外也有用户应用的WEB-INF目录，它是我们自己开发的。
-3、允许Classes卸载
-如果没有自定义的ClassLoader，那么我们自己应用中的classes永远都不能被卸载，因为这些类被Application ClassLoader加载后cache起来了，我们的classes一直对该ClassLoader有引用，而该系统级的ClassLoader永远都不会被卸载，除非JVM shutdown了。JSP和Servlet的动态部署就用到这个特性。
-待续…….
-Note: 还有JVM运行时(Runtime)架构，ClassLoader加载class过程没有总结，这两部分我觉得太重要了，但内容太多，写不完啊。
-这部分内容，《Inside Java Virtual Machine》讲解非常清楚，BEA的官方网站这部分也非常不错，要理解深刻，我建议结合JProfiler工具，非常直观。
-待续…….
-该文仅存的一点回复：
-[zwchen]
-<strong>为什么都说WAS难用？</strong>
-<strong>安装过程</strong>
-1、先安装WAS，然后创建三种不同类型的profiles(manager,default,custom)，譬如缺省的profiles吧，在创建这个profiles过程中，需要启动至少10个端口，要是那10个默认端口有些被你的系统占用了，麻烦就来了。改端口不就ok了吗？但你知道怎么改吗？可能你觉得没有必要10个端口，但WAS就是需要这么多：控制台端口两个(http，https),引导端口2089，soap、ORB，单元 cell发现….  总之，你都不知道你为什么要关心这么多端口。WLS够绝了：一个smart端口 7001全部搞定，在上走各种协议。
-2、系统为你生成的上百个bat命令文件，里面交叉引用的path都是绝对路径，所以，往往你的机器重装了，那么WAS也重装吧。WLS和JBoss可以将整个文件夹移动，WAS不行，如果你喜欢折腾，当然也可以做到，就看值不值了。
-控制台的部署过程
-1、它总是以为我们的应用前台是httpd Server分发，于是让我们选择虚拟主机。其实，我们不是CMS系统，我们的Web前端就是WAS的web容器。
-2、它总是以为我们的应用包含EJB，或是要发布成Web Services，于是让我们选择进退两难。其实，我们只是简单的Web应用。
-3、它总是以为我们的应用要部署分散在多个WAS上，或者在cluster里，所以会强制要求我们选择发布目标位置。其实，我们只是用单Server。
-4、它以为我们发布的应用是EAR企业包，而WAR包只是一个Web前端展示模块，所以它总是在xml配置里面写一堆。其实，我们很想手动修改配置文件。
-我刚才特别部署了一个简单的web应用，就是Struts的sample，写入了29个xml配置文件。设想，保存部署文件是一个事务性的过程，如果你在大连，服务器在北京，速度超级慢，这个写入文件过程失败，呵呵，你就下地狱吧，我们碰到个几次，有一次就被迫服务器profiles重建。
-虽然上面很多步骤我省略了，对于我特别说到的，虽然有默认，但每个默认页有上10个选项，而你并不是很明白这些选择的确切含义，它们是否相互冲突。
-我建议WAS的设计师：请留下尽量少的发布步骤，需要定制，可以部署后修改，学学WLS吧：考虑普通开发人员的感受。
-<strong>开发过程</strong>
-用WAS，最好有其配套的开发工具，eclipse那个WAS插件，我试过不太好用。用RAD吧，要lisence。RAD也是个超级大户，官方推荐内存是最低768M，WAS官方推荐大概是1000M，我的1G机器也可以跑，就是慢了点。
-大家如果用WAS的EJB容器，并且你想做standalone的ejb客户端，那么，千万不要选择IBM之外的JVM，我固执地试过，最后用sun的JVM成功了，但需要一堆IBM WAS下的jar，而且必须走IIOP协议，我可以说，初次使用99%的尝试是失败的。而且，此时的开发工具一定要选择IBM的 RAD或WSAD。建议，学习EJB这类分布式开发阶段，用WLS或JBoss吧，因为它们的EJB standalone客户端都支持smart stub。譬如，对于JBoss，它会通过socket先将客户端stub下载到本地，你察觉不到这个过程。大概WLS是通过反射生成stub。而WAS 必须部署过程编译一堆stub，需要引用一堆jar，sun的ejb部署大概也这样。之所以sun的简单点，那是因为你的ejb客户端jar往往自动被它加入了classpath，或者客户端是在AppServer里。
-如果你要开发基于WAS的Web Services，并且用WAS内置的Web Services引擎，那么你一定要用它自己的开发工具发布和部署，我虽然成功了，只是因为太固执，付出的代价太大。
-<strong>问题诊断</strong>
-用WAS出问题比不出问题正常。出问题咋办？这个我暂时不说了，留给我的后文吧，总之一句话：问题独一无二。
-我本人并不是说WAS做得烂，我只是想说明一点，它的使用，对我们的理论技术水平要求太高，特别不适合初学者。
-———————————————————-
-抛出异常的爱 写道
-用的是5.只有一本。。。中文的。。
-6有没有中文的红宝书？
-[zwchen]像是现在还没有，我建议看它的原著吧，非常易懂，图特多，一天看200多页应该不困难。学习WAS，往往一本红皮书是不够的。市面上介绍WAS的书，大概极少有超越红皮书的。
-——————————————————–
-[zwchen]惭愧啊，我确实算不上高手，真正的高手在北京的IBM中国技术支持中心。我和那边的人电话和邮件聊过好多次，那才是一个字：高！
-了解WAS，我随便总结一下吧：
-引用</p>
-<p>前提：你是项目组专门负责WAS上开发、部署、调优的，并且有与WAS抗争的决心。
-1、学习WAS宝典丛书：WAS相关红皮书，前面我介绍过几本。并且多研究研究WAS的目录结构。
-2、一本非红皮书，IBM内部的技术支持汇总，主要是关于诊断，但它最难吃透但最受用：《IBM® Developer Kit and Runtime Environment, Java™ 2 Technology Edition, Version 6.0  Diagnostics Guide》，500多页。
-3、一定要有JVM相关技术积累：ClassLoader、GC策略，而且一定要注意它们与Sun的JVM的区别，往往WAS的问题发生在这个上面。如Sun的JVM一般建议heap的最大最小值一样，但IBM的JVM你要是这么做会导致严重的碎片问题。Why？默认的GC策略不同。
-4、用JProfiler这类工具深入到WAS内部。
-5、最好对JavaEE相关技术的原理有较深入的了解，譬如EJB的原理、Servlet的原理。而且，最好是这些技术怎么实现的，譬如读读Tomcat的源码,我强烈建议大家读一下这篇文章：<a href="http://www.onjava.com/pub/a/onjava/2003/05/14" target="_blank">http://www.onjava.com/pub/a/onjava/2003/05/14</a> /java_webserver.html。
-整体体会，WAS的功底是在WAS之外，它只是对JVM、JavaEE规范的一个实现罢了。
-另外也建议：不要花太多的时间的在WAS上，我认为非常不值。想研究，还不如去看JBoss，WLS。WAS这东西，知道一般的用法就够了，而且你永远都不可能明白它为什么有那么多的bug和不合理，明白了又能咋样？你的时间都白白浪费了。</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java虚拟机技术总结07年写的-原JavaEye精华帖/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--Java虚拟机技术总结07年写的-原JavaEye精华帖" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--Java7的新特性一览表/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--Java7的新特性一览表" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1586,7 +1423,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:47:11</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 20:45:44</em></span></div>
 </div>
 <div class="clearfix"></div>
 

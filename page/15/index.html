@@ -110,6 +110,149 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/">HAProxy的独门武器：ebtree</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="haproxy-ebtree">HAProxy的独门武器：ebtree</h1>
+<h1 id="1-haproxy-ebtree-">1. HAProxy和ebtree简介</h1>
+<p>HAProxy是法国人Willy Tarreau个人开发的一个开源软件，目标是应对客户端10000以上的同时连接，为后端应用服务器、数据库服务器提供高性能的负载均衡服务。
+在底层数据结构方面，旧版本HAProxy曾经使用过红黑树，用于任务调度、负载均衡等方面。但是Willy Tarreau认为，在事件响应非常频繁的情况下，任务插入、删除的频率非常高，这时候使用红黑树存在性能瓶颈，尤其不能接受红黑树删除节点的时间复杂度为O(log n)。因此，他发明了一种新的数据结构，叫做<strong>弹性二叉树（elastic binary tree）</strong>，简称ebtree。
+目前新版本的HAProxy（本文编写时最新版本为1.4.23）已使用ebtree，而除了HAProxy之外，还没有其它著名的开源软件使用ebtree。可以这么说，HAProxy最有特色的地方就是ebtree，ebtree名符其实是HAProxy的独门武器。
+ebtree是不平衡的二叉搜索树（BST），而红黑树、AVL树等都是平衡的BST。传统的BST最怕的就是退化成线性搜索，因此，红黑树等BST插入、删除时都需要对树进行平衡化，而平衡化是一个从叶子节点开始，向根节点方向递归向上的过程，时间复杂度是O(log n)。
+有鉴于此，ebtree为了实现删除节点时O(1)的时间复杂度，必然放弃保持树的平衡，为了拒绝由此而来的副作用——退化成线性搜索（或者更准确地说，退化成不受限制的线性搜索），不可避免地引入了一些新的成员和新的思路，且待我慢慢道来。</p>
+<h1 id="2-ebtree-">2. ebtree节点的组成</h1>
+<p>一个ebtree的节点（以下简称ebnode）分为node部分和leaf部分（Willy Tarreau是这样描述的，但我觉得称为树干部分和叶子部分更合适一些，以下就按我的理解来叙述）。<strong>树干</strong>负责关联其它ebnode，由父指针（node_p）和分支（Willy Tarreau称之为root，包括左分支L和右分支R），以及一个控制树的高度的特殊成员（bit）组成，<strong>叶子</strong>负责携带数据（data，一般是数据的键值，所以下文都称为key），另外包含一个指向上层的指针（leaf_p）。
+一棵ebtree只有一个根节点（root），包含两个左右分支的指针（L、R）。所有的ebnode总是挂在根节点的左分支下面，根节点的右分支总是为空。在ebtree的遍历过程中，判断当前节点是否根节点就是判断其右指针是否为空。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/Ebnode.png" target="_blank"><img src="" alt="Ebnode"></a></p>
+<p>-</p>
+<h1 id="3-">3. 各个指针的附加属性</h1>
+<p>在32位平台中，一个指针占用4个字节，例如，地址值0xaabbcc00的下一个地址值是0xaabbcc04，再下一个是0xaabbcc08，也就是说，指针的值的最后两个比特不能表示一个合法地址。因此，Willy Tarreau充分利用这一点，来保存上述几个指针的特殊属性。这是一个很重要的优化，每个ebnode可以节省几个成员，整个ebtree就节省大量存储空间。
+1）L和R既可以指向其它ebnode的树干，也可以指向其它ebnode的叶子，还可以指向自己的叶子。在ebtree的遍历过程中，对树干和叶子有不同的处理逻辑，L和R有必要知道自己所指向的是树干还是叶子。
+2）可以知道node_p和leaf_p究竟挂在其它ebnode的左分支下面，还是挂在其右分支下面。
+3）根节点右分支不挂任何树干和叶子，可以把它也利用上，指示该ebtree是否允许重复键值。
+熟悉红黑树的读者都知道，红黑树也有同样的优化方法，表示红黑树节点颜色的属性并不占用内存空间。</p>
+<h1 id="4-bit-">4. bit的定义</h1>
+<p>引入bit就是为了<strong>限制树的高度</strong>，避免极端不平衡。在一棵不允许重复键值的ebtree中，key是32位的情况下，bit的取值范围是从0到31，此时，它的定义是：<strong>子树所有的键中，第一个不同的二进制位的位置</strong>。允许重复键值的ebtree稍后再详细介绍。
+例如，下图的右下角子树中只有两个键，左边叶子节点的键值为300，右边叶子节点的键值为400，300的二进制是100101100，400的二进制是110010000，从右边数起第7位起（注意，程序员都是从0开始数数的），300和400左边的位都相同，所以，bit等于7。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/bit.png" target="_blank"><img src="" alt="bit"></a></p>
+<p>这时候，读者可能会问，这样定义bit为什么能够限制树的高度呢？不用着急，马上隆重介绍bit的两个重要意义！</p>
+<h1 id="5-bit-">5. bit的第一个重要意义</h1>
+<p>这里只讨论键值大于等于零的情况，事实上，ebtree可以支持键值为负数，不过，我还没有仔细研究过这种情况，应该是对符号位进行某些转换处理。
+bit的第一个重要意义：<strong>同一个ebnode中的bit和key，联合决定该ebnode属下的子树内，所有key的取值范围</strong>。
+先看下图挂在根节点下面，key = 300的那个ebnode，bit = 8，300的二进制为100101100，从右边数起第8位是最高位那个1，参考bit的定义，也就是说，该子树所有的键，第8位左边都是0，所以，它们的取值范围是从0到511（二进制111111111）。
+再看最下面那个ebnode，bit = 5，250的二进制为11111010，从右边数起第5位是第三个1，再对照bit的定义，该子树的键，第5位左边都是11，所以，它们的取值范围是从192（二进制11000000）到255（二进制11111111）。
+同理，最右边那个ebnode，bit = 7，key = 400，取值范围是256-511。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/bit1.png" target="_blank"><img src="" alt="bit1"></a></p>
+<h1 id="6-bit-">6. bit的第二个重要意义和查找过程</h1>
+<p>bit的第二个重要意义：<strong>如果要查找的数据x在该子树的取值范围内，bit可以指示其可能会在左分支下面还是右分支下面</strong>。
+ebtree的具体查找过程是，遍历到某个ebnode时，如果key = x，返回查找结果；如果x已经超出bit规定的取值范围，返回查找失败；否则，取x的第bit位，如果bit = 0，那么从该ebnode的左分支查找，反之，从右分支查找；如果已到达叶子还是没有匹配，返回查找失败。
+还是上一节那个图，假如要找的键x = 249，二进制为11111001，从根节点左分支开始查找，bit = 8，右边数起第8位为0，于是从它的左分支继续查找，bit = 5，249右边数起第5位为1，于是从它的右分支继续查找，此时已到达叶子，且250 != 249，本次查找失败。
+假如要找的键x = 300，因为就在查找路径的节点上，直接返回结果。
+假如要找的键x = 600，已经超出该子树中bit规定的取值范围，返回查找失败。</p>
+<h1 id="7-">7. 插入不可重复的键值</h1>
+<p>首先，要介绍的是空树的情况。由前面的叙述可以得知，一棵ebtree为空树当且仅当它的根节点的左分支为空。所以，此时插入的ebnode就直接挂在根节点的左分支下面，由于新插入的ebnode不存在左右分支，也没有父节点（上层ebnode），显然也不需要bit来控制树的高度，因此，该ebnode的树干都没有使用。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert0.png" target="_blank"><img src="" alt="insert0"></a></p>
+<p>其次，介绍ebtree只有一个ebnode时，再插入一个ebnode的情况。此时，新的ebnode必定插入在根节点与旧的ebnode之间，如果新的键值大于原来的键值，旧的ebnode挂在新的ebnode的左分支下面，新的ebnode的叶子挂在自己的右分支下面，再计算bit；反之，则左右相反，再计算bit。
+下图的例子，是已有key = 200，再插入key = 300的情形。读者可以根据上面的描述画出已有key = 200，再插入key = 100的情形。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert1.png" target="_blank"><img src="" alt="insert1"></a></p>
+<p>然后，就可以介绍在ebtree中插入新的ebnode的<strong>五种基本情形</strong>。在这里，都以上图为初始状态。任何具有更多ebnode的情形，都可以通过对ebtree的遍历，递推到其中一种情形。</p>
+<p>1) <strong>新的键值可以插入子树中，而且小于子树中的最小键值。</strong></p>
+<p>假如新插入ebnode的key为100，根据bit的第二个重要意义，100应该在该子树的左分支下面，而且，100小于200，于是，该ebnode插入在原图的左分支上，自己的左分支指向自己的叶子，自己的右分支指向原来子树的左分支。如下图所示。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_1.png" target="_blank"><img src="" alt="insert2_1"></a></p>
+<p>键值范围[0, 200)都属于这种情形。</p>
+<p>2) <strong>新的键值可以插入子树中，该键值在确定要插入的两个ebnode的键值之间，且应该在该子树的左分支下面。</strong></p>
+<p>假如新插入ebnode的key为225，根据bit的第二个重要意义，225应该在该子树的左分支下面，而且，225大于200，于是，该ebnode插入在原图的左分支上，自己的左分支指向原来子树的左分支，自己的右分支指向自己的叶子。如下图所示。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_2.png" target="_blank"><img src="" alt="insert2_2"></a></p>
+<p>键值范围(200, 255]都属于这种情形。</p>
+<p>3) <strong>新的键值可以插入子树中，该键值在确定要插入的两个ebnode的键值之间，且应该在该子树的右分支下面。</strong></p>
+<p>假如新插入ebnode的key为275，根据bit的第二个重要意义，275应该在该子树的右分支下面，而且，275小于300，于是，该ebnode插入在原图的右分支上，自己的左分支指向自己的叶子，自己的右分支指向原来子树的右分支。如下图所示。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_3.png" target="_blank"><img src="" alt="insert2_3"></a></p>
+<p>键值范围(255, 300)都属于这种情形。</p>
+<p>4) <strong>新的键值可以插入子树中，而且大于子树中的最大键值。</strong></p>
+<p>假如新插入ebnode的key为400，根据bit的第二个重要意义，400应该在该子树的右分支下面，而且，400大于300，于是，该ebnode插入在原图的右分支上，自己的左分支指向原来子树的右分支，自己的右分支指向自己的叶子。如下图所示。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_4.png" target="_blank"><img src="" alt="insert2_4"></a></p>
+<p>键值范围(300, 511]都属于这种情形。</p>
+<p>5) <strong>新的键值不可以插入子树中。</strong></p>
+<p>假如新插入ebnode的key为600，根据bit的第一个重要意义，600不可插入到子树中，于是，该ebnode插入在原图的子树之上，自己的左分支指向原来的子树，自己的右分支指向自己的叶子。如下图所示。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_5.png" target="_blank"><img src="" alt="insert2_5"></a></p>
+<p>键值范围(511, +∞)都属于这种情形。</p>
+<h1 id="8-bit-">8. bit的第三个重要意义和插入重复的键值</h1>
+<p>ebtree是专门为任务调度而生的，同样的优先级，必须保证能够按照任务触发的次序来进行访问。所以，ebtree支持存储重复的键值，这一点并不是所有的BST都支持，可以说是ebtree的优点。而且，解决键值冲突不会退化成链表。
+bit的第三个重要意义：<strong>bit为负值表示该子树下所有的键都是重复的，而且，该值表示重复子树的层次</strong>。当然，必须要在根节点右指针允许的情况下。
+插入第一个重复键值，例如300（ebnode底纹为点点），可以参考上一节的第二种和第四种基本情形，不同的是，bit为-1。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup1.png" target="_blank"><img src="" alt="insert_dup1"></a></p>
+<p>如果再插入一个重复键值300（ebnode底纹为方格），应该在重复键值子树上插入，而且是向上生长。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup2.png" target="_blank"><img src="" alt="insert_dup2"></a></p>
+<p>上图已经有四个ebnode，信息量较大，为了后续叙述方便，把它简化，去掉几个指针域，保留bit和key，得到下图。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup2s.png" target="_blank"><img src="" alt="insert_dup2s"></a></p>
+<p>再插入一个300（ebnode底纹为斜方格），得到下面的ebtree。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup3s.png" target="_blank"><img src="" alt="insert_dup3s"></a></p>
+<p>再插入两个300（ebnode底纹分别为左斜线和右斜线），得到下面的ebtree。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup5s.png" target="_blank"><img src="" alt="insert_dup5s"></a></p>
+<p>读者可以思考一下，如果再来一个、两个、三个300，应该在哪里插入？如果插入不同于300的其它键值，应该在哪里插入？
+从上面几张图，大家可以看到，一个ebnode的树干和叶子会随着树的增长而拉长到不同的层次上，好像很有弹性的样子，这就是弹性二叉树名字的由来。</p>
+<h1 id="9-">9. 删除节点</h1>
+<p>删除一个ebnode，概括起来比较简单，就是把要删除的叶子和该叶子的父亲（树干部分）删除，然后把兄弟挂到祖父下面。因为不需要对树进行平衡化，不需要访问其它ebnode，效率很高。
+具体操作，分为两种情况：
+1）被删除的叶子直连自己的树干，可直接删除该ebnode，然后对它的兄弟重新指派原来的祖父为父亲。
+2）被删除的叶子不是直连自己的树干，以该叶子的父亲（其它ebnode的树干）替换该ebnode的树干，然后删除该ebnode，再把它的兄弟重新指派原来的祖父为父亲。</p>
+<h1 id="10-">10. 总结</h1>
+<p>没有最好的数据结构，只有最合适的数据结构。ebtree有它的优点：
+1）支持存储重复的键值，而且，在此情况下，也不会退化成线性操作。
+2）删除节点时，不需要对树进行平衡化。
+3）插入键值时，很可能不需要深入到树的叶子，当然，很多BST都这样。
+4）查询键值时，可以预知子树的取值范围，从而可以选择访问还是不访问该子树。
+缺点也很明显：
+1）逻辑比较复杂，熟悉的人不多（希望读者看完本文之后都有茅塞顿开的感觉）。
+2）ebnode占用空间比较多，如果把bit也算一个指针，相当于花了5个指针才携带1个数据。
+3）键值严重依赖于可以进行位运算的数据类型。
+总而言之，ebtree适合有高频率插入、删除操作（例如50万次/秒）的使用场合，不适合查询较多、插入、删除较少的场合，非常不适合用于缓存。</p>
+<h1 id="11-">11. 参考资料</h1>
+<ul>
+<li><a href="http://1wt.eu/articles/ebtree/" target="_blank"><a href="http://1wt.eu/articles/ebtree/">http://1wt.eu/articles/ebtree/</a></a></li>
+<li>Willy Tarreau个人网站对ebtree的介绍，不过存在不少误导的地方</li>
+<li><a href="http://blog.nklike.com/%E5%BC%80%E6%BA%90%E8%BD%AF%E4%BB%B6/ebtree%E4%BB%8B%E7%BB%8D/" target="_blank"><a href="http://blog.nklike.com/开源软件/ebtree介绍/">http://blog.nklike.com/开源软件/ebtree介绍/</a></a></li>
+<li>淘宝空见对上文的翻译，也有不够准确的地方</li>
+<li><a href="http://wenku.it168.com/d_000555847.shtml" target="_blank"><a href="http://wenku.it168.com/d_000555847.shtml">http://wenku.it168.com/d_000555847.shtml</a></a></li>
+<li><p>对ebtree的描述错误比较多</p>
+<h3 id="-">您可能感兴趣的文章</h3>
+</li>
+<li><p><a href="http://tech.uc.cn/?p=696" target="_blank">使用搜索技术实现URL智能匹配</a></p>
+</li>
+<li><a href="http://tech.uc.cn/?p=1738" target="_blank">HAProxy几个重要的结构体</a></li>
+<li><a href="http://tech.uc.cn/?p=300" target="_blank">Nginx的http配置结构体的组织结构</a></li>
+</ul>
+<p>来源： <a href="[http://tech.uc.cn/?p=1031](http://tech.uc.cn/?p=1031)">[http://tech.uc.cn/?p=1031](http://tech.uc.cn/?p=1031)</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ScoreRank/">ScoreRank</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ScoreRank/">feb. 2 2014</a></time></span>      
@@ -226,67 +369,44 @@ juni[score[i]+1]);
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--SelectionInsertionBubble/">SelectionInsertionBubble</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--QuickSort3/">QuickSort3</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--SelectionInsertionBubble/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--QuickSort3/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="selectioninsertionbubble">SelectionInsertionBubble</h1>
-<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 选择、插入、气泡排序</a></h1>
+        <h1 id="quicksort3">QuickSort3</h1>
+<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 快速排序法（三）</a></h1>
 <h2 id="-">说明</h2>
-<p>选择排序（Selection sort）、插入排序（Insertion sort）与气泡排序（Bubble sort）这三个排序方式是初学排序所必须知道的三个基本排序方式，它们由于速度不快而不实用（平均与最快的时间复杂度都是O(n2)），然而它们排序的方式确是值得观察与探讨的。</p>
+<p>之前说过轴的选择是快速排序法的效率关键之一，在这边的快速排序法的轴选择方式更加快了快速排序法的效率，它是来自演算法名书 Introduction to Algorithms 之中。</p>
 <h2 id="-">解法</h2>
-<ul>
-<li>选择排序
-将要排序的对象分作两部份，一个是已排序的，一个是未排序的，从后端未排序部份选择一个最小值，并放入前端已排序部份的最后一个，例如：
-排序前：70 80 31 37 10 1 48 60 33 80</li>
-</ul>
-<ol>
-<li>[1] 80 31 37 10 70 48 60 33 80 选出最小值1</li>
-<li>[1 10] 31 37 80 70 48 60 33 80 选出最小值10</li>
-<li>[1 10 31] 37 80 70 48 60 33 80 选出最小值31</li>
-<li>[1 10 31 33] 80 70 48 60 37 80 ......</li>
-<li>[1 10 31 33 37] 70 48 60 80 80 ......</li>
-<li>[1 10 31 33 37 48] 70 60 80 80 ......</li>
-<li>[1 10 31 33 37 48 60] 70 80 80 ......</li>
-<li>[1 10 31 33 37 48 60 70] 80 80 ......</li>
-<li>[1 10 31 33 37 48 60 70 80] 80 ......</li>
-</ol>
-<ul>
-<li>插入排序
-像是玩朴克一样，我们将牌分作两堆，每次从后面一堆的牌抽出最前端的牌，然后插入前面一堆牌的适当位置，例如：
-排序前：92 77 67 8 6 84 55 85 43 67</li>
-</ul>
-<ol>
-<li>[77 92] 67 8 6 84 55 85 43 67 将77插入92前</li>
-<li>[67 77 92] 8 6 84 55 85 43 67 将67插入77前</li>
-<li>[8 67 77 92] 6 84 55 85 43 67 将8插入67前</li>
-<li>[6 8 67 77 92] 84 55 85 43 67 将6插入8前</li>
-<li>[6 8 67 77 84 92] 55 85 43 67 将84插入92前</li>
-<li>[6 8 55 67 77 84 92] 85 43 67 将55插入67前</li>
-<li>[6 8 55 67 77 84 85 92] 43 67 ......</li>
-<li>[6 8 43 55 67 77 84 85 92] 67 ......</li>
-<li>[6 8 43 55 67 67 77 84 85 92] ......</li>
-</ol>
-<ul>
-<li>气泡排序法
-顾名思义，就是排序时，最大的元素会如同气泡一样移至右端，其利用比较相邻元素的方法，将大的元素交换至右端，所以大的元素会不断的往右移动，直到适当的位置为止。</li>
-</ul>
-<p>基本的气泡排序法可以利用旗标的方式稍微减少一些比较的时间，当寻访完阵列后都没有发生任何的交换动作，表示排序已经完成，而无需再进行之后的回圈比较与交换动作，例如：
-排序前：95 27 90 49 80 58 6 9 18 50</p>
-<ol>
-<li>27 90 49 80 58 6 9 18 50 [95] 95浮出</li>
-<li>27 49 80 58 6 9 18 50 [90 95] 90浮出</li>
-<li>27 49 58 6 9 18 50 [80 90 95] 80浮出</li>
-<li>27 49 6 9 18 50 [58 80 90 95] ......</li>
-<li>27 6 9 18 49 [50 58 80 90 95] ......</li>
-<li>6 9 18 27 [49 50 58 80 90 95] ......</li>
-<li>6 9 18 [27 49 50 58 80 90 95] 由于接下来不会再发生交换动作，排序提早结束
-在上面的例子当中，还加入了一个观念，就是当进行至i与i+1时没有交换的动作，表示接下来的i+2至n已经排序完毕，这也增进了气泡排序的效率。</li>
-</ol>
+<p>先说明这个快速排序法的概念，它以最右边的值s作比较的标准，将整个数列分为三个部份，一个是小于s的部份，一个是大于s的部份，一个是未处理的部份，如下所示 ：
+<img src="&quot;快速排序&quot;" alt="快速排序">
+在排序的过程中，i 与 j 都会不断的往右进行比较与交换，最后数列会变为以下的状态：
+<img src="&quot;快速排序&quot;" alt="快速排序">
+然后将s的值置于中间，接下来就以相同的步骤会左右两边的数列进行排序的动作，如下所示：
+<img src="&quot;快速排序&quot;" alt="快速排序">
+整个演算的过程，直接摘录书中的虚拟码来作说明：
+QUICKSORT(A, p, r)
+if p &lt; r
+then q &lt;- PARTITION(A, p, r)
+QUICKSORT(A, p, q-1)
+QUICKSORT(A, q+1, r)
+end QUICKSORT
+PARTITION(A, p, r)
+x &lt;- A[r]
+i &lt;- p-1
+for j &lt;- p to r-1
+do if A[j] &lt;= x
+then i &lt;- i+1
+exchange A[i]&lt;-&gt;A[j]
+exchange A[i+1]&lt;-&gt;A[r]
+return i+1
+end PARTITION
+一个实际例子的演算如下所示：
+<img src="&quot;快速排序&quot;" alt="快速排序"></p>
 <h2 id="-">实作</h2>
 <ul>
 <li><p>C
@@ -295,119 +415,71 @@ juni[score[i]+1]);
 /#include <time.h>
 /#define MAX 10
 /#define SWAP(x,y) {int t; t = x; x = y; y = t;}
-void selsort(int[]); // 选择排序
-void insort(int[]); // 插入排序
-void bubsort(int[]); // 气泡排序
+int partition(int[], int, int);
+void quicksort(int[], int, int);
 int main(void) {
 int number[MAX] = {0};
-int i;
+int i, num;
 srand(time(NULL));
 printf(&quot;排序前：&quot;);
 for(i = 0; i &lt; MAX; i++) {
 number[i] = rand() % 100;
 printf(&quot;%d &quot;, number[i]);
 }
-printf(&quot;\n请选择排序方式：\n&quot;);
-printf(&quot;(1)选择排序\n(2)插入排序\n(3)气泡排序\n:&quot;);
-scanf(&quot;%d&quot;, &amp;i);
-switch(i) {
-case 1:
-selsort(number); break;
-case 2:
-insort(number); break;
-case 3:
-bubsort(number); break;
-default:
-printf(&quot;选项错误(1..3)\n&quot;);
-}
+quicksort(number, 0, MAX-1);
+printf(&quot;\n排序后：&quot;);
+for(i = 0; i &lt; MAX; i++)
+printf(&quot;%d &quot;, number[i]);
+printf(&quot;\n&quot;);
 return 0;
 }
-void selsort(int number[]) {
-int i, j, k, m;
-for(i = 0; i &lt; MAX-1; i++) {
-m = i;
-for(j = i+1; j &lt; MAX; j++)
-if(number[j] &lt; number[m])
-m = j;
-if( i != m)
-SWAP(number[i], number[m])
-printf(&quot;第 %d 次排序：&quot;, i+1);
-for(k = 0; k &lt; MAX; k++)
-printf(&quot;%d &quot;, number[k]);
-printf(&quot;\n&quot;);
+int partition(int number[], int left, int right) {
+int i, j, s;
+s = number[right];
+i = left - 1;
+for(j = left; j &lt; right; j++) {
+if(number[j] &lt;= s) {
+i++;
+SWAP(number[i], number[j]);
 }
 }
-void insort(int number[]) {
-int i, j, k, tmp;
-for(j = 1; j &lt; MAX; j++) {
-tmp = number[j];
-i = j - 1;
-while(tmp &lt; number[i]) {
-number[i+1] = number[i];
-i--;
-if(i == -1)
-break;
+SWAP(number[i+1], number[right]);
+return i+1;
 }
-number[i+1] = tmp;
-printf(&quot;第 %d 次排序：&quot;, j);
-for(k = 0; k &lt; MAX; k++)
-printf(&quot;%d &quot;, number[k]);
-printf(&quot;\n&quot;);
-}
-}
-void bubsort(int number[]) {
-int i, j, k, flag = 1;
-for(i = 0; i &lt; MAX-1 &amp;&amp; flag == 1; i++) {
-flag = 0;
-for(j = 0; j &lt; MAX-i-1; j++) {
-if(number[j+1] &lt; number[j]) {
-SWAP(number[j+1], number[j]);
-flag = 1;
-}
-}
-printf(&quot;第 %d 次排序：&quot;, i+1);
-for(k = 0; k &lt; MAX; k++)
-printf(&quot;%d &quot;, number[k]);
-printf(&quot;\n&quot;);
+void quicksort(int number[], int left, int right) {
+int q;
+if(left &lt; right) {
+q = partition(number, left, right);
+quicksort(number, left, q-1);
+quicksort(number, q+1, right);
 }
 }</p>
 </li>
 <li><p>Java
-public class BasicSort {
-public static void selectionSort(int[] number) {
-for(int i = 0; i &lt; number.length - 1; i++) {
-int m = i;
-for(int j = i + 1; j &lt; number.length; j++)
-if(number[j] &lt; number[m])
-m = j;
-if(i != m)
-swap(number, i, m);
+public class QuickSort {
+public static void sort(int[] number) {
+sort(number, 0, number.length-1);
+}
+private static void sort(int[] number,
+int left, int right) {
+if(left &lt; right) {
+int q = partition(number, left, right);
+sort(number, left, q-1);
+sort(number, q+1, right);
 }
 }
-public static void injectionSort(int[] number) {
-for(int j = 1; j &lt; number.length; j++) {
-int tmp = number[j];
-int i = j - 1;
-while(tmp &lt; number[i]) {
-number[i+1] = number[i];
-i--;
-if(i == -1)
-break;
-}
-number[i+1] = tmp;
+private static int partition(int number[],
+int left, int right) {
+int s = number[right];
+int i = left - 1;
+for(int j = left; j &lt; right; j++) {
+if(number[j] &lt;= s) {
+i++;
+swap(number, i, j);
 }
 }
-public static void bubbleSort(int[] number) {
-boolean flag = true;
-for(int i = 0; i &lt; number.length-1 &amp;&amp; flag; i++) {
-flag = false;
-for(int j = 0; j &lt; number.length-i-1; j++) {
-if(number[j+1] &lt; number[j]) {
-swap(number, j+1, j);
-flag = true;
-}
-}
-}
+swap(number, i+1, right);
+return i+1;
 }
 private static void swap(int[] number, int i, int j) {
 int t;
@@ -427,8 +499,8 @@ number[j] = t;
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:34:50"datetime="2014-03-07 10:34:50"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--SelectionInsertionBubble/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--SelectionInsertionBubble" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:34:22"datetime="2014-03-07 10:34:22"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--QuickSort3/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--QuickSort3" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -443,35 +515,158 @@ number[j] = t;
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">How Does Google Work  Learn How Google Works  Sear</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/">haproxy 解决 多主机session共享问题 的三种方法</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="how-does-google-work-learn-how-google-works-search-engine-adwords">How Does Google Work Learn How Google Works Search Engine + AdWords</h1>
-<ul>
-<li><a href="http://ppcblog.com/blog" target="_blank">Blog</a></li>
-<li><a href="http://ppcblog.com/ppc-assets" target="_blank">Free PPC Assets</a></li>
-<li><a href="http://ppcblog.com/about" target="_blank">About Us</a></li>
-<li><a href="http://ppcblog.com/member-tour-new-users-1" target="_blank">PPC Training Tour</a></li>
-<li><a href="https://ppcblog.com/amember/member.php" target="_blank">Member Login »</a></li>
-</ul>
-<h1 id="-ppc-blog-http-ppcblog-com-"><a href="http://ppcblog.com/" target="_blank">PPC Blog</a></h1>
-<h1 id="learn-how-google-works-in-gory-detail">Learn How Google Works: in Gory Detail</h1>
-<p><a href="http://pinterest.com/pin/create/button/?url=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2F&amp;media=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2Fhow-google-works.jpg&amp;description=How%20Google%20Works" target="_blank">888</a>  <a href="http://twitter.com/share" target="_blank">Tweet</a> 388
-<a href="">inShare</a>  <a href="">digg</a></p>
-<p><img src="" alt="How Google Works."></p>
-<p><a href="http://news.ycombinator.com/item?id=1472981" target="_blank">Vote on Hacker News</a>, or <img src="http://static.delicious.com/img/delicious.small.gif" alt="Delicious"> <a href="http://delicious.com/save" target="_blank">Bookmark this on Delicious</a></p>
-<h2 id="free-add-this-infographic-to-your-website-">FREE: add this infographic to your website!</h2>
-<h3 id="600-pixel-wide-version">600 Pixel Wide Version</h3>
-<p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/600.jpg" border="0" alt="How Google Works." /></a></p><p>Infographic by the <a href="http://ppcblog.com/" target="_blank">Pay Per Click Blog</a></p>
-
-<h3 id="large-version">Large Version</h3>
-<p><p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/how-google-works.jpg" border="0" alt="How Does Google Work?" /></a></p><p>Infographic by <a href="http://ppcblog.com/" target="_blank">PPCBlog</a></p>
-Copyright 2011 - 2013 PPC Training Inc. - All Rights Reserved</p>
+        <h1 id="haproxy-session-">haproxy 解决 多主机session共享问题 的三种方法</h1>
+<p>haproxy 解决 多主机session共享问题 的三种方法</p>
+<p>1 session知识储备
+2 haproxy三种方法保持客户端session一致
+3 实验环境及结构
+4 安装配置及管理
+5 本实验中使用到相同的index.php代码
+6 联系方法及扩展阅读
+感谢 不就是要我命 QQ 47034839 提供测试主机 
+1 session知识储备
+Session是由应用服务器维持的一个服务器端的存储空间，用户在连接服务器时，会由服务器生成一个唯一的SessionID,用该SessionID 为标识符来存取服务器端的Session存储空间。
+而SessionID这一数据则是保存到客户端，用Cookie保存的，用户提交页面时，会将这一 SessionID提交到服务器端，来存取Session数据。
+服务器也通过URL重写的方式来传递SessionID的值，因此不是完全依赖Cookie。如果客户端Cookie禁用，则服务器可以自动通过重写URL的方式来保存Session的值，并且这个过程对程序员透明。
+php.ini 里几个session相关值的 其它的值请参考《PHP与Mysql5程序设计》
+session.use_cookies = 1  /#表示 服务端和客户端交互session是通过cookie的方式 默认值
+session.name = 9ai9     /#默认值是PHPSESSID 我这里改成9ai9是为了和默认值区别
+session.cache_limiter = nocache /#此设置确保对每个请求，在可能提供缓存的版本前，先请求发送到最初的服务器。这个值联系到下文中 cookie识别中的相关参数
+2 haproxy三种方法保持客户端session一致
+  2.1 用户IP 识别 </p>
+<p>haroxy 将用户IP经过hash计算后 指定到固定的真实服务器上（类似于nginx 的IP hash 指令）
+配置指令        balance source
+实例访问<a href="http://sourceip.9ai9.net:8080/" target="_blank"><a href="http://sourceip.9ai9.net:8080">http://sourceip.9ai9.net:8080</a></a>
+  2.2 cookie 识别<br>haproxy 将WEB服务端发送给客户端的cookie中插入(或添加加前缀)haproxy定义的后端的服务器COOKIE ID。
+配置指令例举  cookie  SESSION_COOKIE  insert indirect nocache
+<a href="http://cookie.9ai9.net:8080/" target="_blank"><a href="http://cookie.9ai9.net:8080">http://cookie.9ai9.net:8080</a></a>
+用firebug可以观察到用户的请求头的cookie里 有类似&quot; Cookie 9ai9=0bc588656ca05ecf7588c65f9be214f5; SESSION_COOKIE=12&quot; SESSION_COOKIE=12就是haproxy添加的内容
+  2.3 session 识别<br>haproxy 将后端服务器产生的session和后端服务器标识存在haproxy中的一张表里。客户端请求时先查询这张表。
+配置指令例举 appsession 9ai9 len 64 timeout 5h request-learn 
+注意 9ai9 这个值替换成 你的php.ini 里session.name的值。
+实例访问 <a href="http://appsession.9ai9.net:8080/" target="_blank"><a href="http://appsession.9ai9.net:8080">http://appsession.9ai9.net:8080</a></a>
+  2.4 只做简单轮询对比 
+实例访问 <a href="http://nosession.9ai9.net:8080/" target="_blank"><a href="http://nosession.9ai9.net:8080">http://nosession.9ai9.net:8080</a></a>
+3 实验环境及结构
+CentOS 5.3 64
+haproxy  113.106.185.245
+WEB1 REALsrv_70  184.82.239.70
+WEB2  REALsrv_120 220.162.237.120<br>4 安装配置及管理
+useradd -M -s /sbin/nologin haproxy
+wget <a href="http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz" target="_blank"><a href="http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz">http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz</a></a>
+tar zxvf haproxy-1.4.13.tar.gz 
+cd haproxy-1.4.13
+make TARGET=linux26 PREFIX=/usr/local/haproxy install
+mkdir /usr/local/haproxy/conf
+vim /usr/local/haproxy/conf/haproxy.cfg</p>
+<ol>
+<li>global</li>
+<li>log     127.0.0.1 local0 info </li>
+<li>maxconn 4096</li>
+<li>user    haproxy</li>
+<li>group   haproxy</li>
+<li>daemon</li>
+<li>nbproc  1</li>
+<li>pidfile /var/run/haproxy.pid</li>
+<li>defaults</li>
+<li>mode    http</li>
+<li>maxconn         2000</li>
+<li>contimeout      5000</li>
+<li>clitimeout      30000</li>
+<li>srvtimeout      30000</li>
+<li>option          httplog</li>
+<li>option          redispatch</li>
+<li>option          abortonclose</li>
+<li>retries         3</li>
+<li>listen admin_stats</li>
+<li>bind 113.106.185.245:443</li>
+<li>mode http</li>
+<li>log 127.0.0.1 local0 err</li>
+<li>stats   uri     /qhappy_stats</li>
+<li>stats   realm   9ai9.net\ Qhappy</li>
+<li>stats   auth    qhappy:qhappy</li>
+<li>stats   refresh   5s </li>
+<li>listen site_status</li>
+<li>bind 113.106.185.245:445</li>
+<li>mode http</li>
+<li>log  127.0.0.1 local0 err</li>
+<li>monitor-uri     /site_status</li>
+<li>frontend  WEB_SITE</li>
+<li>bind    0.0.0.0:8080</li>
+<li>mode    http</li>
+<li>log     global</li>
+<li>option  httplog</li>
+<li>option  httpclose</li>
+<li>option  forwardfor</li>
+<li>acl     COOKIE          hdr_reg(host)   -i ^(cookie.9ai9.net)</li>
+<li>acl     SOURCE          hdr_reg(host)   -i ^(sourceip.9ai9.net)</li>
+<li>acl     APPSESSION      hdr_reg(host)   -i ^(appsession.9ai9.net)</li>
+<li>acl     NOSESSION       hdr_reg(host)   -i ^(nosession.9ai9.net)</li>
+<li>use_backend COOKIE_srv          if COOKIE</li>
+<li>use_backend SOURCE_srv          if SOURCE</li>
+<li>use_backend APPSESSION_srv      if APPSESSION</li>
+<li>use_backend NOSESSION_srv       if NOSESSION</li>
+<li>/#        default_backend ai_server</li>
+<li>backend COOKIE_srv</li>
+<li>mode    http</li>
+<li>cookie  SESSION_COOKIE  insert indirect nocache</li>
+<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
+<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
+<li>backend SOURCE_srv</li>
+<li>mode    http</li>
+<li>balance source</li>
+<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
+<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
+<li>backend APPSESSION_srv</li>
+<li>mode    http</li>
+<li>appsession 9ai9 len 64 timeout 5h request-learn</li>
+<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
+<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1
+1.</li>
+<li>backend NOSESSION_srv</li>
+<li>mode    http</li>
+<li>balance roundrobin</li>
+<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
+<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
+<li>backend ai_server</li>
+<li>mode    http</li>
+<li>balance roundrobin</li>
+<li>cookie  SERVERID</li>
+<li>server REALsrv_70 184.82.239.70:80 cookie 2 check inter 1500 rise 3 fall 3 weight 1</li>
+<li>server REALsrv_120 220.162.237.120:80 cookie 1 check inter 1500 rise 3 fall 3 weight 1
+<em>复制代码</em>
+haproxy 启动重启等管理脚本
+cd /etc/init.d/
+wget <a href="http://www.9ai9.net/download/shell/haproxy" target="_blank"><a href="http://www.9ai9.net/download/shell/haproxy">http://www.9ai9.net/download/shell/haproxy</a></a>
+chmod 755 haproxy
+chkconfig --add haproxy
+使用方法 你懂的
+/etc/init.d/haproxy {start|stop|status|checkconfig|restart|try-restart|reload|force-reload}
+5 本实验中使用到相同的index.php代码 如下</li>
+<li>&lt;?php</li>
+<li>session_start();</li>
+<li>$_SESSION[&#39;time&#39;] =date(&quot;Y:m:d:H:s&quot;,time());</li>
+<li>echo &quot;本次访问时间&quot;.&quot;<font color=red>&quot;.$_SESSION[&#39;time&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
+<li>echo &quot;访问的服务器地址是&quot;.&quot;<font color=red>&quot;.$_SERVER[&#39;SERVER_ADDR&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
+<li>echo &quot;访问的服务器域名是&quot;.&quot;<font color=red>&quot;.$_SERVER[&#39;SERVER_NAME&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
+<li>echo &quot;SESSIONNAME是&quot;.&quot;<font color=red>&quot;.session_name().&quot;</font>&quot;.&quot;<br>&quot;;</li>
+<li>echo &quot;SESSIONID是&quot;.&quot;<font color=red>&quot;.session_id().&quot;</font>&quot;.&quot;<br>&quot;;</li>
+<li>?&gt;
+<em>复制代码</em>6 联系方法及扩展阅读
+笔者 水煮鱼@溢  微博 <a href="http://t.qq.com/cllxy1234" target="_blank"><a href="http://t.qq.com/cllxy1234">http://t.qq.com/cllxy1234</a></a> 欢迎收听
+haproxy 官网 <a href="http://haproxy.1wt.eu/download/1.4/doc/configuration.txt" target="_blank"><a href="http://haproxy.1wt.eu/download/1.4/doc/configuration.txt">http://haproxy.1wt.eu/download/1.4/doc/configuration.txt</a></a>
+董旗宇  <a href="http://www.9ai9.net/download/art/HAProxy" target="_blank"><a href="http://www.9ai9.net/download/art/HAProxy">http://www.9ai9.net/download/art/HAProxy</a></a>配置使用说明.pdf<br>刘天斯  <a href="http://blog.liuts.com/post/223/" target="_blank"><a href="http://blog.liuts.com/post/223/">http://blog.liuts.com/post/223/</a></a>
+linuxtone <a href="http://bbs.linuxtone.org/thread-73-1-1.html" target="_blank"><a href="http://bbs.linuxtone.org/thread-73-1-1.html">http://bbs.linuxtone.org/thread-73-1-1.html</a></a></li>
+</ol>
+<p>来源： <a href="[http://bbs.linuxtone.org/thread-9526-1-1.html](http://bbs.linuxtone.org/thread-9526-1-1.html)">[http://bbs.linuxtone.org/thread-9526-1-1.html](http://bbs.linuxtone.org/thread-9526-1-1.html)</a></p>
 
       
     </div>
@@ -481,8 +676,8 @@ Copyright 2011 - 2013 PPC Training Inc. - All Rights Reserved</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -497,141 +692,107 @@ Copyright 2011 - 2013 PPC Training Inc. - All Rights Reserved</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava/">tomcat中的context.xml元素详解 </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/">JosephusProblem</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="tomcat-context-xml-pasha-blogjava">tomcat中的context.xml元素详解 - pasha - BlogJava</h1>
-<h1 id="-pasha-http-www-blogjava-net-pasha-"><a href="http://www.blogjava.net/pasha/" target="_blank">pasha</a></h1>
-<h2 id="-tomcat-context-xml-"><a href="">tomcat中的context.xml元素详解</a></h2>
-<p><strong>tomcat中的context.xml元素详解小人物，大博客 Q&#39;e ^ L0J/*J4h
-</strong> <strong>元素名</strong> <strong>属性</strong> <strong>解释</strong> server port 指定一个端口，这个端口负责监听关闭tomcat的请求 shutdown 指定向端口发送的命令字符串 service name 指定service的名字 Connector(表示客户端和service之间的连接) port 指定服务器端要创建的端口号，并在这个端口监听来自客户端的请求 minProcessors 服务器启动时创建的处理请求的线程数 maxProcessors 最大可以创建的处理请求的线程数 enableLookups 如果为true，则可以通过调用request.getRemoteHost()进行DNS查询来得到远程客户端的实际主机名，若为false则不进行DNS查询，而是返回其ip地址 redirectPort 指定服务器正在处理http请求时收到了一个SSL传输请求后重定向的端口号 acceptCount 指定当所有可以使用的处理请求的线程数都被使用时，可以放到处理队列中的请求数，超过这个数的请求将不予处理 connectionTimeout 指定超时的时间数(以毫秒为单位) Engine(表示指定service中的请求处理机，接收和处理来自Connector的请求) defaultHost 指定缺省的处理请求的主机名，它至少与其中的一个host元素的name属性值是一样的 Context(表示一个web应用程序，通常为WAR文件，关于WAR的具体信息见servlet规范) docBase 应用程序的路径或者是WAR文件存放的路径 path 表示此web应用程序的url的前缀，这样请求的url为<a href="http://localhost:8080/path//*/*/*/*" target="_blank">http://localhost:8080/path//*/*/*/*</a> reloadable 这个属性非常重要，如果为true，则tomcat会自动检测应用程序的/WEB-INF/lib 和/WEB-INF/classes目录的变化，自动装载新的应用程序，我们可以在不重起tomcat的情况下改变应用程序 host(表示一个虚拟主机) name 指定主机名 appBase 应用程序基本目录，即存放应用程序的目录 unpackWARs 如果为true，则tomcat会自动将WAR文件解压，否则不解压，直接从WAR文件中运行应用程序 Logger(表示日志，调试和错误信息) className 指定logger使用的类名，此类必须实现org.apache.catalina.Logger 接口 prefix 指定log文件的前缀 suffix 指定log文件的后缀 timestamp 如果为true，则log文件名中要加入时间，如下例:localhost_log.2001-10-04.txt Realm(表示存放用户名，密码及role的数据库) className 指定Realm使用的类名，此类必须实现org.apache.catalina.Realm接口 Valve(功能与Logger差不多，其prefix和suffix属性解释和Logger 中的一样) className 指定Valve使用的类名，如用org.apache.catalina.valves.AccessLogValve类可以记录应用程序的访问信息 directory 指定log文件存放的位置 pattern 有两个值，common方式记录远程主机名或ip地址，用户名，日期，第一行请求的字符串，HTTP响应代码，发送的字节数。combined方式比common方式记录的值更多</p>
-<p>posted on 2008-09-21 11:14 <a href="http://www.blogjava.net/pasha/" target="_blank">pasha</a> 阅读(2524) <a href="http://www.blogjava.net/pasha/articles/230241.html#Post" target="_blank">评论(0)</a>  <a href="http://www.blogjava.net/pasha/admin/EditArticles.aspx?postid=230241" target="_blank">编辑</a>  <a href="http://www.blogjava.net/pasha/AddToFavorite.aspx?id=230241" target="_blank">收藏</a></p>
-<p> <img src="" alt=""></p>
-<p><a href="http://www.blogjava.net/RequireRegister.aspx" target="_blank">新用户注册</a>  <a href="">刷新评论列表</a>  </p>
-<p><a href=""></a> <a href="http://www.cnblogs.com/cmt/archive/2012/10/31/vmware_vforum_2012.html">开发者的云计算盛会，期待您的参与（11月20日~21日，北京，免费）</a>   <a href="http://www.cnblogs.com/" target="_blank">博客园</a>  <a href="http://q.cnblogs.com/" target="_blank">博问</a>  <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://job.cnblogs.com/cate-java_programmer/" target="_blank">Java程序员招聘</a> 标题  请输入标题 姓名  请输入你的姓名 主页 请输入验证码 验证码 /*  <img src="" alt=""> 内容(请不要发表任何与政治相关的内容) 请输入评论内容 Remember Me?   <a href="http://www.blogjava.net/login.aspx?ReturnURL=http://www.blogjava.net/pasha/articles/230241.html&amp;SourceURL=/pasha/articles/230241.html" target="_blank">登录</a>       [使用Ctrl+Enter键可以直接提交]    IT新闻：
-· <a href="http://news.cnblogs.com/n/163329/" target="_blank">让你的iPhone 5变身小电视</a>
-· <a href="http://news.cnblogs.com/n/163348/" target="_blank">流言终结者 /#19 –「我只要专心把产品做好…」</a>
-· <a href="http://news.cnblogs.com/n/163347/" target="_blank">来看看1399元的Lumia究竟如何</a>
-· <a href="http://news.cnblogs.com/n/163346/" target="_blank">周鸿祎给李彦宏一个支点</a>
-· <a href="http://news.cnblogs.com/n/163345/" target="_blank">Twitter HOLD 住大选：少点 Ruby，多些 Java</a></p>
-<p>博客园首页随笔：
-· <a href="http://www.cnblogs.com/bjzhanghao/archive/2012/11/09/2762550.html" target="_blank">[Android问答] 如何实现“退出应用”功能？</a>
-· <a href="http://www.cnblogs.com/vamei/archive/2012/11/09/2762224.html" target="_blank">Python内置函数清单</a>
-· <a href="http://www.cnblogs.com/manuosex/archive/2012/11/09/2762405.html" target="_blank">C/#数据结构与算法揭秘13</a>
-· <a href="http://www.cnblogs.com/ldcsaa/archive/2012/11/09/2762373.html" target="_blank">Portal-Basic Java Web 应用开发框架：应用篇（八） —— Freemarker 整合</a>
-· <a href="http://www.cnblogs.com/nnhy/archive/2012/11/09/Money.html" target="_blank">如何找到并完成兼职项目</a>
-知识库：
-· <a href="http://kb.cnblogs.com/page/157087/" target="_blank">项目管理心得：一个项目经理的个人体会、经验总结</a>
-· <a href="http://kb.cnblogs.com/page/162480/" target="_blank">十天内掌握线性代数：惊人的超速学习实验</a>
-· <a href="http://kb.cnblogs.com/page/157745/" target="_blank">可伸缩性最佳实践：来自eBay的经验</a>
-· <a href="http://kb.cnblogs.com/page/160526/" target="_blank">一堂如何提高代码质量的培训课</a>
-· <a href="http://kb.cnblogs.com/page/161182/" target="_blank">程序江湖</a>  网站导航:</p>
-<p><a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园</a>   <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>   <a href="http://kb.cnblogs.com/" target="_blank">知识库</a>   <a href="http://www.cppblog.com/" target="_blank">C++博客</a>   <a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a>   <a href="http://www.blogjava.net/pasha/articles/230241.html?opt=admin" target="_blank">管理</a>   </p>
-<h3 id="-">导航</h3>
+        <h1 id="josephusproblem">JosephusProblem</h1>
+<h1 id="-algorithm-gossip-josephus-problem-"><a href="">Algorithm Gossip: 约瑟夫问题（Josephus Problem）</a></h1>
+<h2 id="-">说明</h2>
+<p>据说著名犹太历史学家 Josephus有过以下的故事：在罗马人占领乔塔帕特后，39 个犹太人与Josephus及他的朋友躲到一个洞中，39个犹太人决定宁愿死也不要被敌人到，于是决定了一个自杀方式，41个人排成一个圆圈，由第1个人 开始报数，每报数到第3人该人就必须自杀，然后再由下一个重新报数，直到所有人都自杀身亡为止。
+然而Josephus 和他的朋友并不想遵从，Josephus要他的朋友先假装遵从，他将朋友与自己安排在第16个与第31个位置，于是逃过了这场死亡游戏。</p>
+<h2 id="-">解法</h2>
+<p>约瑟夫问题可用代数分析来求解，将这个问题扩大好了，假设现在您与m个朋友不幸参与了这个游戏，您要如何保护您与您的朋友？只要画两个圆圈就可以让自己与朋友免于死亡游戏，这两个圆圈内圈是排列顺序，而外圈是自杀顺序，如下图所示：
+<img src="&quot;约瑟夫问题&quot;" alt="约瑟夫问题"> 使用程式来求解的话，只要将阵列当作环状来处理就可以了，在阵列中由计数1开始，每找到三个无资料区就填入一个计数，直而计数达41为止，然后将阵列由索引1开始列出，就可以得知每个位置的自杀顺序，这就是约瑟夫排列，41个人而报数3的约琴夫排列如下所示：
+14 36 1 38 15 2 24 30 3 16 34 4 25 17 5 40 31 6 18 26 7 37 19 8 35 27 9 20 32 10 41 21 11 28 39 12 22 33 13 29 23
+由上可知，最后一个自杀的是在第31个位置，而倒数第二个自杀的要排在第16个位置，之前的人都死光了，所以他们也就不知道约琴夫与他的朋友并没有遵守游戏规则了。</p>
+<h2 id="-">实作</h2>
 <ul>
-<li><a href="http://www.blogjava.net/" target="_blank">BlogJava</a></li>
-<li><a href="http://www.blogjava.net/pasha/" target="_blank">首页</a></li>
-<li><a href="http://www.blogjava.net/pasha/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a></li>
-<li><a href="http://www.blogjava.net/pasha/contact.aspx?id=1" target="_blank">联系</a></li>
-<li><a href="http://www.blogjava.net/pasha/rss" target="_blank">聚合</a><a href="http://www.blogjava.net/pasha/rss" target="_blank"><img src="" alt=""></a></li>
-<li><a href="http://www.blogjava.net/pasha/admin/EditPosts.aspx" target="_blank">管理</a></li>
+<li><p>C
+/#include <stdio.h>
+/#include <stdlib.h>
+/#define N 41
+/#define M 3
+int main(void) {
+int man[N] = {0};
+int count = 1;
+int i = 0, pos = -1;
+int alive = 0;
+while(count &lt;= N) {
+do {
+pos = (pos+1) % N; // 环状处理
+if(man[pos] == 0)
+i++;
+if(i == M) { // 报数为3了
+i = 0;
+break;
+}
+} while(1);
+man[pos] = count;
+count++;
+}
+printf(&quot;\n约琴夫排列：&quot;);
+for(i = 0; i &lt; N; i++)
+printf(&quot;%d &quot;, man[i]);
+printf(&quot;\n\n您想要救多少人？&quot;);
+scanf(&quot;%d&quot;, &amp;alive);
+printf(&quot;\nL表示这%d人要放的位置：\n&quot;, alive);
+for(i = 0; i &lt; N; i++) {
+if(man[i] &gt; alive)
+printf(&quot;D&quot;);
+else
+printf(&quot;L&quot;);
+if((i+1) % 5 == 0)
+printf(&quot; &quot;);
+}
+printf(&quot;\n&quot;);
+return 0;
+}</p>
+</li>
+<li><p>Java
+public class Josephus {
+public static int[] arrayOfJosephus(
+int number, int per) {
+int[] man = new int[number];
+for(int count = 1, i = 0, pos = -1;
+count &lt;= number; count++) {
+do {
+pos = (pos+1) % number; // 环状处理
+if(man[pos] == 0)
+i++;
+if(i == per) { // 报数为3了
+i = 0;
+break;
+}
+} while(true);
+man[pos] = count;
+}
+return man;
+}
+public static void main(String[] args) {
+int[] man = Josephus.arrayOfJosephus(41, 3);
+int alive = 3;
+System.out.println(&quot;约琴夫排列：&quot;);
+for(int i = 0; i &lt; 41; i++)
+System.out.print(man[i] + &quot; &quot;);
+System.out.println(&quot;\nL表示3个存活的人要放的位置：&quot;);
+for(int i = 0; i &lt; 41; i++) {
+if(man[i] &gt; alive)
+System.out.print(&quot;D&quot;);
+else
+System.out.print(&quot;L&quot;);
+if((i+1) % 5 == 0)
+System.out.print(&quot; &quot;);
+}
+System.out.println();
+}
+}</p>
+</li>
 </ul>
-<h3 id="-">统计</h3>
-<ul>
-<li>随笔 - 7</li>
-<li>文章 - 10</li>
-<li>评论 - 1</li>
-<li>引用 - 0</li>
-</ul>
-<h3 id="-">常用链接</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/MyPosts.html" target="_blank">我的随笔</a></li>
-<li><a href="http://www.blogjava.net/pasha/MyArticles.html" target="_blank">我的文章</a></li>
-<li><a href="http://www.blogjava.net/pasha/MyComments.html" target="_blank">我的评论</a></li>
-<li><a href="http://www.blogjava.net/pasha/OtherPosts.html" target="_blank">我的参与</a></li>
-<li><a href="http://www.blogjava.net/pasha/RecentComments.html" target="_blank">最新评论</a></li>
-</ul>
-<h3 id="-2-">留言簿(2)</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/Contact.aspx?id=1" target="_blank">给我留言</a></li>
-<li><a href="http://www.blogjava.net/pasha/default.aspx?opt=msg" target="_blank">查看公开留言</a></li>
-<li><a href="http://www.blogjava.net/pasha/admin/MyMessages.aspx" target="_blank">查看私人留言</a></li>
-</ul>
-<h3 id="-">随笔分类</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/category/33818.html" target="_blank">ajax</a> <a href="http://www.blogjava.net/pasha/category/33818.html/rss" title="Subscribe to ajax" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/34754.html" target="_blank">database</a> <a href="http://www.blogjava.net/pasha/category/34754.html/rss" title="Subscribe to database" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/33817.html" target="_blank">struts2(1)</a> <a href="http://www.blogjava.net/pasha/category/33817.html/rss" title="Subscribe to struts2(1)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/34753.html" target="_blank">tomcat(2)</a> <a href="http://www.blogjava.net/pasha/category/34753.html/rss" title="Subscribe to tomcat(2)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/35370.html" target="_blank">其他(2)</a> <a href="http://www.blogjava.net/pasha/category/35370.html/rss" title="Subscribe to 其他(2)" target="_blank">(rss)</a></li>
-</ul>
-<h3 id="-">随笔档案</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10.html" target="_blank">2008年10月 (2)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09.html" target="_blank">2008年9月 (3)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/06.html" target="_blank">2008年6月 (1)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/04.html" target="_blank">2008年4月 (1)</a></li>
-</ul>
-<h3 id="-">文章分类</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/category/35369.html" target="_blank">其它</a> <a href="http://www.blogjava.net/pasha/category/35369.html/rss" title="Subscribe to 其它" target="_blank">(rss)</a></li>
-</ul>
-<h3 id="-">文章档案</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/09.html" target="_blank">2008年9月 (4)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/08.html" target="_blank">2008年8月 (2)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/07.html" target="_blank">2008年7月 (1)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/06.html" target="_blank">2008年6月 (2)</a></li>
-</ul>
-<h3 id="-css-">最常用和实用的CSS技巧</h3>
-<h3 id="-">最新随笔</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235638.html" target="_blank">1. Ubuntu Linux与Windows系统多启动的配置(Webmaster )</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235617.html" target="_blank">2. Bcdedit命令详解</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/230555.html" target="_blank">3. JQuery Ajax 方法说明</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/230458.html" target="_blank">4. EditPlus技巧(Liangjhrn)</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/230372.html" target="_blank">5. 转载：《关于JSP页面中的pageEncoding和contentType两种属性的区别》</a></li>
-<li><a href="">6. tomcat中的context.xml元素详解</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230237.html" target="_blank">7. Tomcat6数据源配置（转）</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230227.html" target="_blank">8. tomcat 6.18 设置</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/09/227881.html" target="_blank">9. struts2UI td 的问题</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/222926.html" target="_blank">10. 几款MYSQL管理工具</a></li>
-</ul>
-<h3 id="-">搜索</h3>
-<p>*</p>
-<ul>
-<li></li>
-</ul>
-<h3 id="-http-www-blogjava-net-pasha-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/pasha/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/24/208536.html#230938" target="_blank">1. re: SESSION</a></li>
-<li>啊！！原来是这样啊 终于明白了 谢了！！</li>
-<li>--ndj</li>
-</ul>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230227.html" target="_blank">1. tomcat 6.18 设置(711)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/04/08/191507.html" target="_blank">2. SSO (转)(613)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235617.html" target="_blank">3. Bcdedit命令详解(407)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230237.html" target="_blank">4. Tomcat6数据源配置（转）(338)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/06/17/208536.html" target="_blank">5. SESSION(181)</a></li>
-</ul>
-<h3 id="-">评论排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/06/17/208536.html" target="_blank">1. SESSION(1)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/04/08/191507.html" target="_blank">2. SSO (转)(0)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235638.html" target="_blank">3. Ubuntu Linux与Windows系统多启动的配置(Webmaster )(0)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235617.html" target="_blank">4. Bcdedit命令详解(0)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230237.html" target="_blank">5. Tomcat6数据源配置（转）(0)</a></li>
-</ul>
-<p>Powered by:
-<a href="http://www.blogjava.net/" target="_blank">BlogJava</a>
-Copyright © pasha</p>
 
       
     </div>
@@ -641,53 +802,8 @@ Copyright © pasha</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/">基于tomcat7 web开发中的一点小东西</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-tomcat7-web-">基于tomcat7 web开发中的一点小东西</h1>
-<p><a href="http://blog.csdn.net/benyuxy/article/details/7568386" target="_blank">基于tomcat7 web开发中的一点小东西</a></p>
-<h3 id="-">控制台：</h3>
-<p>org.apache.jasper.compiler.TldLocationsCache tldScanJar</p>
-<p>信息: At least one JAR was scanned for TLDs yet contained no TLDs. Enable debug logging for this logger for a complete list of JARs that were scanned but no TLDs were found in them. Skipping unneeded JARs during scanning can improve startup time and JSP compilation time.
-这样的问题是你的页面中含有<!---->的注释 去掉就好了，tomcat7.0.20.</p>
-<p>tomcat 7对EL表达式的语法要求比较严格，例如&quot;${owner.new}&quot;因包含关键字new就会导致解析出错。 
-问题是出来了，怎么解决呢？有三种，如下： 
-第一种：严格遵守java规范，修改对象的属性名称，要求不包含java关键字; 
-第二种：修改EL表达式，例如&quot;${owner.new}&quot;可以修改为&quot;${owner[&#39;new&#39;]}&quot;; 
-第三种：修改tomcat属性，忽略对EL表达式的关键字检查。修改$CATALINA_BASE/conf/catalina.properties文件，添加org.apache.el.parser.SKIP_IDENTIFIER_CHECK=true选项。</p>
-<p>来源： <a href="[http://blog.csdn.net/benyuxy/article/details/7568386](http://blog.csdn.net/benyuxy/article/details/7568386)">[http://blog.csdn.net/benyuxy/article/details/7568386](http://blog.csdn.net/benyuxy/article/details/7568386)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--基于tomcat7web开发中的一点小东西" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:37:19"datetime="2014-03-07 10:37:19"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -767,7 +883,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:47:11</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 20:45:44</em></span></div>
 </div>
 <div class="clearfix"></div>
 

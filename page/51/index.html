@@ -110,6 +110,198 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结-Xms-Xmx-Xmn-Xss/">JVM调优总结 </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结-Xms-Xmx-Xmn-Xss/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="jvm-xms-xmx-xmn-xss">JVM调优总结 -Xms -Xmx -Xmn -Xss</h1>
+<ol>
+<li><strong>堆大小设置
+</strong>JVM 中最大堆大小有三方面限制：相关操作系统的数据模型（32-bt还是64-bit）限制；系统的可用虚拟内存限制；系统的可用物理内存限制。32位系统下，一般限制在1.5G~2G；64为操作系统对内存无限制。我在Windows Server 2003 系统，3.5G物理内存，JDK5.0下测试，最大可设置为1478m。
+<strong>典型设置：</strong></li>
+</ol>
+<ul>
+<li>java <strong>-Xmx3550m -Xms3550m -Xmn2g</strong> <strong>-Xss128k</strong>
+<strong>-**</strong>Xmx3550m<strong>：设置JVM最大可用内存为3550M。
+</strong>-Xms3550m<strong>：设置JVM促使内存为3550m。此值可以设置与-Xmx相同，以避免每次垃圾回收完成后JVM重新分配内存。
+</strong>-Xmn2g<strong>：设置年轻代大小为2G。</strong>整个JVM内存大小=年轻代大小 + 年老代大小 + 持久代大小<strong>。持久代一般固定大小为64m，所以增大年轻代后，将会减小年老代大小。此值对系统性能影响较大，Sun官方推荐配置为整个堆的3/8。
+</strong>-Xss128k**：设置每个线程的堆栈大小。JDK5.0以后每个线程堆栈大小为1M，以前每个线程堆栈大小为256K。更具应用的线程所需内存大小进行调整。在相同物理内存下，减小这个值能生成更多的线程。但是操作系统对一个进程内的线程数还是有限制的，不能无限生成，经验值在3000~5000左右。</li>
+<li>java -Xmx3550m -Xms3550m -Xss128k <strong>-XX:NewRatio=4 -XX:SurvivorRatio=4 -XX:MaxPermSize=16m -XX:MaxTenuringThreshold=0</strong>
+<strong>-XX:NewRatio=4</strong>:设置年轻代（包括Eden和两个Survivor区）与年老代的比值（除去持久代）。设置为4，则年轻代与年老代所占比值为1：4，年轻代占整个堆栈的1/5
+<strong>-XX:SurvivorRatio=4</strong>：设置年轻代中Eden区与Survivor区的大小比值。设置为4，则两个Survivor区与一个Eden区的比值为2:4，一个Survivor区占整个年轻代的1/6
+<strong>-XX:MaxPermSize=16m</strong>:设置持久代大小为16m。
+<strong>-XX:MaxTenuringThreshold=0</strong>：设置垃圾最大年龄。<strong>如果设置为0的话，则年轻代对象不经过Survivor区，直接进入年老代</strong>。对于年老代比较多的应用，可以提高效率。<strong>如果将此值设置为一个较大值，则年轻代对象会在Survivor区进行多次复制，这样可以增加对象再年轻代的存活时间</strong>，增加在年轻代即被回收的概论。</li>
+<li><strong>回收器选择
+</strong>JVM给了三种选择：<strong>串行收集器、并行收集器、并发收集器</strong>，但是串行收集器只适用于小数据量的情况，所以这里的选择主要针对并行收集器和并发收集器。默认情况下，JDK5.0以前都是使用串行收集器，如果想使用其他收集器需要在启动时加入相应参数。JDK5.0以后，JVM会根据当前<a href="http://java.sun.com/j2se/1.5.0/docs/guide/vm/server-class.html" target="_blank">系统配置</a>进行判断。</li>
+</ul>
+<ol>
+<li><strong>吞吐量优先</strong>的并行收集器
+如上文所述，并行收集器主要以到达一定的吞吐量为目标，适用于科学技术和后台处理等。
+<strong>典型配置</strong>：</li>
+</ol>
+<ul>
+<li>java -Xmx3800m -Xms3800m -Xmn2g -Xss128k <strong>-XX:+UseParallelGC -XX:ParallelGCThreads=20</strong>
+<strong>-XX:+UseParallelGC</strong>：选择垃圾收集器为并行收集器。<strong>此配置仅对年轻代有效。即上述配置下，年轻代使用并发收集，而年老代仍旧使用串行收集。
+**</strong>-XX:ParallelGCThreads=20**：配置并行收集器的线程数，即：同时多少个线程一起进行垃圾回收。此值最好配置与处理器数目相等。</li>
+<li>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseParallelGC -XX:ParallelGCThreads=20 <strong>-XX:+UseParallelOldGC
+**</strong>-XX:+UseParallelOldGC**：配置年老代垃圾收集方式为并行收集。JDK6.0支持对年老代并行收集。</li>
+<li>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseParallelGC  <strong>-XX:MaxGCPauseMillis=100
+**</strong>-XX:MaxGCPauseMillis=100<strong>**:</strong>设置每次年轻代垃圾回收的最长时间，如果无法满足此时间，JVM会自动调整年轻代大小，以满足此值。</li>
+<li>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseParallelGC  -XX:MaxGCPauseMillis=100 <strong>-XX:+UseAdaptiveSizePolicy
+-XX:+UseAdaptiveSizePolicy</strong>：设置此选项后，并行收集器会自动选择年轻代区大小和相应的Survivor区比例，以达到目标系统规定的最低相应时间或者收集频率等，此值建议使用并行收集器时，一直打开。</li>
+<li><p><strong>响应时间优先</strong>的并发收集器
+如上文所述，并发收集器主要是保证系统的响应时间，减少垃圾收集时的停顿时间。适用于应用服务器、电信领域等。
+<strong>典型配置</strong>：</p>
+</li>
+<li><p>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:ParallelGCThreads=20 <strong>-XX:+UseConcMarkSweepGC -XX:+UseParNewGC
+**</strong>-XX:+UseConcMarkSweepGC<strong>：设置年老代为并发收集。测试中配置这个以后，-XX:NewRatio=4的配置失效了，原因不明。所以，此时年轻代大小最好用-Xmn设置。
+</strong>-XX:+UseParNewGC**:设置年轻代为并行收集。可与CMS收集同时使用。JDK5.0以上，JVM会根据系统配置自行设置，所以无需再设置此值。</p>
+</li>
+<li>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseConcMarkSweepGC <strong>-XX:CMSFullGCsBeforeCompaction=5 -XX:+UseCMSCompactAtFullCollection</strong>
+<strong>-XX:CMSFullGCsBeforeCompaction</strong>：由于并发收集器不对内存空间进行压缩、整理，所以运行一段时间以后会产生“碎片”，使得运行效率降低。此值设置运行多少次GC以后对内存空间进行压缩、整理。
+<strong>-XX:+UseCMSCompactAtFullCollection</strong>：打开对年老代的压缩。可能会影响性能，但是可以消除碎片</li>
+<li><p><strong>辅助信息
+</strong>JVM提供了大量命令行参数，打印信息，供调试使用。主要有以下一些：</p>
+</li>
+<li><p><strong>-XX:+PrintGC
+</strong>输出形式<strong>：[GC 118250K-&gt;113543K(130112K), 0.0094143 secs]</strong></p>
+</li>
+</ul>
+<p><strong>                [Full GC 121376K-&gt;10414K(130112K), 0.0650971 secs]</strong></p>
+<ul>
+<li><strong>-XX:+PrintGCDetails
+</strong>输出形式<strong>：[GC [DefNew: 8614K-&gt;781K(9088K), 0.0123035 secs] 118250K-&gt;113543K(130112K), 0.0124633 secs]</strong></li>
+</ul>
+<p><strong>                [GC [DefNew: 8614K-&gt;8614K(9088K), 0.0000665 secs][Tenured: 112761K-&gt;10414K(121024K), 0.0433488 secs] 121376K-&gt;10414K(130112K), 0.0436268 secs]</strong></p>
+<ul>
+<li><strong>-XX:+PrintGCTimeStamps</strong> -XX:+PrintGC：PrintGCTimeStamps可与上面两个混合使用
+输出形式：<strong>11.851: [GC 98328K-&gt;93620K(130112K), 0.0082960 secs]
+</strong></li>
+<li><strong>-XX:+PrintGCApplicationConcurrentTime:</strong>打印每次垃圾回收前，程序未中断的执行时间。可与上面混合使用
+输出形式：<strong>Application time: 0.5291524 seconds
+</strong></li>
+<li><strong>-XX:+PrintGCApplicationStoppedTime</strong>：打印垃圾回收期间程序暂停的时间。可与上面混合使用
+输出形式：<strong>Total time for which application threads were stopped: 0.0468229 seconds
+</strong></li>
+<li><strong>-XX:PrintHeapAtGC</strong>:打印GC前后的详细堆栈信息
+输出形式：
+34.702: [GC {Heap before gc invocations=7:
+def new generation   total 55296K, used 52568K [0x1ebd0000, 0x227d0000, 0x227d0000)
+<strong>eden space 49152K,  99% used</strong> [0x1ebd0000, 0x21bce430, 0x21bd0000)
+<strong>from space 6144K,  55% used</strong> [0x221d0000, 0x22527e10, 0x227d0000)
+to   space 6144K,   0% used [0x21bd0000, 0x21bd0000, 0x221d0000)
+tenured generation   total 69632K, used 2696K [0x227d0000, 0x26bd0000, 0x26bd0000)
+<strong>the space 69632K,   3% used</strong> [0x227d0000, 0x22a720f8, 0x22a72200, 0x26bd0000)
+compacting perm gen  total 8192K, used 2898K [0x26bd0000, 0x273d0000, 0x2abd0000)
+ the space 8192K,  35% used [0x26bd0000, 0x26ea4ba8, 0x26ea4c00, 0x273d0000)
+  ro space 8192K,  66% used [0x2abd0000, 0x2b12bcc0, 0x2b12be00, 0x2b3d0000)
+  rw space 12288K,  46% used [0x2b3d0000, 0x2b972060, 0x2b972200, 0x2bfd0000)
+34.735: [DefNew: 52568K-&gt;3433K(55296K), 0.0072126 secs] 55264K-&gt;6615K(124928K)<strong>Heap after gc invocations=8:
+</strong> def new generation   total 55296K, used 3433K [0x1ebd0000, 0x227d0000, 0x227d0000)
+<strong>eden space 49152K,   0% used</strong> [0x1ebd0000, 0x1ebd0000, 0x21bd0000)
+from space 6144K,  55% used [0x21bd0000, 0x21f2a5e8, 0x221d0000)
+to   space 6144K,   0% used [0x221d0000, 0x221d0000, 0x227d0000)
+tenured generation   total 69632K, used 3182K [0x227d0000, 0x26bd0000, 0x26bd0000)
+<strong>the space 69632K,   4% used</strong>[0x227d0000, 0x22aeb958, 0x22aeba00, 0x26bd0000)
+compacting perm gen  total 8192K, used 2898K [0x26bd0000, 0x273d0000, 0x2abd0000)
+ the space 8192K,  35% used [0x26bd0000, 0x26ea4ba8, 0x26ea4c00, 0x273d0000)
+  ro space 8192K,  66% used [0x2abd0000, 0x2b12bcc0, 0x2b12be00, 0x2b3d0000)
+  rw space 12288K,  46% used [0x2b3d0000, 0x2b972060, 0x2b972200, 0x2bfd0000)
+}
+, 0.0757599 secs]</li>
+<li><strong>-Xloggc:filename</strong>:与上面几个配合使用，把相关日志信息记录到文件以便分析。</li>
+<li><strong>常见配置汇总</strong></li>
+</ul>
+<ol>
+<li>堆设置</li>
+</ol>
+<ul>
+<li><strong>-Xms</strong>:初始堆大小</li>
+<li><strong>-Xmx</strong>:最大堆大小</li>
+<li><strong>-XX:NewSize=n</strong>:设置年轻代大小</li>
+<li><strong>-XX:NewRatio=n:</strong>设置年轻代和年老代的比值。如:为3，表示年轻代与年老代比值为1：3，年轻代占整个年轻代年老代和的1/4</li>
+<li><strong>-XX:SurvivorRatio=n</strong>:年轻代中Eden区与两个Survivor区的比值。注意Survivor区有两个。如：3，表示Eden：Survivor=3：2，一个Survivor区占整个年轻代的1/5</li>
+<li><strong>-XX:MaxPermSize=n</strong>:设置持久代大小</li>
+<li><p>收集器设置</p>
+</li>
+<li><p><strong>-XX:+UseSerialGC</strong>:设置串行收集器</p>
+</li>
+<li><strong>-XX:+UseParallelGC</strong>:设置并行收集器</li>
+<li><strong>-XX:+UseParalledlOldGC</strong>:设置并行年老代收集器</li>
+<li><strong>-XX:+UseConcMarkSweepGC</strong>:设置并发收集器</li>
+<li><p>垃圾回收统计信息</p>
+</li>
+<li><p><strong>-XX:+PrintGC</strong></p>
+</li>
+<li><strong>-XX:+PrintGCDetails</strong></li>
+<li><strong>-XX:+PrintGCTimeStamps</strong></li>
+<li><strong>-Xloggc:filename</strong></li>
+<li><p>并行收集器设置</p>
+</li>
+<li><p><strong>-XX:ParallelGCThreads=n</strong>:设置并行收集器收集时使用的CPU数。并行收集线程数。</p>
+</li>
+<li><strong>-XX:MaxGCPauseMillis=n</strong>:设置并行收集最大暂停时间</li>
+<li><strong>-XX:GCTimeRatio=n</strong>:设置垃圾回收时间占程序运行时间的百分比。公式为1/(1+n)</li>
+<li><p>并发收集器设置</p>
+</li>
+<li><p><strong>-XX:+CMSIncrementalMode</strong>:设置为增量模式。适用于单CPU情况。</p>
+</li>
+<li><strong>-XX:ParallelGCThreads=n</strong>:设置并发收集器年轻代收集方式为并行收集时，使用的CPU数。并行收集线程数。</li>
+</ul>
+<p><strong>四、调优总结</strong></p>
+<ol>
+<li><strong>年轻代大小选择</strong></li>
+</ol>
+<ul>
+<li><strong>响应时间优先的应用</strong>：<strong>尽可能设大，直到接近系统的最低响应时间限制</strong>（根据实际情况选择）。在此种情况下，年轻代收集发生的频率也是最小的。同时，减少到达年老代的对象。</li>
+<li><strong>吞吐量优先的应用</strong>：尽可能的设置大，可能到达Gbit的程度。因为对响应时间没有要求，垃圾收集可以并行进行，一般适合8CPU以上的应用。</li>
+<li><p><strong>年老代大小选择</strong></p>
+</li>
+<li><p><strong>响应时间优先的应用</strong>：年老代使用并发收集器，所以其大小需要小心设置，一般要考虑<strong>并发会话率</strong>和<strong>会话持续时间</strong>等一些参数。如果堆设置小了，可以会造成内存碎片、高回收频率以及应用暂停而使用传统的标记清除方式；如果堆大了，则需要较长的收集时间。最优化的方案，一般需要参考以下数据获得：</p>
+</li>
+<li><p>并发垃圾收集信息</p>
+</li>
+<li>持久代并发收集次数</li>
+<li>传统GC信息</li>
+<li>花在年轻代和年老代回收上的时间比例
+减少年轻代和年老代花费的时间，一般会提高应用的效率</li>
+<li><strong>吞吐量优先的应用</strong>：一般吞吐量优先的应用都有一个很大的年轻代和一个较小的年老代。原因是，这样可以尽可能回收掉大部分短期对象，减少中期的对象，而年老代尽存放长期存活对象。</li>
+<li><p><strong>较小堆引起的碎片问题
+</strong>因为年老代的并发收集器使用标记、清除算法，所以不会对堆进行压缩。当收集器回收时，他会把相邻的空间进行合并，这样可以分配给较大的对象。但是，当堆空间较小时，运行一段时间以后，就会出现“碎片”，如果并发收集器找不到足够的空间，那么并发收集器将会停止，然后使用传统的标记、清除方式进行回收。如果出现“碎片”，可能需要进行如下配置：</p>
+</li>
+<li><p><strong>-XX:+UseCMSCompactAtFullCollection</strong>：使用并发收集器时，开启对年老代的压缩。</p>
+</li>
+<li><strong>-XX:CMSFullGCsBeforeCompaction=0</strong>：上面配置开启的情况下，这里设置多少次Full GC后，对年老代进行压缩</li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结-Xms-Xmx-Xmn-Xss/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结-Xms-Xmx-Xmn-Xss" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM知识点题目/">JVM知识点题目</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM知识点题目/">feb. 2 2014</a></time></span>      
@@ -1107,218 +1299,18 @@ Exception in thread &quot;main&quot; java.lang.OutOfMemoryError</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Ubuntu下经典JAVA开发环境搭建-itstartingIT进行时-BlogJava/">Ubuntu下经典JAVA开发环境搭建 </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--软件设计文档二三事-善攻者动于九天之上-博客园/">软件设计文档二三事 </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Ubuntu下经典JAVA开发环境搭建-itstartingIT进行时-BlogJava/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--软件设计文档二三事-善攻者动于九天之上-博客园/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="ubuntu-java-itstartingit-blogjava">Ubuntu下经典JAVA开发环境搭建 - itstartingIT进行时 - BlogJava</h1>
-<h1 id="-itstarting-it-http-www-blogjava-net-itstarting-"><a href="http://www.blogjava.net/itstarting/" target="_blank">itstarting:IT进行时</a></h1>
-<p>想自己所想，做自己所爱</p>
-<p>posts(26) comments(45) trackbacks(0)</p>
-<ul>
-<li><a href="http://www.blogjava.net/" target="_blank">BlogJava</a></li>
-<li><a href="http://www.blogjava.net/itstarting/contact.aspx?id=1" target="_blank">联系</a></li>
-<li><a href="http://www.blogjava.net/itstarting/rss" target="_blank"><img src="" alt="RSS 2.0 Feed"></a> <a href="http://www.blogjava.net/itstarting/rss" target="_blank">聚合</a></li>
-<li><a href="http://www.blogjava.net/itstarting/admin/EditPosts.aspx" target="_blank">管理</a></li>
-</ul>
-<h3 id="-">常用链接</h3>
-<ul>
-<li><a href="http://www.blogjava.net/itstarting/MyPosts.html" target="_blank">我的随笔</a></li>
-<li><a href="http://www.blogjava.net/itstarting/MyComments.html" target="_blank">我的评论</a></li>
-<li><a href="http://www.blogjava.net/itstarting/OtherPosts.html" target="_blank">我的参与</a></li>
-<li><p><a href="http://www.blogjava.net/itstarting/RecentComments.html" target="_blank">最新评论</a></p>
-<h3 id="-">留言簿</h3>
-</li>
-<li><p><a href="">给我留言</a></p>
-</li>
-<li><a href="">查看公开留言</a></li>
-<li><a href="">查看私人留言</a></li>
-</ul>
-<h3 id="-">随笔分类</h3>
-<ul>
-<li><a href="http://www.blogjava.net/itstarting/category/43133.html/rss" title="Subscribe to hadoop及云计算(2)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/43133.html" target="_blank">hadoop及云计算(2)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/category/16182.html/rss" title="Subscribe to Java Tips(6)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/16182.html" target="_blank">Java Tips(6)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/category/16183.html/rss" title="Subscribe to JetSpeed 2(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/16183.html" target="_blank">JetSpeed 2(1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/category/16184.html/rss" title="Subscribe to SOA/ESB" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/16184.html" target="_blank">SOA/ESB</a></li>
-<li><a href="http://www.blogjava.net/itstarting/category/43132.html/rss" title="Subscribe to ubuntu(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/43132.html" target="_blank">ubuntu(1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/category/43134.html/rss" title="Subscribe to Workflow(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/43134.html" target="_blank">Workflow(1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/category/16185.html/rss" title="Subscribe to XML(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/16185.html" target="_blank">XML(1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/category/37774.html/rss" title="Subscribe to 技术杂谈" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/37774.html" target="_blank">技术杂谈</a></li>
-<li><p><a href="http://www.blogjava.net/itstarting/category/39000.html/rss" title="Subscribe to 经验百宝箱(2)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/39000.html" target="_blank">经验百宝箱(2)</a></p>
-<h3 id="-">随笔档案</h3>
-</li>
-<li><p><a href="http://www.blogjava.net/itstarting/archive/2009/12.html" target="_blank">2009年12月 (4)</a></p>
-</li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2009/08.html" target="_blank">2009年8月 (1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2009/04.html" target="_blank">2009年4月 (2)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2009/02.html" target="_blank">2009年2月 (1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2008/11.html" target="_blank">2008年11月 (1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2008/01.html" target="_blank">2008年1月 (1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2007/08.html" target="_blank">2007年8月 (1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2007/07.html" target="_blank">2007年7月 (1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2007/06.html" target="_blank">2007年6月 (1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2007/03.html" target="_blank">2007年3月 (2)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2006/10.html" target="_blank">2006年10月 (2)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2006/08.html" target="_blank">2006年8月 (2)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2006/06.html" target="_blank">2006年6月 (3)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2006/05.html" target="_blank">2006年5月 (4)</a></li>
-</ul>
-<h3 id="-">文章分类</h3>
-<ul>
-<li><a href="http://www.blogjava.net/itstarting/category/11638.html/rss" title="Subscribe to Java Tips(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/11638.html" target="_blank">Java Tips(1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/category/11639.html/rss" title="Subscribe to JetSpeed 2(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/11639.html" target="_blank">JetSpeed 2(1)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/category/11640.html/rss" title="Subscribe to SOA/ESB(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/11640.html" target="_blank">SOA/ESB(1)</a></li>
-<li><p><a href="http://www.blogjava.net/itstarting/category/16181.html/rss" title="Subscribe to XML" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/16181.html" target="_blank">XML</a></p>
-<h3 id="-">文章档案</h3>
-</li>
-<li><p><a href="http://www.blogjava.net/itstarting/archives/2006/06.html" target="_blank">2006年6月 (1)</a></p>
-</li>
-<li><a href="http://www.blogjava.net/itstarting/archives/2006/05.html" target="_blank">2006年5月 (2)</a></li>
-</ul>
-<h3 id="-">搜索</h3>
-<p>*</p>
-<ul>
-<li><h3 id="-http-www-blogjava-net-itstarting-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/itstarting/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
-</li>
-<li><p><a href="http://www.blogjava.net/itstarting/archive/2009/12/16/255638.html#306091" target="_blank">1. re: AIX下用nmon进行监控和分析实战</a></p>
-</li>
-<li>应该也能在Linux上玩，装个ubuntu吧，感觉跟windows超级像，门槛较低
-有时间自己也试一下：）</li>
-<li>--IT进行时</li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2009/12/16/306076.html#306084" target="_blank">2. re: Hadoop-0.20.1+Ubuntu9.10实战</a></li>
-<li>顶你！ 技术很牛叉！</li>
-<li>--超级大亨</li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2009/12/15/102335.html#306077" target="_blank">3. re: 关于Apache+Tomcat的Cluster的郁闷问题，终于得到解决</a></li>
-<li>可以测试一下广播，应该是配置问题或是受到了干扰</li>
-<li>--IT进行时</li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2009/12/14/102335.html#305976" target="_blank">4. re: 关于Apache+Tomcat的Cluster的郁闷问题，终于得到解决</a></li>
-<li>评论内容较长,点击标题查看</li>
-<li>--xie</li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2009/06/29/255638.html#284604" target="_blank">5. re: AIX下用nmon进行监控和分析实战</a></li>
-<li>一直很想玩，就是没有权限。客户很抠门～～～</li>
-<li>--ly</li>
-</ul>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/itstarting/archive/2007/08/31/141614.html" target="_blank">1. ORA-00600的问题解决方案(8941)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2007/03/11/103142.html" target="_blank">2. FCKeditor的几点重要改进和使用心得，值得分享(4685)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2006/06/30/56043.html" target="_blank">3. ESB Framework:Mule vs. ServiceMix(3297)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2007/07/26/132499.html" target="_blank">4. Jmagick的安装和使用(2554)</a></li>
-<li><p><a href="http://www.blogjava.net/itstarting/archive/2007/03/07/102335.html" target="_blank">5. 关于Apache+Tomcat的Cluster的郁闷问题，终于得到解决(2455)</a></p>
-<h3 id="-">评论排行榜</h3>
-</li>
-<li><p><a href="http://www.blogjava.net/itstarting/archive/2007/03/11/103142.html" target="_blank">1. FCKeditor的几点重要改进和使用心得，值得分享(8)</a></p>
-</li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2007/03/07/102335.html" target="_blank">2. 关于Apache+Tomcat的Cluster的郁闷问题，终于得到解决(5)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2007/07/26/132499.html" target="_blank">3. Jmagick的安装和使用(4)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2007/06/13/123890.html" target="_blank">4. Tips:如何远程调试Tomcat或者Weblogic，解放我们脆弱的笔记本(4)</a></li>
-<li><a href="http://www.blogjava.net/itstarting/archive/2009/02/19/255638.html" target="_blank">5. AIX下用nmon进行监控和分析实战(4)</a></li>
-</ul>
-<h3 id="view-post">View Post</h3>
-<h2 id="-ubuntu-java-http-www-blogjava-net-itstarting-archive-2009-12-15-306075-html-"><a href="http://www.blogjava.net/itstarting/archive/2009/12/15/306075.html" target="_blank">Ubuntu下经典JAVA开发环境搭建</a></h2>
-<h1 id="1-jdk-">1、JDK安装配置</h1>
-<pre><code>选用最新的版本6.0.
-
-打开终端，执行以下命令：
-
-    sudo apt-get install sun-java6-jdk
-
-按照提示做就是了。
-
-**配置JAVA****环境变量:**
-
-    sudo gedit /etc/environment
-
-   在其中添加如下两行：
-
-    CLASSPATH=.:/usr/lib/jvm/java-6-sun/lib
-
-    JAVA_HOME=/usr/lib/jvm/java-6-sun
-
-执行命令：sudo gedit /etc/jvm，在最前面加入：
-
-   /usr/lib/jvm/java-6-sun
-</code></pre><h1 id="2-tomcat-">2、Tomcat安装配置</h1>
-<pre><code>还是喜欢经典的Tomcat5.5,到http://tomcat.apache.org去下载。
-
-文件为：apache-tomcat-5.5.28.zip
-
-解压缩：
-
-unzip /home/zhengxq/下载/apache-tomcat-5.5.28.zip -d $HOME/java
-</code></pre><h1 id="3-eclipse-">3、Eclipse安装配置</h1>
-<pre><code>下载最新的版本，并解压缩：
-
-zhengxq@zhengxq-desktop:~$ tar zxf $HOME/下载/eclipse-java-galileo-SR1-linux-gtk.tar.gz -C $HOME/java
-
-此时直接通过$HOME/java/eclipse/eclipse即可启动。
-
-Tomcat插件是必须的，下载并解压缩到eclipse/plugins下，重启eclipse即可。
-
-下面是“高级篇“：）。为了建立更方便的导航，可以这样：
-
-1、在/usr/bin目录下创建一个启动脚本eclipse：
-sudo gedit /usr/bin/eclipse
-然后在该文件中添加以下内容：
-/#!/bin/sh
-export MOZILLA_FIVE_HOME=&quot;/usr/lib/mozilla/&quot;
-export ECLIPSE_HOME=&quot;/home/zhengxq/java/eclipse&quot;
-$ECLIPSE_HOME/eclipse $/*
-2、让修改该脚本的权限，让它变成可执行：
-sudo chmod +x /usr/bin/eclipse
-3、在桌面或者gnome菜单中添加eclipse启动图标
-（1）在桌面或者启动面板上添加图标：
-在桌面（右键单击桌面-&gt;创建启动器）或面板（右键单击面板-&gt;添加到面板 -&gt;定制应用程序启动器）上创建一个新的启动器，然后添加下列数据：
-名称：Eclipse Platform
-命令：eclipse
-图标： /home/zhengxq/java/eclipse/icon.xpm
-（2）在Applications（应用程序）菜单上添加一个图标
-用文本编辑器在/usr/share/applications目录里新建一个名为eclipse.desktop的启动器，如下面的命令:
-sudo gedit /usr/share/applications/eclipse.desktop
-然后在文件中添加下列内容：
-</code></pre><p>[Desktop Entry]
-Encoding=UTF-8
-Name=Eclipse Platform
-Comment=Eclipse IDE
-Exec=eclipse
-Icon=/home/zhengxq/java/eclipse/icon.xpm
-Terminal=false
-StartupNotify=true
-Type=Application
-Categories=Application;Development;</p>
-<pre><code>保存文件，此时即可通过双击桌面eclipse的图标来运行eclipse。
-
-注意： Type=Application后面绝对不能有空格，否则出不来可别抓狂。
-</code></pre><p>posted on 2009-12-15 22:44 <a href="http://www.blogjava.net/itstarting/" target="_blank">IT进行时</a> 阅读(770) <a href="http://www.blogjava.net/itstarting/archive/2009/12/15/306075.html#Post" target="_blank">评论(1)</a>  <a href="http://www.blogjava.net/itstarting/admin/EditPosts.aspx?postid=306075" target="_blank">编辑</a>  <a href="http://www.blogjava.net/itstarting/AddToFavorite.aspx?id=306075" target="_blank">收藏</a> 所属分类: <a href="http://www.blogjava.net/itstarting/category/43132.html" target="_blank">ubuntu</a>
-<img src="" alt=""></p>
-<p><a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://www.blogjava.net/RequireRegister.aspx" target="_blank">新用户注册</a>  <a href="">刷新评论列表</a>  </p>
-<p><a href=""></a> <a href="http://job.cnblogs.com/offer/3846/">盛大网络诚聘产品技术经理</a> 标题  请输入标题 姓名  请输入你的姓名 主页 请输入验证码 验证码 /*  <img src="" alt=""> 内容(请不要发表任何与政治相关的内容) 请输入评论内容 Remember Me?   <a href="http://www.blogjava.net/login.aspx?ReturnURL=http://www.blogjava.net/itstarting/archive/2009/12/15/306075.html&amp;SourceURL=/itstarting/archive/2009/12/15/306075.html" target="_blank">登录</a>       [使用Ctrl+Enter键可以直接提交] <a href="http://kb.cnblogs.com/zt/windows7/" target="_blank">Windows 7专题</a>  IT新闻：
-· <a href="http://news.cnblogs.com/n/53267/" target="_blank">操作微软文档的JAVA API项目：Apache POI 3.6发布</a>
-· <a href="http://news.cnblogs.com/n/53266/" target="_blank">微软欧盟互相妥协 11年反垄断纠纷终划句号</a>
-· <a href="http://news.cnblogs.com/n/53265/" target="_blank">CNNIC：百度有啊平台忠诚度达55% 位居第二名</a>
-· <a href="http://news.cnblogs.com/n/53264/" target="_blank">缝缝补补又一年 Adobe计划明年1月修复Reader 0day漏洞</a>
-· <a href="http://news.cnblogs.com/n/53263/" target="_blank">CBSi王路否认要收购京东商城:平台公司都偏贵</a></p>
-<p>博客园首页随笔：
-· <a href="http://www.cnblogs.com/procoder/archive/2009/12/17/Windows-Mobile-Silverlight-WPF.html" target="_blank">Silverlight for Windows Mobile非官方预览</a>
-· <a href="http://www.cnblogs.com/sukyboor/archive/2009/12/17/1626274.html" target="_blank">人肉搜索、人肉语言及人肉程序设计</a>
-· <a href="http://www.cnblogs.com/homezzm/archive/2009/12/17/1626264.html" target="_blank">Silverlight4中用net.tcp双工方式与进行通信</a>
-· <a href="http://www.cnblogs.com/n216/archive/2009/12/17/1626254.html" target="_blank">《如何学习一门新的语言（新手篇）》（2009/12/15）</a>
-· <a href="http://www.cnblogs.com/geniusvczh/archive/2009/12/17/1626184.html" target="_blank">看到哪里排序到哪里的ListView</a>
-招聘信息：
-· <a href="http://job.cnblogs.com/offer/3273/" target="_blank">系统工程师(上海微享网络科技有限公司)</a>
-· <a href="http://job.cnblogs.com/offer/3798/" target="_blank">DBA工程师(首都信息发展股份有限公司 CAPINFO)</a>
-· <a href="http://job.cnblogs.com/offer/2506/" target="_blank">高级程序员(融金赢领(北京)网络科技有限公司)</a>
-· <a href="http://job.cnblogs.com/offer/3748/" target="_blank">C/#开发工程师(美屋得信息技术（上海）有限公司)</a>
-· <a href="http://job.cnblogs.com/offer/3577/" target="_blank">.NET 开发工程师(格林豪泰酒店（中国）有限公司)</a> 在知识库中查看：
-<a href="http://kb.cnblogs.com/b/306075/" target="_blank">Ubuntu下经典JAVA开发环境搭建</a> 网站导航:</p>
-<p><a href="http://www.cnblogs.com/" target="_blank">博客园</a>   <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>   <a href="http://home.cnblogs.com/" target="_blank">个人主页</a>   <a href="http://www.cnweblog.com/" target="_blank">博客生活</a>   <a href="http://www.cnitblog.com/" target="_blank">IT博客网</a>   <a href="http://www.cppblog.com/" target="_blank">C++博客</a>   <a href="http://space.cnblogs.com/" target="_blank">博客园社区</a> <a href="http://www.blogjava.net/itstarting/archive/2009/12/15/306075.html?opt=admin" target="_blank">管理</a>   </p>
-<p>Powered by:
-<a href="http://scottwater.com/blog" target="_blank"><img src="" alt=""></a> <a href="http://www.blogjava.net/" target="_blank">BlogJava</a>
-Copyright © IT进行时</p>
+        <h1 id="-">软件设计文档二三事 - 善攻者动于九天之上 - 博客园</h1>
+<p><img src="" alt=""> Saving Data...
+正在保存数据...
+正在儲存資料...</p>
 
       
     </div>
@@ -1328,53 +1320,8 @@ Copyright © IT进行时</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_总结类/">Java_总结类</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_总结类/" class="label label-success">Java_总结类</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Ubuntu下经典JAVA开发环境搭建-itstartingIT进行时-BlogJava/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_总结类--Ubuntu下经典JAVA开发环境搭建-itstartingIT进行时-BlogJava" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JDK7中的5种GC类型第一种：SerialGC/">JDK7中的5种GC类型第一种：Serial GC</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JDK7中的5种GC类型第一种：SerialGC/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="jdk7-5-gc-serial-gc">JDK7中的5种GC类型第一种：Serial GC</h1>
-<h2 id="jdk7-5-gc-">JDK7中的5种GC类型</h2>
-<p>第一种：Serial GC</p>
-<p><img src="" alt=""></p>
-<p>第二种：Parallel GC</p>
-<p><img src="" alt=""></p>
-<p>第三种：Parallel Old GC (Parallel Compacting GC)</p>
-<p><img src="" alt=""></p>
-<p>第四种：Concurrent Mark &amp; Sweep GC (CMS GC)</p>
-<p><img src="" alt=""></p>
-<p>第五种：Garbage First (G1) GC</p>
-<p><img src="" alt=""></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JDK7中的5种GC类型第一种：SerialGC/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JDK7中的5种GC类型第一种：SerialGC" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_设计类/">Java_设计类</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_设计类/" class="label label-success">Java_设计类</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--软件设计文档二三事-善攻者动于九天之上-博客园/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_设计类--软件设计文档二三事-善攻者动于九天之上-博客园" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1454,7 +1401,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 17:47:11</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 20:45:44</em></span></div>
 </div>
 <div class="clearfix"></div>
 
