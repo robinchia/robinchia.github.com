@@ -110,118 +110,138 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE--Java使用”指针”快速比较字节/">Java使用”指针”快速比较字节</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--通过分析JDK源代码研究Hash存储机制/">通过分析 JDK 源代码研究 Hash 存储机制</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE--Java使用”指针”快速比较字节/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--通过分析JDK源代码研究Hash存储机制/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="java-">Java使用”指针”快速比较字节</h1>
-<p>如何才能快速比较两个字节数组呢?我将问题描述成下面的接口：</p>
-<p>public int compareTo(byte[] b1, int s1, int l1, byte[] b2, int s2,int l2);</p>
-<p>最直观的做法是同时遍历两个数组，两两比较。</p>
-<p>public int compareTo(byte[] buffer1, int offset1, int length1,
-        byte[] buffer2, int offset2, int length2) {</p>
-<pre><code>// Short circuit equal case
-if (buffer1 == buffer2 &amp;&amp; offset1 == offset2
-
-    &amp;&amp; length1 == length2) {
-    return 0;
-
-}
-// Bring WritableComparator code local
-
-int end1 = offset1 + length1;
-int end2 = offset2 + length2;
-
-for (int i = offset1, j = offset2; i &lt; end1 &amp;&amp; j &lt; end2; i++, j++) {
-    int a = (buffer1[i] &amp; 0xff);
-
-    int b = (buffer2[j] &amp; 0xff);
-    if (a != b) {
-</code></pre><p>return a - b;
-        }</p>
-<pre><code>}
-return length1 - length2;
-</code></pre><p>}</p>
-<p>如果事情这么简单就结束了，就没有意思了。</p>
-<p>如果要提升性能，可以做循环展开等等优化，但这些优化应该依赖JVM来做，新的JVM可以做的很好。那还有什么办法可以提高性能呢？
-可以将<strong>字节数组合并</strong>!!上面的例子中，每个byte被迫转型成了int，再比较。其实我们可以将8个byte转换成一个long，在比较long，这样效果会不会好些？用什么方法转换才是最优的？</p>
-<p>long sun.misc.Unsafe.getLong(Object o,int offset)</p>
-<p>Java提供了一个本地方法，可以最快最好转换byte与long。该函数是直接访问一个对象的内存，内存地址是对象指针加偏移量，返回该地址指向的值。有人说Java很安全，不可以操作指针，所以有的时候性能也不高。其实不对，有了这个Unsafe类，Java一样也不安全。所以Unsafe类中的方法都不是public的，不过没关系，我们有反射。言归正传，下面是使用这种技术手段的实现代码。</p>
-<p>public int compareTo(byte[] buffer1, int offset1, int length1,
-        byte[] buffer2, int offset2, int length2) {</p>
-<pre><code>// Short circuit equal case
-if (buffer1 == buffer2 &amp;&amp; offset1 == offset2
-
-        &amp;&amp; length1 == length2) {
-    return 0;
-
-}
-int minLength = Math.min(length1, length2);
-
-int minWords = minLength / Longs.BYTES;
-int offset1Adj = offset1 + BYTE_ARRAY_BASE_OFFSET;
-
-int offset2Adj = offset2 + BYTE_ARRAY_BASE_OFFSET;
-
-
-//*
- /* Compare 8 bytes at a time. Benchmarking shows comparing 8
-
- /* bytes at a time is no slower than comparing 4 bytes at a time
- /* even on 32-bit. On the other hand, it is substantially faster
-
- /* on 64-bit.
- /*/
-
-for (int i = 0; i &lt; minWords /* Longs.BYTES; i += Longs.BYTES) {
-    long lw = theUnsafe.getLong(buffer1, offset1Adj + (long) i);
-
-    long rw = theUnsafe.getLong(buffer2, offset2Adj + (long) i);
-    long diff = lw ^ rw;
-
-
-    if (diff != 0) {
-
-        if (!littleEndian) {
-            return (lw + Long.MIN_VALUE) &lt; (rw + Long.MIN_VALUE) ? -1
-
-                    : 1;
-        }
-
-
-        // Use binary search,一下省略若干代码
-
-        .....
-        return (int) (((lw &gt;&gt;&gt; n) &amp; 0xFFL) - ((rw &gt;&gt;&gt; n) &amp; 0xFFL));
-
-    }
-}
-
-
-// The epilogue to cover the last (minLength % 8) elements.
-
-for (int i = minWords /* Longs.BYTES; i &lt; minLength; i++) {
-    int result = UnsignedBytes.compare(buffer1[offset1 + i],
-
-            buffer2[offset2 + i]);
-    if (result != 0) {
-
-        return result;
-    }
-
-}
-return length1 - length2;
-</code></pre><p>}</p>
-<p>实现比原来复杂了一些。但这次一次可以比较8个字节了。这种getLong函数和系统的字节序是紧紧相关的，如果是小端序操作起来有点麻烦，代码先省略掉。这样操作实际效果如何？我们需要对比测试下。对比两个1M的字节数组，如果使用第一个版本，每次比较平均需要2.5499ms,如果使用第二个版本，需要0.8359ms,提升了3倍。对应这种CPU密集型的操作，这样的提升可是很可观的。</p>
-<p>如果要提升性能，使用Unsafe直接访问内存也是不错的选择。
-Share the post &quot;Java使用&quot;指针&quot;快速比较字节&quot;</p>
+        <h1 id="-jdk-hash-">通过分析 JDK 源代码研究 Hash 存储机制</h1>
+<p><a href="http://www.ibm.com/cn/" target="_blank"><img src="" alt="IBM®"></a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main" target="_blank"><img src="" alt="跳转到主要内容"></a>     <strong>中国</strong> [<a href="http://www.ibm.com/developerworks/cn/country/" target="_blank">选择</a>]      <a href="http://www.ibm.com/legal/cn/" target="_blank">使用条款</a>   <img src="" alt=""> <img src="" alt="">   <img src="" alt="Select a scope:"> dW 全部内容 -----------------   AIX and UNIX   Information management   Lotus   Rational   WebSphere -----------------   Architecture   Grid computing   Java 技术   Linux   Multicore acceleration   Open source   Security   SOA &amp; Web services   Web development   XML ----------------- IBM 全部内容 <img src="" alt="Search for:">      <a href=""></a>        <a href="http://www.ibm.com/cn/">首页</a>      <a href="http://www.ibm.com/products/cn/" target="_blank">产品</a>      <a href="http://www.ibm.com/servicessolutions/cn/" target="_blank">服务与解决方案</a>      <a href="http://www.ibm.com/support/cn/" target="_blank">支持与下载</a>      <a href="http://www.ibm.com/account/cn/" target="_blank">个性化服务</a>      <a href="http://www.ibm.com/developerworks/cn/" target="_blank"> </a> <a href="http://www.ibm.com/developerworks/cn/">developerWorks
+中国</a> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#" target="_blank">本文内容包括：</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#major1" target="_blank">通过 HashMap、HashSet 的源代码分析其 Hash 存储机制</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#major2" target="_blank">HashMap 的存储实现</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#major3" target="_blank">Hash 算法的性能选项</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#major4" target="_blank">HashMap 的读取实现</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#major5" target="_blank">HashSet 的实现</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#resources" target="_blank">参考资料</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#author" target="_blank">关于作者</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#rate" target="_blank">对本文的评价</a> <img src="" alt=""> <img src="" alt="">
+<strong>相关链接：</strong> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/views/java/libraryview.jsp" target="_blank">Java technology 技术文档库</a> <img src="" alt=""> <img src="" alt=""> <a href=""><img src="" alt="跳转到主要内容"></a> <img src="" alt=""> <img src="" alt="">
+<a href="http://www.ibm.com/developerworks/cn/" target="_blank">developerWorks 中国</a>  &gt;  <a href="http://www.ibm.com/developerworks/cn/java/" target="_blank">Java technology</a>  &gt;<img src="" alt=""></p>
+<h1 id="-jdk-hash-">通过分析 JDK 源代码研究 Hash 存储机制</h1>
+<p><img src="" alt=""> <img src="" alt="developerWorks"> <img src="" alt=""> <img src="" alt=""> 文档选项 <img src="" alt=""> <img src="" alt=""> 
+未显示需要 JavaScript 的文档选项</p>
+<p>级别： 中级</p>
+<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#author" target="_blank">李 刚</a>, 自由撰稿人</p>
+<p>2009 年 11 月 26 日
+HashMap 和 HashSet 是 Java Collection Framework 的两个重要成员，其中 HashMap 是 Map 接口的常用实现类，HashSet 是 Set 接口的常用实现类。虽然 HashMap 和 HashSet 实现的接口规范不同，但它们底层的 Hash 存储机制完全一样，甚至 HashSet 本身就采用 HashMap 来实现的。</p>
+<p><a href="">通过 HashMap、HashSet 的源代码分析其 Hash 存储机制</a></p>
+<p><img src="" alt=""> <a href=""><strong>集合和引用</strong></a></p>
+<p>就像引用类型的数组一样，当我们把 Java 对象放入数组之时，并不是真正的把 Java 对象放入数组中，只是把对象的引用放入数组中，每个数组元素都是一个引用变量。</p>
+<p>实际上，HashSet 和 HashMap 之间有很多相似之处，对于 HashSet 而言，系统采用 Hash 算法决定集合元素的存储位置，这样可以保证能快速存、取集合元素；对于 HashMap 而言，系统 key-value 当成一个整体进行处理，系统总是根据 Hash 算法来计算 key-value 的存储位置，这样可以保证能快速存、取 Map 的 key-value 对。</p>
+<p>在介绍集合存储之前需要指出一点：虽然集合号称存储的是 Java 对象，但实际上并不会真正将 Java 对象放入 Set 集合中，只是在 Set 集合中保留这些对象的引用而言。也就是说：Java 集合实际上是多个引用变量所组成的集合，这些引用变量指向实际的 Java 对象。
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">HashMap 的存储实现</a></p>
+<p>当程序试图将多个 key-value 放入 HashMap 中时，以如下代码片段为例：
+HashMap<String , Double> map = new HashMap<String , Double>(); map.put(&quot;语文&quot; , 80.0); map.put(&quot;数学&quot; , 89.0); map.put(&quot;英语&quot; , 78.2);</p>
+<p>HashMap 采用一种所谓的“Hash 算法”来决定每个元素的存储位置。</p>
+<p>当程序执行 map.put(&quot;语文&quot; , 80.0); 时，系统将调用&quot;语文&quot;的 hashCode() 方法得到其 hashCode 值——每个 Java 对象都有 hashCode() 方法，都可通过该方法获得它的 hashCode 值。得到这个对象的 hashCode 值之后，系统会根据该 hashCode 值来决定该元素的存储位置。</p>
+<p>我们可以看 HashMap 类的 put(K key , V value) 方法的源代码：
+public V put(K key, V value) { // 如果 key 为 null，调用 putForNullKey 方法进行处理 if (key == null) return putForNullKey(value); // 根据 key 的 keyCode 计算 Hash 值 int hash = hash(key.hashCode()); // 搜索指定 hash 值在对应 table 中的索引  int i = indexFor(hash, table.length); // 如果 i 索引处的 Entry 不为 null，通过循环不断遍历 e 元素的下一个元素 for (Entry<K,V> e = table[i]; e != null; e = e.next) { Object k; // 找到指定 key 与需要放入的 key 相等（hash 值相同 // 通过 equals 比较放回 true） if (e.hash == hash &amp;&amp; ((k = e.key) == key || key.equals(k))) { V oldValue = e.value; e.value = value; e.recordAccess(this); return oldValue; } } // 如果 i 索引处的 Entry 为 null，表明此处还没有 Entry modCount++; // 将 key、value 添加到 i 索引处 addEntry(hash, key, value, i); return null; }
+<img src="" alt=""> <a href=""><strong>JDK 源码</strong></a></p>
+<p>在 JDK 安装目录下可以找到一个 src.zip 压缩文件，该文件里包含了 Java 基础类库的所有源文件。只要读者有学习兴趣，随时可以打开这份压缩文件来阅读 Java 类库的源代码，这对提高读者的编程能力是非常有帮助的。需要指出的是：src.zip 中包含的源代码并没有包含像上文中的中文注释，这些注释是笔者自己添加进去的。</p>
+<p>上面程序中用到了一个重要的内部接口：Map.Entry，每个 Map.Entry 其实就是一个 key-value 对。从上面程序中可以看出：当系统决定存储 HashMap 中的 key-value 对时，完全没有考虑 Entry 中的 value，仅仅只是根据 key 来计算并决定每个 Entry 的存储位置。这也说明了前面的结论：我们完全可以把 Map 集合中的 value 当成 key 的附属，当系统决定了 key 的存储位置之后，value 随之保存在那里即可。</p>
+<p>上面方法提供了一个根据 hashCode() 返回值来计算 Hash 码的方法：hash()，这个方法是一个纯粹的数学计算，其方法如下：
+static int hash(int h) { h ^= (h &gt;&gt;&gt; 20) ^ (h &gt;&gt;&gt; 12); return h ^ (h &gt;&gt;&gt; 7) ^ (h &gt;&gt;&gt; 4); }</p>
+<p>对于任意给定的对象，只要它的 hashCode() 返回值相同，那么程序调用 hash(int h) 方法所计算得到的 Hash 码值总是相同的。接下来程序会调用 indexFor(int h, int length) 方法来计算该对象应该保存在 table 数组的哪个索引处。indexFor(int h, int length) 方法的代码如下：
+static int indexFor(int h, int length) { return h &amp; (length-1); }</p>
+<p>这个方法非常巧妙，它总是通过 h</p>
+<p>&amp;
+(table.length -1) 来得到该对象的保存位置——而 HashMap 底层数组的长度总是 2 的 n 次方，这一点可参看后面关于 HashMap 构造器的介绍。</p>
+<p>当 length 总是 2 的倍数时，h</p>
+<p>&amp; (length-1)</p>
+<p>将是一个非常巧妙的设计：假设 h=5,length=16, 那么 h &amp; length - 1 将得到 5；如果 h=6,length=16, 那么 h &amp; length - 1 将得到 6 ……如果 h=15,length=16, 那么 h &amp; length - 1 将得到 15；但是当 h=16 时 , length=16 时，那么 h &amp; length - 1 将得到 0 了；当 h=17 时 , length=16 时，那么 h &amp; length - 1 将得到 1 了……这样保证计算得到的索引值总是位于 table 数组的索引之内。</p>
+<p>根据上面 put 方法的源代码可以看出，当程序试图将一个 key-value 对放入 HashMap 中时，程序首先根据该 key 的 hashCode() 返回值决定该 Entry 的存储位置：如果两个 Entry 的 key 的 hashCode() 返回值相同，那它们的存储位置相同。如果这两个 Entry 的 key 通过 equals 比较返回 true，新添加 Entry 的 value 将覆盖集合中原有 Entry 的 value，但 key 不会覆盖。如果这两个 Entry 的 key 通过 equals 比较返回 false，新添加的 Entry 将与集合中原有 Entry 形成 Entry 链，而且新添加的 Entry 位于 Entry 链的头部——具体说明继续看 addEntry() 方法的说明。</p>
+<p>当向 HashMap 中添加 key-value 对，由其 key 的 hashCode() 返回值决定该 key-value 对（就是 Entry 对象）的存储位置。当两个 Entry 对象的 key 的 hashCode() 返回值相同时，将由 key 通过 eqauls() 比较值决定是采用覆盖行为（返回 true），还是产生 Entry 链（返回 false）。</p>
+<p>上面程序中还调用了 addEntry(hash, key, value, i); 代码，其中 addEntry 是 HashMap 提供的一个包访问权限的方法，该方法仅用于添加一个 key-value 对。下面是该方法的代码：
+void addEntry(int hash, K key, V value, int bucketIndex) { // 获取指定 bucketIndex 索引处的 Entry Entry<K,V> e = table[bucketIndex]; // ① // 将新创建的 Entry 放入 bucketIndex 索引处，并让新的 Entry 指向原来的 Entry table[bucketIndex] = new Entry<K,V>(hash, key, value, e); // 如果 Map 中的 key-value 对的数量超过了极限 if (size++ &gt;= threshold) // 把 table 对象的长度扩充到 2 倍。 resize(2 /* table.length); // ② }</p>
+<p>上面方法的代码很简单，但其中包含了一个非常优雅的设计：系统总是将新添加的 Entry 对象放入 table 数组的 bucketIndex 索引处——如果 bucketIndex 索引处已经有了一个 Entry 对象，那新添加的 Entry 对象指向原有的 Entry 对象（产生一个 Entry 链），如果 bucketIndex 索引处没有 Entry 对象，也就是上面程序①号代码的 e 变量是 null，也就是新放入的 Entry 对象指向 null，也就是没有产生 Entry 链。
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">Hash 算法的性能选项</a></p>
+<p>根据上面代码可以看出，在同一个 bucket 存储 Entry 链的情况下，新放入的 Entry 总是位于 bucket 中，而最早放入该 bucket 中的 Entry 则位于这个 Entry 链的最末端。</p>
+<p>上面程序中还有这样两个变量：</p>
 <ul>
-<li><a href="http://service.weibo.com/share/share.php?url=http%3A%2F%2Fwww.yankay.com%2Fjava-fast-byte-comparison%2F" title="Share this article on Weibo" target="_blank">Weibo</a></li>
+<li>size：该变量保存了该 HashMap 中所包含的 key-value 对的数量。</li>
+<li>threshold：该变量包含了 HashMap 能容纳的 key-value 对的极限，它的值等于 HashMap 的容量乘以负载因子（load factor）。</li>
 </ul>
+<p>从上面程序中②号代码可以看出，当 size++ &gt;= threshold 时，HashMap 会自动调用 resize 方法扩充 HashMap 的容量。每扩充一次，HashMap 的容量就增大一倍。</p>
+<p>上面程序中使用的 table 其实就是一个普通数组，每个数组都有一个固定的长度，这个数组的长度就是 HashMap 的容量。HashMap 包含如下几个构造器：</p>
+<ul>
+<li>HashMap()：构建一个初始容量为 16，负载因子为 0.75 的 HashMap。</li>
+<li>HashMap(int initialCapacity)：构建一个初始容量为 initialCapacity，负载因子为 0.75 的 HashMap。</li>
+<li>HashMap(int initialCapacity, float loadFactor)：以指定初始容量、指定的负载因子创建一个 HashMap。</li>
+</ul>
+<p>当创建一个 HashMap 时，系统会自动创建一个 table 数组来保存 HashMap 中的 Entry，下面是 HashMap 中一个构造器的代码：
+// 以指定初始化容量、负载因子创建 HashMap public HashMap(int initialCapacity, float loadFactor) { // 初始容量不能为负数 if (initialCapacity &lt; 0) throw new IllegalArgumentException( &quot;Illegal initial capacity: &quot; + initialCapacity); // 如果初始容量大于最大容量，让出示容量 if (initialCapacity &gt; MAXIMUM_CAPACITY) initialCapacity = MAXIMUM_CAPACITY; // 负载因子必须大于 0 的数值 if (loadFactor &lt;= 0 || Float.isNaN(loadFactor)) throw new IllegalArgumentException( loadFactor); // 计算出大于 initialCapacity 的最小的 2 的 n 次方值。 int capacity = 1; while (capacity &lt; initialCapacity) capacity &lt;&lt;= 1; this.loadFactor = loadFactor; // 设置容量极限等于容量 /<em> 负载因子 threshold = (int)(capacity /</em> loadFactor); // 初始化 table 数组 table = new Entry[capacity]; // ① init(); }</p>
+<p>上面代码中粗体字代码包含了一个简洁的代码实现：找出大于 initialCapacity 的、最小的 2 的 n 次方值，并将其作为 HashMap 的实际容量（由 capacity 变量保存）。例如给定 initialCapacity 为 10，那么该 HashMap 的实际容量就是 16。
+<img src="" alt=""> <a href=""><strong>initialCapacity 与 HashTable 的容量</strong></a></p>
+<p>创建 HashMap 时指定的 initialCapacity 并不等于 HashMap 的实际容量，通常来说，HashMap 的实际容量总比 initialCapacity 大一些，除非我们指定的 initialCapacity 参数值恰好是 2 的 n 次方。当然，掌握了 HashMap 容量分配的知识之后，应该在创建 HashMap 时将 initialCapacity 参数值指定为 2 的 n 次方，这样可以减少系统的计算开销。</p>
+<p>程序①号代码处可以看到：table 的实质就是一个数组，一个长度为 capacity 的数组。</p>
+<p>对于 HashMap 及其子类而言，它们采用 Hash 算法来决定集合中元素的存储位置。当系统开始初始化 HashMap 时，系统会创建一个长度为 capacity 的 Entry 数组，这个数组里可以存储元素的位置被称为“桶（bucket）”，每个 bucket 都有其指定索引，系统可以根据其索引快速访问该 bucket 里存储的元素。</p>
+<p>无论何时，HashMap 的每个“桶”只存储一个元素（也就是一个 Entry），由于 Entry 对象可以包含一个引用变量（就是 Entry 构造器的的最后一个参数）用于指向下一个 Entry，因此可能出现的情况是：HashMap 的 bucket 中只有一个 Entry，但这个 Entry 指向另一个 Entry ——这就形成了一个 Entry 链。如图 1 所示：
+<a href=""><strong>图 1. HashMap 的存储示意</strong></a>
+<img src="" alt="图 1. HashMap 的存储示意">
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">HashMap 的读取实现</a></p>
+<p>当 HashMap 的每个 bucket 里存储的 Entry 只是单个 Entry ——也就是没有通过指针产生 Entry 链时，此时的 HashMap 具有最好的性能：当程序通过 key 取出对应 value 时，系统只要先计算出该 key 的 hashCode() 返回值，在根据该 hashCode 返回值找出该 key 在 table 数组中的索引，然后取出该索引处的 Entry，最后返回该 key 对应的 value 即可。看 HashMap 类的 get(K key) 方法代码：
+public V get(Object key) { // 如果 key 是 null，调用 getForNullKey 取出对应的 value if (key == null) return getForNullKey(); // 根据该 key 的 hashCode 值计算它的 hash 码 int hash = hash(key.hashCode()); // 直接取出 table 数组中指定索引处的值， for (Entry<K,V> e = table[indexFor(hash, table.length)]; e != null; // 搜索该 Entry 链的下一个 Entr e = e.next) // ① { Object k; // 如果该 Entry 的 key 与被搜索 key 相同 if (e.hash == hash &amp;&amp; ((k = e.key) == key || key.equals(k))) return e.value; } return null; }</p>
+<p>从上面代码中可以看出，如果 HashMap 的每个 bucket 里只有一个 Entry 时，HashMap 可以根据索引、快速地取出该 bucket 里的 Entry；在发生“Hash 冲突”的情况下，单个 bucket 里存储的不是一个 Entry，而是一个 Entry 链，系统只能必须按顺序遍历每个 Entry，直到找到想搜索的 Entry 为止——如果恰好要搜索的 Entry 位于该 Entry 链的最末端（该 Entry 是最早放入该 bucket 中），那系统必须循环到最后才能找到该元素。</p>
+<p>归纳起来简单地说，HashMap 在底层将 key-value 当成一个整体进行处理，这个整体就是一个 Entry 对象。HashMap 底层采用一个 Entry[] 数组来保存所有的 key-value 对，当需要存储一个 Entry 对象时，会根据 Hash 算法来决定其存储位置；当需要取出一个 Entry 时，也会根据 Hash 算法找到其存储位置，直接取出该 Entry。由此可见：HashMap 之所以能快速存、取它所包含的 Entry，完全类似于现实生活中母亲从小教我们的：不同的东西要放在不同的位置，需要时才能快速找到它。</p>
+<p>当创建 HashMap 时，有一个默认的负载因子（load factor），其默认值为 0.75，这是时间和空间成本上一种折衷：增大负载因子可以减少 Hash 表（就是那个 Entry 数组）所占用的内存空间，但会增加查询数据的时间开销，而查询是最频繁的的操作（HashMap 的 get() 与 put() 方法都要用到查询）；减小负载因子会提高数据查询的性能，但会增加 Hash 表所占用的内存空间。</p>
+<p>掌握了上面知识之后，我们可以在创建 HashMap 时根据实际需要适当地调整 load factor 的值；如果程序比较关心空间开销、内存比较紧张，可以适当地增加负载因子；如果程序比较关心时间开销，内存比较宽裕则可以适当的减少负载因子。通常情况下，程序员无需改变负载因子的值。</p>
+<p>如果开始就知道 HashMap 会保存多个 key-value 对，可以在创建时就使用较大的初始化容量，如果 HashMap 中 Entry 的数量一直不会超过极限容量（capacity /<em> load factor），HashMap 就无需调用 resize() 方法重新分配 table 数组，从而保证较好的性能。当然，开始就将初始容量设置太高可能会浪费空间（系统需要创建一个长度为 capacity 的 Entry 数组），因此创建 HashMap 时初始化容量设置也需要小心对待。
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ [<em>*回页首</em></em>](<a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main" target="_blank">http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main</a>)</p>
+<p><a href="">HashSet 的实现</a></p>
+<p>对于 HashSet 而言，它是基于 HashMap 实现的，HashSet 底层采用 HashMap 来保存所有元素，因此 HashSet 的实现比较简单，查看 HashSet 的源代码，可以看到如下代码：
+public class HashSet<E> extends AbstractSet<E> implements Set<E>, Cloneable, java.io.Serializable { // 使用 HashMap 的 key 保存 HashSet 中所有元素 private transient HashMap<E,Object> map; // 定义一个虚拟的 Object 对象作为 HashMap 的 value private static final Object PRESENT = new Object(); ... // 初始化 HashSet，底层会初始化一个 HashMap public HashSet() { map = new HashMap<E,Object>(); } // 以指定的 initialCapacity、loadFactor 创建 HashSet // 其实就是以相应的参数创建 HashMap public HashSet(int initialCapacity, float loadFactor) { map = new HashMap<E,Object>(initialCapacity, loadFactor); } public HashSet(int initialCapacity) { map = new HashMap<E,Object>(initialCapacity); } HashSet(int initialCapacity, float loadFactor, boolean dummy) { map = new LinkedHashMap<E,Object>(initialCapacity , loadFactor); } // 调用 map 的 keySet 来返回所有的 key public Iterator<E> iterator() { return map.keySet().iterator(); } // 调用 HashMap 的 size() 方法返回 Entry 的数量，就得到该 Set 里元素的个数 public int size() { return map.size(); } // 调用 HashMap 的 isEmpty() 判断该 HashSet 是否为空， // 当 HashMap 为空时，对应的 HashSet 也为空 public boolean isEmpty() { return map.isEmpty(); } // 调用 HashMap 的 containsKey 判断是否包含指定 key //HashSet 的所有元素就是通过 HashMap 的 key 来保存的 public boolean contains(Object o) { return map.containsKey(o); } // 将指定元素放入 HashSet 中，也就是将该元素作为 key 放入 HashMap public boolean add(E e) { return map.put(e, PRESENT) == null; } // 调用 HashMap 的 remove 方法删除指定 Entry，也就删除了 HashSet 中对应的元素 public boolean remove(Object o) { return map.remove(o)==PRESENT; } // 调用 Map 的 clear 方法清空所有 Entry，也就清空了 HashSet 中所有元素 public void clear() { map.clear(); } ... }</p>
+<p>由上面源程序可以看出，HashSet 的实现其实非常简单，它只是封装了一个 HashMap 对象来存储所有的集合元素，所有放入 HashSet 中的集合元素实际上由 HashMap 的 key 来保存，而 HashMap 的 value 则存储了一个 PRESENT，它是一个静态的 Object 对象。</p>
+<p>HashSet 的绝大部分方法都是通过调用 HashMap 的方法来实现的，因此 HashSet 和 HashMap 两个集合在实现本质上是相同的。
+<img src="" alt=""> <a href=""><strong>HashMap 的 put 与 HashSet 的 add</strong></a></p>
+<p>由于 HashSet 的 add() 方法添加集合元素时实际上转变为调用 HashMap 的 put() 方法来添加 key-value 对，当新放入 HashMap 的 Entry 中 key 与集合中原有 Entry 的 key 相同（hashCode() 返回值相等，通过 equals 比较也返回 true），新添加的 Entry 的 value 将覆盖原来 Entry 的 value，但 key 不会有任何改变，因此如果向 HashSet 中添加一个已经存在的元素，新添加的集合元素（底层由 HashMap 的 key 保存）不会覆盖已有的集合元素。</p>
+<p>掌握上面理论知识之后，接下来看一个示例程序，测试一下自己是否真正掌握了 HashMap 和 HashSet 集合的功能。
+class Name { private String first; private String last; public Name(String first, String last) { this.first = first; this.last = last; } public boolean equals(Object o) { if (this == o) { return true; } if (o.getClass() == Name.class) { Name n = (Name)o; return n.first.equals(first) &amp;&amp; n.last.equals(last); } return false; } } public class HashSetTest { public static void main(String[] args) { Set<Name> s = new HashSet<Name>(); s.add(new Name(&quot;abc&quot;, &quot;123&quot;)); System.out.println( s.contains(new Name(&quot;abc&quot;, &quot;123&quot;))); } }</p>
+<p>上面程序中向 HashSet 里添加了一个 new Name(&quot;abc&quot;, &quot;123&quot;) 对象之后，立即通过程序判断该 HashSet 是否包含一个 new Name(&quot;abc&quot;, &quot;123&quot;) 对象。粗看上去，很容易以为该程序会输出 true。</p>
+<p>实际运行上面程序将看到程序输出 false，这是因为 HashSet 判断两个对象相等的标准除了要求通过 equals() 方法比较返回 true 之外，还要求两个对象的 hashCode() 返回值相等。而上面程序没有重写 Name 类的 hashCode() 方法，两个 Name 对象的 hashCode() 返回值并不相同，因此 HashSet 会把它们当成 2 个对象处理，因此程序返回 false。</p>
+<p>由此可见，当我们试图把某个类的对象当成 HashMap 的 key，或试图将这个类的对象放入 HashSet 中保存时，重写该类的 equals(Object obj) 方法和 hashCode() 方法很重要，而且这两个方法的返回值必须保持一致：当该类的两个的 hashCode() 返回值相同时，它们通过 equals() 方法比较也应该返回 true。通常来说，所有参与计算 hashCode() 返回值的关键属性，都应该用于作为 equals() 比较的标准。
+<img src="" alt=""> <a href=""><strong>hashCode() 和 equals()</strong></a></p>
+<p>关于如何正确地重写某个类的 hashCode() 方法和 equals() 方法，请参考疯狂 Java 体系的《疯狂 Java 讲义》一书中相关内容。</p>
+<p>如下程序就正确重写了 Name 类的 hashCode() 和 equals() 方法，程序如下：
+class Name { private String first; private String last; public Name(String first, String last) { this.first = first; this.last = last; } // 根据 first 判断两个 Name 是否相等 public boolean equals(Object o) { if (this == o) { return true; } if (o.getClass() == Name.class) { Name n = (Name)o; return n.first.equals(first); } return false; } // 根据 first 计算 Name 对象的 hashCode() 返回值 public int hashCode() { return first.hashCode(); } public String toString() { return &quot;Name[first=&quot; + first + &quot;, last=&quot; + last + &quot;]&quot;; } } public class HashSetTest2 { public static void main(String[] args) { HashSet<Name> set = new HashSet<Name>(); set.add(new Name(&quot;abc&quot; , &quot;123&quot;)); set.add(new Name(&quot;abc&quot; , &quot;456&quot;)); System.out.println(set); } }</p>
+<p>上面程序中提供了一个 Name 类，该 Name 类重写了 equals() 和 toString() 两个方法，这两个方法都是根据 Name 类的 first 实例变量来判断的，当两个 Name 对象的 first 实例变量相等时，这两个 Name 对象的 hashCode() 返回值也相同，通过 equals() 比较也会返回 true。</p>
+<p>程序主方法先将第一个 Name 对象添加到 HashSet 中，该 Name 对象的 first 实例变量值为&quot;abc&quot;，接着程序再次试图将一个 first 为&quot;abc&quot;的 Name 对象添加到 HashSet 中，很明显，此时没法将新的 Name 对象添加到该 HashSet 中，因为此处试图添加的 Name 对象的 first 也是&quot; abc&quot;，HashSet 会判断此处新增的 Name 对象与原有的 Name 对象相同，因此无法添加进入，程序在①号代码处输出 set 集合时将看到该集合里只包含一个 Name 对象，就是第一个、last 为&quot;123&quot;的 Name 对象。</p>
+<p><a href="">参考资料</a></p>
+<ul>
+<li>“<a href="http://www.ibm.com/developerworks/cn/java/j-jtp05273/" target="_blank">Java 理论与实践: 哈希</a>”（developerWorks，2003 年 8 月）：介绍在创建 Java 类以有效和准确定义 hashCode() 和 equals() 时应遵循的规则和指南。</li>
+<li>“<a href="http://www.ibm.com/developerworks/cn/java/j-jtp08223/" target="_blank">Java 理论与实践: 构建一个更好的 HashMap</a>”（developerWorks，2003 年 8 月）：BrianGoetz 仔细分析了 ConcurrentHashMap 的代码，并探讨 Doug Lea 是如何在不损失线程安全的情况下取得这么骄人成绩的。</li>
+<li>“<a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/" target="_blank">Merlin 的魔力：维护插入顺序使用新链接的 HashSet 和 HashMap 实现</a>”（developerWorks，2001 年 10 月）：学习如何按插入顺序迭代散列集合中的各个元素，以及如何使用 J2SE，版本 1.4 中的新 Collections Framework 按存取顺序维护元素。</li>
+<li>在 <a href="http://www.ibm.com/developerworks/cn/java/" target="_blank">developerWorks Java 技术专区</a> 上可以找到数百篇其他的 Java 参考资料。</li>
+</ul>
+<p><a href="">关于作者</a>
+<img src="" alt=""> <img src="" alt="李刚照片">
+ <img src="" alt=""> 
+李刚，从事 Java EE 应用开发近 10 年。曾任 LITEON 公司的 J2EE 技术主管，负责该公司的企业信息化平台的架构设计。曾任广州电信、广东龙泉科技等公司的技术培训教师。疯狂 Java 联盟（<a href="http://www.crazyit.org）站长。疯狂" target="_blank">http://www.crazyit.org）站长。疯狂</a> Java 实训营创始人，疯狂 Java 体系图书作者，曾任东方标准广州中心软件教学总监，曾兼任广东技术师范学院计算机科学系的兼职副教授。国内知名IT技术作家，已出版《疯狂 Java 讲义》、《轻量级 Java EE 企业应用实战》、《疯狂 Ajax 讲义》、《Struts 2.1 权威指南》、《Ruby On Rails 敏捷开发最佳实践》等著作。</p>
+<p><a href="">对本文的评价</a>
+<img src="" alt=""> 太差！ (1) 需提高 (2) 一般；尚可 (3) 好文章 (4) 真棒！(5)
+<strong>建议？</strong>
+  <img src="" alt=""></p>
+<p> <img src="" alt="">IBM 公司保留在 developerWorks 网站上发表的内容的著作权。未经IBM公司或原始作者的书面明确许可，请勿转载。如果您希望转载，请通过 <a href="https://www.ibm.com/developerworks/secure/reprintreq.jsp?domain=dwchina" target="_blank">提交转载请求表单</a> 联系我们的编辑团队。     <a href="http://www.ibm.com/cn/ibm/index.shtml" target="_blank">关于 IBM</a>      <a href="http://www.ibm.com/cn/ibm/privacy/index.shtml" target="_blank">隐私条约</a>      <a href="http://www.ibm.com/contact/cn/" target="_blank">联系 IBM</a>      <a href="http://www.ibm.com/legal/cn/zh/" target="_blank">使用条款</a>  <img src="" alt=""></p>
 
       
     </div>
@@ -231,8 +251,8 @@ Share the post &quot;Java使用&quot;指针&quot;快速比较字节&quot;</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE--Java使用”指针”快速比较字节/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE--Java使用”指针”快速比较字节" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/数组&集合/">数组&集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/数组&集合/" class="label label-success">数组&集合</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--通过分析JDK源代码研究Hash存储机制/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-数组集合--通过分析JDK源代码研究Hash存储机制" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -247,46 +267,334 @@ Share the post &quot;Java使用&quot;指针&quot;快速比较字节&quot;</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（二）-IO模型/">说说IO（二）</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--跟我一起阅读Java源代码之HashMap/">跟我一起阅读Java源代码之HashMap</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（二）-IO模型/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--跟我一起阅读Java源代码之HashMap/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-io-io-">说说IO（二）- IO模型</h1>
-<p>这部分的东西在网络编程经常能看到，不过在所有IO处理中都是类似的。</p>
-<p><strong>IO**</strong>请求的两个阶段**：</p>
-<pre><code>   **等待资源阶段**：IO请求一般需要请求特殊的资源（如磁盘、RAM、文件），当资源被上一个使用者使用没有被释放时，IO请求就会被阻塞，直到能够使用这个资源。
+        <h1 id="-java-hashmap">跟我一起阅读Java源代码之HashMap</h1>
+<p>最近闲的很，想和大家一起学习并讨论下Java的一些源代码以及其实现的数据结构，</p>
+<p>不是什么高水平的东西，有兴趣的随便看看</p>
+<ol>
+<li><p>为什么要用Map，以HashMap为例</p>
+<p> 很多时候我们有这样的需求，我们需要将数据成键值对的方式存储起来，根据key来获取value(value可以是简单值，也可以是自定义对象)</p>
+<p> 当然用对象数组也能实现这个目的，查找时可以遍历数组，比较关键字来获取对应的value</p>
+<p> 从性能上来讲，遍历大数组会消耗性能</p>
+<p> 从API易用性来讲，需要自己实现查找的逻辑</p>
+<p> 所以用HashMap是必要的    </p>
+</li>
+</ol>
+<ol>
+<li>HashMap的数据结构是怎么样的</li>
+</ol>
+<pre><code>我一直对HashMap的内部结构很好奇，看了源码之后发现他是用散列实现的，即基于hashcode
 
-   **使用资源阶段**：真正进行数据接收和发生。
-</code></pre><p><strong>      </strong>举例说就是<strong>排队</strong>和<strong>服务。<em>**</em></strong></p>
-<p><strong> </strong>在<strong>等待数据</strong>阶段，IO分为阻塞IO和非阻塞IO。</p>
-<p><strong>      **</strong>阻塞IO**：资源不可用时，IO请求一直阻塞，直到反馈结果（有数据或超时）。</p>
-<p><strong>      **</strong>非阻塞IO**：资源不可用时，IO请求离开返回，返回数据标识资源不可用</p>
-<p><strong> </strong>在<strong>使用资源</strong>阶段，IO分为同步IO和异步IO。</p>
-<p><strong>      **</strong>同步IO**：应用阻塞在发送或接收数据的状态，直到数据成功传输或返回失败。</p>
-<p><strong>       异步IO</strong>：应用发送或接收数据后立刻返回，数据写入OS缓存，由OS完成数据发送或接收，并返回成功或失败的信息给应用。</p>
-<p><img src="" alt=""></p>
-<p><strong>按照Unix**</strong>的5<strong><strong>个IO</strong></strong>模型划分**</p>
-<ul>
-<li>阻塞IO</li>
-<li>非阻塞IO</li>
-<li>IO复用</li>
-<li>信号驱动的IO</li>
-<li>异步IO</li>
-</ul>
-<p>从性能上看，异步IO的性能无疑是最好的。</p>
-<p><strong>各种IO**</strong>的特点**</p>
-<ul>
-<li><strong>阻塞IO</strong>：使用简单，但随之而来的问题就是会形成阻塞，需要独立线程配合，而这些线程在大多数时候都是没有进行运算的。Java的BIO使用这种方式，问题带来的问题很明显，一个Socket需要一个独立的线程，因此，会造成线程膨胀。</li>
-<li><strong>非阻塞IO</strong>：采用轮询方式，不会形成线程的阻塞。Java的NIO使用这种方式，对比BIO的优势很明显，可以使用一个线程进行所有Socket的监听（select）。大大减少了线程数。</li>
-</ul>
-<ul>
-<li><strong>同步IO</strong>：同步IO保证一个IO操作结束之后才会返回，因此同步IO效率会低一些，但是对应用来说，编程方式会简单。Java的BIO和NIO都是使用这种方式进行数据处理。</li>
-<li><strong>异步IO</strong>：由于异步IO请求只是写入了缓存，从缓存到硬盘是否成功不可知，因此异步IO相当于把一个IO拆成了两部分，一是发起请求，二是获取处理结果。因此，对应用来说增加了复杂性。但是异步IO的性能是所有很好的，而且异步的思想贯穿了IT系统放放面面。</li>
-</ul>
+大体思想是这样的
+
+1. 首先建立一个数组用来存取数据，假设我们定义一个Object[] table用来存取map的value
+</code></pre><p>这个很容易理解，key存在哪里呢？暂时我不想存储key</p>
+<pre><code>2. 获得key的hashcode经过一定算法转成一个整数
+
+    index，这个index的取值范围必须是0=&lt;index&lt;table.length，然后我将其作为数组元素的下标
+
+    比如执行这样的操作：table[index] = value;
+
+    这样存储的问题解决了
+
+3. 如何通过key去获取这个value呢
+
+    这个太简单了，首先获取key的hashcode，然后通过刚才一样的算法得出元素下标index
+
+    然后value = table[index]
+</code></pre><p>简单的HashTable实现如下</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>public class SimpleHashMap {  </li>
+<li></li>
+<li>private Object[] table;  </li>
+<li></li>
+<li>public SimpleHashMap() {  </li>
+<li>table = new Object[10];  </li>
+<li>}  </li>
+<li></li>
+<li>public Object get(Object key) {  </li>
+<li>int index = indexFor(hash(key.hashCode()), 10);  </li>
+<li>return table[index];  </li>
+<li>}  </li>
+<li></li>
+<li>public void put(Object key, Object value) {  </li>
+<li>int index = indexFor(hash(key.hashCode()), 10);  </li>
+<li>table[index] = value;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过hash code 和table的length得到对应的数组下标 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @param length </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int indexFor(int h, int length) {  </li>
+<li>return h &amp; (length - 1);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过一定算法计算出新的hash值 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int hash(int h) {  </li>
+<li>h ^= (h &gt;&gt;&gt; 20) ^ (h &gt;&gt;&gt; 12);  </li>
+<li>return h ^ (h &gt;&gt;&gt; 7) ^ (h &gt;&gt;&gt; 4);  </li>
+<li>}  </li>
+<li></li>
+<li></li>
+<li>public static void main(String[] args){  </li>
+<li>SimpleHashMap hashMap = new SimpleHashMap();  </li>
+<li>hashMap.put(&quot;key&quot;, &quot;value&quot;);  </li>
+<li>System.out.println(hashMap.get(&quot;key&quot;));  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>这个简单的例子大概描述了散列实现hashmap的过程</p>
+<p>但是还很不成熟，我发现至少存在以下两个问题</p>
+<ol>
+<li><p>hashmap的size是固定的</p>
+</li>
+<li><p>如果不同的key通过hashcode得出的index相同呢，这样的情况是存在的，如何解决？
+来源： <a href="[http://tangyanbo.iteye.com/blog/1755636](http://tangyanbo.iteye.com/blog/1755636)">[http://tangyanbo.iteye.com/blog/1755636](http://tangyanbo.iteye.com/blog/1755636)</a> 由于table的大小是有限的，而key的集合范围是无限大的，所以寄希望于hashcode散落，肯定会出现多个key散落在同一个数组下标下面，</p>
+</li>
+</ol>
+<p>因此我们要引入另外一个概念，将key和value同时存入table[index]中，即将key和value构成一个对象放在table[index]，而且可能存放多个，他们的key对应的index相同，但是key本身不同</p>
+<p>现在我们就该讨论以什么样的方式存储这些散落在同一个数组下标的元素</p>
+<p>可以考虑数组？</p>
+<p>也可以考虑链表存储</p>
+<p>源码里面是用链表存储的，其实我也没明白这两种方式在这里有什么区别</p>
+<p>，感觉无论在检索和存储上都是差不多的效率，</p>
+<p>检索都是需要遍历的方式，而存储也可以是顺序的</p>
+<p>那这个问题留给大家吧。</p>
+<p>我们来实现链式存储的方式，首先定义一个链表数据结构Entry：</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>public class Entry<K, V> {  </li>
+<li>//存储key  </li>
+<li>final K key;  </li>
+<li>//存储value  </li>
+<li>V value;  </li>
+<li>//存储指向下一个节点的指针  </li>
+<li>Entry<K, V> next;  </li>
+<li>//存储key映射的hash  </li>
+<li>final int hash;  </li>
+<li>}  </li>
+</ol>
+<p>新的EntryHashMap实现方式</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>public class EntryHashMap<K, V> {  </li>
+<li></li>
+<li>transient Entry[] table;  </li>
+<li></li>
+<li>transient int size;  </li>
+<li></li>
+<li>public V put(K key, V value) {  </li>
+<li>//计算出新的hash  </li>
+<li>int hash = hash(key.hashCode());  </li>
+<li>//计算出数组小标i  </li>
+<li>int i = indexFor(hash, table.length);  </li>
+<li>//遍历table[i]，如果table[i]没有与新加入的key相等的，则新加入  </li>
+<li>//一个value到table[i]中的entry，否则将新的value覆盖旧的value并返回旧的value  </li>
+<li>for (Entry<K, V> e = table[i]; e != null; e = e.next) {  </li>
+<li>Object k;  </li>
+<li>if (e.hash == hash &amp;&amp; ((k = e.key) == key || key.equals(k))) {  </li>
+<li>V oldValue = e.value;  </li>
+<li>e.value = value;  </li>
+<li>return oldValue;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>addEntry(hash, key, value, i);  </li>
+<li>return null;  </li>
+<li>}  </li>
+<li></li>
+<li>public void addEntry(int hash, K key, V value, int bucketIndex) {  </li>
+<li>Entry<K, V> e = table[bucketIndex];  </li>
+<li>//将新的元素插入链表前端  </li>
+<li>table[bucketIndex] = new Entry&lt;&gt;(hash, key, value, e);  </li>
+<li>size++;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过hash code 和table的length得到对应的数组下标 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @param length </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int indexFor(int h, int length) {  </li>
+<li>return h &amp; (length - 1);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过一定算法计算出新的hash值 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int hash(int h) {  </li>
+<li>h ^= (h &gt;&gt;&gt; 20) ^ (h &gt;&gt;&gt; 12);  </li>
+<li>return h ^ (h &gt;&gt;&gt; 7) ^ (h &gt;&gt;&gt; 4);  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>来源： <a href="[http://tangyanbo.iteye.com/blog/1756074](http://tangyanbo.iteye.com/blog/1756074)">[http://tangyanbo.iteye.com/blog/1756074](http://tangyanbo.iteye.com/blog/1756074)</a> 为什么要用链表而不是数组</p>
+<p>链表的作用有如下两点好处</p>
+<ol>
+<li><p>remove操作时效率高，只维护指针的变化即可，无需进行移位操作</p>
+</li>
+<li><p>重新散列时，原来散落在同一个槽中的元素可能会被散落在不同的地方，对于数组需要进行移位操作，而链表只需维护指针</p>
+</li>
+</ol>
+<p>今天研究下数组长度不够时的处理办法</p>
+<p>table为散列数组</p>
+<ol>
+<li><p>首先定义一个不可修改的静态变量存储table的初始大小 DEFAULT_INITIAL_CAPACITY</p>
+</li>
+<li><p>定义一个全局变量存储table的实际元素长度，size</p>
+</li>
+<li><p>定义一个全局变量存储临界点，即元素的size&gt;=threshold这个临界点时，扩大table的容量</p>
+</li>
+<li><p>因为index是根据hash和table的长度计算得到的，所以还需要重新对所有元素进行散列</p>
+</li>
+</ol>
+<p>实现如下：</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>package sourcecoderead.collection.map;  </li>
+<li></li>
+<li></li>
+<li>public class EntryHashMap<K, V> {  </li>
+<li></li>
+<li>//<em>/</em> 初始容量 /*/  </li>
+<li>static final int DEFAULT_INITIAL_CAPACITY = 16;  </li>
+<li></li>
+<li>static final float DEFAULT_LOAD_FACTOR = 0.75f;  </li>
+<li></li>
+<li>//<em>/</em> 下次扩容的临界值 /*/  </li>
+<li>int threshold;  </li>
+<li></li>
+<li>transient int size;  </li>
+<li></li>
+<li>final float loadFactor;  </li>
+<li></li>
+<li>transient Entry[] table;  </li>
+<li></li>
+<li>public EntryHashMap() {  </li>
+<li>this.loadFactor = DEFAULT_LOAD_FACTOR;  </li>
+<li>threshold = (int) (DEFAULT_INITIAL_CAPACITY /* DEFAULT_LOAD_FACTOR);  </li>
+<li>table = new Entry[DEFAULT_INITIAL_CAPACITY];  </li>
+<li>}  </li>
+<li></li>
+<li>public V put(K key, V value) {  </li>
+<li>// 计算出新的hash  </li>
+<li>int hash = hash(key.hashCode());  </li>
+<li>// 计算出数组小标i  </li>
+<li>int i = indexFor(hash, table.length);  </li>
+<li>// 遍历table[i]，如果table[i]没有与新加入的key相等的，则新加入  </li>
+<li>// 一个value到table[i]中的entry，否则将新的value覆盖旧的value并返回旧的value  </li>
+<li>for (Entry<K, V> e = table[i]; e != null; e = e.next) {  </li>
+<li>Object k;  </li>
+<li>if (e.hash == hash &amp;&amp; ((k = e.key) == key || key.equals(k))) {  </li>
+<li>V oldValue = e.value;  </li>
+<li>e.value = value;  </li>
+<li>return oldValue;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>addEntry(hash, key, value, i);  </li>
+<li>return null;  </li>
+<li>}  </li>
+<li></li>
+<li>public V get(K key) {  </li>
+<li>// 计算出新的hash  </li>
+<li>int hash = hash(key.hashCode());  </li>
+<li>// 计算出数组小标i  </li>
+<li>int i = indexFor(hash, table.length);  </li>
+<li>for (Entry<K, V> e = table[i]; e != null; e = e.next) {  </li>
+<li>Object k;  </li>
+<li>if (e.hash == hash &amp;&amp; ((k = e.key) == key || key.equals(k))) {  </li>
+<li>return e.value;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>return null;  </li>
+<li>}  </li>
+<li></li>
+<li>private void addEntry(int hash, K key, V value, int bucketIndex) {  </li>
+<li>Entry<K, V> e = table[bucketIndex];  </li>
+<li>// 将新的元素插入链表前端  </li>
+<li>table[bucketIndex] = new Entry&lt;&gt;(hash, key, value, e);  </li>
+<li>if (size++ &gt;= threshold)  </li>
+<li>resize(2 /* table.length);  </li>
+<li>}  </li>
+<li></li>
+<li>void resize(int newCapacity) {  </li>
+<li>Entry[] oldTable = table;  </li>
+<li>int oldCapacity = oldTable.length;  </li>
+<li>Entry[] newTable = new Entry[newCapacity];  </li>
+<li>transfer(newTable);  </li>
+<li>table = newTable;  </li>
+<li>threshold = (int) (newCapacity /* loadFactor);  </li>
+<li>}  </li>
+<li></li>
+<li>void transfer(Entry[] newTable) {  </li>
+<li>Entry[] src = table;  </li>
+<li>int newCapacity = newTable.length;  </li>
+<li>for (int j = 0; j &lt; src.length; j++) {  </li>
+<li>Entry<K, V> e = src[j];  </li>
+<li>if (e != null) {  </li>
+<li>src[j] = null;  </li>
+<li>do {  </li>
+<li>Entry<K, V> next = e.next;  </li>
+<li>int i = indexFor(e.hash, newCapacity);  </li>
+<li>e.next = newTable[i];  </li>
+<li>newTable[i] = e;  </li>
+<li>e = next;  </li>
+<li>} while (e != null);  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过hash code 和table的length得到对应的数组下标 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @param length </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int indexFor(int h, int length) {  </li>
+<li>return h &amp; (length - 1);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过一定算法计算出新的hash值 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int hash(int h) {  </li>
+<li>h ^= (h &gt;&gt;&gt; 20) ^ (h &gt;&gt;&gt; 12);  </li>
+<li>return h ^ (h &gt;&gt;&gt; 7) ^ (h &gt;&gt;&gt; 4);  </li>
+<li>}  </li>
+<li></li>
+<li>public static void main(String[] args) {  </li>
+<li>EntryHashMap<String, String> hashMap = new EntryHashMap<String, String>();  </li>
+<li>hashMap.put(&quot;key&quot;, &quot;value&quot;);  </li>
+<li>System.out.println(hashMap.get(&quot;key&quot;));  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>来源： <a href="[http://tangyanbo.iteye.com/blog/1756536](http://tangyanbo.iteye.com/blog/1756536)">[http://tangyanbo.iteye.com/blog/1756536](http://tangyanbo.iteye.com/blog/1756536)</a> </p>
 
       
     </div>
@@ -296,8 +604,494 @@ Share the post &quot;Java使用&quot;指针&quot;快速比较字节&quot;</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/IO/">IO</a></li></span></span> | <span class="tags">Tagged <a href="/tags/IO/" class="label label-primary">IO</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（二）-IO模型/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-IO--说说IO（二）-IO模型" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/数组&集合/">数组&集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/数组&集合/" class="label label-success">数组&集合</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--跟我一起阅读Java源代码之HashMap/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-数组集合--跟我一起阅读Java源代码之HashMap" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-算法--Java算法与数据结构算法排序算法快速排序-冒泡排序-选择排序-合并排序-插入/">Java算法与数据结构 算法 排序算法 快速排序   冒泡排序   选择排序   合并排序   插入</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-算法--Java算法与数据结构算法排序算法快速排序-冒泡排序-选择排序-合并排序-插入/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-">Java算法与数据结构 算法 排序算法 快速排序   冒泡排序   选择排序   合并排序   插入排序     数据结构 单向链表   栈</h1>
+<h3 id="-java-http-tangyanbo-iteye-com-blog-1470412-"><a href="http://tangyanbo.iteye.com/blog/1470412" target="_blank">Java算法与数据结构</a>**</h3>
+<p><strong>算法</strong></p>
+<hr>
+<p><strong>排序算法</strong></p>
+<hr>
+<hr>
+<hr>
+<p><a href="http://tangyanbo.iteye.com/admin/blogs/1470417" target="_blank">快速排序</a></p>
+<p><a href="http://tangyanbo.iteye.com/admin/blogs/1470870" target="_blank">冒泡排序</a></p>
+<p><a href="http://tangyanbo.iteye.com/admin/blogs/1470871" target="_blank">选择排序</a></p>
+<p><a href="http://tangyanbo.iteye.com/admin/blogs/1470872" target="_blank">合并排序</a></p>
+<p><a href="http://tangyanbo.iteye.com/admin/blogs/1472367" target="_blank">插入排序</a></p>
+<p><strong>数据结构</strong></p>
+<p><a href="http://tangyanbo.iteye.com/admin/blogs/1472811" target="_blank">单向链表</a> </p>
+<p><a href="http://tangyanbo.iteye.com/admin/blogs/1472830" target="_blank">栈</a></p>
+<h3 id="-http-tangyanbo-iteye-com-blog-1470417-"><a href="http://tangyanbo.iteye.com/blog/1470417" target="_blank">快速排序</a>**</h3>
+<p><strong>博客分类：</strong> </p>
+<ul>
+<li><a href="http://tangyanbo.iteye.com/category/214584" target="_blank">排序算法</a></li>
+</ul>
+<p><strong>交换排序法-&gt;快速排序 </strong>
+快速排序使用分治法策略来把一个序列分为两个子序列 
+算法步骤： </p>
+<ol>
+<li>从数列中挑出一个元素，称为 &quot;基准&quot;（pivot） </li>
+<li>重新排序数列，所有元素比基准值小的摆放在基准前面，所有元素比基准值大的摆在基准的后面 （相同的数可以到任一边）。在这个分割结束之后，该基准就处于数列的中间位置。这个称为分割（partition）操作 </li>
+<li><p>递归地（recursive）把小于基准值元素的子数列和大于基准值元素的子数列排序 
+/<em> 比较复杂度：O(n㏒n) 
+/</em> 交换(赋值)复杂度：O(n㏒n) 
+/* 优点：比一般的排序都要快 
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+</li>
+<li><p>public static void quickSort(Integer[] array) {     </p>
+</li>
+<li>if (array == null || array.length== 0) {     </li>
+<li>return;     </li>
+<li>}     </li>
+<li>quickSort(array,0,array.length-1);           </li>
+<li>}  </li>
+</ol>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>private static void quickSort(Integer[] array, final int start, final int end){  </li>
+<li>//数组长度&lt;=1退出  </li>
+<li>if(start&gt;=end){  </li>
+<li>return;  </li>
+<li>}  </li>
+<li>//数组长度==2,比较两个元素的大小  </li>
+<li>if(end-start==1){  </li>
+<li>if(array[start]&gt;array[end]){  </li>
+<li>swap(array,start,end);  </li>
+<li>}  </li>
+<li>return;  </li>
+<li>}  </li>
+<li></li>
+<li>//用来进行比较的数  </li>
+<li>int compareNumber = array[start];  </li>
+<li>int middlePosition = 0;  </li>
+<li>int i = start;  </li>
+<li>int j = end;  </li>
+<li>for(;;i++,j--){  </li>
+<li></li>
+<li>//从数组首端开始迭代(不包括compareNumber)，如果数组的数&lt;compareNumber，不做移动  </li>
+<li>while(array[i]&lt;compareNumber&amp;&amp;i&lt;j){  </li>
+<li>i++;  </li>
+<li>}         </li>
+<li>//从数组尾端迭代，如果数组的数&gt;=compareNumber，不做移动  </li>
+<li></li>
+<li>while(array[j]&gt;compareNumber&amp;&amp;i&lt;j){  </li>
+<li>j--;  </li>
+<li>}             </li>
+<li></li>
+<li>if(i&gt;=j){  </li>
+<li>if(array[j]&gt;compareNumber){  </li>
+<li>middlePosition = j;  </li>
+<li>}else{  </li>
+<li>middlePosition = (j+1);  </li>
+<li>}  </li>
+<li>break;  </li>
+<li>}  </li>
+<li>//从数组首端开始迭代，得到大于compareNumber的数array[i]，此时从尾端迭代直至得到&lt;=compareNumber的数  </li>
+<li>//array[j],交换这两个数的位置，然后继续迭代  </li>
+<li>swap(array,i,j);  </li>
+<li>}  </li>
+<li>//递归排序  </li>
+<li>quickSort(array,start,middlePosition-1);  </li>
+<li>quickSort(array,middlePosition,end);  </li>
+<li>}  </li>
+</ol>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>public static void swap(Object[] array,int a,int b){  </li>
+<li>Object temp = array[a];  </li>
+<li>array[a] = array[b];  </li>
+<li>array[b] = temp;  </li>
+<li>}  </li>
+</ol>
+<h3 id="-http-tangyanbo-iteye-com-blog-1470870-"><a href="http://tangyanbo.iteye.com/blog/1470870" target="_blank">冒泡排序</a>**</h3>
+<p><strong>博客分类：</strong> </p>
+<ul>
+<li><a href="http://tangyanbo.iteye.com/category/214584" target="_blank">排序算法</a>
+<a href="http://www.iteye.com/blogs/tag/%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84" target="_blank">数据结构</a></li>
+</ul>
+<p><strong>交换排序-&gt;冒泡排序 </strong>
+算法步骤： </p>
+<ol>
+<li>比较相邻的元素。如果第一个比第二个大，就交换他们两个。 </li>
+<li>对每一对相邻元素作同样的工作，从开始第一对到结尾的最后一对。在这一点，最后的元素应该会是最大的数。 </li>
+<li>针对所有的元素重复以上的步骤，除了最后一个。 </li>
+<li><p>持续每次对越来越少的元素重复上面的步骤，直到没有任何一对数字需要比较。 
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+</li>
+<li><p>public static void bubbleSort(Integer[] array){  </p>
+</li>
+<li>for(int i=array.length-1;i&gt;=0;i--){  </li>
+<li>for(int j=0;j&lt;i;j++){  </li>
+<li>if(array[j]&gt;array[j+1]){  </li>
+<li>swap(array, j, j+1);  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}  </li>
+<li><p>}<br>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+</li>
+<li><p>public static void swap(Object[] array,int a,int b){  </p>
+</li>
+<li>Object temp = array[a];  </li>
+<li>array[a] = array[b];  </li>
+<li>array[b] = temp;  </li>
+<li>}<br>来源： <a href="[http://tangyanbo.iteye.com/blog/1470870](http://tangyanbo.iteye.com/blog/1470870)">[http://tangyanbo.iteye.com/blog/1470870](http://tangyanbo.iteye.com/blog/1470870)</a> <h3 id="-http-tangyanbo-iteye-com-blog-1470871-"><a href="http://tangyanbo.iteye.com/blog/1470871" target="_blank">选择排序</a>**</h3>
+</li>
+</ol>
+<p><strong>博客分类：</strong> </p>
+<ul>
+<li><a href="http://tangyanbo.iteye.com/category/214584" target="_blank">排序算法</a>
+<a href="http://www.iteye.com/blogs/tag/%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84" target="_blank">数据结构</a></li>
+</ul>
+<p><strong>选择排序法-&gt;选择排序</strong> 
+算法步骤： </p>
+<ol>
+<li>未排序序列中找到最小元素，存放到排序序列的起始位置 </li>
+<li>再从剩余未排序元素中继续寻找最小元素，然后放到排序序列末尾 </li>
+<li><p>以此类推,直到所有元素均排序完毕 
+比较复杂度：n(n-1)/2 
+交换(赋值)复杂度：n-1 
+优点：相比冒泡排序来讲，交换的次数减少了 
+缺点：相对快速排序，比较次数仍然是n² 
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+</li>
+<li><p>public static void selectionSort(Integer[] array){  </p>
+</li>
+<li>for(int i=0;i&lt;array.length-1;i++){  </li>
+<li>//最小数存放位置  </li>
+<li>int minPosition = i;  </li>
+<li>for(int j=i+1;j&lt;array.length;j++){  </li>
+<li>if(array[j]&lt;array[minPosition]){  </li>
+<li>//新的最小数位置  </li>
+<li>minPosition = j;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>//找到剩余元素中的最小数，并将其交换至起始位置  </li>
+<li>swap(array, i, minPosition);  </li>
+<li>}  </li>
+<li></li>
+<li><p>}<br>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+</li>
+<li><p>public static void swap(Object[] array,int a,int b){  </p>
+</li>
+<li>Object temp = array[a];  </li>
+<li>array[a] = array[b];  </li>
+<li>array[b] = temp;  </li>
+<li>}<br>来源： <a href="[http://tangyanbo.iteye.com/blog/1470871](http://tangyanbo.iteye.com/blog/1470871)">[http://tangyanbo.iteye.com/blog/1470871](http://tangyanbo.iteye.com/blog/1470871)</a> <h3 id="-http-tangyanbo-iteye-com-blog-1472367-"><a href="http://tangyanbo.iteye.com/blog/1472367" target="_blank">插入排序</a>**</h3>
+</li>
+</ol>
+<p><strong>博客分类：</strong> </p>
+<ul>
+<li><a href="http://tangyanbo.iteye.com/category/214584" target="_blank">排序算法</a></li>
+</ul>
+<p>插入排序 
+算法步骤： 
+1.从第一个元素开始，该元素可以认为已经被排序 
+2.取出下一个元素a，在已经排序的元素序列中从后向前扫描 
+3.如果已排序中的元素b大于a，则将元素b后移一个位置 
+4.重复步骤3，直到找到已排序的元素x小于或者等于元素a 
+5.将元素a插入到x的后面 
+6.重复步骤2~5 
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>public static void insertionSort(Integer[] array){  </li>
+<li>for(int i=1;i&lt;array.length;i++){  </li>
+<li>//待插入的数据  </li>
+<li>Integer toBeInsertedValue = array[i];  </li>
+<li>int j;  </li>
+<li>for(j=i;j&gt;0;j--){  </li>
+<li>if(array[j-1]&gt;toBeInsertedValue){  </li>
+<li>//将比toBeInsertedValue大的元素全部后移  </li>
+<li>array[j]=array[j-1];  </li>
+<li>continue;  </li>
+<li>}  </li>
+<li>break;  </li>
+<li>}  </li>
+<li>//插入新元素  </li>
+<li>array[j]=toBeInsertedValue;  </li>
+<li>}  </li>
+<li>}<br>来源： <a href="[http://tangyanbo.iteye.com/blog/1472367](http://tangyanbo.iteye.com/blog/1472367)">[http://tangyanbo.iteye.com/blog/1472367](http://tangyanbo.iteye.com/blog/1472367)</a> </li>
+</ol>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/算法/">算法</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/算法/" class="label label-success">算法</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-算法--Java算法与数据结构算法排序算法快速排序-冒泡排序-选择排序-合并排序-插入/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-算法--Java算法与数据结构算法排序算法快速排序-冒泡排序-选择排序-合并排序-插入" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-算法--NoSQL数据库的分布式算法/">NoSQL数据库的分布式算法</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-算法--NoSQL数据库的分布式算法/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="nosql-">NoSQL数据库的分布式算法</h1>
+<p>原文出处： <a href="http://highlyscalable.wordpress.com/2012/09/18/distributed-algorithms-in-nosql-databases/" target="_blank">highlyscalable.wordpress.com</a>   译文出处： <a href="http://my.oschina.net/juliashine/blog/88173" target="_blank">juliashine</a></p>
+<p>系统的可扩展性是推动<a href="http://blog.jobbole.com/1344/" title="8种Nosql数据库系统对比" target="_blank">NoSQL</a>运动发展的的主要理由，包含了分布式系统协调，故障转移，资源管理和许多其他特性。这么讲使得NoSQL听起来像是一个大筐，什么都能塞进去。尽管NoSQL运动并没有给分布式数据处理带来根本性的技术变革，但是依然引发了铺天盖地的关于各种协议和算法的研究以及实践。正是通过这些尝试逐渐总结出了一些行之有效的数据库构建方法。在这篇文章里，我将针对<a href="http://blog.jobbole.com/1344/" title="8种Nosql数据库系统对比" target="_blank">nosql数据库</a>的分布式特点进行一些系统化的描述。</p>
+<p>接下来我们将研究一些分布式策略，比如故障检测中的复制，这些策略用黑体字标出，被分为三段：</p>
+<ul>
+<li>数据一致性。NoSQL需要在分布式系统的一致性，容错性和性能，低延迟及高可用之间作出权衡，一般来说，数据一致性是一个必选项，所以这一节主要是关于<strong>数据复制</strong>和<strong>数据恢复</strong>。</li>
+<li>数据放置。一个数据库产品应该能够应对不同的数据分布，集群拓扑和硬件配置。在这一节我们将讨论如何<strong>分布</strong>以及<strong>调整数据分布</strong>才能够能够及时解决故障，提供持久化保证，高效查询和保证集群中的资源（如内存和硬盘空间）得到均衡使用。</li>
+<li>对等系统。像?<strong>leader election</strong>?这样的的技术已经被用于多个数据库产品以实现容错和数据强一致性。然而，即使是分散的的数据库（无中心）也要跟踪它们的全局状态，检测故障和拓扑变化。这一节将介绍几种使系统保持一致状态的技术。</li>
+</ul>
+<h3 id="-"><strong>数据一致性</strong></h3>
+<p>众所周知，分布式系统经常会遇到网络隔离或是延迟的情况，在这种情况下隔离的部分是不可用的，因此要保持高可用性而不牺牲一致性是不可能的。这一事实通常被称作“CAP理论”。然而，一致性在分布式系统中是一个非常昂贵的东西，所以经常需要在这上面做一些让步，不只是针对可用性，还有多种权衡。为了研究这些权衡，我们注意到分布式系统的一致性问题是由数据隔离和复制引起的，所以我们将从研究复制的特点开始：</p>
+<ul>
+<li>可用性。在网络隔离的情况下剩余部分仍然可以应对读写请求。</li>
+<li>读写延迟。读写请求能够在短时间内处理。</li>
+<li>读写延展性。读写的压力可由多个节点均衡分担。</li>
+<li>容错性。对于读写请求的处理不依赖于任何一个特定节点。</li>
+<li>数据持久性。特定条件下的节点故障不会造成数据丢失。</li>
+<li><p>一致性。一致性比前面几个特性都要复杂得多，我们需要详细讨论一下几种不同的观点。 但是我们不会涉及过多的一致性理论和并发模型，因为这已经超出了本文的范畴，我只会使用一些简单特点构成的精简体系。</p>
+</li>
+<li><p>读写一致性。从读写的观点来看，数据库的基本目标是使副本趋同的时间尽可能短（即更新传递到所有副本的时间），保证最终一致性。除了这个较弱的保证，还有一些更强的一致性特点：</p>
+</li>
+<li><p>写后读一致性。在数据项X上写操作的效果总是能够被后续的X上的读操作看见。</p>
+</li>
+<li><p>读后读一致性。在一次对数据项X的读操作之后，后续对X的读操作应该返回与第一次的返回值相同或是更加新的值。</p>
+</li>
+<li><p>写一致性。分区的数据库经常会发生写冲突。数据库应当能处理这种冲突并保证多个写请求不会被不同的分区所处理。这方面数据库提供了几种不同的一致性模型：</p>
+</li>
+<li><p>原子写。假如数据库提供了API，一次写操作只能是一个单独的原子性的赋值，避免写冲突的办法是找出每个数据的“最新版本”。这使得所有的节点都能够在更新结束时获得同一版本，而与更新的顺序无关，网络故障和延迟经常造成各节点更新顺序不一致。 数据版本可以用时间戳或是用户指定的值来表示。Cassandra用的就是这种方法。</p>
+</li>
+<li><p>原子化的读-改-写。应用有时候需要进行 读-改-写 序列操作而非单独的原子写操作。假如有两个客户端读取了同一版本的数据，修改并且把修改后的数据写回，按照原子写模型，时间上比较靠后的那一次更新将会覆盖前一次。这种行为在某些情况下是不正确的（例如，两个客户端往同一个列表值中添加新值）。数据库提供了至少两种解决方法：</p>
+</li>
+<li><p>冲突预防。 读-改-写 可以被认为是一种特殊情况下的事务，所以分布式锁或是 PAXOS [20, 21] 这样的一致协议都可以解决这种问题。这种技术支持原子读改写语义和任意隔离级别的事务。另一种方法是避免分布式的并发写操作，将对特定数据项的所有写操作路由到单个节点上（可以是全局主节点或者分区主节点）。为了避免冲突，数据库必须牺牲网络隔离情况下的可用性。这种方法常用于许多提供强一致性保证的系统（例如大多数关系数据库，HBase，MongoDB）。</p>
+</li>
+<li>冲突检测。数据库跟踪并发更新的冲突，并选择回滚其中之一或是维持两个版本交由客户端解决。并发更新通常用向量时钟 [19] （这是一种乐观锁）来跟踪，或者维护一个完整的版本历史。这个方法用于 Riak, Voldemort, CouchDB.</li>
+</ul>
+<p>现在让我们仔细看看常用的复制技术，并按照描述的特点给他们分一下类。第一幅图描绘了不同技术之间的逻辑关系和不同技术在系统的一致性、扩展性、可用性、延迟性之间的权衡坐标。 第二张图详细描绘了每个技术。</p>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL.png" title="NoSQL" target="_blank"><img src="&quot;NoSQL&quot;" alt=""></a></p>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL2.png" title="NoSQL2" target="_blank"><img src="&quot;NoSQL2&quot;" alt=""></a></p>
+<p>复本因子是4。读写协调者可以是一个外部客户端或是一个内部代理节点。</p>
+<p>我们会依据一致性从弱到强把所有的技术过一遍：</p>
+<ul>
+<li><p>（A, 反熵） 一致性最弱，基于策略如下。写操作的时候选择任意一个节点更新，在读的时候如果新数据还没有通过后台的反熵协议传递到读的那个节点，那么读到的仍然是旧数据。（下一节会详细介绍反熵协议）。这种方法的主要特点是：</p>
+</li>
+<li><p>过高的传播延迟使它在数据同步方面不太好用，所以比较典型的用法是只作为辅助性的功能来检测和修复计划外的不一致。Cassandra就使用了反熵算法来在各节点之间传递数据库拓扑和其他一些元数据信息。</p>
+</li>
+<li>一致性保证较弱：即使在没有发生故障的情况下，也会出现写冲突与读写不一致。</li>
+<li>在网络隔离下的高可用和健壮性。用异步的批处理替代了逐个更新，这使得性能表现优异。</li>
+<li>持久性保障较弱因为新的数据最初只有单个副本。</li>
+<li><p>（B） 对上面模式的一个改进是在任意一个节点收到更新数据请求的同时异步的发送更新给所有可用节点。这也被认为是定向的反熵。</p>
+</li>
+<li><p>与纯粹的反熵相比，这种做法只用一点小小的性能牺牲就极大地提高了一致性。然而，正式一致性和持久性保持不变。</p>
+</li>
+<li>假如某些节点因为网络故障或是节点失效在当时是不可用的，更新最终也会通过反熵传播过程来传递到该节点。</li>
+<li>（C） 在前一个模式中，使用提示移交技术 [8] 可以更好地处理某个节点的操作失败。对于失效节点的预期更新被记录在额外的代理节点上，并且标明一旦特点节点可用就要将更新传递给该节点。这样做提高了一致性，降低了复制收敛时间。</li>
+<li>（D, 一次性读写）因为提示移交的责任节点也有可能在将更新传递出去之前就已经失效，在这种情况下就有必要通过所谓的读修复来保证一致性。每个读操作都会启动一个异步过程，向存储这条数据的所有节点请求一份数据摘要（像签名或者hash），如果发现各节点返回的摘要不一致则统一各节点上的数据版本。我们用一次性读写来命名组合了A、B、C、D的技术- 他们都没有提供严格的一致性保证，但是作为一个自备的方法已经可以用于实践了。</li>
+<li><p>（E, 读若干写若干） 上面的策略是降低了复制收敛时间的启发式增强。为了保证更强的一致性，必须牺牲可用性来保证一定的读写重叠。 通常的做法是同时写入W个副本而不是一个，读的时候也要读R个副本。</p>
+</li>
+<li><p>首先，可以配置写副本数W&gt;1。</p>
+</li>
+<li>其次，因为R+W&gt;N，写入的节点和读取的节点之间必然会有重叠，所以读取的多个数据副本里至少会有一个是比较新的数据（上面的图中 W=2, R=3, N=4 ）。这样在读写请求依序进行的时候（写执行完再读）能够保证一致性（对于单个用户的读写一致性），但是不能保障全局的读一致性。用下面图示里的例子来看，R=2，W=2，N=3，因为写操作对于两个副本的更新是非事务的，在更新没有完成的时候读就可能读到两个都是旧值或者一新一旧：</li>
+</ul>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL3.png" title="NoSQL3" target="_blank"><img src="&quot;NoSQL3&quot;" alt=""></a></p>
+<ul>
+<li>对于某种读延迟的要求，设置R和W的不同值可以调整写延迟与持久性，反之亦然。</li>
+<li><p>如果W&lt;=N/2，并发的多个写入会写到不同的若干节点（如，写操作A写前N/2个，B写后N/2个）。 设置 W&gt;N/2 可以保证在符合回滚模型的原子读改写时及时检测到冲突。</p>
+</li>
+<li><p>严格来讲，这种模式虽然可以容忍个别节点的失效， 但是对于网络隔离的容错性并不好。在实践中，常使用”近似数量通过“这样的方法，通过牺牲一致性来提高某些情景下的可用性。</p>
+</li>
+<li>（F, 读全部写若干）读一致性问题可以通过在读数据的时候访问所有副本（读数据或者检查摘要）来减轻。这确保了只要有至少一个节点上的数据更新新的数据就能被读取者看到。但是在网络隔离的情况下这种保证就不能起到作用了。</li>
+<li>（G, 主从） 这种技术常被用来提供原子写或者 冲突检测持久级别的读改写。为了实现冲突预防级别，必须要用一种集中管理方式或者是锁。最简单的策略是用主从异步复制。对于特定数据项的写操作全部被路由到一个中心节点，并在上面顺序执行。这种情况下主节点会成为瓶颈，所以必须要将数据划分成一个个独立的片区（不同片有不同的master），这样才能提供扩展性。</li>
+<li>（H, Transactional Read Quorum Write Quorum and Read One Write All）? 更新多个副本的方法可以通过使用事务控制技术来避免写冲突。 众所周知的方法是使用两阶段提交协议。但两阶段提交并不是完全可靠的，因为协调者失效可能会造成资源阻塞。 PAXOS提交协议 [20, 21] 是更可靠的选择，但会损失一点性能。 在这个基础上再向前一小步就是读一个副本写所有副本，这种方法把所有副本的更新放在一个事务中，它提供了强容错一致性但会损失掉一些性能和可用性。</li>
+</ul>
+<p>上面分析中的一些权衡有必要再强调一下：</p>
+<ul>
+<li><strong>一致性与可用性。</strong>?严密的权衡已经由CAP理论给出了。在网络隔离的情况下，数据库要么将数据集中，要么既要接受数据丢失的风险。</li>
+<li><strong>一致性与扩展性。</strong>?看得出即使读写一致性保证降低了副本集的扩展性，只有在原子写模型中才可以以一种相对可扩展的方式处理写冲突。原子读改写模型通过给数据加上临时性的全局锁来避免冲突。这表明， 数据或操作之间的依赖，即使是很小范围内或很短时间的，也会损害扩展性。所以精心设计数据模型，将数据分片分开存放对于扩展性非常重要。</li>
+<li><strong>一致性与延迟。</strong>?如上所述，当数据库需要提供强一致性或者持久性的时候应该偏向于读写所有副本技术。但是很明显一致性与请求延迟成反比，所以使用若干副本技术会是比较中允的办法。</li>
+<li><strong>故障转移与一致性/扩展性/延迟。</strong>有趣的是容错性与一致性、扩展性、延迟的取舍冲突并不剧烈。通过合理的放弃一些性能与一致性，集群可以容忍多达 up to 的节点失效。这种折中在两阶段提交与 PAXOS 协议的区别里体现得很明显。这种折中的另一个例子是增加特定的一致性保障，比如使用严格会话进程的“读己所写”，但这又增加了故障转移的复杂性 [22]。</li>
+</ul>
+<h3 id="-"><strong>反熵协议， 谣言传播算法</strong></h3>
+<p>让我们从以下场景开始：</p>
+<p>有许多节点，每条数据会在其中的若干的节点上面存有副本。每个节点都可以单独处理更新请求，每个节点定期和其他节点同步状态，如此一段时间之后所有的副本都会趋向一致。同步过程是怎样进行的？同步何时开始？怎样选择同步的对象？怎么交换数据？我们假定两个节点总是用较新版本的数据覆盖旧的数据或者两个版本都保留以待应用层处理。</p>
+<p>这个问题常见于数据一致性维护和集群状态同步（如集群成员信息传播）等场景。虽然引入一个监控数据库并制定同步计划的协调者可以解决这个问题，但是去中心化的数据库能够提供更好的容错性。去中心化的主要做法是利用精心设计的传染协议[7]，这种协议相对简单，但是提供了很好的收敛时间，而且能够容忍任何节点的失效和网络隔离。尽管有许多类型的传染算法，我们只关注反熵协议，因为NoSQL数据库都在使用它。</p>
+<p>反熵协议假定同步会按照一个固定进度表执行，每个节点定期随机或是按照某种规则选择另外一个节点交换数据，消除差异。有三种反风格的反熵协议：推，拉和混合。推协议的原理是简单选取一个随机节点然后把数据状态发送过去。在真实应用中将全部数据都推送出去显然是愚蠢的，所以节点一般按照下图所示的方式工作。</p>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL4.png" title="NoSQL4" target="_blank"><img src="&quot;NoSQL4&quot;" alt=""></a></p>
+<p>节点A作为同步发起者准备好一份数据摘要，里面包含了A上数据的指纹。节点B接收到摘要之后将摘要中的数据与本地数据进行比较，并将数据差异做成一份摘要返回给A。最后，A发送一个更新给B，B再更新数据。拉方式和混合方式的协议与此类似，就如上图所示的。</p>
+<p>反熵协议提供了足够好的收敛时间和扩展性。下图展示了一个在100个节点的集群中传播一个更新的模拟结果。在每次迭代中，每个节点只与一个随机选取的对等节点发生联系。</p>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL5.png" title="NoSQL5" target="_blank"><img src="&quot;NoSQL5&quot;" alt=""></a></p>
+<p>可以看到，拉方式的收敛性比推方式更好，这可以从理论上得到证明[7]。而且推方式还存在一个“收敛尾巴”的问题。在多次迭代之后，尽管几乎遍历到了所有的节点，但还是有很少的一部分没受到影响。与单纯的推和拉方式相比， 混合方式的效率更高，所以实际应用中通常使用这种方式。反熵是可扩展的，因为平均转换时间以集群规模的对数函数形式增长。</p>
+<p>尽管这些技术看起来很简单，仍然有许多研究关注于不同约束条件下反熵协议的性能表现。其中之一通过一种更有效的结构使用网络拓扑来取代随机选取 [10] 。在网络带宽有限的条件下调整传输率或使用先进的规则来选取要同步的数据 [9]。摘要计算也面临挑战，数据库会维护一份最近更新的日志以有助于摘要计算。</p>
+<h3 id="-eventually-consistent-data-types-"><strong>最终一致数据类型Eventually Consistent Data Types</strong></h3>
+<p>在上一节我们假定两个节点总是合并他们的数据版本。但要解决更新冲突并不容易，让所有副本都最终达到一个语义上正确的值出乎意料的难。一个众所周知的例子是Amazon Dynamo数据库[8]中已经删除的条目可以重现。</p>
+<p>我们假设一个例子来说明这个问题：数据库维护一个逻辑上的全局计数器，每个节点可以增加或者减少计数。虽然每个节点可以在本地维护一个自己的值，但这些本地计数却不能通过简单的加减来合并。假设这样一个例子：有三个节点A、B和C，每个节点执行了一次加操作。如果A从B获得一个值，并且加到本地副本上，然后C从B获得值，然后C再从A获得值，那么C最后的值是4，而这是错误的。解决这个问题的方法是用一个类似于向量时钟[19]的数据结构为每个节点维护一对计数器[1]：
+class Counter {</p>
+<p>   int[] plus
+   int[] minus</p>
+<p>   int NODE_ID</p>
+<p>   increment() {
+      plus[NODE_ID]++</p>
+<p>   }</p>
+<p>   decrement() {
+      minus[NODE_ID]++</p>
+<p>   }</p>
+<p>   get() {
+      return sum(plus) – sum(minus)</p>
+<p>   }</p>
+<p>   merge(Counter other) {
+      for i in 1..MAX_ID {</p>
+<pre><code>     plus[i] = max(plus[i], other.plus[i])
+     minus[i] = max(minus[i], other.minus[i])
+
+  }
+</code></pre><p>   }</p>
+<p>}</p>
+<p>Cassandra用类似的方法计数[11]。利用基于状态的或是基于操作的复制理论也可以设计出更复杂的最终一致的数据结构。例如，[1]中就提及了一系列这样的数据结构，包括：</p>
+<ul>
+<li>计数器（加减操作）</li>
+<li>集合（添加和移除操作）</li>
+<li>图（增加边或顶点，移除边或顶点）</li>
+<li>列表（插入某位置或者移除某位置）</li>
+</ul>
+<p>最终一致数据类型的功能通常是有限的，还会带来额外的性能开销。</p>
+<h3 id="-">数据放置</h3>
+<p>这部分主要关注控制在分布式数据库中放置数据的算法。这些算法负责把数据项映射到合适的物理节点上，在节点间迁移数据以及像内存这样的资源的全局调配。</p>
+<h3 id="-">均衡数据</h3>
+<p>我们还是从一个简单的协议开始，它可以提供集群节点间无缝的数据迁移。这常发生于像集群扩容（加入新节点），故障转移（一些节点宕机）或是均衡数据（数据在节点间的分布不均衡）这样的场景。如下图A中所描绘的场景 – 有三个节点，数据随便分布在三个节点上（假设数据都是key-value型）。</p>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL6.png" title="NoSQL6" target="_blank"><img src="&quot;NoSQL6&quot;" alt=""></a></p>
+<p>如果数据库不支持数据内部均衡，就要在每个节点上发布数据库实例，如上面图B所示。这需要手动进行集群扩展，停掉要迁移的数据库实例，把它转移到新节点上，再在新节点上启动，如图C所示。尽管数据库能够监控到每一条记录，包括MongoDB, Oracle Coherence, 和还在开发中的 Redis Cluster 在内的许多系统仍然使用的是自动均衡技术。也即，将数据分片并把每个数据分片作为迁移的最小单位，这是基于效率的考虑。很明显分片数会比节点数多，数据分片可以在各节点间平均分布。按照一种简单的协议即可实现无缝数据迁移，这个协议可以在迁移数据分片的时候重定向客户的数据迁出节点和迁入节点。下图描绘了一个Redis Cluster中实现的get（key）逻辑的状态机。</p>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL7.png" title="NoSQL7" target="_blank"><img src="&quot;NoSQL7&quot;" alt=""></a></p>
+<p>假定每个节点都知道集群拓扑，能够把任意key映射到相应的数据分片，把数据分片映射到节点。如果节点判断被请求的key属于本地分片，就会在本地查找（上图中上面的方框）。假如节点判断请求的key属于另一个节点X，他会发送一个永久重定向命令给客户端（上图中下方的方框）。永久重定向意味着客户端可以缓存分片和节点间的映射关系。如果分片迁移正在进行，迁出节点和迁入节点会标记相应的分片并且将分片的数据加锁逐条加锁然后开始移动。迁出节点首先会在本地查找key，如果没有找到，重定向客户端到迁入节点，假如key已经迁移完毕的话。这种重定向是一次性的，并且不能被缓存。迁入节点在本地处理重定向，但定期查询在迁移还没完成前被永久重定向。</p>
+<h3 id="-">动态环境中的数据分片和复制</h3>
+<p>我们关注的另一个问题是怎么把记录映射到物理节点。比较直接的方法是用一张表来记录每个范围的key与节点的映射关系，一个范围的key对应到一个节点，或者用key的hash值与节点数取模得到的值作为节点ID。但是hash取模的方法在集群发生更改的情况下就不是很好用，因为增加或者减少节点都会引起集群内的数据彻底重排。导致很难进行复制和故障恢复。</p>
+<p>有许多方法在复制和故障恢复的角度进行了增强。最著名的就是一致性hash。网上已经有很多关于一致性hash的介绍了，所以在这里我只提供一个基本介绍，仅仅为了文章内容的完整性。下图描绘了一致性hash的基本原理：</p>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL8.png" title="NoSQL8" target="_blank"><img src="&quot;NoSQL8&quot;" alt=""></a></p>
+<p>一致性hash从根本上来讲是一个键值映射结构 – 它把键（通常是hash过的）映射到物理节点。键经过hash之后的取值空间是一个有序的定长二进制字符串，很显然每个在此范围内的键都会被映射到图A中A、B、C三个节点中的某一个。为了副本复制，将取值空间闭合成一个环，沿环顺时针前行直到所有副本都被映射到合适的节点上，如图B所示。换句话说，Y将被定位在节点B上，因为它在B的范围内，第一个副本应该放置在C，第二个副本放置在A，以此类推。</p>
+<p>这种结构的好处体现在增加或减少一个节点的时候，因为它只会引起临接区域的数据重新均衡。如图C所示，节点D的加入只会对数据项X产生影响而对Y无影响。同样，移除节点B（或者B失效）只会影响Y和X的副本，而不会对X自身造成影响。但是，正如参考资料[8]中所提到的，这种做法在带来好处的同时也有弱点，那就是重新均衡的负担都由邻节点承受了，它们将移动大量的数据。通过将每个节点映射到多个范围而不是一个范围可以一定程度上减轻这个问题带来的不利影响，如图D所示。这是一个折中，它避免了重新均衡数据时负载过于集中，但是与基于模块的映射相比，保持了总均衡数量适当降低。</p>
+<p>给大规模的集群维护一个完整连贯的hash环很不容易。对于相对小一点的数据库集群就不会有问题，研究如何在对等网络中将数据放置与网络路由结合起来很有意思。一个比较好的例子是Chord算法，它使环的完整性让步于单个节点的查找效率。Chord算法也使用了环映射键到节点的理念，在这方面和一致性hash很相似。不同的是，一个特定节点维护一个短列表，列表中的节点在环上的逻辑位置是指数增长的（如下图）。这使得可以使用二分搜索只需要几次网络跳跃就可以定位一个键。
+?<a href="http://cdn2.jobbole.com/2013/07/NoSQL9.png" title="NoSQL9" target="_blank"><img src="&quot;NoSQL9&quot;" alt=""></a></p>
+<p>这张图画的是一个由16个节点组成的集群，描绘了节点A是如何查找放在节点D上的key的。 (A) 描绘了路由，(B) 描绘了环针对节点A、B、C的局部图像。在参考资料[15]中有更多关于分散式系统中的数据复制的内容。</p>
+<h3 id="-">按照多个属性的数据分片</h3>
+<p>当只需要通过主键来访问数据的时候，一致性hash的数据放置策略很有效，但是当需要按照多个属性来查询的时候事情就会复杂得多。一种简单的做法（MongoDB使用的）是用主键来分布数据而不考虑其他属性。这样做的结果是依据主键的查询可以被路由到接个合适的节点上，但是对其他查询的处理就要遍历集群的所有节点。查询效率的不均衡造成下面的问题：</p>
+<p>有一个数据集，其中的每条数据都有若干属性和相应的值。是否有一种数据分布策略能够使得限定了任意多个属性的查询会被交予尽量少的几个节点执行？</p>
+<p>HyperDex数据库提供了一种解决方案。基本思想是把每个属性视作多维空间中的一个轴，将空间中的区域映射到物理节点上。一次查询会被对应到一个由空间中多个相邻区域组成的超平面，所以只有这些区域与该查询有关。让我们看看参考资料[6]中的一个例子：</p>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL10.png" title="NoSQL10" target="_blank"><img src="&quot;NoSQL10&quot;" alt=""></a></p>
+<p>每一条数据都是一条用户信息，有三个属性First Name 、Last Name 和Phone Number。这些属性被视作一个三维空间，可行的数据分布策略是将每个象限映射到一个物理节点。像“First Name = John”这样的查询对应到一个贯穿4个象限的平面，也即只有4个节点会参与处理此次查询。有两个属性限制的查询对应于一条贯穿两个象限的直线，如上图所示，因此只有2个节点会参与处理。</p>
+<p>这个方法的问题是空间象限会呈属性数的指数函数增长。结果就会是，只有几个属性限制的查询会投射到许多个空间区域，也即许多台服务器。将一个属性较多的数据项拆分成几个属性相对较少的子项，并将每个子项都映射到一个独立的子空间，而不是将整条数据映射到一个多维空间，这样可以一定程度上缓解这个问题：</p>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL11.png" title="NoSQL11" target="_blank"><img src="&quot;NoSQL11&quot;" alt=""></a></p>
+<p>这样能够提供更好的查询到节点的映射，但是增加了集群协调的复杂度，因为这种情况下一条数据会散布在多个独立的子空间，而每个子空间都对应各自的若干个物理节点，数据更新时就必须考虑事务问题。参考资料 [6]有这种技术的更多介绍和实现细节。</p>
+<h3 id="-">钝化副本</h3>
+<p>有的应用有很强的随机读取要求，这就需要把所有数据放在内存里。在这种情况下，将数据分片并把每个分片主从复制通常需要两倍以上的内存，因为每个数据都要在主节点和从节点上各有一份。为了在主节点失效的时候起到代替作用，从节点上的内存大小应该和主节点一样。如果系统能够容忍节点失效的时候出现短暂中断或性能下降，也可以不要分片。</p>
+<p>下面的图描绘了4个节点上的16个分片，每个分片都有一份在内存里，副本存在硬盘上：</p>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL12.png" title="NoSQL12" target="_blank"><img src="&quot;NoSQL12&quot;" alt=""></a></p>
+<p>灰色箭头突出了节点2上的分片复制。其他节点上的分片也是同样复制的。红色箭头描绘了在节点2失效的情况下副本怎样加载进内存。集群内副本的均匀分布使得只需要预留很少的内存就可以存放节点失效情况下激活的副本。在上面的图里，集群只预留了1/3的内存就可以承受单个节点的失效。特别要指出的是副本的激活（从硬盘加载入内存）会花费一些时间，这会造成短时间的性能下降或者正在恢复中的那部分数据服务中断。</p>
+<h3 id="-">系统协调</h3>
+<p>在这部分我们将讨论与系统协调相关的两种技术。分布式协调是一个比较大的领域，数十年以来有很多人对此进行了深入的研究。这篇文章里只涉及两种已经投入实用的技术。关于分布式锁，consensus协议以及其他一些基础技术的内容可以在很多书或者网络资源中找到，也可以去看参考资料[17, 18, 21]。</p>
+<h3 id="-">故障检测</h3>
+<p>故障检测是任何一个拥有容错性的分布式系统的基本功能。实际上所有的故障检测协议都基于心跳通讯机制，原理很简单，被监控的组件定期发送心跳信息给监控进程（或者由监控进程轮询被监控组件），如果有一段时间没有收到心跳信息就被认为失效了。除此之外，真正的分布式系统还要有另外一些功能要求：</p>
+<ul>
+<li>自适应。故障检测应该能够应对暂时的网络故障和延迟，以及集群拓扑、负载和带宽的变化。但这有很大难度，因为没有办法去分辨一个长时间没有响应的进程到底是不是真的失效了，因此，故障检测需要权衡故障识别时间（花多长时间才能识别一个真正的故障，也即一个进程失去响应多久之后会被认为是失效）和虚假警报率之间的轻重。这个权衡因子应该能够动态自动调整。</li>
+<li>灵活性。乍看上去，故障检测只需要输出一个表明被监控进程是否处于工作状态的布尔值，但在实际应用中这是不够的。我们来看参考资料[12]中的一个类似MapReduce的例子。有一个由一个主节点和若干工作节点组成的分布式应用，主节点维护一个作业列表，并将列表中的作业分配给工作节点。主节点能够区分不同程度的失败。如果主节点怀疑某个工作节点挂了，他就不会再给这个节点分配作业。其次，随着时间推移，如果没有收到该节点的心跳信息，主节点就会把运行在这个节点上的作业重新分配给别的节点。最后，主节点确认这个节点已经失效，并释放所有相关资源。</li>
+<li>可扩展性和健壮性。失败检测作为一个系统功能应该能够随着系统的扩大而扩展。他应该是健壮和一致的，也即，即使在发生通讯故障的情况下，系统中的所有节点都应该有一个一致的看法（即所有节点都应该知道哪些节点是不可用的，那些节点是可用的，各节点对此的认知不能发生冲突，不能出现一部分节点知道某节点A不可用，而另一部分节点不知道的情况）</li>
+</ul>
+<p>所谓的累计失效检测器[12]可以解决前两个问题，Cassandra[16]对它进行了一些修改并应用在产品中。其基本工作流程如下：</p>
+<ul>
+<li>对于每一个被监控资源，检测器记录心跳信息到达时间Ti。</li>
+<li>计算在统计预测范围内的到达时间的均值和方差。</li>
+<li>假定到达时间的分布已知（下图包括一个正态分布的公式），我们可以计算心跳延迟（当前时间t_now和上一次到达时间Tc之间的差值） 的概率，用这个概率来判断是否发生故障。如参考资料[12]中所建议的，可以使用对数函数来调整它以提高可用性。在这种情况下，输出1意味着判断错误（认为节点失效）的概率是10%，2意味着1%，以此类推。</li>
+</ul>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL13.png" title="NoSQL13" target="_blank"><img src="&quot;NoSQL13&quot;" alt=""></a>
+根据重要程度不同来分层次组织监控区，各区域之间通过谣言传播协议或者中央容错库同步，这样可以满足扩展性的要求，又可以防止心跳信息在网络中泛滥[14]。如下图所示（6个故障检测器组成了两个区域，互相之间通过谣言传播协议或者像ZooKeeper这样的健壮性库来联系）：</p>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL14.png" title="NoSQL14" target="_blank"><img src="&quot;NoSQL14&quot;" alt=""></a></p>
+<h3 id="-">协调者竞选</h3>
+<p>协调者竞选是用于强一致性数据库的一个重要技术。首先，它可以组织主从结构的系统中主节点的故障恢复。其次，在网络隔离的情况下，它可以断开处于少数的那部分节点，以避免写冲突。</p>
+<p>Bully 算法是一种相对简单的协调者竞选算法。MongoDB 用了这个算法来决定副本集中主要的那一个。Bully 算法的主要思想是集群的每个成员都可以声明它是协调者并通知其他节点。别的节点可以选择接受这个声称或是拒绝并进入协调者竞争。被其他所有节点接受的节点才能成为协调者。节点按照一些属性来判断谁应该胜出。这个属性可以是一个静态ID，也可以是更新的度量像最近一次事务ID（最新的节点会胜出）。</p>
+<p>下图的例子展示了bully算法的执行过程。使用静态ID作为度量，ID值更大的节点会胜出：</p>
+<ol>
+<li>最初集群有5个节点，节点5是一个公认的协调者。</li>
+<li>假设节点5挂了，并且节点2和节点3同时发现了这一情况。两个节点开始竞选并发送竞选消息给ID更大的节点。</li>
+<li>节点4淘汰了节点2和3，节点3淘汰了节点2。</li>
+<li>这时候节点1察觉了节点5失效并向所有ID更大的节点发送了竞选信息。</li>
+<li>节点2、3和4都淘汰了节点1。</li>
+<li>节点4发送竞选信息给节点5。</li>
+<li>节点5没有响应，所以节点4宣布自己当选并向其他节点通告了这一消息。</li>
+</ol>
+<p><a href="http://cdn2.jobbole.com/2013/07/NoSQL15.png" title="NoSQL15" target="_blank"><img src="&quot;NoSQL15&quot;" alt=""></a></p>
+<p>协调者竞选过程会统计参与的节点数目并确保集群中至少一半的节点参与了竞选。这确保了在网络隔离的情况下只有一部分节点能选出协调者（假设网络中网络会被分割成多块区域，之间互不联通，协调者竞选的结果必然会在节点数相对比较多的那个区域中选出协调者，当然前提是那个区域中的可用节点多于集群原有节点数的半数。如果集群被隔离成几个区块，而没有一个区块的节点数多于原有节点总数的一半，那就无法选举出协调者，当然这样的情况下也别指望集群能够继续提供服务了）。</p>
+<h3 id="-">参考资料</h3>
+<ol>
+<li><a href="http://hal.inria.fr/docs/00/55/55/88/PDF/techreport.pdf" target="_blank">M. Shapiro et al. A Comprehensive Study of Convergent and Commutative Replicated Data Types</a></li>
+<li><a href="http://pdos.csail.mit.edu/papers/chord:sigcomm01/chord_sigcomm.pdf" target="_blank">I. Stoica et al. Chord: A Scalable Peer-to-peer Lookup Service for Internet Applications</a></li>
+<li><a href="http://www.ssrc.ucsc.edu/Papers/honicky-ipdps04.pdf" target="_blank">R. J. Honicky, E.L.Miller. Replication Under Scalable Hashing: A Family of Algorithms for Scalable Decentralized Data Distribution</a></li>
+<li><a href="http://cs-www.cs.yale.edu/homes/shah/pubs/thesis.pdf" target="_blank">G. Shah. Distributed Data Structures for Peer-to-Peer Systems</a></li>
+<li><a href="http://sbrc2010.inf.ufrgs.br/resources/presentations/tutorial/tutorial-montresor.pdf" target="_blank">A. Montresor, Gossip Protocols for Large-Scale Distributed Systems</a></li>
+<li><a href="http://hyperdex.org/papers/hyperdex.pdf" target="_blank">R. Escriva, B. Wong, E.G. Sirer. HyperDex: A Distributed, Searchable Key-Value Store</a></li>
+<li><a href="http://net.pku.edu.cn/~course/cs501/2009/reading/1987-SPDC-Epidemic algorithms for replicated database maintenance.pdf" target="_blank">A. Demers et al. Epidemic Algorithms for Replicated Database Maintenance</a></li>
+<li><a href="http://www.read.seas.harvard.edu/~kohler/class/cs239-w08/decandia07dynamo.pdf" target="_blank">G. DeCandia, et al. Dynamo: Amazon’s Highly Available Key-value Store</a></li>
+<li><a href="http://www.cs.cornell.edu/home/rvr/papers/flowgossip.pdf" target="_blank">R. van Resesse et al. Efficient Reconciliation and Flow Control for Anti-Entropy Protocols</a></li>
+<li><a href="http://www.hcs.ufl.edu/pubs/CC2000.pdf" target="_blank">S. Ranganathan et al. Gossip-Style Failure Detection and Distributed Consensus for Scalable Heterogeneous Clusters</a></li>
+<li><a href="http://www.slideshare.net/kakugawa/distributed-counters-in-cassandra-cassandra-summit-2010" target="_blank"><a href="http://www.slideshare.net/kakugawa/distributed-counters-in-cassandra-cassandra-summit-2010">http://www.slideshare.net/kakugawa/distributed-counters-in-cassandra-cassandra-summit-2010</a></a></li>
+<li><a href="http://cassandra-shawn.googlecode.com/files/The Phi Accrual Failure Detector.pdf" target="_blank">N. Hayashibara, X. Defago, R. Yared, T. Katayama. The Phi Accrual Failure Detector</a></li>
+<li><a href="http://www.cs.mcgill.ca/~carl/impossible.pdf" target="_blank">M.J. Fischer, N.A. Lynch, and M.S. Paterson. Impossibility of Distributed Consensus with One Faulty Process</a></li>
+<li><a href="http://ddg.jaist.ac.jp/pub/HCK02.pdf" target="_blank">N. Hayashibara, A. Cherif, T. Katayama. Failure Detectors for Large-Scale Distributed Systems</a></li>
+<li>M. Leslie, J. Davies, and T. Huffman. A Comparison Of Replication Strategies for Reliable Decentralised Storage</li>
+<li><a href="http://www.cs.cornell.edu/projects/ladis2009/papers/lakshman-ladis2009.pdf" target="_blank">A. Lakshman, P.Malik. Cassandra – A Decentralized Structured Storage System</a></li>
+<li>N. A. Lynch. Distributed Algorithms</li>
+<li>G. Tel. Introduction to Distributed Algorithms</li>
+<li><a href="http://basho.com/blog/technical/2010/04/05/why-vector-clocks-are-hard/" target="_blank"><a href="http://basho.com/blog/technical/2010/04/05/why-vector-clocks-are-hard/">http://basho.com/blog/technical/2010/04/05/why-vector-clocks-are-hard/</a></a></li>
+<li><a href="http://research.microsoft.com/en-us/um/people/lamport/pubs/paxos-simple.pdf" target="_blank">L. Lamport. Paxos Made Simple</a></li>
+<li><a href="http://www.cs.duke.edu/courses/fall07/cps212/consensus.pdf" target="_blank">J. Chase. Distributed Systems, Failures, and Consensus</a></li>
+<li><a href="http://www.allthingsdistributed.com/2008/12/eventually_consistent.html" target="_blank">W. Vogels. Eventualy Consistent – Revisited</a></li>
+<li><a href="http://static.googleusercontent.com/external_content/untrusted_dlcp/research.google.com/en/archive/spanner-osdi2012.pdf" target="_blank">J. C. Corbett et al. Spanner: Google’s Globally-Distributed Database</a></li>
+</ol>
+<p><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"> (<strong>*1</strong> 个评分，平均: <strong>5.00*</strong>)
+<img src="&quot;Loading ...&quot;" alt="Loading ..."> Loading ...</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/算法/">算法</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/算法/" class="label label-success">算法</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-算法--NoSQL数据库的分布式算法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-算法--NoSQL数据库的分布式算法" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -545,354 +1339,6 @@ iter.next();// 每个对象都是Map.  </li>
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist/">DWR如何获得返回对象 list Map Set list</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="dwr-list-map-set-list">DWR如何获得返回对象 list Map Set list</h1>
-<p><strong>DWR**</strong>如何获得返回对象<strong>**list Map Set list.add(JavaBean)</strong></p>
-<p><strong>1**</strong>、调用没有返回值和参数的JAVA方法**</p>
-<p>1.1、dwr.xml的配置</p>
-<p><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod1"/>
-</create>
-</allow>
-</dwr></p>
-<p><allow>标签中包括可以暴露给javascript访问的东西。</p>
-<p><create>标签中指定javascript中可以访问的java类，并定义DWR应当如何获得要进行远程的类的实例。creator=&quot;new&quot;属性指定java类实例的生成方式，new意味着DWR应当调用类的默认构造函数来获得实例，其他的还有spring方式，通过与IOC容器Spring进行集成来获得实例等等。javascript=&quot; testClass &quot;属性指定javascript代码访问对象时使用的名称。</p>
-<p><param>标签指定要公开给javascript的java类名。</p>
-<p><include>标签指定要公开给javascript的方法。不指定的话就公开所有方法。</p>
-<p><exclude>标签指定要防止被访问的方法。
-1.2、javascript中调用
-首先，引入javascript脚本</p>
-<p><script src='dwr/interface/ testClass.js'></script></p>
-<p><script src="/dwr/engine.js"></script></p>
-<p><script src="/dwr/util.js"></script>
-其中TestClass.js是dwr根据配置文件自动生成的，engine.js和util.js是dwr自带的脚本文件。
-其次，编写调用java方法的javascript函数
-Function callTestMethod1(){
-       testClass.testMethod1();
-}
-<strong>2**</strong>、调用有简单返回值的java方法**</p>
-<p><strong>2.1**</strong>、dwr.xml的配置<strong><em>**</em></strong>配置同1.1</p>
-<p><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod2"/>
-</create>
-</allow>
-</dwr>
-2.2、javascript中调用
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数和接收返回值的回调函数
-Function callTestMethod2(){
-       testClass.testMethod2(callBackFortestMethod2);
-}
-Function callBackFortestMethod2(data){
-      //其中date接收方法的返回值
-      //可以在这里对返回值进行处理和显示等等
-alert(&quot;the return value is &quot; + data);
-}
-其中callBackFortestMethod2是接收返回值的回调函数**</p>
-<p><strong>3**</strong>、调用有简单参数的java方法**</p>
-<p><strong>3.1**</strong>、dwr.xml的配置<strong><em>**</em></strong>配置同1.1</p>
-<p><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod3"/>
-</create>
-</allow>
-</dwr>
-3.2、javascript中调用
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数
-Function callTestMethod3(){
-                  //定义要传到java方法中的参数
-       var data;
-       //构造参数
-       data = “test String”;
-       testClass.testMethod3(data);
-}**</p>
-<p><strong>4**</strong>、调用返回JavaBean的java方法<strong><strong>4.1</strong></strong>、dwr.xml的配置<em>**</em><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod4"/>
-</create></p>
-<p>&lt;convert converter=&quot;bean&quot; match=&quot;&quot;com.dwr.TestBean&quot;&gt;
-                   <param name="include" value="username,password" />
-</convert>
-</allow>
-</dwr></p>
-<p><creator><strong>**标签负责公开用于Web远程的类和类的方法，<convertor>标签则负责这些方法的参数和返回类型。convert元素的作用是告诉DWR在服务器端Java 对象表示和序列化的JavaScript之间如何转换数据类型。DWR自动地在Java和JavaScript表示之间调整简单数据类型。这些类型包括Java原生类型和它们各自的封装类表示，还有String、Date、数组和集合类型。DWR也能把JavaBean转换成JavaScript 表示，但是出于安全性的原因，要求显式的配置，<convertor>标签就是完成此功能的。converter=&quot;bean&quot;属性指定转换的方式采用JavaBean命名规范，match=&quot;&quot;com.dwr.TestBean&quot;属性指定要转换的javabean名称，<param>标签指定要转换的JavaBean属性。
-4.2、javascript中调用
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数和接收返回值的回调函数
-Function callTestMethod4(){
-       testClass.testMethod4(callBackFortestMethod4);
-}
-Function callBackFortestMethod4(data){
-      //其中date接收方法的返回值
-//对于JavaBean返回值，有两种方式处理
-              //不知道属性名称时，使用如下方法
-            for(var property in data){
-               alert(&quot;property:&quot;+property);
-               alert(property+&quot;:&quot;+data[property]);
-            }
-//知道属性名称时，使用如下方法
-            alert(data.username);
-            alert(data.password);
-}
-其中callBackFortestMethod4是接收返回值的回调函数</strong></p>
-<p><strong>5**</strong>、调用有JavaBean参数的java方法<strong><strong>5.1</strong></strong>、dwr.xml的配置
-<em>**</em>配置同4.1</p>
-<p><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod5"/>
-</create></p>
-<p><convert converter="bean" match="com.dwr.TestBean">
-                   <param name="include" value="username,password" />
-</convert>
-</allow>
-</dwr>
-5.2、javascript中调用
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数
-Function callTestMethod5(){
-                  //定义要传到java方法中的参数
-       var data;
-       //构造参数，date实际上是一个object
-       data = { username:&quot;user&quot;, password:&quot;password&quot; }
-       testClass.testMethod5(data);
-}**</p>
-<p><strong>6**</strong>、调用返回List、Set或者Map的java方法<strong><strong>6.1</strong></strong>、dwr.xml的配置<strong><em>**</em></strong>配置同4.1</p>
-<p><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod6"/>
-</create></p>
-<p><convert converter="bean" match="com.dwr.TestBean"></p>
-<p><param name="include" value="username,password" />
-</convert>
-</allow>
-</dwr>
-注意：如果List、Set或者Map中的元素均为简单类型（包括其封装类）或String、Date、数组和集合类型，则不需要<convert>标签。
-6.2、javascript中调用(以返回List为例，List的元素为TestBean)
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数和接收返回值的回调函数
-Function callTestMethod6(){
-       testClass.testMethod6(callBackFortestMethod6);
-}
-Function callBackFortestMethod6(data){
-      //其中date接收方法的返回值
-//对于JavaBean返回值，有两种方式处理
-              //不知道属性名称时，使用如下方法
-            for(var i=0;i&lt;data.length;i++){
-for(var property in data){
-                   alert(&quot;property:&quot;+property);
-                   alert(property+&quot;:&quot;+data[property]);
-                }
-}
-//知道属性名称时，使用如下方法
-for(var i=0;i&lt;data.length;i++){
-                alert(data.username);
-                alert(data.password);
-}
-}**</p>
-<p><strong>7**</strong>、调用有List、Set或者Map参数的java方法**</p>
-<p><strong>7.1**</strong>、dwr.xml的配置<em>**</em><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod7"/>
-</create></p>
-<p><convert converter="bean" match="com.dwr.TestBean"></p>
-<p><param name="include" value="username,password" />
-</convert>
-</allow></p>
-<p><signatures>
-&lt;![CDATA[
-import java.util.List;
-import com.dwr.TestClass;
-import com.dwr.TestBean;
-TestClass.testMethod7(List<TestBean>);
-]]&gt;
-</signatures>
-</dwr></p>
-<p><signatures><em>**</em>标签是用来声明java方法中List、Set或者Map参数所包含的确切类，以便java代码作出判断。
-7.2、javascript中调用(以返回List为例，List的元素为TestBean)
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数
-Function callTestMethod7(){
-//定义要传到java方法中的参数
-       var data;
-       //构造参数，date实际上是一个object数组，即数组的每个元素均为object
-data = [
-                       {
-                          username:&quot;user1&quot;,
-                          password:&quot;password2&quot;
-                       },
-                       {
-                          username:&quot;user2&quot;,
-                          password:&quot; password2&quot;
-                       }
-                   ];
-       testClass.testMethod7(data);
-}
-注意：
-1、对于第6种情况，如果java方法的返回值为Map，则在接收该返回值的javascript回调函数中如下处理：
-function callBackFortestMethod(data){
-            //其中date接收方法的返回值
-            for(var property in data){
-                   var bean = data[property];
-                   alert(bean.username);
-                   alert(bean.password);
-               }
-}
-2、对于第7种情况，如果java的方法的参数为Map（假设其key为String，value为TestBean），则在调用该方法的javascript函数中用如下方法构造要传递的参数：
-function callTestMethod (){
-               //定义要传到java方法中的参数
-               var data;
-               //构造参数，date实际上是一个object，其属性名为Map的key，属性值为Map的value
-               data = {
-                          &quot;key1&quot;:{
-                              username:&quot;user1&quot;,
-                             password:&quot;password2&quot;
-                          },
-                          &quot;key2&quot;:{
-                             username:&quot;user2&quot;,
-                             password:&quot; password2&quot;
-                          }
-                      };
-               testClass.testMethod(data);
-}
-并且在dwr.xml中增加如下的配置段</p>
-<p><signatures>
-&lt;![CDATA[
-import java.util.List;
-import com.dwr.TestClass;
-import com.dwr.TestBean;
-TestClass.testMethod7(Map<String,TestBean>);
-]]&gt;
-</signatures>
-3、由以上可以发现，对于java方法的返回值为List(Set)的情况，DWR将其转化为Object数组，传递个javascript；对于java方法的返回值为Map的情况，DWR将其转化为一个Object，其中Object的属性为原Map的key值，属性值为原Map相应的value值。
-4、如果java方法的参数为List(Set)和Map的情况，javascript中也要根据3种所说，构造相应的javascript数据来传递到java中。**</p>
-<p><strong>======================================================================================</strong></p>
-<p><a href=""></a><strong>Scripting Introduction</strong></p>
-<p><strong>DWR**</strong>根据dwr.xml生成和Java代码类似的Javascript代码。**</p>
-<p><strong>相对而言Java同步调用，创建与Java代码匹配的Ajax远程调用接口的最大挑战来至与实现Ajax的异步调用特性。</strong></p>
-<p><strong>DWR**</strong>通过引入回调函数来解决这个问题，当结果被返回时，DWR会调用这个函数。**</p>
-<p><strong>有两种推荐的方式来使用DWR实现远程方法调用。可以通过把回调函数放在参数列表里，也可以把回调函数放到元数据对象里。</strong></p>
-<p><strong>当然也可以把回调函数做为第一个参数，但是不建议使用这种方法。因为这种方法在处理</strong><a href="http://wiki.javascud.org/display/dwrcn/Accessing+Servlet+Objects" title="Accessing Servlet Objects" target="_blank">自动处理http对象</a><strong>时(查看&quot;Alternative Method&quot;)上会有问题。这个方法主要是为向下兼容而存在的。</strong></p>
-<p><a href=""></a><strong>简单的回调函数</strong></p>
-<p><strong>假设你有一个这样的Java方法：</strong></p>
-<p><strong>public class Remote {    public String getData(int index) { ... }}</strong></p>
-<p><strong>我们可以在Javascript中这样使用：</strong></p>
-<p><strong><script type="text/javascript"    src="[WEBAPP]/dwr/interface/Remote.js"> </script><script type="text/javascript"    src="[WEBAPP]/dwr/engine.js"> </script>...function handleGetData(str) {  alert(str);}Remote.getData(42, handleGetData);</strong></p>
-<p><strong>42**</strong>是Java方法getData()的一个参数。**</p>
-<p><strong>此外你也可以使用这种减缩格式：</strong></p>
-<p><strong>Remote.getData**</strong>(42, function(str) { alert(str); });**</p>
-<p><a href=""></a><strong>调用元数据对象(Meta-Data)</strong></p>
-<p><strong>另外一种语法时使用&quot;调用元数据对象&quot;来指定回调函数和其他的选项。上面的例子可以写成这样：</strong></p>
-<p><strong>Remote.getData**</strong>(42, {  callback:function(str) { alert(str); }});**</p>
-<p><strong>这种方法有很多优点：易于阅读，更重要的指定额外的调用选项。</strong></p>
-<p><a href=""></a><strong>超时和错误处理</strong></p>
-<p><strong>在回调函数的元数据中你可以指定超时和错误的处理方式。例如：</strong></p>
-<p><strong>Remote.getData**</strong>(42, {  callback:function(str) { alert(str); },  timeout:5000,  errorHandler:function(message) { alert(&quot;Oops: &quot; + message); }});**</p>
-<p><a href=""></a><strong>查找回调函数</strong></p>
-<p><strong>有些情况下我们很难区分各种回调选项(记住，Javascript是不支持函数重载的)。例如：</strong></p>
-<p><strong>Remote.method**</strong>({ timeout:3 }, { errorHandler:somefunc });**</p>
-<p><strong>这两个参数之一是bean的参数，另一个是元数据对象，但是我们不能清楚的告诉DWR哪个是哪个。为了可以跨浏览器，我们假定null == undefined。 所以当前的情况，规则是：</strong></p>
-<ul>
-<li><strong>如果第一个或最后一个是一个函数，那么它就是回调函数，没有元数据对象，并且其他参数都是Java的方法参数。</strong></li>
-<li><strong>另外，如果最后一个参数是一个对象，这个对象中有一个callback成员，并且它是个函数，那么这个对象就是元数据对象，其他的都是Java方法参数。</strong></li>
-<li><strong>另外，如果第一个参数是 null ，我们就假设没有回调函数，并且其他的都是Java方法参数。尽管如此，我们会检查最后一个参数是不是null，如果是就发出警告。</strong></li>
-<li><strong>最后如果最后一个参数是null，那么就没有callback函数。</strong></li>
-<li><strong>另外，发出错误信号是个糟糕的请求格式。</strong></li>
-</ul>
-<p><a href=""></a><strong>创造一个与Java对象匹配的Javascript对象</strong></p>
-<p><strong>假设你有这样的Java方法：</strong></p>
-<p><strong>public class Remote {  public void setPerson(Person p) {    this.person = p;  }}</strong></p>
-<p><strong>Person**</strong>对象的结构是这样的：**</p>
-<p><strong>public Person {  private String name;  private int age;  private Date[] appointments;  // getters and setters ...}</strong></p>
-<p><strong>那么你可以在Javascript中这样写：</strong></p>
-<p><strong>var**</strong>p = {  name:&quot;Fred Bloggs&quot;,  age:42,  appointments:[ new Date(), new Date(&quot;1 Jan 2008&quot;) ]};Remote.setPerson(p);**</p>
-<p><strong>在Javascript没有出现的字段，在Java中就不会被设置。</strong></p>
-<p><strong>因为setter都是返回&#39;void&#39;，我们就不需要使用callback函数了。如果你想要一个返回void的服务端方法的完整版，你也可以加上callback函数。很明显DWR不会向它传递任何参数。</strong></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/">java集合类总结</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-">java集合类总结</h1>
-<p><img src="" alt=""> Saving Data...
-正在保存数据...
-正在儲存資料...</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--java集合类总结" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -963,7 +1409,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 15:12:18</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:01:36</em></span></div>
 </div>
 <div class="clearfix"></div>
 

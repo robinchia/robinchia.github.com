@@ -110,6 +110,215 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析java内存/">离线分析java内存</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析java内存/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-java-">离线分析java内存</h1>
+<p> 如题，我这里简单说下我现在离线分析java内存的方式，所谓离线，就是需要dump出正在运行的java系统中的一些运行时堆栈数据，然后拿到线下来分析，分析可以包括内存，线程，GC等等，同时不会对正在运行的生产环境的机器造成很大的影响，对应着离线分析，当然是在线分析了，这个我在后面会尝试下，因为离线分析有些场景还是模拟不出来，需要借助LR来模拟压力，查看在线的java程序运行情况了。</p>
+<pre><code>        首先一个简单的问题，如何dump出java运行时堆栈，这个SUN就提供了很好的工具，位于JAVA_HOME/bin目录下的jmap（java memory map之意），如果需要dump出当前运行的java进程的堆栈数据，则首先需要获得该java进程的进程ID,在linux下可以使用
+</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>ps -aux  </li>
+<li></li>
+<li>ps -ef | grep java  </li>
+</ol>
+<p>或者使用jdk自带的一个工具jps，例如</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>/JAVA_HOME/bin/jps  </li>
+</ol>
+<p>找到了当前运行的java进程的id后，就可以对正在运行的java进程使用jmap工具进行dump了，例如使用以下命令：</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>JAVA_HOME/bin/jmap  -dump:format=b,file=heap.bin <pid>   </li>
+</ol>
+<p>其中file = heap.bin的意思是dump出的文件名叫heap.bin, 当然你可以选择你喜欢的名字，我这里选择叫/*.bin是为了后面使用方便，<pid>表示你需要dump的java进程的id。</p>
+<p>这里需要注意的是，记住dump的进程是java进程，不会是jboss的进程，weblogic的进程等。dump过程中机器load可能会升高，但是在我这里测试发现load升的不是特别快，同时dump时需要的磁盘空间也比较大，例如我这里测试的几个系统，分别是500M 800M 1500M  3000M，所以确保你运行jmap命令时所在的目录中的磁盘空间足够，当然现在的系统磁盘空间都比较大。</p>
+<p>以上是在java进程还存活的时候进行的dump，有的时候我们的java进程crash后，会生成一个core.pid文件，这个core.pid文件还不能直接被我们的java 内存分析工具使用，需要将其转换为java 内存分析工具可以读的文件（例如使用jmap工具dump出的heap.bin文件就是很多java 内存分析工具可以读的文件格式）。将core.pid文件转换为jmap工具dump出的文件格式还可以继续使用jmap工具，这个的说明可以见我前几篇中的一个转载（<a href="http://dikar.iteye.com/blog/643196" target="_blank">Create Java heapdumps with the help of core dumps</a>），这里我在补充点</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>jmap -heap:format=b [java binary] [core dump file]  </li>
+<li></li>
+<li></li>
+<li>64位下可以指定使用64位模式  </li>
+<li></li>
+<li>jmap -d64  -dump:format=b [java binary] [core dump file]  </li>
+</ol>
+<p>需要说明一下，使用jmap转换core.pid文件时，当文件格式比较大时，可能大于2G的时候就不能执行成功（我转换3G文件大小的时候没有成功）而报出</p>
+<p>Error attaching to core file: Can&#39;t attach to the core file</p>
+<p>查过sun的bug库中，这个bug还没有被修复，我想还是由于32位下用户进程寻址大小限制在2G的范围内引起的，在64位系统和64位jdk版本中，转换3G文件应该没有什么大的问题（有机会有环境得需要测试下）。如果有兴趣分析jmap转换不成功的同学，可以使用如下命令来分析跟踪命令的执行轨迹，例如使用</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>strace  jmap -heap:format=b [java binary] [core dum  </li>
+<li><p>p]  </p>
+<p>对于strace的命令的说明，同样可以参考我前几篇文章中的一个<a href="http://dikar.iteye.com/blog/643201" target="_blank"> strace命令用法</a></p>
+</li>
+</ol>
+<p>同时对于core.pid文件的调试我也补充一下, 其中&gt;&gt;表示命令提示符</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li><blockquote>
+<blockquote>
+<p>gdb JAVA_HOME/bin/java  core.pid  </p>
+</blockquote>
+</blockquote>
+</li>
+<li></li>
+<li><blockquote>
+<blockquote>
+<p>bt  </p>
+</blockquote>
+</blockquote>
+</li>
+</ol>
+<p>bt后就可以看到生成core.pid文件时，系统正在执行的一个操作，例如是哪个so文件正在执行等。</p>
+<p>好了说了这么多，上面都是怎么生成java 运行期DUMP文件的，接下来我们就进入分析阶段，为了分析这个dump出的文件，需要将这个文件弄到你的分析程序所在的机器上，例如可以是windows上，linux上，这个和你使用的分析工具以及使用的操作系统有关。不管使用什么系统，总是需要把生产环境下打出的dump文件搞到你的分析机器上，由于dump出的文件经常会比较大，例如达到2G，这么大的文件不是很好的从生产环境拉下来，因此使用FTP的方式把文件拖到分析机器上，同时由于单个文件很大，因此为了快速的将文件下载到分析机器，我们可以使用分而治之的思想，先将文件切割为小文件下载，然后在合并为一个大文件即可，还好linux提供了很方便的工具，例如使用如下命令</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>$ split -b 300m heap.bin  </li>
+<li></li>
+<li>$ cat x/* &gt; heap.bin  </li>
+</ol>
+<p>在上面的 split 命令行中的 “300m” 表示分割后的每个文件为 300MB，“heap.bin” 为待分割的dump文件，分割后的文件自动命名为 xaa，xab，xac等 
+cat 命令可将这些分割后的文件合并为一个文件，例如将所有x开头的文件合并为heap.bin</p>
+<p>如果我们是利用一个中间层的FTP服务器来保存数据的，那么我们还需要连接这个FTP服务器把合并后的文件拉下来，在windows下我推荐使用一个工具，速度很快而且简单，</p>
+<p>winscp   <a href="http://winscp.net/eng/docs/lang:chs" target="_blank">http://winscp.net/eng/docs/lang:chs</a></p>
+<p>好了分析的文件终于经过一翻周折到了你的分析机器上，现在我们就可以使用分析工具来分析这个dump出的程序了，这里我主要是分析内存的问题，所以我说下我选择的内存分析工具，我这里使用的是开源的由SAP 和IBM 支持的一个内存分析工具</p>
+<h1 id="memory-analyzer-mat-">Memory Analyzer (MAT)</h1>
+<p><a href="http://www.eclipse.org/mat/" target="_blank">http://www.eclipse.org/mat/</a></p>
+<p>我建议下载 Stand-alone Eclipse RCP 版本，不要装成eclipse的插件，因为这个分析起来还是很耗内存。<em>**</em></p>
+<p>下载好了，解压开来就可以直接使用了（基于eclipse的），打开以后，在菜单栏中选择打开文件，选择你刚刚的dump文件，然后一路的next就可以了，最后你会看到一个报告，这个报告里会告诉你可能的内存泄露的点，以及内存中对象的一个分布，关于mat的使用请参考官方说明，当然你也可以自己徜徉在学习的海洋中 。</p>
+<p>对于dump文件的分析还可以使用jdk中提供的一个jhat工具来查看，不过这个很耗内存，而且默认的内存大小不够，还需要增加参数设置内存大小才能分析出，不过我看了下分析出的结果不是很满意，而且这个用起来很慢。还是推荐使用mat 。
+来源： <a href="[http://dikar.iteye.com/blog/643436](http://dikar.iteye.com/blog/643436)">[http://dikar.iteye.com/blog/643436](http://dikar.iteye.com/blog/643436)</a> </p>
+<p> 摘文：<a href="http://dikar.iteye.com/blog/643196" target="_blank">Create Java heapdumps with the help of core dumps</a></p>
+<p>转载自：<a href="http://devops-abyss.blogspot.com/2010/03/create-java-heapdumps-with-help-of-core.html" target="_blank">http://devops-abyss.blogspot.com/2010/03/create-java-heapdumps-with-help-of-core.html</a></p>
+<p>Hi,
+for some time I had the problem, that taking Java heap dumps with jmap took too long. When one of my tomcats crashed by an OutOfMemoryException, I had no time to do a heap dump because it took some hours and the server had to be back online.
+Now I found a sollution to my problem. The initial idea came from <a href="https://proxy.evlit.net/browse.php?u=http%3A%2F%2Fserverfault.com%2Fquestions%2F110153%2Fhow-to-reliably-take-java-heap-dumps%2F12545&amp;b=4#125451" target="_blank">this</a> post. It had a solution for Solaris, but with some googling and try and error I found a solution for linux too.</p>
+<ol>
+<li>create a core dump of your java process with gdb
+gdb --pid=[java pid] 
+gcore [file name] 
+detach 
+quit</li>
+<li>restart the tomcat or do whatever you like with the java process</li>
+<li>attach jmap to the core dump and create a Java heap dump
+jmap -heap:format=b [java binary] [core dump file]</li>
+<li><p>analyze your Java heap dump with your prefered tool</p>
+<p>When you get the following error in step three:
+Error attaching to core file: Can&#39;t attach to the core file</p>
+</li>
+</ol>
+<p>This might help:
+In my case the error apeared because I used the wrong java binary in the jmap call. When you are not sure about your java binary, open the core dump with gdb:</p>
+<p>gdb --core=[core dump file]</p>
+<p>You will get an output similar to this one:</p>
+<p>GNU gdb 6.6 Copyright (C) 2006 Free Software Foundation, Inc. GDB is free software, covered by the GNU General Public License, and you are welcome to change it and/or distribute copies of it under certain conditions. Type &quot;show copying&quot; to see the conditions. There is absolutely no warranty for GDB.  Type &quot;show warranty&quot; for details. This GDB was configured as &quot;i586-suse-linux&quot;... (no debugging symbols found) Using host libthread_db library &quot;/lib/libthread_db.so.1&quot;. 
+warning: core file may not match specified executable file. (no debugging symbols found) Failed to read a valid object file image from memory. Core was generated by `/opt/tomcat/bin/jsvc&#39;. /#0  0xffffe410 in _start ()</p>
+<p> What you are looking for is in this line:</p>
+<p>Core was generated by `/opt/tomcat/bin/jsvc&#39;.</p>
+<p> Call jmap with this binary and you will get a heapdump.</p>
+<p>来源： <a href="[http://dikar.iteye.com/blog/643196](http://dikar.iteye.com/blog/643196)">[http://dikar.iteye.com/blog/643196](http://dikar.iteye.com/blog/643196)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析java内存/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--离线分析java内存" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/">离线分析—— MAT(Memory Analyzer Tool)工具入门介绍</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-mat-memory-analyzer-tool-">离线分析—— MAT(Memory Analyzer Tool)工具入门介绍</h1>
+<p>1、MAT是什么？</p>
+<pre><code>MAT(Memory Analyzer Tool)，一个基于Eclipse的内存分析工具，是一个快速、功能丰富的JAVA heap分析工具，它可以帮助我们查找内存泄漏和减少内存消耗。使用内存分析工具从众多的对象中进行分析，快速的计算出在内存中对象的占用大小，看看是谁阻止了垃圾收集器的回收工作，并可以通过报表直观的查看到可能造成这种结果的对象。
+
+![]()
+</code></pre><p>2.为什么使用MAT？
+    当服务器应用占用了过多内存的时候，会遇到OutOfMemoryError。如何快速定位问题呢？Eclipse MAT的出现使这个问题变得非常简单。它能够离线分析dump的文件数据。
+    Eclipse MAT是SAP公司贡献的一个工具，可以在Eclipse网站下载到它，完全免费的。它可比Sun提供的内存镜像分析工具jhat要强太多了。
+3.
+首页：<a href="http://www.eclipse.org/mat/" target="_blank"><a href="http://www.eclipse.org/mat/![](http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif">http://www.eclipse.org/mat/![](http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif</a>)</a> 
+插件更新地址：
+<a href="http://download.eclipse.org/mat/1.0/update-site/" target="_blank"><a href="http://download.eclipse.org/mat/1.0/update-site/">http://download.eclipse.org/mat/1.0/update-site/</a></a><a href="http://d/" target="_blank"><img src="http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif" alt=""></a></p>
+<p>先调用jdk的工具得到heap使用情况</p>
+<p>我安装的是jdk1.6</p>
+<p>C:/&gt;java -version</p>
+<p>java version &quot;1.6.0_11&quot;</p>
+<p>Java(TM) SE Runtime Environment (build 1.6.0_11-b03)</p>
+<p>Java HotSpot(TM) Client VM (build 11.0-b16, mixed mode, sharing)</p>
+<p>调用jdk工具jps查看当前的java进程</p>
+<p>C:/&gt;jps</p>
+<p>3504 Jps</p>
+<p>3676 Bootstrap</p>
+<p>3496 org.eclipse.equinox.launcher_1.0.201.R35x_v20090715.jar</p>
+<p>调用jmap工具得到信息</p>
+<p>C:/&gt;jmap -dump:format=b,file=heap.bin 3676</p>
+<p>Dumping heap to C:/heap.bin ...</p>
+<p>Heap dump file created</p>
+<p>这时，我们的C盘根目录，就生成了heap.bin文件，用eclipse的file----&gt;open打开这个文件，首先是一个启动图：</p>
+<p><img src="" alt=""></p>
+<p>这里可以选择查看</p>
+<p>1、内存泄露报表，自动检查可能存在内存泄露的对象，通过报表展示存活的对象以及为什么他们没有被垃圾收集；</p>
+<p>2、对象报表，对可颖对象的分析，如字符串是否定义重了，空的collection、finalizer以及弱引用等。</p>
+<p>我这里选择的是查看内存报表，以下是截的简略图：</p>
+<p><img src="" alt=""></p>
+<p> <img src="" alt=""></p>
+<p>通过报表展示，蛮清楚的，下面还有详细的说明，这里就没有帖图了，有兴趣的可以继续探究。
+来源： <a href="[http://blog.csdn.net/fenglibing/article/details/6298326](http://blog.csdn.net/fenglibing/article/details/6298326)">[http://blog.csdn.net/fenglibing/article/details/6298326](http://blog.csdn.net/fenglibing/article/details/6298326)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--JAVAHOTSPOTVM参数大全/">JAVA HOTSPOT VM参数大全</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--JAVAHOTSPOTVM参数大全/">feb. 2 2014</a></time></span>      
@@ -384,189 +593,6 @@ quote=&quot;nethibernate&quot;]1楼nb, 崇拜一下 ...
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/优化/">优化</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/优化/" class="label label-success">优化</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
 <a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--JAVAHOTSPOTVM参数大全/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-优化--JAVAHOTSPOTVM参数大全" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20/">优化技巧分享：把内存消耗降低至原来的1</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-1-20">优化技巧分享：把内存消耗降低至原来的1/20</h1>
-<p><strong><a href="http://www.jobbole.com/" title="伯乐在线" target="_blank">伯乐</a>在线注：</strong>昨天在微博中推荐了英文原文，感谢@<a href="http://weibo.com/fwlx" title="NULL_文龙" target="_blank">NULL_文龙</a> 和@<a href="http://weibo.com/1077006667" title="战斗的那美克星人" target="_blank">战斗的那美克星人</a> 的热情。以下是译文。</p>
-<p>——————————–</p>
-<p>这是最近发生的又一起内存相关的事件了。这个案例是从一个最近的客户报告中提取出来，一个异常运行的应用在其产品中反复报告内存耗尽。</p>
-<p>这个症状是由我们的一个实验性功能发现，它主要用来监测某一类数据结构的使用情况。它提供了一个信号探针，结果会指向问题源代码的某一位置。为了保护客户的隐私，我们人为重建了该例子并保持它同原真实场景在技术层面的一致性。你可以免费在此处<a href="http://www.plumbr.eu/files/plumbr-optimization-sample.zip" target="_blank">下载到源码</a>。</p>
-<p>故事开始于一组从外界源加载进来的对象。同外部的信息交互是基于XML的接口，这本身并没什么大不了的，但事实上“基于XML的格式进行通讯”的实现细节被分散到了系统的每一个角落。 传入系统的文档是首先被转换成XMLBean实例，然后在整个系统范围内被使用，这中做法听起来有点傻。</p>
-<p>整个问题中最核心的部分是一个延迟加载的缓冲方案。缓存的对象是“Person”的实例：
-1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7 // Imports and methods removed to improve readability</p>
-<p>public</p>
-<p>class</p>
-<p>Person {</p>
-<p>private</p>
-<p>String id;</p>
-<p>private</p>
-<p>Date dateOfBirth;</p>
-<p>private</p>
-<p>String forename;</p>
-<p>private</p>
-<p>String surname;
-}</p>
-<p>你也许会说这才能消耗多少内存呢。但当我们揭开进一步的细节时，发现事情就变了味了。表面上根据设计，声称实现只用到的诸如上文提到的那样一些简单的类，但真实的情形是使用了基于模型生成的数据结构。使用的模型是诸如下面的这个简化的XSD片段。</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13</p>
-<p>14
- &lt;</p>
-<p>xs:schema</p>
-<p>targetNamespace</p>
-<p>=</p>
-<p>&quot;<a href="http://plumbr.eu" target="_blank">http://plumbr.eu</a>&quot;</p>
-<p>xmlns:xs</p>
-<p>=</p>
-<p>&quot;<a href="http://www.w3.org/2001/XMLSchema" target="_blank">http://www.w3.org/2001/XMLSchema</a>&quot;</p>
-<p>elementFormDefault</p>
-<p>=</p>
-<p>&quot;qualified&quot;</p>
-<p>&gt;</p>
-<p>&lt;</p>
-<p>xs:element</p>
-<p>name</p>
-<p>=</p>
-<p>&quot;person&quot;</p>
-<p>&gt;</p>
-<p>&lt;</p>
-<p>xs:complexType</p>
-<p>&gt;</p>
-<p>&lt;</p>
-<p>xs:sequence</p>
-<p>&gt;</p>
-<p>&lt;</p>
-<p>xs:element</p>
-<p>name</p>
-<p>=</p>
-<p>&quot;id&quot;</p>
-<p>type</p>
-<p>=</p>
-<p>&quot;xs:string&quot;</p>
-<p>/&gt;</p>
-<p>&lt;</p>
-<p>xs:element</p>
-<p>name</p>
-<p>=</p>
-<p>&quot;dateOfBirth&quot;</p>
-<p>type</p>
-<p>=</p>
-<p>&quot;xs:dateTime&quot;</p>
-<p>/&gt;</p>
-<p>&lt;</p>
-<p>xs:element</p>
-<p>name</p>
-<p>=</p>
-<p>&quot;forename&quot;</p>
-<p>type</p>
-<p>=</p>
-<p>&quot;xs:string&quot;</p>
-<p>/&gt;</p>
-<p>&lt;</p>
-<p>xs:element</p>
-<p>name</p>
-<p>=</p>
-<p>&quot;surname&quot;</p>
-<p>type</p>
-<p>=</p>
-<p>&quot;xs:string&quot;</p>
-<p>/&gt;</p>
-<p>&lt;/</p>
-<p>xs:sequence</p>
-<p>&gt;</p>
-<p>&lt;/</p>
-<p>xs:complexType</p>
-<p>&gt;</p>
-<p>&lt;/</p>
-<p>xs:element</p>
-<p>&gt;</p>
-<p>&lt;/</p>
-<p>xs:schema</p>
-<p>&gt;</p>
-<p>使用<a href="http://xmlbeans.apache.org/" target="_blank">XMLBeans</a>，开发者生成了该模型，并在真实的场景中使用。现在我们回到开始的这个缓存的方案上来，假设它设计初衷是为了支持最多1.3M Person类的实例，而我们实际却要塞进去同等数量的大家伙，这从根上就注定了失败。</p>
-<p>跑一组测试用例后，发现1.3M个基于XMLBean的生成的实例需要消耗大概1.5GB的堆空间。我们当时想这肯定可以做的更好。</p>
-<p>第一个改进是显而易见的，外部同系统内部集成的实现细节是不应该把影响传递给系统的每一个角落的。所以我们把缓存改成了使用简单的<a href="http://docs.oracle.com/javase/7/docs/api/java/util/HashMap.html" target="_blank"> java.util.HashMap<Long, Person></a>。ID是键，Person是值。我们发现内存的消耗立即降低到了214MB。但这还不能令我们满意。</p>
-<p>由于Map中的键是一个数，我们有十足的理由使用<a href="http://trove.starlight-systems.com/" target="_blank">Trove Collections</a>来进一步降低它的内存消耗。这在实现上的改动很快，我们只需把 <a href="http://docs.oracle.com/javase/7/docs/api/java/util/HashMap.html" target="_blank">HashMap </a>改成 <a href="http://trove4j.sourceforge.net/javadocs/gnu/trove/map/hash/TLongObjectHashMap.html" target="_blank">TLongObjectHashMap<Person></a> ，堆的消耗进一步降低到了143MB。</p>
-<p>活干到这个程度我们已经可以收工了，但是工程师的好奇心驱使我们要更进一步。不由自主的我们发现了系统的数据存在着大量的重复信息。例如Date Of Birth其实已经在ID中编码了，所以Date Of Birth可以直接从ID中得到，而不必使用额外的空间去它。</p>
-<p>经过改良，Person类现在变成了这个样子：
-1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
- // Imports and methods removed to improve readability</p>
-<p>public</p>
-<p>class</p>
-<p>Person {</p>
-<p>private</p>
-<p>String id;</p>
-<p>private</p>
-<p>String forename;</p>
-<p>private</p>
-<p>String surname;</p>
-<p>}</p>
-<p>重新跑一边测试证实我们的改进的确有效，堆消耗降低到了93MB。但是我们还未满足。</p>
-<p>该应用在64位的机器上使用老的JDK6。默认情况下，这么做不能<a href="https://wikis.oracle.com/display/HotSpotInternals/CompressedOops" target="_blank">压缩普通对象</a>的指针的。通过参数”<a href="https://wikis.oracle.com/display/HotSpotInternals/CompressedOops" target="_blank">-XX:UseCompressedOops</a>“切换到压缩模式使我们获得了额外的收获，现在我们的内存消耗降低到了73MB。</p>
-<p><a href="http://cdn2.jobbole.com/2013/06/comparing-heap-consumption.png" title="comparing-heap-consumption" target="_blank"><img src="&quot;comparing-heap-consumption&quot;" alt=""></a></p>
-<p>当然，我们还能走的更远。比如基于键值建立B-tree，但这已经开始影响到了代码的可读性，所以我们决定到此为止。降低21.5倍的堆内存应该已经是一个足够好的结果了。</p>
-<p><strong>让我们在重复一下学到了什么</strong></p>
-<ul>
-<li>别把同外部模块的整合影响到系统的每一个角落</li>
-<li>冗余的数据可能带来开销。在可能的情况下尽量消除它</li>
-<li>基本数据类型是你最经常打交道的朋友，务必知道些关于它们的工具，如果还没玩过<a href="http://trove.starlight-systems.com/" target="_blank">Trove</a>请立刻开始吧</li>
-<li>JVM自带的优化技术不可忽视</li>
-</ul>
-<p>如果你对这个实验很好奇，请在此处<a href="http://www.plumbr.eu/files/plumbr-optimization-sample.zip" target="_blank">下载相关的代码</a>。使用到的的测量工具和其具体描述可以在这篇<a href="http://plumbr.eu/blog/how-much-memory-do-i-need-part-3-measure-dont-guess" target="_blank">博文</a>找到。</p>
-<p>原文链接： <a href="http://plumbr.eu/blog/reducing-memory-consumption-by-20x" target="_blank">Nikita Salnikov-Tarnovski</a> ，编译：感谢@<a href="http://weibo.com/fwlx" title="NULL_文龙" target="_blank">NULL_文龙</a> 的热心翻译</p>
-<p>译文链接：<a href="http://blog.jobbole.com/40666/" target="_blank"><a href="http://blog.jobbole.com/40666/">http://blog.jobbole.com/40666/</a></a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/优化/">优化</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/优化/" class="label label-success">优化</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1241,756 +1267,6 @@ klass对象的更详细的介绍也留待以后再写吧～至少得找时间写
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC/">Java加密技术（一）——BASE64与单向加密算法MD5&SHA&MAC</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-base64-md5-sha-mac">Java加密技术（一）——BASE64与单向加密算法MD5&amp;SHA&amp;MAC</h1>
-<pre><code>加密解密，曾经是我一个毕业设计的重要组件。在工作了多年以后回想当时那个加密、解密算法，实在是太单纯了。![]()
-言归正传，这里我们主要描述Java已经实现的一些加密解密算法，最后介绍数字证书。
-如基本的单向加密算法：
-</code></pre><ul>
-<li>BASE64 严格地说，属于编码格式，而非加密算法</li>
-<li>MD5(Message Digest algorithm 5，信息摘要算法)</li>
-<li>SHA(Secure Hash Algorithm，安全散列算法)</li>
-<li><p>HMAC(Hash Message Authentication Code，散列消息鉴别码)
-  复杂的对称加密（DES、PBE）、非对称加密算法：</p>
-</li>
-<li><p>DES(Data Encryption Standard，数据加密算法)</p>
-</li>
-<li>PBE(Password-based encryption，基于密码验证)</li>
-<li>RSA(算法的名字以发明者的名字命名：Ron Rivest, AdiShamir 和Leonard Adleman)</li>
-<li>DH(Diffie-Hellman算法，密钥一致协议)</li>
-<li>DSA(Digital Signature Algorithm，数字签名)</li>
-<li>ECC(Elliptic Curves Cryptography，椭圆曲线密码编码学)
-  本篇内容简要介绍<strong>BASE64</strong>、<strong>MD5</strong>、<strong>SHA</strong>、<strong>HMAC</strong>几种方法。
-  <strong>MD5</strong>、<strong>SHA</strong>、<strong>HMAC</strong>这三种加密算法，可谓是非可逆加密，就是不可解密的加密方法。我们通常只把他们作为加密的基础。单纯的以上三种的加密并不可靠。
-<strong>BASE64</strong>
-按照RFC2045的定义，Base64被定义为：Base64内容传送编码被设计用来把任意序列的8位字节描述为一种不易被人直接识别的形式。（The Base64 Content-Transfer-Encoding is designed to represent arbitrary sequences of octets in a form that need not be humanly readable.）
-常见于邮件、http加密，截取http信息，你就会发现登录操作的用户名、密码字段通过BASE64加密的。
-<img src="" alt="">
-通过java代码实现如下：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></li>
-</ul>
-<ol>
-<li>//<em>/</em> </li>
-<li>/* BASE64解密 </li>
-<li>/*  </li>
-<li>/* @param key </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static byte[] decryptBASE64(String key) throws Exception {  </li>
-<li>return (new BASE64Decoder()).decodeBuffer(key);  </li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* BASE64加密 </li>
-<li>/*  </li>
-<li>/* @param key </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static String encryptBASE64(byte[] key) throws Exception {  </li>
-<li>return (new BASE64Encoder()).encodeBuffer(key);  </li>
-<li><p>}  </p>
-<p> //<em>/</em></p>
-<p>  /<em> BASE64解密
-  /</em></p>
-<p>  /<em> @param key
-  /</em> @return</p>
-<p>  /<em> @throws Exception
-  /</em>/</p>
-<p> public static byte[] decryptBASE64(String key) throws Exception {</p>
-<pre><code> return (new BASE64Decoder()).decodeBuffer(key);
-</code></pre><p> }</p>
-</li>
-</ol>
-<pre><code>//*/*
- /* BASE64加密
-
- /*
- /* @param key
-
- /* @return
- /* @throws Exception
-
- /*/
-public static String encryptBASE64(byte[] key) throws Exception {
-
-    return (new BASE64Encoder()).encodeBuffer(key);
-}
-</code></pre><p>主要就是BASE64Encoder、BASE64Decoder两个类，我们只需要知道使用对应的方法即可。另，BASE加密后产生的字节位数是8的倍数，如果不够位数以<strong>=</strong>符号填充。
-<strong>MD5</strong>
-MD5 -- message-digest algorithm 5 （信息-摘要算法）缩写，广泛用于加密和解密技术，常用于文件校验。校验？不管文件多大，经过MD5后都能生成唯一的MD5值。好比现在的ISO校验，都是MD5校验。怎么用？当然是把ISO经过MD5后产生MD5的值。一般下载linux-ISO的朋友都见过下载链接旁边放着MD5的串。就是用来验证文件是否一致的。
-<img src="" alt="">
-通过java代码实现如下：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>//<em>/</em> </li>
-<li>/* MD5加密 </li>
-<li>/*  </li>
-<li>/* @param data </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static byte[] encryptMD5(byte[] data) throws Exception {  </li>
-<li></li>
-<li>MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);  </li>
-<li>md5.update(data);  </li>
-<li></li>
-<li>return md5.digest();  </li>
-<li></li>
-<li><p>}  </p>
-<p> //<em>/</em></p>
-<p>  /<em> MD5加密
-  /</em></p>
-<p>  /<em> @param data
-  /</em> @return</p>
-<p>  /<em> @throws Exception
-  /</em>/</p>
-<p> public static byte[] encryptMD5(byte[] data) throws Exception {</p>
-</li>
-</ol>
-<pre><code>    MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);
-    md5.update(data);
-
-
-    return md5.digest();
-
-
-}
-</code></pre><p>通常我们不直接使用上述MD5加密。通常将MD5产生的字节数组交给BASE64再加密一把，得到相应的字符串。
-<strong>SHA</strong>
-SHA(Secure Hash Algorithm，安全散列算法），数字签名等密码学应用中重要的工具，被广泛地应用于电子商务等信息安全领域。虽然，SHA与MD5通过碰撞法都被破解了，<img src="" alt=""> 但是SHA仍然是公认的安全加密算法，较之MD5更为安全。<img src="" alt="">
-<img src="" alt="">
-通过java代码实现如下：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>//<em>/</em> </li>
-<li>/* SHA加密 </li>
-<li>/*  </li>
-<li>/* @param data </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static byte[] encryptSHA(byte[] data) throws Exception {  </li>
-<li></li>
-<li>MessageDigest sha = MessageDigest.getInstance(KEY_SHA);  </li>
-<li>sha.update(data);  </li>
-<li></li>
-<li>return sha.digest();  </li>
-<li></li>
-<li>}  </li>
-<li><p>}  </p>
-<p> //<em>/</em></p>
-<p>  /<em> SHA加密
-  /</em></p>
-<p>  /<em> @param data
-  /</em> @return</p>
-<p>  /<em> @throws Exception
-  /</em>/</p>
-<p> public static byte[] encryptSHA(byte[] data) throws Exception {</p>
-</li>
-</ol>
-<pre><code>    MessageDigest sha = MessageDigest.getInstance(KEY_SHA);
-    sha.update(data);
-
-
-    return sha.digest();
-
-
-}
-</code></pre><p>}
-<strong>HMAC</strong>
-HMAC(Hash Message Authentication Code，散列消息鉴别码，基于密钥的Hash算法的认证协议。消息鉴别码实现鉴别的原理是，用公开函数和密钥产生一个固定长度的值作为认证标识，用这个标识鉴别消息的完整性。使用一个密钥生成一个固定大小的小数据块，即MAC，并将其加入到消息中，然后传输。接收方利用与发送方共享的密钥进行鉴别认证等。
-<img src="" alt="">
-通过java代码实现如下：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>//<em>/</em> </li>
-<li>/* 初始化HMAC密钥 </li>
-<li>/*  </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static String initMacKey() throws Exception {  </li>
-<li>KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);  </li>
-<li></li>
-<li>SecretKey secretKey = keyGenerator.generateKey();  </li>
-<li>return encryptBASE64(secretKey.getEncoded());  </li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* HMAC加密 </li>
-<li>/*  </li>
-<li>/* @param data </li>
-<li>/* @param key </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static byte[] encryptHMAC(byte[] data, String key) throws Exception {  </li>
-<li></li>
-<li>SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);  </li>
-<li>Mac mac = Mac.getInstance(secretKey.getAlgorithm());  </li>
-<li>mac.init(secretKey);  </li>
-<li></li>
-<li>return mac.doFinal(data);  </li>
-<li></li>
-<li><p>}  </p>
-<p> //<em>/</em></p>
-<p>  /<em> 初始化HMAC密钥
-  /</em></p>
-<p>  /<em> @return
-  /</em> @throws Exception</p>
-<p>  /*/
- public static String initMacKey() throws Exception {</p>
-<pre><code> KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);
-</code></pre></li>
-</ol>
-<pre><code>    SecretKey secretKey = keyGenerator.generateKey();
-    return encryptBASE64(secretKey.getEncoded());
-
-}
-
-
-//*/*
- /* HMAC加密
-
- /*
- /* @param data
-
- /* @param key
- /* @return
-
- /* @throws Exception
- /*/
-
-public static byte[] encryptHMAC(byte[] data, String key) throws Exception {
-
-
-    SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);
-    Mac mac = Mac.getInstance(secretKey.getAlgorithm());
-
-    mac.init(secretKey);
-
-
-    return mac.doFinal(data);
-
-
-}
-</code></pre><p>给出一个完整类，如下：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>import java.security.MessageDigest;  </li>
-<li></li>
-<li>import javax.crypto.KeyGenerator;  </li>
-<li>import javax.crypto.Mac;  </li>
-<li>import javax.crypto.SecretKey;  </li>
-<li></li>
-<li>import sun.misc.BASE64Decoder;  </li>
-<li>import sun.misc.BASE64Encoder;  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* 基础加密组件 </li>
-<li>/*  </li>
-<li>/* @author 梁栋 </li>
-<li>/* @version 1.0 </li>
-<li>/* @since 1.0 </li>
-<li>/*/  </li>
-<li>public abstract class Coder {  </li>
-<li>public static final String KEY_SHA = &quot;SHA&quot;;  </li>
-<li>public static final String KEY_MD5 = &quot;MD5&quot;;  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* MAC算法可选以下多种算法 </li>
-<li>/*  </li>
-<li>/* <pre> </li>
-<li>/* HmacMD5  </li>
-<li>/* HmacSHA1  </li>
-<li>/* HmacSHA256  </li>
-<li>/* HmacSHA384  </li>
-<li>/* HmacSHA512 </li>
-<li>/* </pre> </li>
-<li>/*/  </li>
-<li>public static final String KEY_MAC = &quot;HmacMD5&quot;;  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* BASE64解密 </li>
-<li>/*  </li>
-<li>/* @param key </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static byte[] decryptBASE64(String key) throws Exception {  </li>
-<li>return (new BASE64Decoder()).decodeBuffer(key);  </li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* BASE64加密 </li>
-<li>/*  </li>
-<li>/* @param key </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static String encryptBASE64(byte[] key) throws Exception {  </li>
-<li>return (new BASE64Encoder()).encodeBuffer(key);  </li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* MD5加密 </li>
-<li>/*  </li>
-<li>/* @param data </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static byte[] encryptMD5(byte[] data) throws Exception {  </li>
-<li></li>
-<li>MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);  </li>
-<li>md5.update(data);  </li>
-<li></li>
-<li>return md5.digest();  </li>
-<li></li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* SHA加密 </li>
-<li>/*  </li>
-<li>/* @param data </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static byte[] encryptSHA(byte[] data) throws Exception {  </li>
-<li></li>
-<li>MessageDigest sha = MessageDigest.getInstance(KEY_SHA);  </li>
-<li>sha.update(data);  </li>
-<li></li>
-<li>return sha.digest();  </li>
-<li></li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* 初始化HMAC密钥 </li>
-<li>/*  </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static String initMacKey() throws Exception {  </li>
-<li>KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);  </li>
-<li></li>
-<li>SecretKey secretKey = keyGenerator.generateKey();  </li>
-<li>return encryptBASE64(secretKey.getEncoded());  </li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* HMAC加密 </li>
-<li>/*  </li>
-<li>/* @param data </li>
-<li>/* @param key </li>
-<li>/* @return </li>
-<li>/* @throws Exception </li>
-<li>/*/  </li>
-<li>public static byte[] encryptHMAC(byte[] data, String key) throws Exception {  </li>
-<li></li>
-<li>SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);  </li>
-<li>Mac mac = Mac.getInstance(secretKey.getAlgorithm());  </li>
-<li>mac.init(secretKey);  </li>
-<li></li>
-<li>return mac.doFinal(data);  </li>
-<li></li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>import java.security.MessageDigest;</p>
-<p>import javax.crypto.KeyGenerator;</p>
-<p>import javax.crypto.Mac;
-import javax.crypto.SecretKey;</p>
-<p>import sun.misc.BASE64Decoder;</p>
-<p>import sun.misc.BASE64Encoder;</p>
-<p>//<em>/</em>
-/* 基础加密组件</p>
-<p>/<em>
-/</em> @author 梁栋</p>
-<p>/<em> @version 1.0
-/</em> @since 1.0</p>
-<p>/*/
-public abstract class Coder {</p>
-<pre><code>public static final String KEY_SHA = &quot;SHA&quot;;
-public static final String KEY_MD5 = &quot;MD5&quot;;
-
-
-//*/*
-
- /* MAC算法可选以下多种算法
- /*
-
- /* &lt;pre&gt;
- /* HmacMD5
-
- /* HmacSHA1
- /* HmacSHA256
-
- /* HmacSHA384
- /* HmacSHA512
-
- /* &lt;/pre&gt;
- /*/
-
-public static final String KEY_MAC = &quot;HmacMD5&quot;;
-
-
-//*/*
- /* BASE64解密
-
- /*
- /* @param key
-
- /* @return
- /* @throws Exception
-
- /*/
-public static byte[] decryptBASE64(String key) throws Exception {
-
-    return (new BASE64Decoder()).decodeBuffer(key);
-}
-
-
-//*/*
-
- /* BASE64加密
- /*
-
- /* @param key
- /* @return
-
- /* @throws Exception
- /*/
-
-public static String encryptBASE64(byte[] key) throws Exception {
-    return (new BASE64Encoder()).encodeBuffer(key);
-
-}
-
-
-//*/*
- /* MD5加密
-
- /*
- /* @param data
-
- /* @return
- /* @throws Exception
-
- /*/
-public static byte[] encryptMD5(byte[] data) throws Exception {
-
-
-    MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);
-
-    md5.update(data);
-
-
-    return md5.digest();
-
-
-}
-
-
-//*/*
- /* SHA加密
-
- /*
- /* @param data
-
- /* @return
- /* @throws Exception
-
- /*/
-public static byte[] encryptSHA(byte[] data) throws Exception {
-
-
-    MessageDigest sha = MessageDigest.getInstance(KEY_SHA);
-
-    sha.update(data);
-
-
-    return sha.digest();
-
-
-}
-
-
-//*/*
- /* 初始化HMAC密钥
-
- /*
- /* @return
-
- /* @throws Exception
- /*/
-
-public static String initMacKey() throws Exception {
-    KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);
-
-
-    SecretKey secretKey = keyGenerator.generateKey();
-
-    return encryptBASE64(secretKey.getEncoded());
-}
-
-
-//*/*
-
- /* HMAC加密
- /*
-
- /* @param data
- /* @param key
-
- /* @return
- /* @throws Exception
-
- /*/
-public static byte[] encryptHMAC(byte[] data, String key) throws Exception {
-
-
-    SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);
-
-    Mac mac = Mac.getInstance(secretKey.getAlgorithm());
-    mac.init(secretKey);
-
-
-    return mac.doFinal(data);
-
-
-}
-</code></pre><p>}
-再给出一个测试类：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>import static org.junit.Assert./*;  </li>
-<li></li>
-<li>import org.junit.Test;  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/*  </li>
-<li>/* @author 梁栋 </li>
-<li>/* @version 1.0 </li>
-<li>/* @since 1.0 </li>
-<li>/*/  </li>
-<li>public class CoderTest {  </li>
-<li></li>
-<li>@Test  </li>
-<li>public void test() throws Exception {  </li>
-<li>String inputStr = &quot;简单加密&quot;;  </li>
-<li>System.err.println(&quot;原文:\n&quot; + inputStr);  </li>
-<li></li>
-<li>byte[] inputData = inputStr.getBytes();  </li>
-<li>String code = Coder.encryptBASE64(inputData);  </li>
-<li></li>
-<li>System.err.println(&quot;BASE64加密后:\n&quot; + code);  </li>
-<li></li>
-<li>byte[] output = Coder.decryptBASE64(code);  </li>
-<li></li>
-<li>String outputStr = new String(output);  </li>
-<li></li>
-<li>System.err.println(&quot;BASE64解密后:\n&quot; + outputStr);  </li>
-<li></li>
-<li>// 验证BASE64加密解密一致性  </li>
-<li>assertEquals(inputStr, outputStr);  </li>
-<li></li>
-<li>// 验证MD5对于同一内容加密是否一致  </li>
-<li>assertArrayEquals(Coder.encryptMD5(inputData), Coder  </li>
-<li>.encryptMD5(inputData));  </li>
-<li></li>
-<li>// 验证SHA对于同一内容加密是否一致  </li>
-<li>assertArrayEquals(Coder.encryptSHA(inputData), Coder  </li>
-<li>.encryptSHA(inputData));  </li>
-<li></li>
-<li>String key = Coder.initMacKey();  </li>
-<li>System.err.println(&quot;Mac密钥:\n&quot; + key);  </li>
-<li></li>
-<li>// 验证HMAC对于同一内容，同一密钥加密是否一致  </li>
-<li>assertArrayEquals(Coder.encryptHMAC(inputData, key), Coder.encryptHMAC(  </li>
-<li>inputData, key));  </li>
-<li></li>
-<li>BigInteger md5 = new BigInteger(Coder.encryptMD5(inputData));  </li>
-<li>System.err.println(&quot;MD5:\n&quot; + md5.toString(16));  </li>
-<li></li>
-<li>BigInteger sha = new BigInteger(Coder.encryptSHA(inputData));  </li>
-<li>System.err.println(&quot;SHA:\n&quot; + sha.toString(32));  </li>
-<li></li>
-<li>BigInteger mac = new BigInteger(Coder.encryptHMAC(inputData, inputStr));  </li>
-<li>System.err.println(&quot;HMAC:\n&quot; + mac.toString(16));  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>import static org.junit.Assert./*;</p>
-<p>import org.junit.Test;</p>
-<p>//<em>/</em></p>
-<p>/<em>
-/</em> @author 梁栋</p>
-<p>/<em> @version 1.0
-/</em> @since 1.0</p>
-<p>/*/
-public class CoderTest {</p>
-<pre><code>@Test
-
-public void test() throws Exception {
-    String inputStr = &quot;简单加密&quot;;
-
-    System.err.println(&quot;原文:\n&quot; + inputStr);
-
-
-    byte[] inputData = inputStr.getBytes();
-    String code = Coder.encryptBASE64(inputData);
-
-
-    System.err.println(&quot;BASE64加密后:\n&quot; + code);
-
-
-    byte[] output = Coder.decryptBASE64(code);
-
-
-    String outputStr = new String(output);
-
-
-    System.err.println(&quot;BASE64解密后:\n&quot; + outputStr);
-
-
-    // 验证BASE64加密解密一致性
-
-    assertEquals(inputStr, outputStr);
-
-
-    // 验证MD5对于同一内容加密是否一致
-    assertArrayEquals(Coder.encryptMD5(inputData), Coder
-
-            .encryptMD5(inputData));
-
-
-    // 验证SHA对于同一内容加密是否一致
-    assertArrayEquals(Coder.encryptSHA(inputData), Coder
-
-            .encryptSHA(inputData));
-
-
-    String key = Coder.initMacKey();
-    System.err.println(&quot;Mac密钥:\n&quot; + key);
-
-
-    // 验证HMAC对于同一内容，同一密钥加密是否一致
-
-    assertArrayEquals(Coder.encryptHMAC(inputData, key), Coder.encryptHMAC(
-            inputData, key));
-
-
-    BigInteger md5 = new BigInteger(Coder.encryptMD5(inputData));
-
-    System.err.println(&quot;MD5:\n&quot; + md5.toString(16));
-
-
-    BigInteger sha = new BigInteger(Coder.encryptSHA(inputData));
-    System.err.println(&quot;SHA:\n&quot; + sha.toString(32));
-
-
-    BigInteger mac = new BigInteger(Coder.encryptHMAC(inputData, inputStr));
-
-    System.err.println(&quot;HMAC:\n&quot; + mac.toString(16));
-}
-</code></pre><p>}
-控制台输出：
-Console代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>原文:  </li>
-<li>简单加密  </li>
-<li>BASE64加密后:  </li>
-<li>566A5Y2V5Yqg5a+G  </li>
-<li></li>
-<li>BASE64解密后:  </li>
-<li>简单加密  </li>
-<li>Mac密钥:  </li>
-<li>uGxdHC+6ylRDaik++leFtGwiMbuYUJ6mqHWyhSgF4trVkVBBSQvY/a22xU8XT1RUemdCWW155Bke  </li>
-<li>pBIpkd7QHg==  </li>
-<li></li>
-<li>MD5:  </li>
-<li>-550b4d90349ad4629462113e7934de56  </li>
-<li>SHA:  </li>
-<li>91k9vo7p400cjkgfhjh0ia9qthsjagfn  </li>
-<li>HMAC:  </li>
-<li>2287d192387e95694bdbba2fa941009a  </li>
-</ol>
-<p>原文:</p>
-<p>简单加密
-BASE64加密后:</p>
-<p>566A5Y2V5Yqg5a+G</p>
-<p>BASE64解密后:
-简单加密</p>
-<p>Mac密钥:
-uGxdHC+6ylRDaik++leFtGwiMbuYUJ6mqHWyhSgF4trVkVBBSQvY/a22xU8XT1RUemdCWW155Bke</p>
-<p>pBIpkd7QHg==</p>
-<p>MD5:
--550b4d90349ad4629462113e7934de56</p>
-<p>SHA:
-91k9vo7p400cjkgfhjh0ia9qthsjagfn</p>
-<p>HMAC:
-2287d192387e95694bdbba2fa941009a</p>
-<p>注意
-编译时，可能会看到如下提示：
-引用</p>
-<p>警告：sun.misc.BASE64Decoder 是 Sun 的专用 API，可能会在未来版本中删除
-import sun.misc.BASE64Decoder;
-               ^
-警告：sun.misc.BASE64Encoder 是 Sun 的专用 API，可能会在未来版本中删除
-import sun.misc.BASE64Encoder;
-               ^
-BASE64Encoder和BASE64Decoder是非官方JDK实现类。虽然可以在JDK里能找到并使用，但是在API里查不到。JRE 中 sun 和 com.sun 开头包的类都是未被文档化的，他们属于 java, javax 类库的基础，其中的实现大多数与底层平台有关，一般来说是不推荐使用的。
-    BASE64的加密解密是双向的，可以求反解。
-    MD5、SHA以及HMAC是单向加密，任何数据加密后只会产生唯一的一个加密串，通常用来校验数据在传输过程中是否被修改。其中HMAC算法有一个密钥，增强了数据传输过程中的安全性，强化了算法外的不可控因素。<img src="" alt="">
-    单向加密的用途主要是为了校验数据在传输过程中是否被修改。
-<strong>相关链接：
-<a href="http://snowolf.iteye.com/blog/379860" target="_blank">Java加密技术（一）——BASE64与单向加密算法MD5&amp;SHA&amp;MAC</a>
-<a href="http://snowolf.iteye.com/blog/380034" target="_blank">Java加密技术（二）——对称加密DES&amp;AES</a>
-<a href="http://snowolf.iteye.com/blog/380761" target="_blank">Java加密技术（三）——PBE算法</a>
-<a href="http://snowolf.iteye.com/blog/381767" target="_blank">Java加密技术（四）——非对称加密算法RSA</a>
-<a href="http://snowolf.iteye.com/blog/382422" target="_blank">Java加密技术（五）——非对称加密算法的由来DH</a>
-<a href="http://snowolf.iteye.com/blog/382749" target="_blank">Java加密技术（六）——数字签名算法DSA</a>
-<a href="http://snowolf.iteye.com/blog/383412" target="_blank">Java加密技术（七）——非对称加密算法最高ECC</a>
-<a href="http://snowolf.iteye.com/blog/391931" target="_blank">Java加密技术（八）——数字证书</a>
-<a href="http://snowolf.iteye.com/blog/397693" target="_blank">Java加密技术（九）——初探SSL</a>
-<a href="http://snowolf.iteye.com/blog/398198" target="_blank">Java加密技术（十）——单向认证</a>
-<a href="http://snowolf.iteye.com/blog/510985" target="_blank">Java加密技术（十一）——双向认证</a>
-<a href="http://snowolf.iteye.com/blog/735294" target="_blank">Java加密技术（十二）——/<em>.PFX(/</em>.p12)&amp;个人信息交换文件</a>
-</strong></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/加解密/">加解密</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/加解密/" class="label label-success">加解密</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -2061,7 +1337,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 15:12:18</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:01:37</em></span></div>
 </div>
 <div class="clearfix"></div>
 
