@@ -110,391 +110,352 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-连接池--用连接池提高Servlet访问数据库的效率-txt/">用连接池提高Servlet访问数据库的效率 (</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Jsp知识总结/">Jsp知识总结</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-连接池--用连接池提高Servlet访问数据库的效率-txt/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Jsp知识总结/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-servlet-txt">用连接池提高Servlet访问数据库的效率 (-).txt</h1>
-<p>作者：jeru</p>
-<p>日期：2000-12-7 11:45:06
-Java Servlet作为首选的服务器端数据处理技术，正在迅速取代CGI脚本。Servlet超越CGI的优势之一在于，不仅多个请求</p>
-<p>可以共享公用资源，而且还可以在不同用户请求之间保留持续数据。本文介绍一种充分发挥该特色的实用技术，即数据库连
-接池。</p>
-<p>一、实现连接池的意义</p>
-<p>动态Web站点往往用数据库存储的信息生成Web页面，每一个页面请求导致一次数据库访问。连接
-数据库不仅要开销一定的通讯和内存资源，还必须完成用户验证、安全上下文配置这类任务，因而往往成为最为耗时的操</p>
-<p>作。当然，实际的连接时间开销千变万化，但1到2秒延迟并非不常见。如果某个基于数据库的Web应用只需建立一次初始连
-接，不同页面请求能够共享同一连接，就能获得显著的性能改善。</p>
-<p>Servlet是一个Java类。Servlet引擎（它可能是Web服务软件的一部分，也可能是一个独立的附加模块）在系统启动或Servlet
-第一次被请求时将该类装入Java虚拟机并创建它的一个实例。不同用户请求由同一Servlet实例的多个独立线程处理。那些要</p>
-<p>求在不同请求之间持续有效的数据既可以用Servlet的实例变量来保存，也可以保存在独立的辅助对象中。
-用JDBC访问数据库首先要创建与数据库之间的连接，获得一个连接对象（Connection），由连接对象提供执行SQL语句的方法。</p>
-<p>本文介绍的数据库连接池包括一个管理类DBConnectionManager，负责提供与多个连接池对象（DBConnectionPool类）之间
-的接口。每一个连接池对象管理一组JDBC连接对象，每一个连接对象可以被任意数量的Servlet共享。</p>
-<p>类DBConnectionPool提供以下功能：</p>
-<p>1) 从连接池获取（或创建）可用连接。
-2) 把连接返回给连接池。</p>
-<p>3) 在系统关闭时释放所有资源，关闭所有连接。</p>
-<p>此外， DBConnectionPool类还能够处理无效连接（原来登记为可用的连接，由于某种原因不再可用，如超时，通讯问题）
-，并能够限制连接池中的连接总数不超过某个预定值。</p>
-<p>管理类DBConnectionManager用于管理多个连接池对象，它提供以下功能：</p>
-<p>1) 装载和注册JDBC驱动程序。
-2) 根据在属性文件中定义的属性创建连接池对象。</p>
-<p>3) 实现连接池名字与其实例之间的映射。
-4) 跟踪客户程序对连接池的引用，保证在最后一个客户程序结束时安全地关闭所有连接池。</p>
-<p>本文余下部分将详细说明这两个类，最后给出一个示例演示Servlet使用连接池的一般过程。</p>
-<p>二、具体实现</p>
-<p>DBConnectionManager.java程序清单如下：</p>
-<p>001 import java.io./<em>;
-002 import java.sql./</em>;</p>
-<p>003 import java.util./*;
-004 import java.util.Date;</p>
-<p>005
-006 //<em>/</em></p>
-<p>007 /<em> 管理类DBConnectionManager支持对一个或多个由属性文件定义的数据库连接
-008 /</em> 池的访问.客户程序可以调用getInstance()方法访问本类的唯一实例.</p>
-<p>009 /*/
-010 public class DBConnectionManager {</p>
-<p>011 static private DBConnectionManager instance; // 唯一实例
-012 static private int clients;</p>
-<p>013
-014 private Vector drivers = new Vector();</p>
-<p>015 private PrintWriter log;
-016 private Hashtable pools = new Hashtable();</p>
-<p>017
-018 //<em>/</em></p>
-<p>019 /<em> 返回唯一实例.如果是第一次调用此方法,则创建实例
-020 /</em></p>
-<p>021 /<em> @return DBConnectionManager 唯一实例
-022 /</em>/</p>
-<p>023 static synchronized public DBConnectionManager getInstance() {
-024 if (instance == null) {</p>
-<p>025 instance = new DBConnectionManager();
-026 }</p>
-<p>027 clients++;
-028 return instance;</p>
-<p>029 }
-030</p>
-<p>031 //<em>/</em>
-032 /* 建构函数私有以防止其它对象创建本类实例</p>
-<p>033 /*/
-034 private DBConnectionManager() {</p>
-<p>035 init();
-036 }</p>
-<p>037
-038 //<em>/</em></p>
-<p>039 /<em> 将连接对象返回给由名字指定的连接池
-040 /</em></p>
-<p>041 /<em> @param name 在属性文件中定义的连接池名字
-042 /</em> @param con 连接对象</p>
-<p>043 /*/
-044 public void freeConnection(String name, Connection con) {</p>
-<p>045 DBConnectionPool pool = (DBConnectionPool) pools.get(name);
-046 if (pool != null) {</p>
-<p>047 pool.freeConnection(con);
-048 }</p>
-<p>049 }
-050</p>
-<p>051 //<em>/</em>
-052 /* 获得一个可用的(空闲的)连接.如果没有可用连接,且已有连接数小于最大连接数</p>
-<p>053 /<em> 限制,则创建并返回新连接
-054 /</em></p>
-<p>055 /<em> @param name 在属性文件中定义的连接池名字
-056 /</em> @return Connection 可用连接或null</p>
-<p>057 /*/
-058 public Connection getConnection(String name) {</p>
-<p>059 DBConnectionPool pool = (DBConnectionPool) pools.get(name);
-060 if (pool != null) {</p>
-<p>061 return pool.getConnection();
-062 }</p>
-<p>063 return null;
-064 }</p>
-<p>065
-066 //<em>/</em></p>
-<p>067 /<em> 获得一个可用连接.若没有可用连接,且已有连接数小于最大连接数限制,
-068 /</em> 则创建并返回新连接.否则,在指定的时间内等待其它线程释放连接.</p>
-<p>069 /<em>
-070 /</em> @param name 连接池名字</p>
-<p>071 /<em> @param time 以毫秒计的等待时间
-072 /</em> @return Connection 可用连接或null</p>
-<p>073 /*/
-074 public Connection getConnection(String name, long time) {</p>
-<p>075 DBConnectionPool pool = (DBConnectionPool) pools.get(name);
-076 if (pool != null) {</p>
-<p>077 return pool.getConnection(time);
-078 }</p>
-<p>079 return null;
-080 }</p>
-<p>081
-082 //<em>/</em></p>
-<p>083 /<em> 关闭所有连接,撤销驱动程序的注册
-084 /</em>/</p>
-<p>085 public synchronized void release() {
-086 // 等待直到最后一个客户程序调用</p>
-<p>087 if (--clients != 0) {
-088 return;</p>
-<p>089 }
-090</p>
-<p>091 Enumeration allPools = pools.elements();
-092 while (allPools.hasMoreElements()) {</p>
-<p>093 DBConnectionPool pool = (DBConnectionPool) allPools.nextElement();
-094 pool.release();</p>
-<p>095 }
-096 Enumeration allDrivers = drivers.elements();</p>
-<p>097 while (allDrivers.hasMoreElements()) {
-098 Driver driver = (Driver) allDrivers.nextElement();</p>
-<p>099 try {
-100 DriverManager.deregisterDriver(driver);</p>
-<p>101 log(&quot;撤销JDBC驱动程序 &quot; + driver.getClass().getName()+&quot;的注册&quot;);
-102 }</p>
-<p>103 catch (SQLException e) {
-104 log(e, &quot;无法撤销下列JDBC驱动程序的注册: &quot; + driver.getClass().getName());</p>
-<p>105 }
-106 }</p>
-<p>107 }
-108</p>
-<p>109 //<em>/</em>
-110 /* 根据指定属性创建连接池实例.</p>
-<p>111 /<em>
-112 /</em> @param props 连接池属性</p>
-<p>113 /*/
-114 private void createPools(Properties props) {</p>
-<p>115 Enumeration propNames = props.propertyNames();
-116 while (propNames.hasMoreElements()) {</p>
-<p>117 String name = (String) propNames.nextElement();
-118 if (name.endsWith(&quot;.url&quot;)) {</p>
-<p>119 String poolName = name.substring(0, name.lastIndexOf(&quot;.&quot;));
-120 String url = props.getProperty(poolName + &quot;.url&quot;);</p>
-<p>121 if (url == null) {
-122 log(&quot;没有为连接池&quot; + poolName + &quot;指定URL&quot;);</p>
-<p>123 continue;
-124 }</p>
-<p>125 String user = props.getProperty(poolName + &quot;.user&quot;);
-126 String password = props.getProperty(poolName + &quot;.password&quot;);</p>
-<p>127 String maxconn = props.getProperty(poolName + &quot;.maxconn&quot;, &quot;0&quot;);
-128 int max;</p>
-<p>129 try {
-130 max = Integer.valueOf(maxconn).intValue();</p>
-<p>131 }
-132 catch (NumberFormatException e) {</p>
-<p>133 log(&quot;错误的最大连接数限制: &quot; + maxconn + &quot; .连接池: &quot; + poolName);
-134 max = 0;</p>
-<p>135 }
-136 DBConnectionPool pool =</p>
-<p>137 new DBConnectionPool(poolName, url, user, password, max);
-138 pools.put(poolName, pool);</p>
-<p>139 log(&quot;成功创建连接池&quot; + poolName);
-140 }</p>
-<p>141 }
-142 }</p>
-<p>143
-144 //<em>/</em></p>
-<p>145 /<em> 读取属性完成初始化
-146 /</em>/</p>
-<p>147 private void init() {
-148 InputStream is = getClass().getResourceAsStream(&quot;/db.properties&quot;);</p>
-<p>149 Properties dbProps = new Properties();
-150 try {</p>
-<p>151 dbProps.load(is);
-152 }</p>
-<p>153 catch (Exception e) {
-154 System.err.println(&quot;不能读取属性文件. &quot; +</p>
-<p>155 &quot;请确保db.properties在CLASSPATH指定的路径中&quot;);
-156 return;</p>
-<p>157 }
-158 String logFile = dbProps.getProperty(&quot;logfile&quot;, &quot;DBConnectionManager.log&quot;);</p>
-<p>159 try {
-160 log = new PrintWriter(new FileWriter(logFile, true), true);</p>
-<p>161 }
-162 catch (IOException e) {</p>
-<p>163 System.err.println(&quot;无法打开日志文件: &quot; + logFile);
-164 log = new PrintWriter(System.err);</p>
-<p>165 }
-166 loadDrivers(dbProps);</p>
-<p>167 createPools(dbProps);
-168 }</p>
-<p>169
-170 //<em>/</em></p>
-<p>171 /<em> 装载和注册所有JDBC驱动程序
-172 /</em></p>
-<p>173 /<em> @param props 属性
-174 /</em>/</p>
-<p>175 private void loadDrivers(Properties props) {
-176 String driverClasses = props.getProperty(&quot;drivers&quot;);</p>
-<p>177 StringTokenizer st = new StringTokenizer(driverClasses);
-178 while (st.hasMoreElements()) {</p>
-<p>179 String driverClassName = st.nextToken().trim();
-180 try {</p>
-<p>181 Driver driver = (Driver)
-182 Class.forName(driverClassName).newInstance();</p>
-<p>183 DriverManager.registerDriver(driver);
-184 drivers.addElement(driver);</p>
-<p>185 log(&quot;成功注册JDBC驱动程序&quot; + driverClassName);
-186 }</p>
-<p>187 catch (Exception e) {
-188 log(&quot;无法注册JDBC驱动程序: &quot; +</p>
-<p>189 driverClassName + &quot;, 错误: &quot; + e);
-190 }</p>
-<p>191 }
-192 }</p>
-<p>193
-194 //<em>/</em></p>
-<p>195 /<em> 将文本信息写入日志文件
-196 /</em>/</p>
-<p>197 private void log(String msg) {
-198 log.println(new Date() + &quot;: &quot; + msg);</p>
-<p>199 }
-200</p>
-<p>201 //<em>/</em>
-202 /* 将文本信息与异常写入日志文件</p>
-<p>203 /*/
-204 private void log(Throwable e, String msg) {</p>
-<p>205 log.println(new Date() + &quot;: &quot; + msg);
-206 e.printStackTrace(log);</p>
-<p>207 }
-208</p>
-<p>209 //<em>/</em>
-210 /* 此内部类定义了一个连接池.它能够根据要求创建新连接,直到预定的最</p>
-<p>211 /<em> 大连接数为止.在返回连接给客户程序之前,它能够验证连接的有效性.
-212 /</em>/</p>
-<p>213 class DBConnectionPool {
-214 private int checkedOut;</p>
-<p>215 private Vector freeConnections = new Vector();
-216 private int maxConn;</p>
-<p>217 private String name;
-218 private String password;</p>
-<p>219 private String URL;
-220 private String user;</p>
-<p>221
-222 //<em>/</em></p>
-<p>223 /<em> 创建新的连接池
-224 /</em></p>
-<p>225 /<em> @param name 连接池名字
-226 /</em> @param URL 数据库的JDBC URL</p>
-<p>227 /<em> @param user 数据库帐号,或 null
-228 /</em> @param password 密码,或 null</p>
-<p>229 /<em> @param maxConn 此连接池允许建立的最大连接数
-230 /</em>/</p>
-<p>231 public DBConnectionPool(String name, String URL, String user, String password,
-232 int maxConn) {</p>
-<p>233 this.name = name;
-234 this.URL = URL;</p>
-<p>235 this.user = user;
-236 this.password = password;</p>
-<p>237 this.maxConn = maxConn;
-238 }</p>
-<p>239
-240 //<em>/</em></p>
-<p>241 /<em> 将不再使用的连接返回给连接池
-242 /</em></p>
-<p>243 /<em> @param con 客户程序释放的连接
-244 /</em>/</p>
-<p>245 public synchronized void freeConnection(Connection con) {
-246 // 将指定连接加入到向量末尾</p>
-<p>247 freeConnections.addElement(con);
-248 checkedOut--;</p>
-<p>249 notifyAll();
-250 }</p>
-<p>251
-252 //<em>/</em></p>
-<p>253 /<em> 从连接池获得一个可用连接.如没有空闲的连接且当前连接数小于最大连接
-254 /</em> 数限制,则创建新连接.如原来登记为可用的连接不再有效,则从向量删除之,</p>
-<p>255 /<em> 然后递归调用自己以尝试新的可用连接.
-256 /</em>/</p>
-<p>257 public synchronized Connection getConnection() {
-258 Connection con = null;</p>
-<p>259 if (freeConnections.size() &gt; 0) {
-260 // 获取向量中第一个可用连接</p>
-<p>261 con = (Connection) freeConnections.firstElement();
-262 freeConnections.removeElementAt(0);</p>
-<p>263 try {
-264 if (con.isClosed()) {</p>
-<p>265 log(&quot;从连接池&quot; + name+&quot;删除一个无效连接&quot;);
-266 // 递归调用自己,尝试再次获取可用连接</p>
-<p>267 con = getConnection();
-268 }</p>
-<p>269 }
-270 catch (SQLException e) {</p>
-<p>271 log(&quot;从连接池&quot; + name+&quot;删除一个无效连接&quot;);
-272 // 递归调用自己,尝试再次获取可用连接</p>
-<p>273 con = getConnection();
-274 }</p>
-<p>275 }
-276 else if (maxConn == 0 || checkedOut &lt; maxConn) {</p>
-<p>277 con = newConnection();
-278 }</p>
-<p>279 if (con != null) {
-280 checkedOut++;</p>
-<p>281 }
-282 return con;</p>
-<p>283 }
-284</p>
-<p>285 //<em>/</em>
-286 /* 从连接池获取可用连接.可以指定客户程序能够等待的最长时间</p>
-<p>287 /<em> 参见前一个getConnection()方法.
-288 /</em></p>
-<p>289 /<em> @param timeout 以毫秒计的等待时间限制
-290 /</em>/</p>
-<p>291 public synchronized Connection getConnection(long timeout) {
-292 long startTime = new Date().getTime();</p>
-<p>293 Connection con;
-294 while ((con = getConnection()) == null) {</p>
-<p>295 try {
-296 wait(timeout);</p>
-<p>297 }
-298 catch (InterruptedException e) {}</p>
-<p>299 if ((new Date().getTime() - startTime) &gt;= timeout) {
-300 // wait()返回的原因是超时</p>
-<p>301 return null;
-302 }</p>
-<p>303 }
-304 return con;</p>
-<p>305 }
-306</p>
-<p>307 //<em>/</em>
-308 /* 关闭所有连接</p>
-<p>309 /*/
-310 public synchronized void release() {</p>
-<p>311 Enumeration allConnections = freeConnections.elements();
-312 while (allConnections.hasMoreElements()) {</p>
-<p>313 Connection con = (Connection) allConnections.nextElement();
-314 try {</p>
-<p>315 con.close();
-316 log(&quot;关闭连接池&quot; + name+&quot;中的一个连接&quot;);</p>
-<p>317 }
-318 catch (SQLException e) {</p>
-<p>319 log(e, &quot;无法关闭连接池&quot; + name+&quot;中的连接&quot;);
-320 }</p>
-<p>321 }
-322 freeConnections.removeAllElements();</p>
-<p>323 }
-324</p>
-<p>325 //<em>/</em>
-326 /* 创建新的连接</p>
-<p>327 /*/
-328 private Connection newConnection() {</p>
-<p>329 Connection con = null;
-330 try {</p>
-<p>331 if (user == null) {
-332 con = DriverManager.getConnection(URL);</p>
-<p>333 }
-334 else {</p>
-<p>335 con = DriverManager.getConnection(URL, user, password);
-336 }</p>
-<p>337 log(&quot;连接池&quot; + name+&quot;创建一个新的连接&quot;);
-338 }</p>
-<p>339 catch (SQLException e) {
-340 log(e, &quot;无法创建下列URL的连接: &quot; + URL);</p>
-<p>341 return null;
-342 }</p>
-<p>343 return con;
-344 }</p>
-<p>345 }
-346 }</p>
+        <h1 id="jsp-">Jsp知识总结</h1>
+<p>Jsp知识总结</p>
+<p>Servlet 容器模型
+? 三个基本层次：
+1、 上下文（应用程序中的所有全局资源）
+2、 会话
+3、 应用程序在分布式环境中不同区域
+? ServletContext：
+其包含在ServletConfig 对象中。所有的Servlet 都有 ServletContext getServletContext( ) 该方法最初在ServletConfig 中定义，后来由GenericServlet 实现。
+在DTD中使用context-param标志指定名称/值对，它必须放在web-app标志的开始位置。
+它的方法：
+String getInitParameter(String name)
+Enumeration getInitParameterName( )
+URLgetResource(Stringpath)throws java.net.MalformedURLException
+InputStream getResourseAsStream(String path)
+String getMimeType(String file)
+RequestDispatcher getRequestDispatcher(String path)
+Void setAttribute(String name,Object value)
+Object getAttribute(String name)
+? 上下文参数和属性的区别：
+1、 参数只能在容器或者是web.xml 中设置而属性通过servlet或容器设置
+2、 参数只返回String 而属性返回Object
+3、 属性名名称用包结构
+? ServleContextListener：
+Void contextInitialized(ServletContextEvent e)
+Void contextDestroyed(ServletContextEvent e)
+其作用为在调用servlet请求之前初始化所有数据。</p>
+<p><listener></p>
+<p><listener-class>
+的标志出现在servlet 声明之前。
+? ServletContextEvent:
+ServletContext getServletContext()
+? ServletContextAttributeListenr:
+Void attributeAdded(ServletContextAttributeEvent e)
+Void attributeRemoved(ServletContextAttributeEvent e)
+Void attributeReplaced(ServletContextAttributeEvent e)
+? ServletContextAttributeEvent:
+String getName( )
+Object getValue( )
+? HttpSession:
+会话在客户发送第一个请求是建立，它不会自动跟踪用户操作，用HttpServletRequest 类的方法进行访问：
+HttpSession getSession (boolean )
+然后用HttpSession类的方法使用会话数据：
+Object getAttribute(String name)
+Void setAttribute(String name,Object value)
+Void removeAttribute(String name)
+? HttpSessionListener：
+必须实现以下的方法:
+void sessionCreate ( HttpSessionEvent e)
+void sessionDestryed(HttpSessionEvent e)
+? HttpSessionEvent:
+HttpSession getSession()
+? HttpSessionAttributeListener:
+Void attributeAdded(HttpSessionBindingEvent e)
+Void attributeRemoved(HttpSessionBindingEvent e)
+Void attributeReplaced(HttpSessionBindingEvent e)
+? HttpSessionBindingEvent:
+HttpSession getSession( )
+String getName( )
+Object getValue( )
+? HttpSessionActivationListener:
+Void sessionDidActive(HttpSessionEvent se)
+上面的方法负责在转移会话时，读取会话中的文件内容，并将其写到新的服务器的文件中。
+Void sessionWillPassivate(HttpSessionEvent se)
+上面的方法负责转移对话前将文件中的内容写到会话中。
+? HttpSessionBindingListener:
+它和HttpSessionAttributeListener 的区别是它是从对象绑定的角度去观察，而HttpSessionAttributeListener是从会话的角度来观察。
+当会话超时或无效时，对象会从会话解除绑定。此时HttpSessionBindingListener会得到通知，而HttpSessionAttributeListener不会。
+Void valueBound(HttpSessionBindingEvent event)
+Void valueUnbound(HttpSessionBindingEvent event)
+? 可分布环境</p>
+<ol>
+<li>变量应区别对待：实例变量或静态变量应避免。</li>
+<li>ServletContext 应避免存储状态。</li>
+<li>HttpSession对象也必须是可转移的。</li>
+<li>文件也必须分别处理应使用相对于上下文的路径。
+在应用程序的描述和上下文参数之间放置一个空的标志<distributable/>
+? 过滤器</li>
+<li>生命周期
+在过滤器截取响应对象的时候，如果输出流被servlet 关闭了，那么过滤器将不能改变输出流的信息，因此，鼓励用servlet的flush( )刷新流，而不是用close( )关闭流。</li>
+<li>过滤器
+过滤器类必须：</li>
+<li>实现适当接口</li>
+<li>定义方法</li>
+<li>在部署描述符中被声明</li>
+<li>创建过滤器
+实现javax.servlet.Filter接口
+实现方法：
+public void init(FilterConfig config)
+public void doFilter(
+ServletRequest req,ServletResponse resp,FilterChain chain)
+Public void destroy( )
+当前的过滤器调用chain.do Filter(req,resp) 可以转移到下一个过滤器。
+Destroy( ) 方法是由Web容器调用的。</li>
+<li>定义部署描述符(必须出现在servlet标志之前)
+<filter>
+<filter-name></filter-name>
+<filter-class></filter-class>
+<init-param>
+<param-name>&lt;/&gt;
+<param-value>&lt;/&gt;
+映射到servlet或jsp的方法：</li>
+<li><filter-mapping>
+<filter-name>&lt;/&gt;
+<servlet-name>&lt;/&gt;
+&lt;/&gt;</li>
+<li><filter-mapping>
+<filter-name>&lt;/&gt;
+<url-pattern>//*.jsp&lt;/&gt;
+&lt;/&gt;
+术语：
+clustering (聚类)、listener(接收器)、context object(上下文对象)
+scope(作用域)、distributable(可分布的)、session(会话)
+event(事件)、synchronization(同步)、filter(过滤器)
+处理异常
+? 问题通知
+sendError:
+HttpServletResponse 类提供的sendError( ) 方法
+Public void sendError(int sc)
+Public void sendError(int sc,String msg)
+使用sendError() 方法将发生三件事情:</li>
+<li>使用指定的状态代码给客户端发送一个出错响应</li>
+<li>用包含具体消息的html 格式的服务器错误页面替换servlet 的响应正文.</li>
+<li>将内容类型设成text/html, 并不修改cookie 和其他标题.
+setStatus
+public void setStatus(int statusCode)
+setStatus(int statusCode)不能产生自动的出错响应页面,而sendError(…) 能够.
+setStatus(…)不会提交响应,他会导致容器清除响应缓冲区.容器设置Location标题,保持cookie 和其他标题. 如果已提交响应,则忽略setStatus(…)的调用.
+一般用于非错误情形(SC_OK\SC_MOVED_TEMPORARILY)
+sendError(…)一般用于错误情形.
+? 错误页面
+setStatus(…) 和 sendError(…) 默认是产生一个由服务器格式化的错误页面.
+a) 静态错误页面
+<web-app>
+<error-page>
+<error-code>
+404
+</error-code>
+<location>
+/error/404.html(必须以斜线开始)
+</location>
+&lt;/&gt;
+&lt;/&gt;
+b) 动态错误页面
+javax.servlet.error.status_code 返回一个指定错误状态代码的Integer对象.
+javax.servlet.error.message 返回一个String消息,通常是通过传递给endError(…)的第二个参数指定的.
+一个动态页面或servlet可用于多个错误代码.每个都要在dtd 中声明.每个错误代码都必须有自己的<error-page>&lt;/&gt;
+? 传递错误
+必须在转发请求之前设置错误属性.
+? 记录消息
+GenericServlet类提供了两个方法,使servlet能将错误写到日志文件:
+public void log(String msg) 将一条错误消息写入servlet 日志文件.
+public void log(String msg,Throwable t) 将一条错误消息和Throwable对象写入servlet 日志文件.
+? 报告消息
+printStackTrace( ) 方法返回void. 为了将错误消息传递给客户端,
+必须调用sendError(…) , 但是在消息可被传递之前,必须捕获记录并将其写入PrintStream 或 PrintWriter. Throwable 类提供了:
+void printStackTrace()
+void printStackTrace(PrintStream p)
+void printStackTrace(PrintWriter p)
+? servlet异常
+方法抛出异常:</li>
+<li>让servlet 捕捉</li>
+<li>抛给服务器处理
+规范明确指出服务器处理的异常必须是IOException ServletException RuntimeException 的子类.
+ServletException: (Exception的子类)
+ServletException( )
+ServletException(String message)
+ServletException(Throwable rootCause)
+ServeltException(String message , Throwable rootCause)
+UnavailableException: (ServletException的子类)
+永久不可用: servlet 以某种方式销毁或没有适当配置.
+暂时不可用: 由于系统范畴的问题.
+Java服务器页面
+Jsp 模型
+Jsp 模型的两个目标：
+1． 允许并鼓励Presentation层与java代码的分离
+2． 使开发人员能以最大的能力和灵活性编写具有动态内容的web.
+标准的servlet 扩展了java.servlet.HttpServlet
+从jsp 转换的servlet都必须利用javax.servlet.jsp.JspPage接口
+方法:
+void jspInit()
+void jspDestroy()
+javax.servlet.jsp.HttpJspPage接口增加了
+void _jspService(HttpServletRequest req,HttpServletResponse res)
+过程如下:</li>
+<li>翻译页面(.jsp到.java)</li>
+<li>编译jsp(.java到.class)</li>
+<li>加载类</li>
+<li>创建实例</li>
+<li>在该页面第一次初始化时调用jspInit().</li>
+<li>为每个jsp 请求调用_jspDestroy( )</li>
+<li>在服务器销毁该jsp时调用_jspDestroy( ).
+JSP元素
+? 隐含的注释:
+jsp 语法 &lt;%--comment--%&gt;
+? 声明: 可以访问的java变量和方法
+jsp 语法 &lt;%! Declaration; %&gt;
+xml 语法 <jsp:declaration>
+declaration;
+</jsp:declaration>
+书写声明的规则:</li>
+<li>可以声明静态或实例变量、新的方法或是内部类。</li>
+<li>每个变量声明都必须以分号结束。</li>
+<li>可以通过import 语句使用的变量和方法在没有所需的额外声明的情况下也能使用。</li>
+<li>声明方法和变量后，以后的java代码都可用。</li>
+<li>它通常包含将超出servlet的_jspService(…) 方法之外的代码。
+? 表达式
+jsp 语法
+&lt;%=expression%&gt;
+xml 语法
+<jsp:expression>
+expression;
+</jsp:expression>
+表达式规则：</li>
+<li>通常不以分号结束。</li>
+<li>从左到右求值。</li>
+<li>可由多个部分或表达式组成
+? Scriplet
+Jsp 语法
+&lt;% code fragment %&gt;
+xml 语法
+<jsp:scriptlet>
+code fragment;
+</jsp:scriptlet>
+? 语句
+处理花括号
+? 指令</li>
+<li>include指令 包含一个静态文件
+jsp 语法：
+&lt;%@ include file = “relativeURL” %&gt;
+xml 语法：
+<jsp:directive.include file=”relativeURL”/>
+路径以“/”开始是相对于上下文。
+路径起始于一个目录或文件名，那么该路径是相对于jsp页面的。</li>
+<li>page 指令定义将应用于整个jsp页面的属性。
+Jsp 语法 〈%@ page Attributes %〉
+language\extends\import\session\buffer\autoFlush
+\isThreadSafe\info\errorPage\isErrorPage\contentType
+\pageEncoding
+xml 语法
+〈jsp:directive.page pageDirectiveAttribute〉
+规则：
+1） 在一个翻译单元可多次使用page
+2） 除了import 外，一个翻译单元只能用一个page属性
+3） page指令可放在jsp页面的任何地方。</li>
+<li>taglib指令指定在jsp页面内使用的标志库和定制标志的前缀。
+Jsp 语法：
+&lt;%@ taglib uri=”URIForLiabrary” prefix=”tagPrefix” %&gt;
+前缀是唯一的，且不能使用：jsp jspx java javax servlet sun sunw.
+? 隐含对象
+plication对象:
+web.xml:
+<context-param>
+<param-name>&lt;/&gt;
+<param-value>&lt;/&gt;
+&lt;/&gt;
+可如下获取：
+application.getInitParametr(“paraname”);
+pageContext对象：
+方法：
+getOut( )
+getException( )
+getPage( )
+getRequest( )
+getResponse( )
+getSession( )
+getServletConfig( )
+getServletContext( )
+forward( )
+include( )
+handlePageException( )
+它拥有页面作用域，这意味着只能通过_jspService( )方法访问该对象。
+config 对象：
+通过pageContext 的getAttribute(String name)访问config属性。
+request对象：
+即使使用了forward( ) include( ) 等，该请求也在作用域内。
+response 对象：
+被绑定到PageContext ,能够在_jspService(…)中访问。
+如page指令的缓冲区没有设成none，http状态代码和标题能够在发送到客户端后在被更改。
+session 对象：
+被绑定到PageContext，getAttribute(String name)可访问数据。
+out 对象：
+属于javax.servlet.jsp.JspWriter 类，是java.io.PrintWriter的缓冲版本。
+缓冲大小可设置〈%@ page buffer=”16kb” %〉
+page对象：
+相当于java中的this.
+Exception对象：
+是java.lang.Throwable的实例，如果使用page指令的errorPage属性，那么exception对象对该页面就不可用。例如：
+〈%@page isErrorPage=”true” %〉
+<pre>
+&lt;% exception.printStackTrace(new PrintWriter(out)); %&gt;
+表达式〈%= … %〉是在处理HTTP或HTTP服务器处理请求的时候求值的。
+Scriptlet 〈% …%〉
+处理请求时执行，被嵌入到_jspService(…)方法中
+声明 〈%!…%〉
+调用jsp的jspInit( )方法时初始化
+指令&lt;%@ …%&gt;
+是在翻译时调用的。
+? 操作
+jsp:include
+<jsp:include page=”relativeURL”>
+or
+<jsp:include page=”relativeURL” flush=”true|false”>
+<jsp:param name=”parameterName” value=”parameterValue”>
+</jsp:inlcude>
+page 指定目标资源的相对URL
+param标志确定需要传递的参数值
+flush标志等于true或false 默认为false 要求设为true
+include 有两种使用方法：
+1． 具有file属性的指令，包含一个静态文件
+2． 使用操作将令一个文件的静态或动态的输出结合到响应中
+jsp:forward:
+不会处理jsp:forward模块后的任何代码。
+jsp:plugin:
+<jsp:plugin
+type=”bean|applet”
+code=”classFileName.class”
+>
+<jsp:params>
+<jsp:param name=”pramName” value=”paramvalue”/>
+</jsp:params>
+<jsp:fallback> text message for user</jsp:fallback>
+</jsp:plugin>
+jsp:useBean
+<jsp:useBean id=”beanInstanceName”
+scope=”page|request|session|application”
+{
+class=”package.class”|
+type=”package.class”|
+class=”package.class” type=”package.class”|
+beanName=”{package.class|<%=expression %>}”
+type=”package.class”
+}
+/&gt;|</jsp:useBean>
+同时使用class和beanName是无效的
+jsp:setProperty
+jsp:getProperty</li>
+</ol>
 
       
     </div>
@@ -504,8 +465,8 @@ Java Servlet作为首选的服务器端数据处理技术，正在迅速取代CG
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/连接池/">连接池</a></li></span></span> | <span class="tags">Tagged <a href="/tags/连接池/" class="label label-primary">连接池</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-连接池--用连接池提高Servlet访问数据库的效率-txt/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-连接池--用连接池提高Servlet访问数据库的效率-txt" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_总结类/">Java_总结类</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_总结类/" class="label label-success">Java_总结类</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Jsp知识总结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_总结类--Jsp知识总结" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -520,530 +481,190 @@ Java Servlet作为首选的服务器端数据处理技术，正在迅速取代CG
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-连接池--基于ApacheDBCP的数据库连接获取类原创-BeanSoft-sJavaBlo/">基于 Apache DBCP 的数据库连接获取类(原创) </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Servlet学习总结_warren_新浪博客/">Servlet学习总结_warren_新浪博客</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-连接池--基于ApacheDBCP的数据库连接获取类原创-BeanSoft-sJavaBlo/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Servlet学习总结_warren_新浪博客/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-apache-dbcp-beansoft-s-java-blog-blogjava">基于 Apache DBCP 的数据库连接获取类(原创) - BeanSoft&#39;s Java Blog - BlogJava</h1>
-<p><a href="http://www.blogjava.net/beansoft/" target="_blank">BeanSoft&#39;s Java Blog</a></p>
-<p>MyEclipse 教程, Java EE 5, JSPWiki, Spring, Struts, Hibernate, JPA, SWT, Swing, AJAX, JavaScript, Netbeans</p>
-<h1 id="-">导航</h1>
+        <h1 id="servlet-_warren_-">Servlet学习总结<em>warren</em>新浪博客</h1>
+<p><a href="http://blog.sina.com.cn/" target="_blank"><img src="" alt="新浪博客"></a></p>
+<p><a href="http://control.blog.sina.com.cn/admin/article/article_add.php" target="_blank"><img src="&quot;博文&quot;" alt=""> 发博文</a></p>
+<p>博文</p>
+<h1 id="-warren-http-blog-sina-com-cn-warren0915-"><a href="http://blog.sina.com.cn/warren0915" target="_blank">warren的技术博客</a></h1>
+<p><a href="http://blog.sina.com.cn/warren0915" target="_blank"><a href="http://blog.sina.com.cn/warren0915">http://blog.sina.com.cn/warren0915</a></a> <a href="http://blog.sina.com.cn/s/blog_5c6935040100lg9x.html#" target="_blank">[订阅]</a><a href="">[手机订阅]</a></p>
+<p><a href="http://blog.sina.com.cn/warren0915" target="_blank">首页</a> <a href="http://blog.sina.com.cn/s/articlelist_1550398724_0_1.html" target="_blank">博文目录</a> <a href="http://photo.blog.sina.com.cn/warren0915" target="_blank">图片</a> <a href="http://blog.sina.com.cn/s/profile_1550398724.html" target="_blank">关于我</a>
+<a href="http://blog.sina.com.cn/s/blog_5c6935040100lg9x.html#"></a></p>
+<p>个人资料</p>
+<p><img src="&quot;warren&quot;" alt="warren"></p>
+<p><img src="" alt=""> <strong>warren</strong></p>
+<p><a href="http://qing.weibo.com/1550398724" target="_blank"><img src="" alt="">Qing</a> <a href="http://weibo.com/u/1550398724?source=blog" target="_blank"><img src="" alt="">微博</a>
+<a href="">加好友</a> <a href="">发纸条</a></p>
+<p><a href="http://blog.sina.com.cn/s/profile_1550398724.html#write" target="_blank">写留言</a> <a href="http://blog.sina.com.cn/s/blog_5c6935040100lg9x.html#" target="_blank">加关注</a></p>
 <ul>
-<li><a href="http://www.blogjava.net/" target="_blank">BlogJava</a></li>
-<li><a href="http://www.blogjava.net/beansoft/" target="_blank">首页</a></li>
-<li><a href="http://www.blogjava.net/beansoft/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a>
-*</li>
-<li><a href="http://www.blogjava.net/beansoft/rss" target="_blank">聚合</a><a href="http://www.blogjava.net/beansoft/rss" target="_blank"><img src="" alt=""></a></li>
-<li><p><a href="http://www.blogjava.net/beansoft/admin/EditPosts.aspx" target="_blank">管理</a>
-公告</p>
+<li>博客等级：<img src="" alt=""></li>
+<li><p>博客积分：<strong>95</strong></p>
 </li>
-<li><p>Java EE 专家
-Java 高清视频
-Mail: <a href="mailto:beansoft@126.com">beansoft@126.com</a>
-Location: Beijing
-<img src="" alt="">
-<img src="" alt=""></p>
+<li><p>博客访问：<strong>1,896</strong></p>
 </li>
+<li>关注人气：<strong>1</strong></li>
 </ul>
-<h1 id="-">随笔分类</h1>
+<p>相关博文</p>
 <ul>
-<li><a href="http://www.blogjava.net/beansoft/category/19463.html" target="_blank">AJAX(22)</a> <a href="http://www.blogjava.net/beansoft/category/19463.html/rss" title="Subscribe to AJAX(22)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/21451.html" target="_blank">Database(11)</a> <a href="http://www.blogjava.net/beansoft/category/21451.html/rss" title="Subscribe to Database(11)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17556.html" target="_blank">Eclipse(30)</a> <a href="http://www.blogjava.net/beansoft/category/17556.html/rss" title="Subscribe to Eclipse(30)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17516.html" target="_blank">Firefox(3)</a> <a href="http://www.blogjava.net/beansoft/category/17516.html/rss" title="Subscribe to Firefox(3)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17577.html" target="_blank">Free Software(20)</a> <a href="http://www.blogjava.net/beansoft/category/17577.html/rss" title="Subscribe to Free Software(20)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/24282.html" target="_blank">Game(4)</a> <a href="http://www.blogjava.net/beansoft/category/24282.html/rss" title="Subscribe to Game(4)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/23349.html" target="_blank">Hibernate(8)</a> <a href="http://www.blogjava.net/beansoft/category/23349.html/rss" title="Subscribe to Hibernate(8)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/22785.html" target="_blank">Java Code Share(12)</a> <a href="http://www.blogjava.net/beansoft/category/22785.html/rss" title="Subscribe to Java Code Share(12)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17555.html" target="_blank">Java EE(32)</a> <a href="http://www.blogjava.net/beansoft/category/17555.html/rss" title="Subscribe to Java EE(32)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17517.html" target="_blank">Java SE(27)</a> <a href="http://www.blogjava.net/beansoft/category/17517.html/rss" title="Subscribe to Java SE(27)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/26076.html" target="_blank">JavaMail(5)</a> <a href="http://www.blogjava.net/beansoft/category/26076.html/rss" title="Subscribe to JavaMail(5)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/26857.html" target="_blank">JavaScript(1)</a> <a href="http://www.blogjava.net/beansoft/category/26857.html/rss" title="Subscribe to JavaScript(1)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/26074.html" target="_blank">JBoss(3)</a> <a href="http://www.blogjava.net/beansoft/category/26074.html/rss" title="Subscribe to JBoss(3)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/26022.html" target="_blank">JSF(4)</a> <a href="http://www.blogjava.net/beansoft/category/26022.html/rss" title="Subscribe to JSF(4)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/27072.html" target="_blank">JSP(3)</a> <a href="http://www.blogjava.net/beansoft/category/27072.html/rss" title="Subscribe to JSP(3)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17506.html" target="_blank">JSPWiki(16)</a> <a href="http://www.blogjava.net/beansoft/category/17506.html/rss" title="Subscribe to JSPWiki(16)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/18621.html" target="_blank">Michael Jackson(1)</a> <a href="http://www.blogjava.net/beansoft/category/18621.html/rss" title="Subscribe to Michael Jackson(1)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17569.html" target="_blank">My Open Source Toys(30)</a> <a href="http://www.blogjava.net/beansoft/category/17569.html/rss" title="Subscribe to My Open Source Toys(30)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/26073.html" target="_blank">MyEclipse(43)</a> <a href="http://www.blogjava.net/beansoft/category/26073.html/rss" title="Subscribe to MyEclipse(43)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/21997.html" target="_blank">NetBeans(15)</a> <a href="http://www.blogjava.net/beansoft/category/21997.html/rss" title="Subscribe to NetBeans(15)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17575.html" target="_blank">Open Source World(14)</a> <a href="http://www.blogjava.net/beansoft/category/17575.html/rss" title="Subscribe to Open Source World(14)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/26075.html" target="_blank">Oracle(2)</a> <a href="http://www.blogjava.net/beansoft/category/26075.html/rss" title="Subscribe to Oracle(2)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17585.html" target="_blank">Other(72)</a> <a href="http://www.blogjava.net/beansoft/category/17585.html/rss" title="Subscribe to Other(72)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17518.html" target="_blank">Portable Java IDE(3)</a> <a href="http://www.blogjava.net/beansoft/category/17518.html/rss" title="Subscribe to Portable Java IDE(3)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/25965.html" target="_blank">ROR(2)</a> <a href="http://www.blogjava.net/beansoft/category/25965.html/rss" title="Subscribe to ROR(2)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/23350.html" target="_blank">Spring(29)</a> <a href="http://www.blogjava.net/beansoft/category/23350.html/rss" title="Subscribe to Spring(29)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/20433.html" target="_blank">Swing, GUI(9)</a> <a href="http://www.blogjava.net/beansoft/category/20433.html/rss" title="Subscribe to Swing, GUI(9)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/20278.html" target="_blank">SWT/JFACE/RCP(24)</a> <a href="http://www.blogjava.net/beansoft/category/20278.html/rss" title="Subscribe to SWT/JFACE/RCP(24)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/26856.html" target="_blank">Tomcat(1)</a> <a href="http://www.blogjava.net/beansoft/category/26856.html/rss" title="Subscribe to Tomcat(1)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17587.html" target="_blank">Web(42)</a> <a href="http://www.blogjava.net/beansoft/category/17587.html/rss" title="Subscribe to Web(42)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/22027.html" target="_blank">Web Framework(8)</a> <a href="http://www.blogjava.net/beansoft/category/22027.html/rss" title="Subscribe to Web Framework(8)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17929.html" target="_blank">Weblogic(7)</a> <a href="http://www.blogjava.net/beansoft/category/17929.html/rss" title="Subscribe to Weblogic(7)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17574.html" target="_blank">What&#39;s Hot(17)</a> <a href="http://www.blogjava.net/beansoft/category/17574.html/rss" title="Subscribe to What&#39;s Hot(17)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/17511.html" target="_blank">战地2 Battle Field 2(2)</a> <a href="http://www.blogjava.net/beansoft/category/17511.html/rss" title="Subscribe to 战地2 Battle Field 2(2)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/category/18212.html" target="_blank">老军医悬壶济世(13)</a> <a href="http://www.blogjava.net/beansoft/category/18212.html/rss" title="Subscribe to 老军医悬壶济世(13)" target="_blank">(rss)</a></li>
+<li><a href="http://qing.weibo.com/tag/%E8%87%AA%E6%8B%8D?blogid=10bc5ea933002233" title="看哪位妹子的自拍照最能诱惑到你" target="_blank">看哪位妹子的自拍照最能诱惑到你</a></li>
 </ul>
-<h3 id="-">最新随笔</h3>
+<p><a href="http://qing.weibo.com/tag/%E8%87%AA%E6%8B%8D?blogid=10bc5ea933002233" target="_blank">lvywayp迁</a></p>
 <ul>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/174610.html" target="_blank">1. 关于MyEclipse 6.0.0 GA开发SSH应用的%%%% Error Creating SessionFactory %%%% java.lang.SecurityException: class &quot;org.apache.commons.collections.SequencedHashMap&quot;&#39;异常的解决方案</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/10/174248.html" target="_blank">2. 可以在多普达微软 Pocket PC Windows Mobile 5 手机上运行的eswt程序包</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/08/173714.html" target="_blank">3. BlogJava 备份文章阅读器:增加日期范围增量备份功能</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/07/173395.html" target="_blank">4. 电子书 《MyEclipse 6 Java 开发中文教程》 第十章 开发 Spring 应用 完工</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/07/173298.html" target="_blank">5. 如何购买《MyEclipse 6 Java 开发中文教程》DVD光盘（含源代码，视频和软件）及网上答疑</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/04/172725.html" target="_blank">6. IBM 中文网站的 Spring 系列等资料</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/02/172266.html" target="_blank">7. Spring 1.2和2.0的简单AOP例子</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/27/171006.html" target="_blank">8. Word 文档加入带链接功能的目录的方法</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/27/170997.html" target="_blank">9. 电子书 《MyEclipse 6 Java 开发中文教程》 第九章 开发Struts 1.x应用 完工</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/21/169400.html" target="_blank">10. 电子书 《MyEclipse 6 Java 开发中文教程》第八章 开发 Web 应用</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/19/168742.html" target="_blank">11. 电子书 《MyEclipse 6 Java 开发中文教程》 第七章 Hibernate 开发预览</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/18/168600.html" target="_blank">12. MyEclipse 6 实战开发讲解视频入门 11 Struts 文件上传</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/14/167733.html" target="_blank">13. 电子书 《MyEclipse 6 Java 开发中文教程》 第五，六章预览</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/10/166631.html" target="_blank">14. 原创电子书 《MyEclipse 6 Java 开发中文教程》下载</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/03/164796.html" target="_blank">15. 感谢 2007 年 12 月的 &lt;&lt;程序员&gt;&gt; 杂志推荐我的 Blog</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/03/164748.html" target="_blank">16. 视频讲解: Eclipse/MyEclipse 如何导入项目源代码</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/02/164704.html" target="_blank">17. MyEclipse 6 实战开发讲解视频入门 10 JSP 文件上传下载</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/02/164696.html" target="_blank">18. Java SE 6 Update N Early Access 提供下载</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/30/164230.html" target="_blank">19. Spring 2.5 标注开发的简单例子</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/30/164166.html" target="_blank">20. MyEclipse 6 实战开发讲解视频入门 9 JSF 1.2 入门开发</a></li>
+<li><a href="http://qing.weibo.com/tag/%E6%B2%BB%E6%84%88%E7%B3%BB?blogid=a492664f32002a6e" title="海獭君发现自己被偷拍后，激萌！" target="_blank">海獭君发现自己被偷拍后，激萌！</a></li>
 </ul>
-<h3 id="-">搜索</h3>
-<p>*</p>
+<p><a href="http://qing.weibo.com/tag/%E6%B2%BB%E6%84%88%E7%B3%BB?blogid=a492664f32002a6e" target="_blank">壹间studio</a></p>
 <ul>
-<li></li>
+<li><a href="http://blog.sina.com.cn/s/blog_4d89b8340102dzog.html" title="徐小明：缺口常补但不是必补" target="_blank">徐小明：缺口常补但不是必补</a></li>
 </ul>
-<h3 id="-">积分与排名</h3>
+<p><a href="http://blog.sina.com.cn/u/1300871220" target="_blank">徐小明</a></p>
 <ul>
-<li>积分 - 632502</li>
-<li>排名 - 1</li>
+<li><a href="http://blog.sina.com.cn/s/blog_4a39b61b0102dxky.html" title="2012年09月25日" target="_blank">2012年09月25日</a></li>
 </ul>
-<h3 id="-http-www-blogjava-net-beansoft-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/beansoft/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
+<p><a href="http://blog.sina.com.cn/u/1245296155" target="_blank">封起De日子</a></p>
 <ul>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/12/173298.html#174772" target="_blank">1. re: 如何购买《MyEclipse 6 Java 开发中文教程》DVD光盘（含源代码，视频和软件）及网上答疑</a></li>
-<li>评论内容较长,点击标题查看</li>
-<li>--jerryhu</li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/173298.html#174727" target="_blank">2. re: 如何购买《MyEclipse 6 Java 开发中文教程》DVD光盘（含源代码，视频和软件）及网上答疑</a></li>
-<li>建议增加spring+jdbc介绍另外JPA部分也增加与spring整和的介绍</li>
-<li>--建议</li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/173395.html#174585" target="_blank">3. re: 电子书 《MyEclipse 6 Java 开发中文教程》 第十章 开发 Spring 应用 完工</a></li>
-<li>评论内容较长,点击标题查看</li>
-<li>--BeanSoft</li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/104339.html#174565" target="_blank">4. re: 老军医讲牙石</a></li>
-<li>正在想最近总是牙出血是什么原因呢，原来如此！</li>
-<li>--爱上鸟的鱼</li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/104339.html#174559" target="_blank">5. re: 老军医讲牙石</a></li>
-<li>正在向最近总是牙出血是什么原因呢，原来如此！</li>
-<li>--爱上鸟的鱼</li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/166631.html#174553" target="_blank">6. re: 原创电子书 《MyEclipse 6 Java 开发中文教程》下载[未登录]</a></li>
-<li>评论内容较长,点击标题查看</li>
-<li>--什么捷</li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/173395.html#174537" target="_blank">7. re: 电子书 《MyEclipse 6 Java 开发中文教程》 第十章 开发 Spring 应用 完工</a></li>
-<li>评论内容较长,点击标题查看</li>
-<li>--爱上鸟的鱼</li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/161502.html#174516" target="_blank">8. re: MyEclipse 6 实战开发讲解视频入门 6 Web 入门开发 - JSP/HTML/JDBC 登录</a></li>
-<li>美国就是变态!怎么搞的!下你个东西,也是左搞搞右搞搞!</li>
-<li>--pzxy</li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/10/157925.html#174437" target="_blank">9. re: 原创歌曲: Java 就是好呀</a></li>
-<li>没发现,老师您这么有喜剧天份</li>
-<li>--tott</li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/10/163354.html#174429" target="_blank">10. re: MyEclipse 6 实战开发讲解视频入门 7 Struts 入门开发</a></li>
-<li>正好,我急用学struts1.0.thanks</li>
-<li>--张晓云</li>
+<li><a href="http://blog.sina.com.cn/s/blog_5042c5310102e6af.html" title="泰国“最美变性人”私照曝光（" target="_blank">泰国“最美变性人”私照曝光（</a></li>
 </ul>
-<h3 id="-">阅读排行榜</h3>
+<p><a href="http://blog.sina.com.cn/u/1346553137" target="_blank">思考者</a></p>
 <ul>
-<li><a href="http://www.blogjava.net/beansoft/archive/2006/11/25/83486.html" target="_blank">1. XLoadTree 基于AJAX + XML动态加载的JS树组件的文档翻译- 已完成(原创)(5081)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/08/15/137067.html" target="_blank">2. MyEclipse Hibernate 快速入门中文版(4417)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/06/18/124894.html" target="_blank">3. Sysdeo Eclipse Tomcat 3.2.1 插件中文版下载(4393)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/10/07/150877.html" target="_blank">4. MyEclipse 5.5 开发 Spring + Struts + Hibernate 的详解视频(长1.5小时)(4341)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/05/10/116486.html" target="_blank">5. 《jsf入门》简体中文版.rar 电子书下载(4100)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2006/12/31/91144.html" target="_blank">6. JSP 中 AJAX 的表单提交中文问题的简单解决方案 - GBK 版本(原创)(3942)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/02/01/97294.html" target="_blank">7. JSP 文件下载的相对完整代码(解决中文问题和Weblogic报错)(3807)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/03/27/106733.html" target="_blank">8. 北京市IT公司黑名单(转载)(3707)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/05/08/115878.html" target="_blank">9. AJAX 入门培训 PPT 及示例代码(3651)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/03/18/104577.html" target="_blank">10. Jigloo 开发 SWT 的入门教程(3626)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2006/11/22/82765.html" target="_blank">11. Eclipse 插件精选介绍(原创)(3612)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2006/12/22/89577.html" target="_blank">12. Tomcat 5.5 的 Apache Tomcat Native library(3557)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2006/12/25/89835.html" target="_blank">13. JSP 中 AJAX 的表单提交中文问题的简单解决方案(3536)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/02/05/97940.html" target="_blank">14. MySQL 5 绿色版(BAT版本)(3515)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/10/24/155586.html" target="_blank">15. MyEclipse 6 学习视频集中下载(文档,视频,源代码)(3470)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2006/12/19/88881.html" target="_blank">16. LambdaProbe 中文包下载(99%完成)(3434)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/02/03/97760.html" target="_blank">17. 用开源软件搭建企业内部协作平台, Kill QQ MSN(3391)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/01/08/92320.html" target="_blank">18. 理解并使用 JSPWiki 中的权限控制(3299)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2006/12/13/87494.html" target="_blank">19. 使用 JDK 6 中的 JConsole 监控应用(原创)(3289)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/05/21/118869.html" target="_blank">20. Netbeans 5.5 + JPA + Hibernate 3 + Tomcat 实例有声视频(3173)</a></li>
+<li><a href="http://blog.sina.com.cn/s/blog_50dd0f370102ebgw.html" title="继父以夫妻名义跟继女同居产婴" target="_blank">继父以夫妻名义跟继女同居产婴</a></li>
 </ul>
-<h3 id="60-">60天内阅读排行</h3>
+<p><a href="http://blog.sina.com.cn/u/1356664631" target="_blank">雨中竹</a></p>
 <ul>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/27/163416.html" target="_blank">1. 翻译: MyEclipse Spring 入门教程(含官方视频和AOP例子)(2239)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/22/162498.html" target="_blank">2. 翻译: MyEclipse AJAX 调试教程(含官方视频)(2203)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/10/166631.html" target="_blank">3. 原创电子书 《MyEclipse 6 Java 开发中文教程》下载(2063)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/30/164230.html" target="_blank">4. Spring 2.5 标注开发的简单例子(2030)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/13/160288.html" target="_blank">5. 翻译: MyEclipse Hibernate 入门教程(含官方视频)(1966)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/23/162700.html" target="_blank">6. 击破谎言: Spring 2.5 并非&quot;完全&quot;支持基于标注的配置(1914)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/19/161502.html" target="_blank">7. MyEclipse 6 实战开发讲解视频入门 6 Web 入门开发 - JSP/HTML/JDBC 登录(1668)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/26/163354.html" target="_blank">8. MyEclipse 6 实战开发讲解视频入门 7 Struts 入门开发(1644)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/30/164166.html" target="_blank">9. MyEclipse 6 实战开发讲解视频入门 9 JSF 1.2 入门开发(1554)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/02/164704.html" target="_blank">10. MyEclipse 6 实战开发讲解视频入门 10 JSP 文件上传下载(1424)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/29/163907.html" target="_blank">11. MyEclipse 6 实战开发讲解视频入门 8 XFire Web Service 入门开发(1369)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/16/160876.html" target="_blank">12. 翻译: MyEclipse Struts 1.x 教程(PDF格式)(1351)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/02/172266.html" target="_blank">13. Spring 1.2和2.0的简单AOP例子(1253)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/19/168742.html" target="_blank">14. 电子书 《MyEclipse 6 Java 开发中文教程》 第七章 Hibernate 开发预览(1174)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/14/167733.html" target="_blank">15. 电子书 《MyEclipse 6 Java 开发中文教程》 第五，六章预览(1165)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/07/173395.html" target="_blank">16. 电子书 《MyEclipse 6 Java 开发中文教程》 第十章 开发 Spring 应用 完工(1101)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/18/168600.html" target="_blank">17. MyEclipse 6 实战开发讲解视频入门 11 Struts 文件上传(1099)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/27/170997.html" target="_blank">18. 电子书 《MyEclipse 6 Java 开发中文教程》 第九章 开发Struts 1.x应用 完工(961)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/03/164748.html" target="_blank">19. 视频讲解: Eclipse/MyEclipse 如何导入项目源代码(900)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/03/164796.html" target="_blank">20. 感谢 2007 年 12 月的 &lt;&lt;程序员&gt;&gt; 杂志推荐我的 Blog(736)</a></li>
+<li><a href="http://blog.sina.com.cn/s/blog_5226ab3301018l0t.html" title="让男人爱到痴迷的5种女人" target="_blank">让男人爱到痴迷的5种女人</a></li>
 </ul>
-<p><a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html" target="_blank">基于 Apache DBCP 的数据库连接获取类(原创)</a></p>
-<p>2005年12月5日星期一</p>
-<p>基于 Apache DBCP 的数据库连接获取类, 可以让你在 Tomcat 之外的 J2SE 程序或者其它应用服务器上使用 Apache 的数据库连接池.</p>
-<p>TODO: 增加最大连接数和最小连接数的设置功能</p>
-<p>配置文件:</p>
-<p>ConnectionFactory.properties</p>
-<p>/# 2004-12-30
-/# 数据库连接工厂的配置文件, 类文件参见 util.ConnectionFactory
-/# 调试标志, 为 true 时使用 JDBC 直接连接(使用 url, driver, user, password 四个参数)
-/# 为 false 时使用内置数据库连接池(使用参数 jdbc.jndi), 配置文件位于 db.properties 中
-debug=false
-/# JDBC的连接地址 URL
-jdbc.url=jdbc:microsoft:sqlserver://127.0.0.1:1433;DatabaseName=yuelao
-/# JDBC 的驱动
-jdbc.driver=com.microsoft.jdbc.sqlserver.SQLServerDriver
-/# JDBC 的连接用户名
-jdbc.user=sa
-/# JDBC 的连接密码
-jdbc.password=
-/#debug 为 false 时, 将根据连接池名获取数据库连接, 适用于程序在服务器运行的时候</p>
-<p>.Java 文件:</p>
-<p>//<em>
-/</em> @(/#)ConnectionFactory.java 1.2 2005-11-25
-/<em>
-/</em> Copyright 2005 BeanSoft Studio. All rights reserved.
-/<em> PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
-/</em>/</p>
-<p>package beansoft.util;</p>
-<p>import java.io.ByteArrayInputStream;
-import java.io.FileOutputStream;
-import java.io.FileWriter;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.util.Properties;</p>
-<p>import javax.sql.DataSource;
-import org.apache.commons.dbcp.BasicDataSource;</p>
-<p>import beansoft.jsp.StringUtil;
-import beansoft.sql.DatabaseUtil;</p>
-<p>//<em>/</em>
-/<em> ConnectionFactory provide a factory class that produces all database
-/</em> connections from here, and it provides methods for shutdown and restart
-/<em> data sources as well as reading and saving configuration parameters from/to file.
-/</em>
-/<em> 数据库连接工厂类, 所有的数据库连接都从这里产生, 提供关闭和重启数据源的方法, 以及读取和保存
-/</em> 配置参数到文件的能力.
-/<em>
-/</em> 2005-08-19
-/<em> Using Apache DBCP as database connection pool provider.
-/</em> 使用 Apache DBCP 作为连接池的提供类.
-/<em>
-/</em> @link <a href="http://jakarta.apache.org/commons/dbcp/" target="_blank"><a href="http://jakarta.apache.org/commons/dbcp/">http://jakarta.apache.org/commons/dbcp/</a></a>
-/<em>
-/</em> Dependency:
-/<em> commons-collections.jar
-/</em> commons-pool.jar
-/<em> commons-dbcp.jar
-/</em> j2ee.jar (for the javax.sql classes)
-/<em>
-/</em> If you using this class with Tomcat&#39;s web application, then all the above jars
-/<em> not need to be added because the Tomcat it self has included these class libs.
-/</em> 如果你在 Tomcat 的 Web Application 中调用这个类, 以上的 JAR 都不用单独
-/<em> 加入的, 因为 Tomcat 默认已经自带了这些类库.
-/</em>
-/<em> @author BeanSoft
-/</em> @version 1.2
-/<em> 2005-11-25
-/</em>/
-public class ConnectionFactory {</p>
-<p>//<em>/</em> Database password /*/
-private static String password;</p>
-<p>//<em>/</em> Database username /*/
-private static String user;</p>
-<p>//<em>/</em> JDBC URL /*/
-private static String url;</p>
-<p>//<em>/</em>
-/<em> JDBC driver class name
-/</em>/
-private static String driver;</p>
-<p>//<em>/</em>
-/<em> DEBUG flag, default value is true, returns a connection that directly fetched using
-/</em> JDBC API; if falg is false, returns a connection returned by the connection pool,
-/<em> if u want depoly the application, please make this flag be false.
-/</em> 调试标记, 默认值为 true, 则返回直接使用 JDBC 获取的连接; 如果标记为 false,
-/<em> 则从连接池中返回器连接, 发布程序时请将这个标志 设置为 false.
-/</em>/
-private static boolean DEBUG = true;</p>
-<p>//<em>/</em> Connection properties value /*/
-private static Properties props = new Properties();</p>
-<p>//<em>/</em> The data source object, added at 2005-08-19 /*/
-private static DataSource dataSource = null;</p>
-<p>// Load configuration from resource /ConnectionFactory.properties
-static {
-loadConfiguration();
-}</p>
-<p>private ConnectionFactory() {
-}</p>
-<p>//<em>/</em>
-/<em> Factory method: obtain a database connection.
-/</em> 工厂方法: 获取一个数据库连接.
-/<em>
-/</em>
-/<em> @return Connection a java.sql.Connection object
-/</em>/
-public static Connection getConnection() {
-try {
-Connection conn = null;</p>
-<p>// Debug mode, obtain connection directly through JDBC API
-if (DEBUG) {</p>
-<p>Class.forName(driver);</p>
-<p>conn = DriverManager.getConnection(url, user, password);
-} else {
-// TODO
-// // Looking data source through JNDI tree
-// DataSource dataSource = (DataSource) getInitialContext()
-// .lookup(jndi);
-// conn = dataSource.getConnection();
-conn = setupDataSource().getConnection();
-}</p>
-<p>return conn;
-} catch (Exception ex) {
-System.err.println(&quot;Error: Unable to get a connection: &quot; + ex);
-ex.printStackTrace();
-}</p>
-<p>return null;
-}</p>
-<p>//<em>/</em>
-/<em> Load and parse configuration.
-/</em>/
-public static void loadConfiguration() {
-try {
-props.load(new ByteArrayInputStream(readConfigurationString().getBytes()));</p>
-<p>// Load DEBUG flag, default to true
-DEBUG = Boolean.valueOf(props.getProperty(&quot;debug&quot;, &quot;true&quot;))
-.booleanValue();
-password = props.getProperty(&quot;jdbc.password&quot;, null);
-user = props.getProperty(&quot;jdbc.user&quot;, null);
-url = props.getProperty(&quot;jdbc.url&quot;, null);
-driver = props.getProperty(&quot;jdbc.driver&quot;);
-} catch (Exception e) {
-e.printStackTrace();
-}
-}</p>
-<p>//<em>/</em>
-/<em> Save the current configuration properties.
-/</em>/
-public static void saveConfiguration() {
-saveConfiguration(getProperties());
-}</p>
-<p>//<em>/</em>
-/<em> Read content string from configuration file. Because Class.getResourceAsStream(String)
-/</em> sometimes cache the contents, so here used this method.
-/<em> 读取配置文件中的字符串.
-/</em> 因为 Class 类的 getResourceAsStream(String) 方法有时候会出现缓存, 因此
-/<em> 不得已使用了这种办法.
-/</em> @return String, null if failed
-/*/
-public static String readConfigurationString() {
-try {
-java.io.FileInputStream fin = new java.io.FileInputStream(
-getConfigurationFilePath());
-java.io.ByteArrayOutputStream bout = new
-java.io.ByteArrayOutputStream();</p>
-<p>int data;
-while( (data = fin.read()) != -1) {
-bout.write(data);
-}
-bout.close();
-fin.close();</p>
-<p>return bout.toString();
-} catch (Exception ex) {
-System.err.println(&quot;Unable to load ConnectionFactory.properties:&quot; +
-ex.getMessage());
-ex.printStackTrace();
-}
-return null;
-}</p>
-<p>//<em>/</em>
-/<em> Get the configuration file&#39;s real physical path.
-/</em>/
-private static String getConfigurationFilePath() {
-return StringUtil.getRealFilePath(&quot;/ConnectionFactory.properties&quot;);
-}</p>
-<p>//<em>/</em>
-/<em> Save string content of a java.util.Properties object.
-/</em> 保存配置文件中的字符串.
-/<em>
-/</em> @param props configuration string
-/<em> @return operation result
-/</em>/
-protected static boolean saveConfigurationString(String props) {
-if(props == null || props.length() &lt;= 0) return false;
-try {
-FileWriter out = new FileWriter(getConfigurationFilePath());
-out.write(props);
-out.close();</p>
-<p>return true;
-} catch (Exception ex) {
-System.err.println(&quot;Unable save configuration string to ConnectionFactory.properties:&quot;</p>
+<p><a href="http://blog.sina.com.cn/u/1378265907" target="_blank">健康达人</a></p>
 <ul>
-<li>ex);
-ex.printStackTrace();
-}</li>
+<li><a href="http://blog.sina.com.cn/s/blog_50402e320102e49o.html" title="不同口味喜好对五脏有不同伤害" target="_blank">不同口味喜好对五脏有不同伤害</a></li>
 </ul>
-<p>return false;
-}</p>
-<p>//<em>/</em>
-/<em> Returns the current database connection properties.
-/</em> @return Properties object
-/*/
-public static Properties getProperties() {
-return props;
-}</p>
-<p>//<em>/</em>
-/<em> Save configuration properties.
-/</em>
-/<em> @param props Properties
-/</em> @return operation result
-/*/
-public static boolean saveConfiguration(Properties props) {
-if(props == null || props.size() &lt;= 0) return false;</p>
-<p>try {
-FileOutputStream out = new FileOutputStream(getConfigurationFilePath());
-props.store(out, &quot;&quot;);
-out.close();</p>
-<p>return true;
-} catch (Exception ex) {
-System.err.println(&quot;Unable to save ConnectionFactory.properties:&quot; + ex.getMessage());
-ex.printStackTrace();
-}</p>
-<p>return false;
-}</p>
-<p>//<em>/</em>
-/<em> Create a DataSource instance based on the Apache DBCP.
-/</em> 创建基于 Apache DBCP 的 DataSource.
-/<em>
-/</em> @return a poolable DataSource
-/*/
-public static DataSource setupDataSource() {
-if(dataSource == null) {
-BasicDataSource ds = new BasicDataSource();
-ds.setDriverClassName(driver);
-ds.setUsername(user);
-ds.setPassword(password);
-ds.setUrl(url);</p>
-<p>dataSource = ds;
-}</p>
-<p>return dataSource;
-}</p>
-<p>//<em>/</em>
-/<em> Display connection status of current data source.
-/</em>
-/<em> 显示当前数据源的状态.
-/</em>/
-public static String getDataSourceStats() {
-BasicDataSource bds = (BasicDataSource) setupDataSource();
-StringBuffer info = new StringBuffer();</p>
-<p>info.append(&quot;Active connection numbers: &quot; + bds.getNumActive());
-info.append(&quot;\n&quot;);
-info.append(&quot;Idle connection numbers: &quot; + bds.getNumIdle());</p>
-<p>return info.toString();
-}</p>
-<p>//<em>/</em>
-/<em> Shut down the data source, if want use it again,
-/</em> please call setupDataSource().
-/*/
-public static void shutdownDataSource() {
-BasicDataSource bds = (BasicDataSource) setupDataSource();
-try {
-bds.close();
-} catch (SQLException e) {
-// TODO auto generated try-catch
-e.printStackTrace();
-}
-}</p>
-<p>//<em>/</em>
-/<em> Restart the data source.
-/</em> 重新启动数据源.
-/*/
-public static void restartDataSource() {
-shutdownDataSource();
-setupDataSource();
-}</p>
-<p>//<em>/</em> Test method /*/
-public static void main(String[] args) {
-Connection conn = ConnectionFactory.getConnection();
-DatabaseUtil dbUtil = new DatabaseUtil();
-dbUtil.setConnection(conn);
-// try {
-// java.sql.ResultSet rs = conn.createStatement().executeQuery(
-// &quot;SELECT MAX(ID) FROM items&quot;);
-//
-// while(rs.next()) {
-// System.out.println(rs.getString(1));
-// }
-//
-// rs.close();
-//
-// } catch (Exception ex) {
-// ex.printStackTrace();
-// }
-System.out.println(dbUtil.getAllCount(&quot;SELECT MAX(ID) FROM items&quot;));</p>
-<p>System.out.println(conn);</p>
-<p>try {
-conn.close();
-} catch (Exception ex) {
-// ex.printStackTrace();
-}</p>
-<p>conn = ConnectionFactory.getConnection();</p>
-<p>System.out.println(conn);</p>
-<p>try {
-conn.close();
-} catch (Exception ex) {
-// ex.printStackTrace();
-}</p>
-<p>System.exit(0);
-}</p>
-<p>}
-posted on 2007-01-19 11:04 <a href="http://www.blogjava.net/beansoft/" target="_blank">BeanSoft</a> 阅读(2136) <a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html#Post" target="_blank">评论(1)</a>  <a href="http://www.blogjava.net/beansoft/admin/EditPosts.aspx?postid=94882" target="_blank">编辑</a>  <a href="http://www.blogjava.net/beansoft/AddToFavorite.aspx?id=94882" target="_blank">收藏</a> 所属分类: <a href="http://www.blogjava.net/beansoft/category/21451.html" target="_blank">Database</a><img src="" alt=""></p>
-<p><a href=""></a><a href=""></a></p>
-<p>[Comments</p>
+<p><a href="http://blog.sina.com.cn/u/1346383410" target="_blank">养生堂</a></p>
 <ul>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html#95631" title="permalink: re: 基于 Apache DBCP 的数据库连接获取类(原创)" target="_blank">/#</a> <a href=""></a>re: 基于 Apache DBCP 的数据库连接获取类(原创)<a href=""></a><a href="http://www.blogjava.net/liubowu/" target="_blank">小车马</a>
-Posted @ 2007-01-23 23:38
-恩，以前也用过，apache的很多东西都非常不错，
-楼主，潜力贴论坛（<a href="http://content.uu1001.com/" target="_blank"><a href="http://content.uu1001.com/">http://content.uu1001.com/</a></a>）是我个人的一个设想，如果你对java非常的专注，并且愿意交我这个朋友，可以发邮件给我（lbw070105@gmail.com），希望我们可以一起发展它。  <a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html#post" target="_blank">回复</a>  <a href="http://www.blogjava.net/comment?author=%e5%b0%8f%e8%bd%a6%e9%a9%ac" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href="">]()
-</a>
-<a href="">刷新评论列表</a>  </li>
+<li><a href="http://blog.sina.com.cn/s/blog_5e8ee6360102eduy.html" title="我22岁还是处男被女友讥笑是" target="_blank">我22岁还是处男被女友讥笑是</a></li>
 </ul>
-<p><a href=""></a> 标题  请输入标题 姓名  请输入你的姓名 主页 请输入验证码 验证码 /*  <img src="" alt=""> 内容(请不要发表任何与政治相关的内容) 请输入评论内容 Remember Me?   <a href="http://www.blogjava.net/login.aspx?ReturnURL=http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html&amp;SourceURL=/beansoft/archive/2007/01/19/94882.html">登录</a>  <a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html?login=1#Post" target="_blank">使用高级评论</a>  <a href="http://www.blogjava.net/RequireRegister.aspx" target="_blank">新用户注册</a>  <a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html#Top" target="_blank">返回页首</a>  <a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html#Post" target="_blank">恢复上次提交</a>       [使用Ctrl+Enter键可以直接提交] 该文被作者在 2007-09-22 12:56 编辑过      相关文章:</p>
+<p><a href="http://blog.sina.com.cn/u/1586423350" target="_blank">黎文东</a></p>
 <ul>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/10/23/155318.html" target="_blank">基于<em>JDBC_2.0</em>驱动的分页代码实现</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/10/01/150075.html" target="_blank">BeanSoft MySQL Java 开发套装(服务器,管理工具,JDBC驱动,示例代码) 无中文问题</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/09/24/147657.html" target="_blank">SQL中主键和外键的区别?(zz)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/09/22/147366.html" target="_blank">常用 JDBC 驱动名字和 URL 列表</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/09/18/146115.html" target="_blank">如何连接SQL Server数据库(Tomcat 连接池配置) (转载)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/07/11/129652.html" target="_blank">Oracle Sequence 和 java.sql.PreparedStatement 的协同使用</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/07/10/129354.html" target="_blank">学习 SQL 语法的好资料: Transact-SQL 参考</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/07/10/129329.html" target="_blank">Hibernate 如何配置显示生成的 SQL?</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/04/09/109432.html" target="_blank">Mysql 优化的资料(收集转载)</a></li>
-<li><a href="http://www.blogjava.net/beansoft/archive/2007/02/05/97940.html" target="_blank">MySQL 5 绿色版(BAT版本)</a></li>
+<li><a href="http://blog.sina.com.cn/s/blog_4b2a6f390102e3el.html" title="很多从事服务业的人都是缺乏人" target="_blank">很多从事服务业的人都是缺乏人</a></li>
 </ul>
-<p>Powered by:
-<a href="http://www.blogjava.net/" target="_blank">BlogJava</a>
-Copyright © BeanSoft</p>
+<p><a href="http://blog.sina.com.cn/u/1261072185" target="_blank">情感威客</a></p>
+<ul>
+<li>[《一路向西》远超《肉蒲团》<a href="http://blog.sina.com.cn/s/blog_492904350102dylu.html" title="《一路向西》远超《肉蒲团》["></a></li>
+</ul>
+<p><a href="http://blog.sina.com.cn/u/1227424821" target="_blank">张学伟</a>
+<a href="http://search.sina.com.cn/?c=blog&amp;q=%D4%D3%CC%B8%2C%D0%DD%CF%D0&amp;by=tag" target="_blank">更多&gt;&gt;</a>
+精彩图文</p>
+<p><a href="http://sina.allyes.com/main/adfclick?db=sina&amp;bid=204720,506031,511306&amp;cid=0,0,0&amp;sid=510895&amp;advid=358&amp;camid=37389&amp;show=ignore&amp;url=http://blog.sina.com.cn/lm/blog_7years.html?tj=1" target="_blank"><img src="" alt="">公告：新版博客新功能介绍</a></p>
+<ul>
+<li><a href="http://sina.allyes.com/main/adfclick?db=sina&amp;bid=204720,506031,511306&amp;cid=0,0,0&amp;sid=510895&amp;advid=358&amp;camid=37389&amp;show=ignore&amp;url=http://blog.sina.com.cn/lm/blog_7years.html?tj=1" target="_blank"><img src="" alt="公告：新版博客新功能介绍"></a></li>
+<li><a href="http://qing.weibo.com/tag/写真?blogid=b2a91ee4330025tx" target="_blank"><img src="" alt="林宜萱:“想脱正是时候”"></a></li>
+<li><a href="http://qing.weibo.com/tag/心理学?blogid=9cd3f9c6320029ed" target="_blank"><img src="" alt="电击蓝斑核如何复活外星人"></a></li>
+</ul>
+<p><a href="http://qing.weibo.com/fancy.html" target="_blank">查看更多</a>&gt;&gt;</p>
+<p>推荐博文</p>
+<ul>
+<li><a href="http://blog.sina.com.cn/s/tj_467a5c960102e1na.html" title="建设中国特色的天体主义（答《中" target="_blank">建设中国特色的天体主义（答《中</a></li>
+</ul>
+<p><a href="http://blog.sina.com.cn/u/1182424214" target="_blank">方刚</a></p>
+<ul>
+<li><a href="http://blog.sina.com.cn/s/tj_5d98f6740102dzz6.html" title="《辽宁号》：蓝水海军第一步" target="_blank">《辽宁号》：蓝水海军第一步</a></li>
+</ul>
+<p><a href="http://blog.sina.com.cn/u/1570305652" target="_blank">乔良</a></p>
+<ul>
+<li><a href="http://blog.sina.com.cn/s/tj_474068790102e2ku.html" title="一嘴巴细菌" target="_blank">一嘴巴细菌</a></li>
+</ul>
+<p><a href="http://blog.sina.com.cn/u/1195403385" target="_blank">方舟子</a></p>
+<ul>
+<li><a href="http://blog.sina.com.cn/s/tj_63c408870101cb11.html" title="“湄公河惨案审判”之我感（2）" target="_blank">“湄公河惨案审判”之我感（2）</a></li>
+</ul>
+<p><a href="http://blog.sina.com.cn/u/1673791623" target="_blank">躲猫猫调查团边民</a></p>
+<ul>
+<li><a href="http://blog.sina.com.cn/s/tj_46e9d5da0102e1si.html" title="当日本人在改变" target="_blank">当日本人在改变</a></li>
+</ul>
+<p><a href="http://blog.sina.com.cn/u/1189729754" target="_blank">闾丘露薇</a></p>
+<ul>
+<li><a href="http://blog.sina.com.cn/s/tj_493b73bf0102e7rw.html" title="『名人面对面』 谢芳" target="_blank">『名人面对面』 谢芳</a></li>
+</ul>
+<p><a href="http://blog.sina.com.cn/u/1228633023" target="_blank">许戈辉</a></p>
+<ul>
+<li><a href="http://blog.sina.com.cn/s/tj_4fcb878a0102ege1.html" title="谁在说李娜是汉奸？" target="_blank">谁在说李娜是汉奸？</a></li>
+</ul>
+<p><a href="http://blog.sina.com.cn/u/1338738570" target="_blank">石述思</a></p>
+<ul>
+<li><a href="http://blog.sina.com.cn/s/tj_476ffe1a01012uwv.html" title="韩寒婚恋观的自由价值" target="_blank">韩寒婚恋观的自由价值</a></li>
+</ul>
+<p><a href="http://blog.sina.com.cn/u/1198521882" target="_blank">单士兵</a></p>
+<ul>
+<li><a href="http://blog.sina.com.cn/s/tj_46cf47710102e6ag.html" title="嫌犯为何可以轻松闯入女生宿舍行" target="_blank">嫌犯为何可以轻松闯入女生宿舍行</a></li>
+</ul>
+<p><a href="http://blog.sina.com.cn/u/1187989361" target="_blank">熊丙奇</a></p>
+<ul>
+<li><a href="http://blog.sina.com.cn/s/tj_48c00fbb0102e067.html" title="杨恒均：当“言论自由”遭遇“宗" target="_blank">杨恒均：当“言论自由”遭遇“宗</a></li>
+</ul>
+<p><a href="http://blog.sina.com.cn/u/1220546491" target="_blank">杨恒均</a>
+<a href="http://blog.sina.com.cn/lm/top/zatan/day.html" target="_blank">查看更多</a>&gt;&gt;
+谁看过这篇博文</p>
+<p><img src="" alt="">加载中…</p>
+<p>正文 字体大小：<a href="">大</a> <strong>中</strong> <a href="">小</a></p>
+<h2 id="servlet-">Servlet学习总结</h2>
+<p><img src="&quot;此博文包含图片&quot;" alt=""> (2010-08-31 01:45:58)</p>
+<p><a href=""><img src="" alt="">转载<em>▼</em></a></p>
+<p>标签：</p>
+<h3 id="-http-search-sina-com-cn-c-blog-q-d4-d3-cc-b8-by-tag-"><a href="http://search.sina.com.cn/?c=blog&amp;q=%D4%D3%CC%B8&amp;by=tag" target="_blank">杂谈</a></h3>
+<p>一.Servlet简介</p>
+<p>  1,Serlet是在服务器端运行的小应用程序，用来完成B/S架构下客户端的请求的响应处理。</p>
+<p>  2,Servlet API为Servlet提供统一的编程接口。</p>
+<p>  3,Servlet一般在容器如tomcat，jetty等容器中运行。</p>
+<p>  4,同一个类型的Servlet对象在Servlet容器中以单例的形式存在。</p>
+<p>二.Servlet的执行过程</p>
+<p>1,Tomcat启动时，首先读取web.xml中的配置信息，如果配置信息中有设置<load-on-startup>属性,实例化一份Servlet.如果没配置</p>
+<p>，Tomcat将会在第一个用户的第一次请求时实例化一个Servlet.</p>
+<p>2、在Servlet容器启动后：客户首次向Servlet发出请求，Servlet容器会判断内存中是否存在指定的Servlet对象，如果没有则创建</p>
+<p>它，然后根据客户的请求创建HttpRequest,HttpResponse对象，从而调用Servlet对象的service方法。</p>
+<p>三.具体执行过程如图</p>
+<p> <a href="http://photo.blog.sina.com.cn/showpic.html#blogid=5c6935040100lg9x&amp;url=http://s13.sinaimg.cn/orignal/5c693504t8f130335c95c" target="_blank"><img src="&quot;Servlet学习总结&quot;" alt="Servlet学习总结"></a></p>
+<p>1，Web Client 向Servlet容器（Tomcat）发出Http请求</p>
+<p>2，Servlet容器接收Web Client的请求</p>
+<p>3，Servlet容器创建一个HttpRequest对象，将Web Client请求的信息封装到这个对象中</p>
+<p>4，Servlet容器创建一个HttpResponse对象</p>
+<p>5，Servlet容器调用HttpServlet对象的service方法，把HttpRequest对象与HttpResponse对象作为参数</p>
+<pre><code> 传给 HttpServlet对象
+</code></pre><p>6，HttpServlet调用HttpRequest对象的有关方法，获取Http请求信息</p>
+<p>7，HttpServlet调用HttpResponse对象的有关方法，生成响应数据</p>
+<p>8，Servlet容器把HttpServlet的响应结果传给Web Client</p>
+<p>分享： <a href=""><img src="&quot;分享到新浪Qing&quot;" alt="">分享到新浪Qing</a></p>
+<p><a href="&quot;分享到新浪微博&quot;"></a><a href="&quot;分享到MSN&quot;"></a><a href="&quot;分享到开心网&quot;"></a><a href="&quot;分享到人人网&quot;"></a><a href="&quot;分享到QQ空间&quot;"></a><a href="&quot;分享到豆瓣&quot;"></a><a href="&quot;更多平台&quot;"></a></p>
+<p><img src="" alt="">喜欢
+阅读<em>┊</em> <a href="http://blog.sina.com.cn/s/blog_5c6935040100lg9x.html#commonComment" target="_blank">评论</a> <em>┊</em> <a href="">收藏</a> <em>┊</em><a href="http://blog.sina.com.cn/s/blog_5c6935040100lg9x.html#" target="_blank">转载</a><a href="http://blog.sina.com.cn/s/blog_5c6935040100lg9x.html#" target="_blank"></a> <em>┊</em> <a href="">喜欢</a><a href=""><strong>▼</strong></a> <em>┊</em><a href="http://blog.sina.com.cn/main_v5/ria/print.html?blog_id=blog_5c6935040100lg9x" target="_blank">打印</a><em>┊</em><a href="http://blog.sina.com.cn/s/blog_5c6935040100lg9x.html#" target="_blank">举报</a></p>
+<p>已投稿到： <img src="&quot;排行榜&quot;" alt=""> <a href="http://blog.sina.com.cn/lm/114/117/day.html" target="_blank">排行榜</a><img src="&quot;圈子&quot;" alt=""> <a href="http://q.sina.com.cn/blog_groups.php?fid=5c6935040100lg9x" target="_blank">圈子</a></p>
+<p>加载中，请稍候......
+前一篇：<a href="http://blog.sina.com.cn/s/blog_5c6935040100l7b2.html" target="_blank">2010年08月14日（我的第一个项目）</a></p>
+<p>后一篇：<a href="http://blog.sina.com.cn/s/blog_5c6935040100r5qj.html" target="_blank">子查询转换为连接查询</a></p>
+<p><strong>评论</strong> <a href="http://blog.sina.com.cn/lm/8/2009/0325/105340.html" target="_blank">重要提示：警惕虚假中奖信息</a>       <a href="http://sina.allyes.com/main/adfclick?db=sina&amp;bid=204720,398329,403641&amp;cid=0,0,0&amp;sid=400721&amp;advid=358&amp;camid=37389&amp;show=ignore&amp;url=http://sina.allyes.com/main/adfclick?db=sina&amp;bid=204720,397177,402488&amp;cid=0,0,0&amp;sid=399523&amp;advid=358&amp;camid=37389&amp;show=ignore&amp;url=http://sina.allyes.com/main/adfclick?db=sina&amp;bid=204720,399385,404697&amp;cid=0,0,0&amp;sid=401826&amp;advid=358&amp;camid=37389&amp;show=ignore&amp;url=http://sina.allyes.com/main/adfclick?db=sina&amp;bid=204720,399385,404697&amp;cid=0,0,0&amp;sid=401826&amp;advid=358&amp;camid=37389&amp;show=ignore&amp;url=http://sina.allyes.com/main/adfclick?db=sina&amp;bid=204720,397177,402488&amp;cid=0,0,0&amp;sid=399523&amp;advid=358&amp;camid=37389&amp;show=ignore&amp;url=http://sina.allyes.com/main/adfclick?db=sina&amp;bid=204720,399385,404697&amp;cid=0,0,0&amp;sid=401826&amp;advid=358&amp;camid=37389&amp;show=ignore&amp;url=http://qing.weibo.com/1951657750/3395898400485810.html" target="_blank">♥ 2011吃货们的幸福生活</a>       <a href="http://sina.allyes.com/main/adfclick?db=sina&amp;bid=118883,251213,256255&amp;cid=0,0,0&amp;sid=247096&amp;advid=358&amp;camid=19809&amp;show=ignore&amp;url=http://weibo.com/blogkefu" target="_blank">关注每日最热门博客</a><a href=""> </a></p>
+<p><a href="http://blog.sina.com.cn/s/blog_5c6935040100lg9x.html#post" target="_blank">[发评论]</a></p>
+<ul>
+<li>评论加载中，请稍候...
+<a href=""></a></li>
+</ul>
+<p><strong>发评论</strong> <a href="http://qing.weibo.com/1951657750/7453ef16330007vj.html" target="_blank">Qing带来全新读图时代</a>       <a href="http://sina.allyes.com/main/adfclick?db=sina&amp;bid=118883,251212,256254&amp;cid=0,0,0&amp;sid=247095&amp;advid=358&amp;camid=19809&amp;show=ignore&amp;url=http://weibo.com/blogkefu" target="_blank">关注每日最热门博客</a></p>
+<p>登录名： 密码： <a href="http://login.sina.com.cn/getpass.html" target="_blank">找回密码</a> <a href="http://login.sina.com.cn/signup/signup.php?entry=blog&amp;src=blogicp&amp;srcuid=1550398724" target="_blank">注册</a> 记住登录状态</p>
+<p>昵   称：</p>
+<p><img src="" alt="">分享到微博 <img src="&quot;新&quot;" alt="">   评论并转载此博文<img src="&quot;新&quot;" alt=""></p>
+<p>验证码： <a href="">请点击后输入验证码</a><img src="" alt=""> <a href="http://blog.sina.com.cn/s/blog_5c6935040100lg9x.html#" target="_blank">收听验证码</a></p>
+<p>匿名评论
+<a href="">发评论</a></p>
+<p>以上网友发言只代表其个人观点，不代表新浪网的观点或立场。
+&lt; 前一篇<a href="http://blog.sina.com.cn/s/blog_5c6935040100l7b2.html" target="_blank">2010年08月14日（我的第一个项目）</a></p>
+<p>后一篇 &gt;<a href="http://blog.sina.com.cn/s/blog_5c6935040100r5qj.html" target="_blank">子查询转换为连接查询</a></p>
+<p><a href="http://control.blog.sina.com.cn/admin/advice/advice_list.php" target="_blank">新浪BLOG意见反馈留言板</a>　<a href="">不良信息反馈</a>　电话：4006900000 提示音后按1键（按当地市话标准计费）　欢迎批评指正</p>
+<p><a href="http://corp.sina.com.cn/chn/" target="_blank">新浪简介</a> | <a href="http://corp.sina.com.cn/eng/" target="_blank">About Sina</a> | <a href="http://emarketing.sina.com.cn/" target="_blank">广告服务</a> | <a href="http://www.sina.com.cn/contactus.html" target="_blank">联系我们</a> | <a href="http://corp.sina.com.cn/chn/sina_job.html" target="_blank">招聘信息</a> | <a href="http://www.sina.com.cn/intro/lawfirm.shtml" target="_blank">网站律师</a> | <a href="http://english.sina.com/" target="_blank">SINA English</a> | <a href="http://members.sina.com.cn/apply/" target="_blank">会员注册</a> | <a href="http://help.sina.com.cn/" target="_blank">产品答疑</a></p>
+<p>Copyright © 1996 - 2012 SINA Corporation, All Rights Reserved</p>
+<p>新浪公司 <a href="http://www.sina.com.cn/intro/copyright.shtml" target="_blank">版权所有</a>
+<a href="http://www.bj.cyberpolice.cn/index.jsp"></a></p>
 
       
     </div>
@@ -1053,8 +674,8 @@ Copyright © BeanSoft</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/连接池/">连接池</a></li></span></span> | <span class="tags">Tagged <a href="/tags/连接池/" class="label label-primary">连接池</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-连接池--基于ApacheDBCP的数据库连接获取类原创-BeanSoft-sJavaBlo/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-连接池--基于ApacheDBCP的数据库连接获取类原创-BeanSoft-sJavaBlo" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_总结类/">Java_总结类</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_总结类/" class="label label-success">Java_总结类</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Servlet学习总结_warren_新浪博客/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_总结类--Servlet学习总结_warren_新浪博客" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1069,1244 +690,222 @@ Copyright © BeanSoft</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-连接池--druid教程/">druid 教程</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--我的重构哪里不规范？讨论第2页/">我的重构哪里不规范？讨论第2页</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-连接池--druid教程/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--我的重构哪里不规范？讨论第2页/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="druid-">druid 教程</h1>
-<pre><code> java程序很大一部分要操作数据库，为了提高性能操作数据库的时候，有不得不使用数据库连接池。数据库连接池有很多选择，c3p、dhcp、proxool等，druid作为一名后起之秀，凭借其出色的性能，也逐渐印入了大家的眼帘。接下来本教程就说一下druid的简单使用。
-</code></pre><p> 首先从<a href="http://repo1.maven.org/maven2/com/alibaba/druid/" target="_blank"><a href="http://repo1.maven.org/maven2/com/alibaba/druid/">http://repo1.maven.org/maven2/com/alibaba/druid/</a></a> 下载最新的jar包。如果想使用最新的源码编译，可以从<a href="https://github.com/alibaba/druid" target="_blank"><a href="https://github.com/alibaba/druid">https://github.com/alibaba/druid</a></a> 下载源码，然后使用maven命令行，或者导入到eclipse中进行编译。</p>
-<h2 id="-1-"><a href=""></a>1 配置</h2>
-<p>和dbcp类似，druid的配置项如下</p>
-<p>配置 缺省值 说明 name   配置这个属性的意义在于，如果存在多个数据源，监控的时候
-可以通过名字来区分开来。如果没有配置，将会生成一个名字，
-格式是：&quot;DataSource-&quot; + System.identityHashCode(this) jdbcUrl   连接数据库的url，不同数据库不一样。例如：
-mysql : jdbc:mysql://10.20.153.104:3306/druid2 
-oracle : jdbc:oracle:thin:@10.20.149.85:1521:ocnauto username   连接数据库的用户名 password   连接数据库的密码。如果你不希望密码直接写在配置文件中，
-可以使用ConfigFilter。详细看这里：
-<a href="https://github.com/alibaba/druid/wiki/%E4%BD%BF%E7%94%A8ConfigFilter" target="_blank"><a href="https://github.com/alibaba/druid/wiki/%E4%BD%BF%E7%94%A8ConfigFilter">https://github.com/alibaba/druid/wiki/%E4%BD%BF%E7%94%A8ConfigFilter</a></a> driverClassName 根据url自动识别 这一项可配可不配，如果不配置druid会根据url自动识别dbType，
-然后选择相应的driverClassName initialSize 0 初始化时建立物理连接的个数。初始化发生在显示调用init方法，
-或者第一次getConnection时 maxActive 8 最大连接池数量 maxIdle 8 已经不再使用，配置了也没效果 minIdle   最小连接池数量 maxWait   获取连接时最大等待时间，单位毫秒。配置了maxWait之后，
-缺省启用公平锁，并发效率会有所下降，
-如果需要可以通过配置useUnfairLock属性为true使用非公平锁。 poolPreparedStatements false 是否缓存preparedStatement，也就是PSCache。
-PSCache对支持游标的数据库性能提升巨大，比如说oracle。
-在mysql下建议关闭。 maxOpenPreparedStatements -1 要启用PSCache，必须配置大于0，当大于0时，
-poolPreparedStatements自动触发修改为true。
-在Druid中，不会存在Oracle下PSCache占用内存过多的问题，
-可以把这个数值配置大一些，比如说100 validationQuery   用来检测连接是否有效的sql，要求是一个查询语句。
-如果validationQuery为null，testOnBorrow、testOnReturn、
-testWhileIdle都不会其作用。 testOnBorrow true 申请连接时执行validationQuery检测连接是否有效，
-做了这个配置会降低性能。 testOnReturn false 归还连接时执行validationQuery检测连接是否有效，
-做了这个配置会降低性能 testWhileIdle false 建议配置为true，不影响性能，并且保证安全性。
-申请连接的时候检测，如果空闲时间大于
-timeBetweenEvictionRunsMillis，
-执行validationQuery检测连接是否有效。 timeBetweenEvictionRunsMillis   有两个含义：
-1) Destroy线程会检测连接的间隔时间
- 2) testWhileIdle的判断依据，详细看testWhileIdle属性的说明 numTestsPerEvictionRun   不再使用，一个DruidDataSource只支持一个EvictionRun minEvictableIdleTimeMillis     connectionInitSqls   物理连接初始化的时候执行的sql exceptionSorter 根据dbType自动识别 当数据库抛出一些不可恢复的异常时，抛弃连接 filters   属性类型是字符串，通过别名的方式配置扩展插件，
-常用的插件有：
-监控统计用的filter:stat 
-日志用的filter:log4j
- 防御sql注入的filter:wall proxyFilters   类型是List<com.alibaba.druid.filter.Filter>，
-如果同时配置了filters和proxyFilters，
-是组合关系，并非替换关系<strong>表1.1 配置属性</strong></p>
-<p>根据常用的配置属性，首先给出一个如下的配置文件，放置于src目录下。</p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>url:jdbc:mysql://localhost:3306/dragoon_v25_masterdb  </li>
-<li>driverClassName:com.mysql.jdbc.Driver  </li>
-<li>username:root  </li>
-<li>password:aaaaaaaa  </li>
-<li></li>
-<li>filters:stat  </li>
-<li></li>
-<li>maxActive:20  </li>
-<li>initialSize:1  </li>
-<li>maxWait:60000  </li>
-<li>minIdle:10  </li>
-<li>/#maxIdle:15  </li>
-<li></li>
-<li>timeBetweenEvictionRunsMillis:60000  </li>
-<li>minEvictableIdleTimeMillis:300000  </li>
-<li></li>
-<li>validationQuery:SELECT &#39;x&#39;  </li>
-<li>testWhileIdle:true  </li>
-<li>testOnBorrow:false  </li>
-<li>testOnReturn:false  </li>
-<li>/#poolPreparedStatements:true  </li>
-<li>maxOpenPreparedStatements:20  </li>
-<li></li>
-<li>/#对于长时间不使用的连接强制关闭  </li>
-<li>removeAbandoned:true  </li>
-<li>/#超过30分钟开始关闭空闲连接  </li>
-<li>removeAbandonedTimeout:1800  </li>
-<li>/#将当前关闭动作记录到日志  </li>
-<li>logAbandoned:true  </li>
-</ol>
-<p><strong>配置文件1.1 </strong></p>
-<p>配置项中指定了各个参数后，在连接池内部是这么使用这些参数的。数据库连接池在初始化的时候会创建initialSize个连接，当有数据库操作时，会从池中取出一个连接。如果当前池中正在使用的连接数等于maxActive，则会等待一段时间，等待其他操作释放掉某一个连接，如果这个等待时间超过了maxWait，则会报错；如果当前正在使用的连接数没有达到maxActive，则判断当前是否空闲连接，如果有则直接使用空闲连接，如果没有则新建立一个连接。在连接使用完毕后，不是将其物理连接关闭，而是将其放入池中等待其他操作复用。</p>
-<p>同时连接池内部有机制判断，如果当前的总的连接数少于miniIdle，则会建立新的空闲连接，以保证连接数得到miniIdle。如果当前连接池中某个连接在空闲了timeBetweenEvictionRunsMillis时间后任然没有使用，则被物理性的关闭掉。有些数据库连接的时候有超时限制（mysql连接在8小时后断开），或者由于网络中断等原因，连接池的连接会出现失效的情况，这时候设置一个testWhileIdle参数为true，可以保证连接池内部定时检测连接的可用性，不可用的连接会被抛弃或者重建，最大情况的保证从连接池中得到的Connection对象是可用的。当然，为了保证绝对的可用性，你也可以使用testOnBorrow为true（即在获取Connection对象时检测其可用性），不过这样会影响性能。</p>
-<h2 id="-2-"><a href=""></a>2 代码编写</h2>
-<h3 id="-2-1-spring"><a href=""></a>2.1 使用spring</h3>
-<p>首先给出spring配置文件</p>
-<p><strong>[html]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;  </li>
-<li>&lt;beans xmlns=&quot;<a href="http://www.springframework.org/schema/beans" target="_blank">http://www.springframework.org/schema/beans</a>&quot;  </li>
-<li>xmlns:xsi=&quot;<a href="http://www.w3.org/2001/XMLSchema-instance" target="_blank">http://www.w3.org/2001/XMLSchema-instance</a>&quot;  </li>
-<li>xsi:schemaLocation=&quot;<a href="http://www.springframework.org/schema/mvc" target="_blank">http://www.springframework.org/schema/mvc</a> <a href="http://www.springframework.org/schema/mvc/spring-mvc-3.0.xsd" target="_blank">http://www.springframework.org/schema/mvc/spring-mvc-3.0.xsd</a>  </li>
-<li><a href="http://www.springframework.org/schema/beans" target="_blank">http://www.springframework.org/schema/beans</a> <a href="http://www.springframework.org/schema/beans/spring-beans-3.0.xsd" target="_blank">http://www.springframework.org/schema/beans/spring-beans-3.0.xsd</a>  </li>
-<li><a href="http://www.springframework.org/schema/context" target="_blank">http://www.springframework.org/schema/context</a> <a href="http://www.springframework.org/schema/context/spring-context-3.0.xsd&quot;&gt;" target="_blank">http://www.springframework.org/schema/context/spring-context-3.0.xsd&quot;&gt;</a>  </li>
-<li><!-- 给web使用的spring文件 -->  </li>
-<li>&lt;bean id=&quot;propertyConfigurer&quot;  </li>
-<li>class=&quot;org.springframework.beans.factory.config.PropertyPlaceholderConfigurer&quot;&gt;  </li>
-<li><property name="locations">  </li>
-<li><list>  </li>
-<li><value>/WEB-INF/classes/dbconfig.properties</value>  </li>
-<li></list>  </li>
-<li></property>  </li>
-<li></bean>  </li>
-<li>&lt;bean id=&quot;dataSource&quot; class=&quot;com.alibaba.druid.pool.DruidDataSource&quot;  </li>
-<li>destroy-method=&quot;close&quot;&gt;  </li>
-<li><property name="url" value="${url}" />  </li>
-<li><property name="username" value="${username}" />  </li>
-<li><property name="password" value="${password}" />  </li>
-<li><property name="driverClassName" value="${driverClassName}" />  </li>
-<li><property name="filters" value="${filters}" />  </li>
-<li></li>
-<li><property name="maxActive" value="${maxActive}" />  </li>
-<li><property name="initialSize" value="${initialSize}" />  </li>
-<li><property name="maxWait" value="${maxWait}" />  </li>
-<li><property name="minIdle" value="${minIdle}" />  </li>
-<li></li>
-<li><property name="timeBetweenEvictionRunsMillis" value="${timeBetweenEvictionRunsMillis}" />  </li>
-<li><property name="minEvictableIdleTimeMillis" value="${minEvictableIdleTimeMillis}" />  </li>
-<li></li>
-<li><property name="validationQuery" value="${validationQuery}" />  </li>
-<li><property name="testWhileIdle" value="${testWhileIdle}" />  </li>
-<li><property name="testOnBorrow" value="${testOnBorrow}" />  </li>
-<li><property name="testOnReturn" value="${testOnReturn}" />  </li>
-<li>&lt;property name=&quot;maxOpenPreparedStatements&quot;  </li>
-<li>value=&quot;${maxOpenPreparedStatements}&quot; /&gt;  </li>
-<li><property name="removeAbandoned" value="${removeAbandoned}" /> <!-- 打开removeAbandoned功能 -->  </li>
-<li><property name="removeAbandonedTimeout" value="${removeAbandonedTimeout}" /> <!-- 1800秒，也就是30分钟 -->  </li>
-<li><property name="logAbandoned" value="${logAbandoned}" /> <!-- 关闭abanded连接时输出错误日志 -->  </li>
-<li></bean>  </li>
-<li></li>
-<li>&lt;bean id=&quot;dataSourceDbcp&quot; class=&quot;org.apache.commons.dbcp.BasicDataSource&quot;  </li>
-<li>destroy-method=&quot;close&quot;&gt;  </li>
-<li></li>
-<li><property name="driverClassName" value="${driverClassName}" />  </li>
-<li><property name="url" value="${url}" />  </li>
-<li><property name="username" value="${username}" />  </li>
-<li><property name="password" value="${password}" />  </li>
-<li></li>
-<li><property name="maxActive" value="${maxActive}" />  </li>
-<li><property name="minIdle" value="${minIdle}" />  </li>
-<li><property name="maxWait" value="${maxWait}" />  </li>
-<li><property name="defaultAutoCommit" value="true" />  </li>
-<li></li>
-<li><property name="timeBetweenEvictionRunsMillis" value="${timeBetweenEvictionRunsMillis}" />  </li>
-<li><property name="minEvictableIdleTimeMillis" value="${minEvictableIdleTimeMillis}" />  </li>
-<li></li>
-<li><property name="validationQuery" value="${validationQuery}" />  </li>
-<li><property name="testWhileIdle" value="${testWhileIdle}" />  </li>
-<li><property name="testOnBorrow" value="${testOnBorrow}" />  </li>
-<li><property name="testOnReturn" value="${testOnReturn}" />  </li>
-<li>&lt;property name=&quot;maxOpenPreparedStatements&quot;  </li>
-<li>value=&quot;${maxOpenPreparedStatements}&quot; /&gt;  </li>
-<li><property name="removeAbandoned" value="${removeAbandoned}" />   </li>
-<li><property name="removeAbandonedTimeout" value="${removeAbandonedTimeout}" />  </li>
-<li><property name="logAbandoned" value="${logAbandoned}" />  </li>
-<li></bean>  </li>
-<li></li>
-<li></li>
-<li><!-- jdbcTemplate -->  </li>
-<li><bean id="jdbc" class="org.springframework.jdbc.core.JdbcTemplate">  </li>
-<li><property name="dataSource">  </li>
-<li><ref bean="dataSource" />  </li>
-<li></property>  </li>
-<li></bean>  </li>
-<li></li>
-<li>&lt;bean id=&quot;SpringTableOperatorBean&quot; class=&quot;com.whyun.druid.model.TableOperator&quot;  </li>
-<li>scope=&quot;prototype&quot;&gt;  </li>
-<li><property name="dataSource">  </li>
-<li><ref bean="dataSource" />  </li>
-<li></property>  </li>
-<li></bean>  </li>
-<li></li>
-<li></beans>  </li>
-</ol>
-<p><strong>配置文件2.1</strong></p>
-<p>其中第一个bean中给出的配置文件/WEB-INF/classes/dbconfig.properties就是第1节中给出的配置文件。我这里还特地给出dbcp的spring配置项，目的就是将两者进行对比，方便大家进行迁移。这里没有使用JdbcTemplate，所以jdbc那个bean没有使用到。下面给出com.whyun.druid.model.TableOperator类的代码。</p>
-<p><strong>[java]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>package com.whyun.druid.model;  </li>
-<li></li>
-<li>import java.sql.Connection;  </li>
-<li>import java.sql.PreparedStatement;  </li>
-<li>import java.sql.SQLException;  </li>
-<li>import java.sql.Statement;  </li>
-<li></li>
-<li>import javax.sql.DataSource;  </li>
-<li></li>
-<li>public class TableOperator {  </li>
-<li>private DataSource dataSource;  </li>
-<li>public void setDataSource(DataSource dataSource) {  </li>
-<li>this.dataSource = dataSource;  </li>
-<li>}  </li>
-<li></li>
-<li>private static final int COUNT = 800;      </li>
-<li></li>
-<li>public TableOperator() {  </li>
-<li></li>
-<li>}  </li>
-<li></li>
-<li>public void tearDown() throws Exception {  </li>
-<li>try {  </li>
-<li>dropTable();  </li>
-<li>} catch (SQLException e) {  </li>
-<li>e.printStackTrace();  </li>
-<li>}         </li>
-<li>}  </li>
-<li></li>
-<li>public void insert() throws Exception {  </li>
-<li></li>
-<li>StringBuffer ddl = new StringBuffer();  </li>
-<li>ddl.append(&quot;INSERT INTO t_big (&quot;);  </li>
-<li>for (int i = 0; i &lt; COUNT; ++i) {  </li>
-<li>if (i != 0) {  </li>
-<li>ddl.append(&quot;, &quot;);  </li>
-<li>}  </li>
-<li>ddl.append(&quot;F&quot; + i);  </li>
-<li>}  </li>
-<li>ddl.append(&quot;) VALUES (&quot;);  </li>
-<li>for (int i = 0; i &lt; COUNT; ++i) {  </li>
-<li>if (i != 0) {  </li>
-<li>ddl.append(&quot;, &quot;);  </li>
-<li>}  </li>
-<li>ddl.append(&quot;?&quot;);  </li>
-<li>}  </li>
-<li>ddl.append(&quot;)&quot;);  </li>
-<li></li>
-<li>Connection conn = dataSource.getConnection();  </li>
-<li></li>
-<li>//        System.out.println(ddl.toString());  </li>
-<li></li>
-<li>PreparedStatement stmt = conn.prepareStatement(ddl.toString());  </li>
-<li></li>
-<li>for (int i = 0; i &lt; COUNT; ++i) {  </li>
-<li>stmt.setInt(i + 1, i);  </li>
-<li>}  </li>
-<li>stmt.execute();  </li>
-<li>stmt.close();  </li>
-<li></li>
-<li>conn.close();  </li>
-<li>}  </li>
-<li></li>
-<li>private void dropTable() throws SQLException {  </li>
-<li></li>
-<li>Connection conn = dataSource.getConnection();  </li>
-<li></li>
-<li>Statement stmt = conn.createStatement();  </li>
-<li>stmt.execute(&quot;DROP TABLE t_big&quot;);  </li>
-<li>stmt.close();  </li>
-<li></li>
-<li>conn.close();  </li>
-<li>}  </li>
-<li></li>
-<li>public void createTable() throws SQLException {  </li>
-<li>StringBuffer ddl = new StringBuffer();  </li>
-<li>ddl.append(&quot;CREATE TABLE t_big (FID INT AUTO_INCREMENT PRIMARY KEY &quot;);  </li>
-<li>for (int i = 0; i &lt; COUNT; ++i) {  </li>
-<li>ddl.append(&quot;, &quot;);  </li>
-<li>ddl.append(&quot;F&quot; + i);  </li>
-<li>ddl.append(&quot; BIGINT NULL&quot;);  </li>
-<li>}  </li>
-<li>ddl.append(&quot;)&quot;);  </li>
-<li></li>
-<li>Connection conn = dataSource.getConnection();  </li>
-<li></li>
-<li>Statement stmt = conn.createStatement();  </li>
-<li>stmt.execute(ddl.toString());  </li>
-<li>stmt.close();  </li>
-<li></li>
-<li>conn.close();  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p><strong>代码片段2.1</strong></p>
-<p><strong>注意：在使用的时候，通过获取完Connection对象，在使用完之后，要将其close掉，这样其实是将用完的连接放入到连接池中，如果你不close的话，会造成连接泄露。</strong>
-然后我们写一个servlet来测试他.</p>
-<p><strong>[java]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>package com.whyun.druid.servelt;  </li>
-<li></li>
-<li>import java.io.IOException;  </li>
-<li>import java.io.PrintWriter;  </li>
-<li>import java.sql.SQLException;  </li>
-<li></li>
-<li>import javax.servlet.ServletContext;  </li>
-<li>import javax.servlet.ServletException;  </li>
-<li>import javax.servlet.http.HttpServlet;  </li>
-<li>import javax.servlet.http.HttpServletRequest;  </li>
-<li>import javax.servlet.http.HttpServletResponse;  </li>
-<li></li>
-<li>import org.springframework.web.context.WebApplicationContext;  </li>
-<li>import org.springframework.web.context.support.WebApplicationContextUtils;  </li>
-<li></li>
-<li>import com.whyun.druid.model.TableOperator;  </li>
-<li></li>
-<li>public class TestServlet extends HttpServlet {  </li>
-<li>private TableOperator operator;  </li>
-<li></li>
-<li></li>
-<li>@Override  </li>
-<li>public void init() throws ServletException {  </li>
-<li></li>
-<li>super.init();  </li>
-<li>ServletContext servletContext = this.getServletContext();     </li>
-<li></li>
-<li>WebApplicationContext ctx  </li>
-<li>= WebApplicationContextUtils.getWebApplicationContext(servletContext);  </li>
-<li>operator = (TableOperator)ctx.getBean(&quot;SpringTableOperatorBean&quot;);  </li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* The doGet method of the servlet. <br> </li>
-<li>/* </li>
-<li>/* This method is called when a form has its tag value method equals to get. </li>
-<li>/*  </li>
-<li>/* @param request the request send by the client to the server </li>
-<li>/* @param response the response send by the server to the client </li>
-<li>/* @throws ServletException if an error occurred </li>
-<li>/* @throws IOException if an error occurred </li>
-<li>/*/  </li>
-<li>public void doGet(HttpServletRequest request, HttpServletResponse response)  </li>
-<li>throws ServletException, IOException {  </li>
-<li></li>
-<li>response.setContentType(&quot;text/html&quot;);  </li>
-<li>PrintWriter out = response.getWriter();  </li>
-<li></li>
-<li>boolean createResult = false;  </li>
-<li>boolean insertResult = false;  </li>
-<li>boolean dropResult = false;  </li>
-<li></li>
-<li>try {  </li>
-<li>operator.createTable();  </li>
-<li>createResult = true;  </li>
-<li>} catch (SQLException e) {  </li>
-<li>e.printStackTrace();  </li>
-<li>}  </li>
-<li>if (createResult) {  </li>
-<li>try {  </li>
-<li>operator.insert();  </li>
-<li>insertResult = true;  </li>
-<li>} catch (Exception e) {  </li>
-<li>e.printStackTrace();  </li>
-<li>}  </li>
-<li>try {  </li>
-<li>operator.tearDown();  </li>
-<li>dropResult = true;  </li>
-<li>} catch (Exception e) {  </li>
-<li>e.printStackTrace();  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li></li>
-<li>out.println(&quot;{&#39;createResult&#39;:&quot;+createResult+&quot;,&#39;insertResult&#39;:&quot;  </li>
-<li>+insertResult+&quot;,&#39;dropResult&#39;:&quot;+dropResult+&quot;}&quot;);  </li>
-<li></li>
-<li>out.flush();  </li>
-<li>out.close();  </li>
-<li>}  </li>
-<li></li>
-<li>}<br><strong>代码片段2.2</strong></li>
-</ol>
-<p>这里没有用到struts2或者springmvc，虽然大部分开发者用的是这两种框架。</p>
-<h3 id="-2-2-spring"><a href=""></a>2.2 不使用spring</h3>
-<p>类似于dbcp，druid也提供了原生态的支持。先看下面这段代码：</p>
-<p><strong>[java]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>package com.whyun.util.db;  </li>
-<li></li>
-<li>import javax.sql.DataSource;  </li>
-<li></li>
-<li>import org.apache.commons.dbcp.BasicDataSourceFactory;  </li>
-<li></li>
-<li>import com.alibaba.druid.pool.DruidDataSourceFactory;  </li>
-<li>import com.whyun.util.config.MySqlConfigProperty;  </li>
-<li>import com.whyun.util.config.MySqlConfigProperty2;  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* The Class DataSourceUtil. </li>
-<li>/*/  </li>
-<li>public class DataSourceUtil {  </li>
-<li></li>
-<li>//<em>/</em> 使用配置文件dbconfig.properties构建Druid数据源. /*/  </li>
-<li>public static final int DRUID_MYSQL_SOURCE = 0;  </li>
-<li></li>
-<li>//<em>/</em> 使用配置文件dbconfig2.properties构建Druid数据源. /*/  </li>
-<li>public static final int DRUID_MYSQL_SOURCE2 = 1;  </li>
-<li></li>
-<li>//<em>/</em> 使用配置文件dbconfig.properties构建Dbcp数据源. /*/  </li>
-<li>public static final int DBCP_SOURCE = 4;  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* 根据类型获取数据源 </li>
-<li>/* </li>
-<li>/* @param sourceType 数据源类型 </li>
-<li>/* @return druid或者dbcp数据源 </li>
-<li>/* @throws Exception the exception </li>
-<li>/*/  </li>
-<li>public static final DataSource getDataSource(int sourceType)  </li>
-<li>throws Exception {  </li>
-<li>DataSource dataSource = null;  </li>
-<li>switch(sourceType) {  </li>
-<li>case DRUID_MYSQL_SOURCE:              </li>
-<li>dataSource = DruidDataSourceFactory.createDataSource(  </li>
-<li>MySqlConfigProperty.getInstance().getProperties());               </li>
-<li>break;  </li>
-<li>case DRUID_MYSQL_SOURCE2:  </li>
-<li>dataSource = DruidDataSourceFactory.createDataSource(  </li>
-<li>MySqlConfigProperty2.getInstance().getProperties());  </li>
-<li>break;  </li>
-<li>case DBCP_SOURCE:  </li>
-<li>dataSource = BasicDataSourceFactory.createDataSource(  </li>
-<li>MySqlConfigProperty.getInstance().getProperties());  </li>
-<li>break;  </li>
-<li>}  </li>
-<li>return dataSource;  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p><strong>代码片段2.3 手动读取配置文件初始化连接池</strong></p>
-<p>第37行中调用了类com.alibaba.druid.pool.DruidDataSourceFactory中createDataSource方法来初始化一个连接池。对比dbcp的使用方法，两者很相似。</p>
-<p>下面给出一个多线程的测试程序。运行后可以比较druid和dbcp的性能差别。</p>
-<p><strong>[java]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>package com.whyun.druid.test;  </li>
-<li></li>
-<li>import java.sql.SQLException;  </li>
-<li>import java.util.ArrayList;  </li>
-<li>import java.util.List;  </li>
-<li>import java.util.concurrent.Callable;  </li>
-<li>import java.util.concurrent.ExecutorService;  </li>
-<li>import java.util.concurrent.Executors;  </li>
-<li>import java.util.concurrent.Future;  </li>
-<li>import java.util.concurrent.TimeUnit;  </li>
-<li></li>
-<li>import com.whyun.druid.model.TableOperator;  </li>
-<li>import com.whyun.util.db.DataSourceUtil;  </li>
-<li></li>
-<li>public class MutilThreadTest {  </li>
-<li>public static void test(int dbType, int times)  </li>
-<li>throws Exception {   </li>
-<li>int numOfThreads =Runtime.getRuntime().availableProcessors()/*2;  </li>
-<li>ExecutorService executor = Executors.newFixedThreadPool(numOfThreads);    </li>
-<li>final TableOperator test = new TableOperator();  </li>
-<li>//        int dbType = DataSourceUtil.DRUID_MYSQL_SOURCE;  </li>
-<li>//        dbType = DataSourceUtil.DBCP_SOURCE;  </li>
-<li>test.setDataSource(DataSourceUtil.getDataSource(dbType));  </li>
-<li></li>
-<li>boolean createResult = false;  </li>
-<li>try {  </li>
-<li>test.createTable();  </li>
-<li>createResult = true;  </li>
-<li>} catch (SQLException e) {  </li>
-<li>e.printStackTrace();  </li>
-<li>}  </li>
-<li>if (createResult) {  </li>
-<li>List<Future<Long>&gt; results = new ArrayList<Future<Long>&gt;();     </li>
-<li>for (int i = 0; i &lt; times; i++) {    </li>
-<li>results.add(executor.submit(new Callable<Long>() {    </li>
-<li>@Override    </li>
-<li>public Long call() throws Exception {    </li>
-<li>long begin = System.currentTimeMillis();  </li>
-<li>try {  </li>
-<li>test.insert();  </li>
-<li>//insertResult = true;  </li>
-<li>} catch (Exception e) {  </li>
-<li>e.printStackTrace();  </li>
-<li>}                             </li>
-<li>long end = System.currentTimeMillis();    </li>
-<li>return end - begin;    </li>
-<li>}    </li>
-<li>}));    </li>
-<li>}    </li>
-<li>executor.shutdown();    </li>
-<li>while(!executor.awaitTermination(Long.MAX_VALUE, TimeUnit.DAYS));    </li>
-<li></li>
-<li>long sum = 0;    </li>
-<li>for (Future<Long> result : results) {    </li>
-<li>sum += result.get();    </li>
-<li>}    </li>
-<li></li>
-<li></li>
-<li>System.out.println(&quot;---------------db type &quot;+dbType+&quot;------------------&quot;);    </li>
-<li>System.out.println(&quot;number of threads :&quot; + numOfThreads + &quot; times:&quot; + times);    </li>
-<li>System.out.println(&quot;running time: &quot; + sum + &quot;ms&quot;);    </li>
-<li>System.out.println(&quot;TPS: &quot; + (double)(100000 /* 1000) / (double)(sum));    </li>
-<li>System.out.println();    </li>
-<li>try {  </li>
-<li>test.tearDown();  </li>
-<li>//dropResult = true;  </li>
-<li>} catch (Exception e) {  </li>
-<li>e.printStackTrace();  </li>
-<li>}  </li>
-<li>} else {  </li>
-<li>System.out.println(&quot;初始化数据库失败&quot;);  </li>
-<li>}  </li>
-<li></li>
-<li>}    </li>
-<li></li>
-<li>public static void main (String argc[])  </li>
-<li>throws Exception {  </li>
-<li>test(DataSourceUtil.DBCP_SOURCE,50);  </li>
-<li>test(DataSourceUtil.DRUID_MYSQL_SOURCE,50);  </li>
-<li></li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p><strong>代码片段2.4 连接池多线程测试程序</strong></p>
-<hr>
-<h2 id="-3-"><a href=""></a><strong>3 监控</strong></h2>
-<h3 id="-3-1-web-"><a href=""></a><strong>3.1 web监控</strong></h3>
-<p>druid提供了sql语句查询时间等信息的监控功能。为了让数据库查询一直运行，下面特地写了一个ajax进行轮询。同时，还要保证在web.xml中配置如下信息</p>
-<p><strong>[html]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li><servlet>  </li>
-<li><servlet-name>DruidStatView</servlet-name>  </li>
-<li><servlet-class>com.alibaba.druid.support.http.StatViewServlet</servlet-class>  </li>
-<li></servlet>  </li>
-<li><servlet-mapping>  </li>
-<li><servlet-name>DruidStatView</servlet-name>  </li>
-<li><url-pattern>/druid//*</url-pattern>  </li>
-<li></servlet-mapping><br><strong>配置文件3.1 在web.xml中添加druid监控</strong></li>
-</ol>
-<p><em>**</em>同时将ajax代码提供如下</p>
-<p><strong>[javascript]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>function showTime() {  </li>
-<li>var myDate = new Date();  </li>
-<li>var timeStr = &#39;&#39;;  </li>
-<li>timeStr += myDate.getFullYear()+&#39;-&#39;; //获取完整的年份(4位,1970-????)  </li>
-<li>timeStr += myDate.getMonth()+&#39;-&#39;;      //获取当前月份(0-11,0代表1月)  </li>
-<li>timeStr += myDate.getDate() + &#39; &#39;;      //获取当前日(1-31)  </li>
-<li>timeStr += myDate.getHours()+&#39;:&#39;;      //获取当前小时数(0-23)  </li>
-<li>timeStr += myDate.getMinutes()+&#39;:&#39;;    //获取当前分钟数(0-59)  </li>
-<li>timeStr += myDate.getSeconds();    //获取当前秒数(0-59)  </li>
-<li>return timeStr  </li>
-<li>}  </li>
-<li>$(document).ready(function() {  </li>
-<li>function loadDBTestMessage() {  </li>
-<li>$.get(&#39;servlet/MysqlTestServlet&#39;,function(data) {  </li>
-<li>if (typeof(data) != &#39;object&#39;) {  </li>
-<li>data = eval(&#39;(&#39; + data + &#39;)&#39;);  </li>
-<li>}  </li>
-<li>var html = &#39;[&#39;+showTime()+&#39;]&#39;;  </li>
-<li>html += &#39;创建：&#39; + data[&#39;createResult&#39;];  </li>
-<li>html +=  &#39;插入：&#39; + data[&#39;insertResult&#39;];  </li>
-<li>html += &#39;销毁:&#39; + data[&#39;dropResult&#39;];  </li>
-<li>html +=   </li>
-<li>$(&#39;/#message&#39;).html(html);  </li>
-<li>});  </li>
-<li>}  </li>
-<li></li>
-<li>setInterval(function() {  </li>
-<li>loadDBTestMessage();  </li>
-<li>}, 10000);  </li>
-<li>});<br><strong>代码片段3.1 ajax轮询</strong></li>
-</ol>
-<p>这时打开<a href="http://localhost/druid-web/druid/" target="_blank">http://localhost/druid-web/druid/</a> 地址，会看到监控界面，点击其中的sql标签。</p>
-<p><img src="" alt=""></p>
-<p><strong>图3.1 监控界面查看sql查询时间</strong></p>
-<p><strong>注意：在写配置文件1.1时，要保证filter配置项中含有stat属性，否则这个地方看不到sql语句的监控数据。</strong></p>
-<p>表格中各项含义如下</p>
-<hr>
-<p>名称</p>
-<p>解释</p>
-<p>备注 ExecuteCount</p>
-<p>当前sql已执行次数 ExecTime</p>
-<p>当前sql已执行时间 ExecMax</p>
-<p>当前sql最大执行时间 Txn</p>
-<p>当前运行的事务数量 Error</p>
-<p>当前sql执行出错的数目 Update</p>
-<p>当前sql更新或者删除操作中已经影响的行数 FetchRow</p>
-<p>当前sql操作中已经读取的行数 Running</p>
-<p>当前sql正在运行的数目 Concurrent</p>
-<p>当前sql最大并发执行数  ExecHisto </p>
-<p>当前sql做execute操作的时间分布数组</p>
-<p>分为0-1,1-10,10-100,100-1000，&gt;1000，5个时间分布区域，单位为ms ExecRsHisto </p>
-<p>当前sql做execute操作和resultSet</p>
-<p>打开至关闭的时间总和分布数组</p>
-<p>同上 FetchRowHisto</p>
-<p>当前sql查询时间分布数组</p>
-<p>同上 UpdateHisto </p>
-<p>当前sql更新、删除时间分布数组</p>
-<p>同上表3.1 监控字段含义</p>
-<p>老版本的druid的jar包中不支持通过web界面进行远程监控，从0.2.14开始可以通过配置jmx地址来获取远程运行druid的服务器的监控信息。具体配置方法如下：</p>
-<p><strong>[html]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li><servlet>  </li>
-<li><servlet-name>DruidStatView</servlet-name>  </li>
-<li><servlet-class>com.alibaba.druid.support.http.StatViewServlet</servlet-class>  </li>
-<li><init-param>  </li>
-<li><param-name>jmxUrl</param-name>  </li>
-<li><param-value>service:jmx:rmi:///jndi/rmi://localhost:9004/jmxrmi</param-value>  </li>
-<li></init-param>  </li>
-<li></servlet>  </li>
-<li><servlet-mapping>  </li>
-<li><servlet-name>DruidStatView</servlet-name>  </li>
-<li><url-pattern>/druid//*</url-pattern>  </li>
-<li></servlet-mapping><br>配置文件3.2 远程监控web</li>
-</ol>
-<p>这里连接的配置参数中多了一个jmxUrl，里面配置一个jmx连接地址。jmx连接中也可以指定用户名、密码，在上面的servlet中添加两个init-param，其param-name分别为jmxUsername和jmxPassword，分别对应连接jmx的用户名和密码。对于jmx在服务器端的配置，可以参考3.2节中的介绍。</p>
-<h3 id="-3-2-jconsole-"><a href=""></a><strong>3.2 jconsole监控</strong></h3>
-<p>同时druid提供了jconsole监控的功能，因为界面做的不是很好，所以官方中没有对其的相关介绍。如果是纯java程序的话，上面提到的web监控就无法使用了，jconsole的作用就体现出来了。不过我在下面做教程的时候，依然使用的是刚才用的web项目。</p>
-<p>首先在catalina.bat（或者catalina.sh）中加入java的启动选项，放置于if &quot;%OS%&quot; == &quot;Windows_NT&quot; setlocal这句之后。</p>
-<p>set JAVA_OPTS=%JAVA_OPTS% -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=&quot;9004&quot; -Dcom.sun.management.jmxremote.authenticate=&quot;false&quot; -Dcom.sun.management.jmxremote.ssl=&quot;false&quot;</p>
-<p>保存完之后，启动startup.bat(或者startup.sh)来运行tomcat（上面设置java启动项的配置，按理来说在eclipse中也能适用，但是笔者在其下没有试验成功）。然后在远程的某台电脑的命令行中运行如下命令</p>
-<p>jconsole -pluginpath E:\kuaipan\workspace6\druid-web\WebRoot\WEB-INF\lib\druid-0.2.11.jar</p>
-<p>这里的最后一个参数就是你的druid的jar包的路径。</p>
-<p><img src="" alt=""></p>
-<p><strong>图3.2 jconsole连接界面</strong></p>
-<p>在远程进程的输入框里面输入ip:端口号，然后点击连接（上面的配置中没有指定用户名、密码，所以这里不用填写）。打开的界面如下：</p>
-<p><img src="" alt=""></p>
-<p><strong>图3.3 jconsole 连接成功界面</strong></p>
-<p>可以看到和web监控界面类似的数据了。
-来源： <a href="[http://blog.csdn.net/yunnysunny/article/details/8657095](http://blog.csdn.net/yunnysunny/article/details/8657095)">[http://blog.csdn.net/yunnysunny/article/details/8657095](http://blog.csdn.net/yunnysunny/article/details/8657095)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/连接池/">连接池</a></li></span></span> | <span class="tags">Tagged <a href="/tags/连接池/" class="label label-primary">连接池</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-连接池--druid教程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-连接池--druid教程" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-gitgithub--Git详解之三：Git分支/">Git详解之三：Git分支</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-gitgithub--Git详解之三：Git分支/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="git-git-">Git详解之三：Git分支</h1>
-<p>原文：<a href="http://git-scm.com/book/zh" target="_blank">《Pro Git》</a></p>
-<p><strong>Git 分支</strong></p>
-<p>几乎每一种版本控制系统都以某种形式支持分支。使用分支意味着你可以从开发主线上分离开来，然后在不影响主线的同时继续工作。在很多版本控制系统中，这是个昂贵的过程，常常需要创建一个源代码目录的完整副本，对大型项目来说会花费很长时间。（<a href="http://www.jobbole.com/" title="1" target="_blank">伯乐</a>在线注：如果你对Git还不了解，建议从本<a href="http://blog.jobbole.com/25775/" target="_blank">Git</a>系列<a href="http://blog.jobbole.com/25775/" target="_blank">第一篇文章</a>开始阅读）</p>
-<p>有人把 Git 的分支模型称为“必杀技特性”，而正是因为它，将 Git 从版本控制系统家族里区分出来。Git 有何特别之处呢？Git 的分支可谓是难以置信的轻量级，它的新建操作几乎可以在瞬间完成，并且在不同分支间切换起来也差不多一样快。和许多其他版本控制系统不同，Git 鼓励在工作流程中频繁使用分支与合并，哪怕一天之内进行许多次都没有关系。理解分支的概念并熟练运用后，你才会意识到为什么 Git 是一个如此强大而独特的工具，并从此真正改变你的开发方式。</p>
-<p><strong>3.1  何谓分支</strong></p>
-<p>为了理解 Git 分支的实现方式，我们需要回顾一下 Git 是如何储存数据的。或许你还记得第一章的内容，Git 保存的不是文件差异或者变化量，而只是一系列文件快照。</p>
-<p>在 Git 中提交时，会保存一个提交（commit）对象，该对象包含一个指向暂存内容快照的指针，包含本次提交的作者等相关附属信息，包含零个或多个指向该提交对 象的父对象指针：首次提交是没有直接祖先的，普通提交有一个祖先，由两个或多个分支合并产生的提交则有多个祖先。</p>
-<p>为直观起见，我们假设在工作目录中有三个文件，准备将它们暂存后提交。暂存操作会对每一个文件计算校验和（即第一章中提到的 SHA-1 哈希字串），然后把当前版本的文件快照保存到 Git 仓库中（Git 使用 blob 类型的对象存储这些快照），并将校验和加入暂存区域：</p>
-<p>1</p>
-<p>2
-$ git add README</p>
-<p>test</p>
-<p>.rb LICENSE</p>
-<p>$ git commit -m</p>
-<p>&#39;initial commit of my project&#39;</p>
-<p>当使用 git commit新建一个提交对象前，Git 会先计算每一个子目录（本例中就是项目根目录）的校验和，然后在 Git 仓库中将这些目录保存为树（tree）对象。之后 Git 创建的提交对象，除了包含相关提交信息以外，还包含着指向这个树对象（项目根目录）的指针，如此它就可以在将来需要的时候，重现此次快照的内容了。</p>
-<p>现在，Git 仓库中有五个对象：三个表示文件快照内容的 blob 对象；一个记录着目录树内容及其中各个文件对应 blob 对象索引的 tree 对象；以及一个包含指向 tree 对象（根目录）的索引和其他提交信息元数据的 commit 对象。概念上来说，仓库中的各个对象保存的数据和相互关系看起来如图 3-1 所示：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches1.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-1. 单个提交对象在仓库中的数据结构</p>
-<p>作些修改后再次提交，那么这次的提交对象会包含一个指向上次提交对象的指针（译注：即下图中的 parent 对象）。两次提交后，仓库历史会变成图 3-2 的样子：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches12.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-2. 多个提交对象之间的链接关系</p>
-<p>现在来谈分支。Git 中的分支，其实本质上仅仅是个指向 commit 对象的可变指针。Git 会使用 master 作为分支的默认名字。在若干次提交后，你其实已经有了一个指向最后一次提交对象的 master 分支，它在每次提交的时候都会自动向前移动。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches13.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-3. 分支其实就是从某个提交对象往回看的历史</p>
-<p>那么，Git 又是如何创建一个新的分支的呢？答案很简单，创建一个新的分支指针。比如新建一个 testing 分支，可以使用git branch命令：
-1$ git branch testing</p>
-<p>这会在当前 commit 对象上新建一个分支指针（见图 3-4）。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches14.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-4. 多个分支指向提交数据的历史</p>
-<p>那么，Git 是如何知道你当前在哪个分支上工作的呢？其实答案也很简单，它保存着一个名为 HEAD 的特别指针。请注意它和你熟知的许多其他版本控制系统（比如 Subversion 或 CVS）里的 HEAD 概念大不相同。在 Git 中，它是一个指向你正在工作中的本地分支的指针（译注：将 HEAD 想象为当前分支的别名。）。运行</p>
-<p>git branch
- 命令，仅仅是建立了一个新的分支，但不会自动切换到这个分支中去，所以在这个例子中，我们依然还在 master 分支里工作（参考图 3-5）。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches15.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-5. HEAD 指向当前所在的分支</p>
-<p>要切换到其他分支，可以执行 git checkout命令。我们现在转换到新建的 testing 分支：
-1$ git checkout testing</p>
-<p>这样 HEAD 就指向了 testing 分支（见图3-6）。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches16.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-6. HEAD 在你转换分支时指向新的分支</p>
-<p>这样的实现方式会给我们带来什么好处呢？好吧，现在不妨再提交一次：
-$ vim test.rb $ git commit -a -m ‘made a change’</p>
-<p>图 3-7 展示了提交后的结果。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches17.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-7. 每次提交后 HEAD 随着分支一起向前移动</p>
-<p>非常有趣，现在 testing 分支向前移动了一格，而 master 分支仍然指向原先 </p>
-<p>git checkout
- 时所在的 commit 对象。现在我们回到 master 分支看看：
-1$ git checkout master</p>
-<p>图 3-8 显示了结果。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches18.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-8. HEAD 在一次 checkout 之后移动到了另一个分支</p>
-<p>这条命令做了两件事。它把 HEAD 指针移回到 master 分支，并把工作目录中的文件换成了 master 分支所指向的快照内容。也就是说，现在开始所做的改动，将始于本项目中一个较老的版本。它的主要作用是将 testing 分支里作出的修改暂时取消，这样你就可以向另一个方向进行开发。</p>
-<p>我们作些修改后再次提交：
-1</p>
-<p>2
-$ vim</p>
-<p>test</p>
-<p>.rb</p>
-<p>$ git commit -a -m</p>
-<p>&#39;made other changes&#39;</p>
-<p>现在我们的项目提交历史产生了分叉（如图 3-9 所示），因为刚才我们创建了一个分支，转换到其中进行了一些工作，然后又回到原来的主分支进行了另外一些工作。这些改变分别孤立在不同的分支里：我们可以 在不同分支里反复切换，并在时机成熟时把它们合并到一起。而所有这些工作，仅仅需要</p>
-<p>branch
- 和 </p>
-<p>checkout
- 这两条命令就可以完成。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches19.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-9. 不同流向的分支历史</p>
-<p>由于 Git 中的分支实际上仅是一个包含所指对象校验和（40 个字符长度 SHA-1 字串）的文件，所以创建和销毁一个分支就变得非常廉价。说白了，新建一个分支就是向一个文件写入 41 个字节（外加一个换行符）那么简单，当然也就很快了。</p>
-<p>这和大多数版本控制系统形成了鲜明对比，它们管理分支大多采取备份所有项目文件到特定目录的方式，所以根据项目文件数量和大小不同，可能花费的时间 也会有相当大的差别，快则几秒，慢则数分钟。而 Git 的实现与项目复杂度无关，它永远可以在几毫秒的时间内完成分支的创建和切换。同时，因为每次提交时都记录了祖先信息（译注：即</p>
-<p>parent
- 对象），将来要合并分支时，寻找恰当的合并基础（译注：即共同祖先）的工作其实已经自然而然地摆在那里了，所以实现起来非常容易。Git 鼓励开发者频繁使用分支，正是因为有着这些特性作保障。</p>
-<p>接下来看看，我们为什么应该频繁使用分支。</p>
-<p><strong>3.2  分支的新建与合并</strong></p>
-<p>现在让我们来看一个简单的分支与合并的例子，实际工作中大体也会用到这样的工作流程：</p>
-<ol>
-<li>开发某个网站。 2. 为实现某个新的需求，创建一个分支。 3. 在这个分支上开展工作。</li>
-</ol>
-<p>假设此时，你突然接到一个电话说有个很严重的问题需要紧急修补，那么可以按照下面的方式处理：</p>
-<ol>
-<li>返回到原先已经发布到生产服务器上的分支。 2. 为这次紧急修补建立一个新分支，并在其中修复问题。 3. 通过测试后，回到生产服务器所在的分支，将修补分支合并进来，然后再推送到生产服务器上。 4. 切换到之前实现新需求的分支，继续工作。</li>
-</ol>
-<p><strong>分支的新建与切换</strong></p>
-<p>首先，我们假设你正在项目中愉快地工作，并且已经提交了几次更新（见图 3-10）。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches20.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-10. 一个简短的提交历史</p>
-<p>现在，你决定要修补问题追踪系统上的 /#53 问题。顺带说明下，Git 并不同任何特定的问题追踪系统打交道。这里为了说明要解决的问题，才把新建的分支取名为 iss53。要新建并切换到该分支，运行git checkout 并加上 -b 参数：</p>
-<p>1</p>
-<p>2
-$ git checkout -b iss53</p>
-<p>Switched to a new branch</p>
-<p>&quot;iss53&quot;</p>
-<p>这相当于执行下面这两条命令：</p>
-<p>1</p>
-<p>2
-$ git branch iss53</p>
-<p>$ git checkout iss53</p>
-<p>图 3-11 示意该命令的执行结果。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches21.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-11. 创建了一个新分支的指针</p>
-<p>接着你开始尝试修复问题，在提交了若干次更新后，iss53分支的指针也会随着向前推进，因为它就是当前分支（换句话说，当前的 HEAD 指针正指向 iss53，见图 3-12）：</p>
-<p>1</p>
-<p>2
-$ vim index.html</p>
-<p>$ git commit -a -m</p>
-<p>&#39;added a new footer [issue 53]&#39;</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches22.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-12. iss53 分支随工作进展向前推进</p>
-<p>现在你就接到了那个网站问题的紧急电话，需要马上修补。有了 Git ，我们就不需要同时发布这个补丁和 iss53 里作出的修改，也不需要在创建和发布该补丁到服务器之前花费大力气来复原这些修改。唯一需要的仅仅是切换回master 分支。</p>
-<p>不过在此之前，留心你的暂存区或者工作目录里，那些还没有提交的修改，它会和你即将检出的分支产生冲突从而阻止 Git 为你切换分支。切换分支的时候最好保持一个清洁的工作区域。稍后会介绍几个绕过这种问题的办法（分别叫做 stashing 和 commit amending）。目前已经提交了所有的修改，所以接下来可以正常转换到master 分支：</p>
-<p>1</p>
-<p>2
-$ git checkout master</p>
-<p>Switched to branch</p>
-<p>&quot;master&quot;</p>
-<p>此时工作目录中的内容和你在解决问题 /#53 之前一模一样，你可以集中精力进行紧急修补。这一点值得牢记：Git 会把工作目录的内容恢复为检出某分支时它所指向的那个提交对象的快照。它会自动添加、删除和修改文件以确保目录的内容和你当时提交时完全一样。</p>
-<p>接下来，你得进行紧急修补。我们创建一个紧急修补分支 hotfix 来开展工作，直到<a href="http://www.amazon.cn/gp/product/B007XPTAIS/ref=as_li_qf_sp_asin_il_tl?ie=UTF8&amp;tag=vastwork-23&amp;linkCode=as2&amp;camp=536&amp;creative=3200&amp;creativeASIN=B007XPTAIS" title="搞定(套装共3册) " target="_blank">搞定</a>（见图 3-13）：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-$ git checkout -b</p>
-<p>&#39;hotfix&#39;</p>
-<p>Switched to a new branch</p>
-<p>&quot;hotfix&quot;
-$ vim index.html</p>
-<p>$ git commit -a -m</p>
-<p>&#39;fixed the broken email address&#39;
-[hotfix]: created 3a0874c:</p>
-<p>&quot;fixed the broken email address&quot;</p>
-<p>1 files changed, 0 insertions(+), 1 deletions(-)</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches23.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-13. hotfix 分支是从 master 分支所在点分化出来的</p>
-<p>有必要作些测试，确保修补是成功的，然后回到 master 分支并把它合并进来，然后发布到生产服务器。用 git merge 命令来进行合并：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-$ git checkout master</p>
-<p>$ git merge hotfix
-Updating f42c576..3a0874c</p>
-<p>Fast forward
-README | 1 -</p>
-<p>1 files changed, 0 insertions(+), 1 deletions(-)</p>
-<p>请注意，合并时出现了“Fast forward”的提示。由于当前 master 分支所在的提交对象是要并入的 hotfix 分支的直接上游，Git 只需把master 分支指针直接右移。换句话说，如果顺着一个分支走下去可以到达另一个分支的话，那么 Git 在合并两者时，只会简单地把指针右移，因为这种单线的历史分支不存在任何需要解决的分歧，所以这种合并过程可以称为快进（Fast forward）。</p>
-<p>现在最新的修改已经在当前 master 分支所指向的提交对象中了，可以部署到生产服务器上去了（见图 3-14）。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches24.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-14. 合并之后，master 分支和 hotfix 分支指向同一位置。</p>
-<p>在那个超级重要的修补发布以后，你想要回到被打扰之前的工作。由于当前 hotfix 分支和 master 都指向相同的提交对象，所以hotfix 已经完成了历史使命，可以删掉了。使用 git branch 的 -d 选项执行删除操作：</p>
-<p>1</p>
-<p>2
-$ git branch -d hotfix</p>
-<p>Deleted branch hotfix (3a0874c).</p>
-<p>现在回到之前未完成的 /#53 问题修复分支上继续工作（图 3-15）：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-$ git checkout iss53</p>
-<p>Switched to branch</p>
-<p>&quot;iss53&quot;
-$ vim index.html</p>
-<p>$ git commit -a -m</p>
-<p>&#39;finished the new footer [issue 53]&#39;
-[iss53]: created ad82d7a:</p>
-<p>&quot;finished the new footer [issue 53]&quot;</p>
-<p>1 files changed, 1 insertions(+), 0 deletions(-)</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches25.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-15. iss53 分支可以不受影响继续推进。</p>
-<p>不用担心之前 hotfix 分支的修改内容尚未包含到 iss53 中来。如果确实需要纳入此次修补，可以用git merge master 把 master 分支合并到 iss53；或者等 iss53 完成之后，再将iss53 分支中的更新并入 master。</p>
-<p><strong>分支的合并</strong></p>
-<p>在问题 /#53 相关的工作完成之后，可以合并回 master 分支。实际操作同前面合并 hotfix 分支差不多，只需回到master分支，运行 git merge 命令指定要合并进来的分支：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5$ git checkout master</p>
-<p>$ git merge iss53
-Merge made by recursive.</p>
-<p>README | 1 +
-1 files changed, 1 insertions(+), 0 deletions(-)</p>
-<p>请注意，这次合并操作的底层实现，并不同于之前 hotfix 的并入方式。因为这次你的开发历史是从更早的地方开始分叉的。由于当前 master 分支所指向的提交对象（C4）并不是 iss53 分支的直接祖先，Git 不得不进行一些额外处理。就此例而言，Git 会用两个分支的末端（C4 和 C5）以及它们的共同祖先（C2）进行一次简单的三方合并计算。图 3-16 用红框标出了 Git 用于合并的三个提交对象：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches26.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-16. Git 为分支合并自动识别出最佳的同源合并点。</p>
-<p>这次，Git 没有简单地把分支指针右移，而是对三方合并后的结果重新做一个新的快照，并自动创建一个指向它的提交对象（C6）（见图 3-17）。这个提交对象比较特殊，它有两个祖先（C4 和 C5）。</p>
-<p>值得一提的是 Git 可以自己裁决哪个共同祖先才是最佳合并基础；这和 CVS 或 Subversion（1.5 以后的版本）不同，它们需要开发者手工指定合并基础。所以此特性让 Git 的合并操作比其他系统都要简单不少。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches27.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-17. Git 自动创建了一个包含了合并结果的提交对象。</p>
-<p>既然之前的工作成果已经合并到 master 了，那么 iss53 也就没用了。你可以就此删除它，并在问题追踪系统里关闭该问题。
-1$ git branch -d iss53</p>
-<p><strong>遇到冲突时的分支合并</strong></p>
-<p>有时候合并操作并不会如此顺利。如果在不同的分支中都修改了同一个文件的同一部分，Git 就无法干净地把两者合到一起（译注：逻辑上说，这种问题只能由人来裁决。）。如果你在解决问题 /#53 的过程中修改了hotfix 中修改的部分，将得到类似下面的结果：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-$ git merge iss53</p>
-<p>Auto-merging index.html
-CONFLICT (content): Merge conflict</p>
-<p>in</p>
-<p>index.html</p>
-<p>Automatic merge failed; fix conflicts and</p>
-<p>then</p>
-<p>commit the result.</p>
-<p>Git 作了合并，但没有提交，它会停下来等你解决冲突。要看看哪些文件在合并时发生冲突，可以用 git status 查阅：
-1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11[master/*]$ git status</p>
-<p>index.html: needs merge
-/# On branch master</p>
-<p>/# Changed but not updated:
-/# (use &quot;git add</p>
-<p>...&quot; to update what will be committed)
-/# (use &quot;git checkout -- ...&quot;</p>
-<p>to discard changes</p>
-<p>in</p>
-<p>working directory)
-/#</p>
-<p>/# unmerged: index.html
-/#</p>
-<p>任何包含未解决冲突的文件都会以未合并（unmerged）的状态列出。Git 会在有冲突的文件里加入标准的冲突解决标记，可以通过它们来手工定位并解决这些冲突。可以看到此文件包含类似下面这样的部分：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches01.png" title="Git branches01" target="_blank"><img src="&quot;Git branches01&quot;" alt=""></a><a href="http://cdn2.jobbole.com/2012/08/Git-branches02.png" title="Git branches02" target="_blank"><img src="&quot;Git branches02&quot;" alt=""></a></p>
-<p>可以看到 ======= 隔开的上半部分，是 HEAD（即 master 分支，在运行merge 命令时所切换到的分支）中的内容，下半部分是在 iss53 分支中的内容。解决冲突的办法无非是二者选其一或者由你亲自整合到一起。比如你可以通过把这段内容替换为下面这样来解决：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches03.png" title="Git branches03" target="_blank"><img src="&quot;Git branches03&quot;" alt=""></a></p>
-<p>这个解决方案各采纳了两个分支中的一部分内容，而且我还删除了 &lt;&lt;&lt;&lt;&lt;&lt;&lt;，======= 和 &gt;&gt;&gt;&gt;&gt;&gt;&gt; 这些行。在解决了所有文件里的所有冲突后，运行 git add 将把它们标记为已解决状态（译注：实际上就是来一次快照保存到暂存区域。）。因为一旦暂存，就表示冲突已经解决。如果你想用一个有图形界面的工具来解决这些问题，不妨运行git mergetool，它会调用一个可视化的合并工具并引导你解决所有冲突：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7$ git mergetool</p>
-<p>merge tool candidates: kdiff3 tkdiff xxdiff meld gvimdiff opendiff emerge vimdiff
-Merging the files: index.html</p>
-<p>Normal merge conflict</p>
-<p>for</p>
-<p>&#39;index.html&#39;</p>
-<p>:
-{</p>
-<p>local</p>
-<p>}: modified</p>
-<p>{remote}: modified
-Hit</p>
-<p>return</p>
-<p>to start merge resolution tool (opendiff):</p>
-<p>如果不想用默认的合并工具（Git 为我默认选择了 opendiff，因为我在 Mac 上运行了该命令），你可以在上方”merge tool candidates”里找到可用的合并工具列表，输入你想用的工具名。我们将在第七章讨论怎样改变环境中的默认值。</p>
-<p>退出合并工具以后，Git 会询问你合并是否成功。如果回答是，它会为你把相关文件暂存起来，以表明状态为已解决。</p>
-<p>再运行一次 git status 来确认所有冲突都已解决：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-$ git status</p>
-<p>/# On branch master
-/# Changes to be committed:</p>
-<p>/# (use &quot;git reset HEAD
-...&quot; to unstage)</p>
-<p>/#
-/# modified: index.html</p>
-<p>/#</p>
-<p>如果觉得满意了，并且确认所有冲突都已解决，也就是进入了暂存区，就可以用 git commit 来完成这次合并提交。提交的记录差不多是这样：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-Merge branch</p>
-<p>&#39;iss53&#39;</p>
-<p>Conflicts:
-index.html</p>
-<p>/#
-/# It looks like you may be committing a MERGE.</p>
-<p>/# If this is not correct, please remove the file
-/# .git/MERGE_HEAD /# and try again.</p>
-<p>/#</p>
-<p>如果想给将来看这次合并的人一些方便，可以修改该信息，提供更多合并细节。比如你都作了哪些改动，以及这么做的原因。有时候裁决冲突的理由并不直接或明显，有必要略加注解。</p>
-<hr>
-<p><strong>3.3  分支的管理</strong></p>
-<p>到目前为止，你已经学会了如何创建、合并和删除分支。除此之外，我们还需要学习如何管理分支，在日后的常规工作中会经常用到下面介绍的管理命令。</p>
-<p>git branch 命令不仅仅能创建和删除分支，如果不加任何参数，它会给出当前所有分支的清单：
-1</p>
-<p>2
-3</p>
-<p>4
-$ git branch</p>
-<p>iss53
-/* master</p>
-<p>testing</p>
-<p>注意看 master 分支前的 /* 字符：它表示当前所在的分支。也就是说，如果现在提交更新，master 分支将随着开发进度前移。若要查看各个分支最后一个提交对象的信息，运行git branch -v：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-$ git branch -</p>
-<p>v</p>
-<p>iss53 93b412c fix javascript issue
-/* master 7a98805 Merge branch</p>
-<p>&#39;iss53&#39;</p>
-<p>testing 782fd34 add scott to the author list</p>
-<p>in</p>
-<p>the readmes</p>
-<p>要从该清单中筛选出你已经（或尚未）与当前分支合并的分支，可以用 –merge 和 –no-merged 选项（Git 1.5.6 以上版本）。比如用git branch –merge 查看哪些分支已被并入当前分支（译注：也就是说哪些分支是当前分支的直接上游。）：</p>
-<p>1</p>
-<p>2
-3$ git branch --merged</p>
-<p>iss53
-/* master</p>
-<p>之前我们已经合并了 iss53，所以在这里会看到它。一般来说，列表中没有 /* 的分支通常都可以用 git branch -d 来删掉。原因很简单，既然已经把它们所包含的工作整合到了其他分支，删掉也不会损失什么。</p>
-<p>另外可以用 git branch –no-merged 查看尚未合并的工作：</p>
-<p>1</p>
-<p>2
-$ git branch --no-merged</p>
-<p>testing</p>
-<p>它会显示还未合并进来的分支。由于这些分支中还包含着尚未合并进来的工作成果，所以简单地用 git branch -d 删除该分支会提示错误，因为那样做会丢失数据：
-1</p>
-<p>2
-3$ git branch -d testing</p>
-<p>error: The branch</p>
-<p>&#39;testing&#39;</p>
-<p>is not an ancestor of your current HEAD.
-If you are sure you want to delete it, run</p>
-<p>&#39;git branch -D testing&#39;</p>
-<p>.</p>
-<p>不过，如果你确实想要删除该分支上的改动，可以用大写的删除选项 -D 强制执行，就像上面提示信息中给出的那样。</p>
-<p><strong>3.4  利用分支进行开发的工作流程</strong></p>
-<p>现在我们已经学会了新建分支和合并分支，可以（或应该）用它来做点什么呢？在本节，我们会介绍一些利用分支进行开发的工作流程。而正是由于分支管理的便捷，才衍生出了这类典型的工作模式，你可以根据项目的实际情况选择一种用用看。</p>
-<p><strong>长期分支</strong></p>
-<p>由于 Git 使用简单的三方合并，所以就算在较长一段时间内，反复多次把某个分支合并到另一分支，也不是什么难事。也就是说，你可以同时拥有多个开放的分支，每个分支用于完成特定的任务，随着开发的推进，你可以随时把某个特性分支的成果并到其他分支中。</p>
-<p>许多使用 Git 的开发者都喜欢用这种方式来开展工作，比如仅在 master 分支中保留完全稳定的代码，即已经发布或即将发布的代码。与此同时，他们还有一个名为develop 或 next 的平行分支，专门用于后续的开发，或仅用于稳定性测试 — 当然并不是说一定要绝对稳定，不过一旦进入某种稳定状态，便可以把它合并到master 里。这样，在确保这些已完成的特性分支（短期分支，比如之前的 iss53 分支）能够通过所有测试，并且不会引入更多错误之后，就可以并到主干分支中，等待下一次的发布。</p>
-<p>本质上我们刚才谈论的，是随着提交对象不断右移的指针。稳定分支的指针总是在提交历史中落后一大截，而前沿分支总是比较靠前（见图 3-18）。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches28.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-18. 稳定分支总是比较老旧。</p>
-<p>或者把它们想象成工作流水线，或许更好理解一些，经过测试的提交对象集合被遴选到更稳定的流水线（见图 3-19）。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches29.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-19. 想象成流水线可能会容易点。</p>
-<p>你可以用这招维护不同层次的稳定性。某些大项目还会有个 proposed（建议）或 pu（proposed updates，建议更新）分支，它包含着那些可能还没有成熟到进入next 或 master 的内容。这么做的目的是拥有不同层次的稳定性：当这些分支进入到更稳定的水平时，再把它们合并到更高层分支中去。再次说明下，使用多个长期分支的做法并非必需，不过一般来说，对于特大型项目或特复杂的项目，这么做确实更容易管理。</p>
-<p><strong>特性分支</strong></p>
-<p>在任何规模的项目中都可以使用特性（Topic）分支。一个特性分支是指一个短期的，用来实现单一特性或与其相关工作的分支。可能你在以前的版本控 制系统里从未做过类似这样的事情，因为通常创建与合并分支消耗太大。然而在 Git 中，一天之内建立、使用、合并再删除多个分支是常见的事。</p>
-<p>我们在上节的例子里已经见过这种用法了。我们创建了 iss53 和 hotfix 这两个特性分支，在提交了若干更新后，把它们合并到主干分支，然后删除。该技术允许你迅速且完全的进行语境切换 — 因为你的工作分散在不同的流水线里，每个分支里的改变都和它的目标特性相关，浏览代码之类的事情因而变得更简单了。你可以把作出的改变保持在特性分支中几 分钟，几天甚至几个月，等它们成熟以后再合并，而不用在乎它们建立的顺序或者进度。</p>
-<p>现在我们来看一个实际的例子。请看图 3-20，由下往上，起先我们在 master 工作到 C1，然后开始一个新分支 iss91 尝试修复 91 号缺陷，提交到 C6 的时候，又冒出一个解决该问题的新办法，于是从之前 C4 的地方又分出一个分支iss91v2，干到 C8 的时候，又回到主干 master 中提交了 C9 和 C10，再回到 iss91v2 继续工作，提交 C11，接着，又冒出个不太确定的想法，从 master 的最新提交 C10 处开了个新的分支dumbidea 做些试验。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches30.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-20. 拥有多个特性分支的提交历史。</p>
-<p>现在，假定两件事情：我们最终决定使用第二个解决方案，即 iss91v2 中的办法；另外，我们把 dumbidea 分支拿给同事们看了以后，发现它竟然是个天才之作。所以接下来，我们准备抛弃原来的iss91 分支（实际上会丢弃 C5 和 C6），直接在主干中并入另外两个分支。最终的提交历史将变成图 3-21 这样：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches31.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-21. 合并了 dumbidea 和 iss91v2 后的分支历史。</p>
-<p>请务必牢记这些分支全部都是本地分支，这一点很重要。当你在使用分支及合并的时候，一切都是在你自己的 Git 仓库中进行的 — 完全不涉及与服务器的交互。</p>
-<hr>
-<p><strong>3.5  远程分支</strong></p>
-<p>远程分支（remote branch）是对远程仓库中的分支的索引。它们是一些无法移动的本地分支；只有在 Git 进行网络交互时才会更新。远程分支就像是书签，提醒着你上次连接远程仓库时上面各分支的位置。</p>
-<p>我们用 (远程仓库名)/(分支名) 这样的形式表示远程分支。比如我们想看看上次同 origin 仓库通讯时master 的样子，就应该查看 origin/master 分支。如果你和同伴一起修复某个问题，但他们先推送了一个iss53 分支到远程仓库，虽然你可能也有一个本地的 iss53 分支，但指向服务器上最新更新的却应该是 origin/iss53 分支。</p>
-<p>可能有点乱，我们不妨举例说明。假设你们团队有个地址为 git.ourcompany.com 的 Git 服务器。如果你从这里克隆，Git 会自动为你将此远程仓库命名为origin，并下载其中所有的数据，建立一个指向它的 master 分支的指针，在本地命名为origin/master，但你无法在本地更改其数据。接着，Git 建立一个属于你自己的本地master 分支，始于 origin 上 master分支相同的位置，你可以就此开始工作（见图 3-22）：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches32.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-22. 一次 Git 克隆会建立你自己的本地分支 master 和远程分支 origin/master，它们都指向 origin/master 分支的最后一次提交。</p>
-<p>如果你在本地 master 分支做了些改动，与此同时，其他人向 git.ourcompany.com 推送了他们的更新，那么服务器上的master 分支就会向前推进，而于此同时，你在本地的提交历史正朝向不同方向发展。不过只要你不和服务器通讯，你的 origin/master 指针仍然保持原位不会移动（见图 3-23）。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches33.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-23. 在本地工作的同时有人向远程仓库推送内容会让提交历史开始分流。</p>
-<p>可以运行 git fetch origin 来同步远程服务器上的数据到本地。该命令首先找到 origin 是哪个服务器（本例为git.ourcompany.com），从上面获取你尚未拥有的数据，更新你本地的数据库，然后把 origin/master 的指针移到它最新的位置上（见图 3-24）。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches34.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-24. git fetch 命令会更新 remote 索引。</p>
-<p>为了演示拥有多个远程分支（在不同的远程服务器上）的项目是如何工作的，我们假设你还有另一个仅供你的敏捷开发小组使用的内部服务器 git.team1.ourcompany.com。可以用第二章中提到的git remote add 命令把它加为当前项目的远程分支之一。我们把它命名为 teamone，以便代替原始的 Git 地址（见图 3-25）。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches35.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-25. 把另一个服务器加为远程仓库</p>
-<p>现在你可以用 git fetch teamone 来获取小组服务器上你还没有的数据了。由于当前该服务器上的内容是你 origin 服务器上的子集，Git 不会下载任何数据，而只是简单地创建一个名为teamone/master 的分支，指向 teamone 服务器上 master分支所在的提交对象31b8e（见图 3-26）。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches36.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-26. 你在本地有了一个指向 teamone 服务器上 master 分支的索引。</p>
-<p><strong>推送本地分支</strong></p>
-<p>要想和其他人分享某个本地分支，你需要把它推送到一个你拥有写权限的远程仓库。你的本地分支不会被自动同步到你引入的远程服务器上，除非你明确执行推送操作。换句话说，对于无意分享的分支，你尽管保留为私人分支好了，而只推送那些协同工作要用到的特性分支。</p>
-<p>如果你有个叫 serverfix 的分支需要和他人一起开发，可以运行 git push (远程仓库名) (分支名)：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7$ git push origin serverfix</p>
-<p>Counting objects: 20,</p>
-<p>done</p>
-<p>.
-Compressing objects: 100% (14</p>
-<p>/14</p>
-<p>),</p>
-<p>done</p>
-<p>.</p>
-<p>Writing objects: 100% (15</p>
-<p>/15</p>
-<p>), 1.74 KiB,</p>
-<p>done</p>
-<p>.
-Total 15 (delta 5), reused 0 (delta 0)</p>
-<p>To git@ &lt;span class=</p>
-<p>&quot;wp_keywordlink&quot;</p>
-<blockquote>
-<p>&lt;a href=</p>
-</blockquote>
-<p>&quot;<a href="http://blog.jobbole.com/6492/" target="_blank">http://blog.jobbole.com/6492/</a>&quot;</p>
-<p>title=</p>
-<p>&quot;GitHub如何运作：时间并不决定一切&quot;</p>
-<p>target=</p>
-<p>&quot;_blank&quot;</p>
-<blockquote>
-<p>GitHub&lt;</p>
-</blockquote>
-<p>/a</p>
-<blockquote>
-<p>&lt;</p>
-</blockquote>
-<p>/span</p>
-<blockquote>
-<p>.com:schacon</p>
-</blockquote>
-<p>/simplegit</p>
-<p>.git
-/* [new branch] serverfix -&gt; serverfix</p>
-<p>这其实有点像条捷径。Git 自动把 serverfix 分支名扩展为 refs/heads/serverfix:refs/heads/serverfix，意为“取出我在本地的 serverfix 分支，推送到远程仓库的 serverfix 分支中去”。我们将在第九章进一步介绍refs/heads/ 部分的细节，不过一般使用的时候都可以省略它。也可以运行 git push origin serverfix:serferfix 来实现相同的效果，它的意思是“上传我本地的 serverfix 分支到远程仓库中去，仍旧称它为 serverfix 分支”。通过此语法，你可以把本地分支推送到某个命名不同的远程分支：若想把远程分支叫作awesomebranch，可以用 git push origin serverfix:awesomebranch 来推送数据。</p>
-<p>接下来，当你的协作者再次从服务器上获取数据时，他们将得到一个新的远程分支 origin/serverfix：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7$ git fetch origin</p>
-<p>remote: Counting objects: 20,</p>
-<p>done</p>
-<p>.
-remote: Compressing objects: 100% (14</p>
-<p>/14</p>
-<p>),</p>
-<p>done</p>
-<p>.</p>
-<p>remote: Total 15 (delta 5), reused 0 (delta 0)
-Unpacking objects: 100% (15</p>
-<p>/15</p>
-<p>),</p>
-<p>done</p>
-<p>.</p>
-<p>From git@ github.com:schacon</p>
-<p>/simplegit
-/* [new branch] serverfix -&gt; origin</p>
-<p>/serverfix</p>
-<p>值得注意的是，在 fetch 操作下载好新的远程分支之后，你仍然无法在本地编辑该远程仓库中的分支。换句话说，在本例中，你不会有一个新的serverfix 分支，有的只是一个你无法移动的 origin/serverfix 指针。</p>
-<p>如果要把该内容合并到当前分支，可以运行 git merge origin/serverfix。如果想要一份自己的 serverfix 来开发，可以在远程分支的基础上分化出一个新的分支来：</p>
-<p>1</p>
-<p>2
-3$ git checkout -b serverfix origin</p>
-<p>/serverfix</p>
-<p>Branch serverfix</p>
-<p>set</p>
-<p>up to track remote branch refs</p>
-<p>/remotes/origin/serverfix</p>
-<p>.
-Switched to a new branch</p>
-<p>&quot;serverfix&quot;</p>
-<p>这会切换到新建的 serverfix 本地分支，其内容同远程分支 origin/serverfix 一致，这样你就可以在里面继续开发了。</p>
-<p><strong>跟踪远程分支</strong></p>
-<p>从远程分支 checkout 出来的本地分支，称为<em>跟踪分支(tracking branch)</em>。跟踪分支是一种和远程分支有直接联系的本地分支。在跟踪分支里输入git push，Git 会自行推断应该向哪个服务器的哪个分支推送数据。反过来，在这些分支里运行 git pull 会获取所有远程索引，并把它们的数据都合并到本地分支中来。</p>
-<p>在克隆仓库时，Git 通常会自动创建一个名为 master 的分支来跟踪 origin/master。这正是git push 和 git pull 一开始就能正常工作的原因。当然，你可以随心所欲地设定为其它跟踪分支，比如origin 上除了 master 之外的其它分支。刚才我们已经看到了这样的一个例子：git checkout -b [分支名] [远程名]/[分支名]。如果你有 1.6.2 以上版本的 Git，还可以用–track 选项简化：
-1</p>
-<p>2
-3$ git checkout --track origin</p>
-<p>/serverfix</p>
-<p>Branch serverfix</p>
-<p>set</p>
-<p>up to track remote branch refs</p>
-<p>/remotes/origin/serverfix</p>
-<p>.
-Switched to a new branch</p>
-<p>&quot;serverfix&quot;</p>
-<p>要为本地分支设定不同于远程分支的名字，只需在前个版本的命令里换个名字：</p>
-<p>1</p>
-<p>2
-3$ git checkout -b sf origin</p>
-<p>/serverfix</p>
-<p>Branch sf</p>
-<p>set</p>
-<p>up to track remote branch refs</p>
-<p>/remotes/origin/serverfix</p>
-<p>.
-Switched to a new branch</p>
-<p>&quot;sf&quot;</p>
-<p>现在你的本地分支 sf 会自动向 origin/serverfix 推送和抓取数据了。</p>
-<p><strong>删除远程分支</strong></p>
-<p>如果不再需要某个远程分支了，比如搞定了某个特性并把它合并进了远程的 master 分支（或任何其他存放稳定代码的地方），可以用这个非常无厘头的语法来删除它：git push [远程名] :[分支名]。如果想在服务器上删除serverfix 分支，运行下面的命令：
-1</p>
-<p>2
-3$ git push origin :serverfix</p>
-<p>To git@ github.com:schacon</p>
-<p>/simplegit</p>
-<p>.git</p>
+        <h1 id="-2-">我的重构哪里不规范？讨论第2页</h1>
+<p><a href="http://www.javaeye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.javaeye.com/all" target="_blank">我的应用</a> <a href="http://www.javaeye.com/login" target="_blank">登录</a> <a href="http://www.javaeye.com/signup" target="_blank">注册</a></p>
+<p><a href="http://www.javaeye.com/" target="_blank"><img src="&quot;JavaEye-最棒的软件开发交流社区&quot;" alt="JavaEye-最棒的软件开发交流社区"></a></p>
+<p><a href="http://www.javaeye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.javaeye.com/forums/board/develop" target="_blank">软件开发和项目管理版</a> → <a href="http://www.javaeye.com/forums/tag/test" target="_blank">软件测试</a> →</p>
+<h1 id="-">我的重构哪里不规范？</h1>
+<p><a href="http://www.javaeye.com/forums/board/develop" target="_blank">全部</a> <a href="http://www.javaeye.com/forums/tag/project-manage" target="_blank">项目管理</a> <a href="http://www.javaeye.com/forums/tag/agile" target="_blank">敏捷开发</a> <a href="http://www.javaeye.com/forums/tag/test" target="_blank">软件测试</a> <a href="http://www.javaeye.com/forums/tag/configuration" target="_blank">配置管理</a> <a href="http://www.javaeye.com/forums/tag/UseCase" target="_blank">UseCase</a> <a href="http://www.javaeye.com/forums/tag/UML" target="_blank">UML</a> <a href="http://www.javaeye.com/forums/tag/unitest" target="_blank">单元测试</a> <a href="http://www.javaeye.com/forums/tag/XP" target="_blank">XP</a> <a href="http://www.javaeye.com/forums/tag/TDD" target="_blank">TDD</a> <a href="http://www.javaeye.com/forums/tag/UP" target="_blank">UP</a> <a href="http://www.javaeye.com/forums/tag/CMM" target="_blank">CMM</a>
+<a href="http://www.javaeye.com/topic/90347?page=1" target="_blank">« 上一页</a> <a href="http://www.javaeye.com/topic/90347?page=1" target="_blank">1</a> 2 <a href="http://www.javaeye.com/topic/90347?page=3" target="_blank">3</a> <a href="http://www.javaeye.com/topic/90347?page=4" target="_blank">4</a> <a href="http://www.javaeye.com/topic/90347?page=5" target="_blank">5</a> <a href="http://www.javaeye.com/topic/90347?page=3" target="_blank">下一页 »</a></p>
+<p>浏览 17393 次 锁定老贴子 <a href="http://www.javaeye.com/topic/90347" target="_blank">主题：我的重构哪里不规范？</a></p>
+<p>精华帖 (3) :: 良好帖 (0) :: 新手帖 (0) :: 隐藏帖 (1) 作者 正文 * gigix</p>
 <ul>
-<li>[deleted] serverfix</li>
+<li>等级: <img src="&quot;资深会员&quot;" alt="资深会员">资深会员</li>
+<li><a href="http://gigix.javaeye.com/" target="_blank"><img src="&quot;gigix的博客: 透明之眼&quot;" alt="gigix的博客"></a></li>
+<li>文章: 4810</li>
+<li>积分: 2991</li>
+<li>来自: 北京</li>
+<li><img src="" alt="">
+  发表时间：2007-06-15  </li>
 </ul>
-<p>咚！服务器上的分支没了。你最好特别留心这一页，因为你一定会用到那个命令，而且你很可能会忘掉它的语法。有种方便记忆这条命令的方法：记住我们不久前见过的 git push [远程名] [本地分支]:[远程分支] 语法，如果省略 [本地分支]，那就等于是在说“在这里提取空白然后把它变成[远程分支]”。</p>
-<p><strong>3.6  分支的衍合</strong></p>
-<p>把一个分支整合到另一个分支的办法有两种：merge 和 rebase（译注：rebase 的翻译暂定为“衍合”，大家知道就可以了。）。在本章我们会学习什么是衍合，如何使用衍合，为什么衍合操作如此富有魅力，以及我们应该在什么情况下使用衍合。</p>
-<p><strong>基本的衍合操作</strong></p>
-<p>回顾之前有关合并的一节（见图 3-27），你会看到开发进程分叉到两个不同分支，又各自提交了更新。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches37.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-27. 最初分叉的提交历史。</p>
-<p>之前介绍过，最容易的整合分支的方法是 merge 命令，它会把两个分支最新的快照（C3 和 C4）以及二者最新的共同祖先（C2）进行三方合并，合并的结果是产生一个新的提交对象（C5）。如图 3-28 所示：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches38.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-28. 通过合并一个分支来整合分叉了的历史。</p>
-<p>其实，还有另外一个选择：你可以把在 C3 里产生的变化补丁在 C4 的基础上重新打一遍。在 Git 里，这种操作叫做<em>衍合（rebase）</em>。有了 rebase 命令，就可以把在一个分支里提交的改变移到另一个分支里重放一遍。</p>
-<p>在上面这个例子中，运行：
-1</p>
-<p>2
-3</p>
-<p>4
-$ git checkout experiment</p>
-<p>$ git rebase master
-First, rewinding</p>
-<p>head</p>
-<p>to replay your work on</p>
-<p>top</p>
-<p>of it...</p>
-<p>Applying: added staged</p>
-<p>command</p>
-<p>它的原理是回到两个分支最近的共同祖先，根据当前分支（也就是要进行衍合的分支 experiment）后续的历次提交对象（这里只有一个 C3），生成一系列文件补丁，然后以基底分支（也就是主干分支master）最后一个提交对象（C4）为新的出发点，逐个应用之前准备好的补丁文件，最后会生成一个新的合并提交对象（C3’），从而改写 experiment 的提交历史，使它成为 master 分支的直接下游，如图 3-29 所示：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches39.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-29. 把 C3 里产生的改变到 C4 上重演一遍。</p>
-<p>现在回到 master 分支，进行一次快进合并（见图 3-30）：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches40.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-30. master 分支的快进。</p>
-<p>现在的 C3’ 对应的快照，其实和普通的三方合并，即上个例子中的 C5 对应的快照内容一模一样了。虽然最后整合得到的结果没有任何区别，但衍合能产生一个更为整洁的提交历史。如果视察一个衍合过的分支的历史记录，看起来会更 清楚：仿佛所有修改都是在一根线上先后进行的，尽管实际上它们原本是同时并行发生的。</p>
-<p>一般我们使用衍合的目的，是想要得到一个能在远程分支上干净应用的补丁 — 比如某些项目你不是维护者，但想帮点忙的话，最好用衍合：先在自己的一个分支里进行开发，当准备向主项目提交补丁的时候，根据最新的origin/master 进行一次衍合操作然后再提交，这样维护者就不需要做任何整合工作（译注：实际上是把解决分支补丁同最新主干代码之间冲突的责任，化转为由提交补丁的人来解决。），只需根据你提供的仓库地址作一次快进合并，或者直接采纳你提交的补丁。</p>
-<p>请注意，合并结果中最后一次提交所指向的快照，无论是通过衍合，还是三方合并，都会得到相同的快照内容，只不过提交历史不同罢了。衍合是按照每行的修改次序重演一遍修改，而合并是把最终结果合在一起。</p>
-<p><strong>有趣的衍合</strong></p>
-<p>衍合也可以放到其他分支进行，并不一定非得根据分化之前的分支。以图 3-31 的历史为例，我们为了给服务器端代码添加一些功能而创建了特性分支 server，然后提交 C3 和 C4。然后又从 C3 的地方再增加一个client 分支来对客户端代码进行一些相应修改，所以提交了 C8 和 C9。最后，又回到 server 分支提交了 C10。</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches41.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-31. 从一个特性分支里再分出一个特性分支的历史。</p>
-<p>假设在接下来的一次软件发布中，我们决定先把客户端的修改并到主线中，而暂缓并入服务端软件的修改（因为还需要进一步测试）。这个时候，我们就可以把基于 server 分支而非 master 分支的改变（即 C8 和 C9），跳过 server 直接放到master 分支中重演一遍，但这需要用 git rebase 的 –onto 选项指定新的基底分支master：
-1$ git rebase --onto master server client</p>
-<p>这好比在说：“取出 client 分支，找出 client 分支和 server 分支的共同祖先之后的变化，然后把它们在master 上重演一遍”。是不是有点复杂？不过它的结果如图 3-32 所示，非常酷（译注：虽然 client 里的 C8, C9 在 C3 之后，但这仅表明时间上的先后，而非在 C3 修改的基础上进一步改动，因为server 和 client 这两个分支对应的代码应该是两套文件，虽然这么说不是很严格，但应理解为在 C3 时间点之后，对另外的文件所做的 C8，C9 修改，放到主干重演。）：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/42.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-32. 将特性分支上的另一个特性分支衍合到其他分支。</p>
-<p>现在可以快进 master 分支了（见图 3-33）：
-1$ git checkout master $ git merge client</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches43.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-33. 快进 master 分支，使之包含 client 分支的变化。</p>
-<p>现在我们决定把 server 分支的变化也包含进来。我们可以直接把 server 分支衍合到 master，而不用手工切换到 server分支后再执行衍合操作 — git rebase [主分支] [特性分支] 命令会先取出特性分支server，然后在主分支 master 上重演：
-1$ git rebase master server</p>
-<p>于是，server 的进度应用到 master 的基础上，如图 3-34 所示：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches44.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-34. 在 master 分支上衍合 server 分支。</p>
-<p>然后就可以快进主干分支 master 了：
-1$ git checkout master $ git merge server</p>
-<p>现在 client 和 server 分支的变化都已经集成到主干分支来了，可以删掉它们了。最终我们的提交历史会变成图 3-35 的样子：</p>
-<p>1$ git branch -d client $ git branch -d server</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches45.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-35. 最终的提交历史</p>
-<p><strong>衍合的风险</strong></p>
-<p>呃，奇妙的衍合也并非完美无缺，要用它得遵守一条准则：</p>
-<p><strong>一旦分支中的提交对象发布到公共仓库，就千万不要对该分支进行衍合操作。</strong></p>
-<p>如果你遵循这条金科玉律，就不会出差错。否则，人民群众会仇恨你，你的朋友和家人也会嘲笑你，唾弃你。</p>
-<p>在进行衍合的时候，实际上抛弃了一些现存的提交对象而创造了一些类似但不同的新的提交对象。如果你把原来分支中的提交对象发布出去，并且其他人更新下载后在其基础上开展工作，而稍后你又用git rebase 抛弃这些提交对象，把新的重演后的提交对象发布出去的话，你的合作者就不得不重新合并他们的工作，这样当你再次从他们那里获取内容时，提交历史就会变得一团糟。</p>
-<p>下面我们用一个实际例子来说明为什么公开的衍合会带来问题。假设你从一个中央服务器克隆然后在它的基础上搞了一些开发，提交历史类似图 3-36 所示：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches46.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-36. 克隆一个仓库，在其基础上工作一番。</p>
-<p>现在，某人在 C1 的基础上做了些改变，并合并他自己的分支得到结果 C6，推送到中央服务器。当你抓取并合并这些数据到你本地的开发分支中后，会得到合并结果 C7，历史提交会变成图 3-37 这样：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches47.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-37. 抓取他人提交，并入自己主干。</p>
-<p>接下来，那个推送 C6 上来的人决定用衍合取代之前的合并操作；继而又用 git push –force 覆盖了服务器上的历史，得到 C4’。而之后当你再从服务器上下载最新提交后，会得到：</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches48.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-38. 有人推送了衍合后得到的 C4’，丢弃了你作为开发基础的 C4 和 C6。</p>
-<p>下载更新后需要合并，但此时衍合产生的提交对象 C4’ 的 SHA-1 校验值和之前 C4 完全不同，所以 Git 会把它们当作新的提交对象处理，而实际上此刻你的提交历史 C7 中早已经包含了 C4 的修改内容，于是合并操作会把 C7 和 C4’ 合并为 C8（见图 3-39）:</p>
-<p><a href="http://cdn2.jobbole.com/2012/08/Git-branches49.png" title="Git详解之二：Git分支" target="_blank"><img src="&quot;Git详解之二：Git分支&quot;" alt="Git详解之二：Git分支"></a></p>
-<p>图 3-39. 你把相同的内容又合并了一遍，生成一个新的提交 C8。</p>
-<p>C8 这一步的合并是迟早会发生的，因为只有这样你才能和其他协作者提交的内容保持同步。而在 C8 之后，你的提交历史里就会同时包含 C4 和 C4’，两者有着不同的 SHA-1 校验值，如果用git log 查看历史，会看到两个提交拥有相同的作者日期与说明，令人费解。而更糟的是，当你把这样的历史推送到服务器后，会再次把这些衍合后的提交引入到中央服务 器，进一步困扰其他人（译注：这个例子中，出问题的责任方是那个发布了 C6 后又用衍合发布 C4’ 的人，其他人会因此反馈双重历史到共享主干，从而混淆大家的视听。）。</p>
-<p>如果把衍合当成一种在推送之前清理提交历史的手段，而且仅仅衍合那些尚未公开的提交对象，就没问题。如果衍合那些已经公开的提交对象，并且已经有人基于这些提交对象开展了后续开发工作的话，就会出现叫人沮丧的麻烦。</p>
-<p><strong>3.7  小结</strong></p>
-<p>读到这里，你应该已经学会了如何创建分支并切换到新分支，在不同分支间转换，合并本地分支，把分支推送到共享服务器上，使用共享分支与他人协作，以及在分享之前进行衍合。</p>
-<p><img src="&quot;2 votes, average: 5.00 out of 5&quot;" alt="2 votes, average: 5.00 out of 5"><img src="&quot;2 votes, average: 5.00 out of 5&quot;" alt="2 votes, average: 5.00 out of 5"><img src="&quot;2 votes, average: 5.00 out of 5&quot;" alt="2 votes, average: 5.00 out of 5"><img src="&quot;2 votes, average: 5.00 out of 5&quot;" alt="2 votes, average: 5.00 out of 5"><img src="&quot;2 votes, average: 5.00 out of 5&quot;" alt="2 votes, average: 5.00 out of 5"> (<strong>*2</strong> 个评分，平均: <strong>5.00*</strong>)</p>
-<p><img src="&quot;Loading ...&quot;" alt="Loading ..."> Loading ...</p>
+<p><a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">&lt;</a> <a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">&gt;</a>  猎头职位: <a href="http://www.javaeye.com/jobs/712" target="_blank">北京:  Java搜索工程师</a></p>
+<p>ojava 写道
+公司新加代码规范条目：所定义的方法尽量不要超过100行。
+某一方面来说，可以避免这种流水账式的代码吧！
+并且强制我们进行Xiaohanne所说的面向接口不要面向实现的编程。
+TDD is THE solution of your problem:
+you just can&#39;t write a test for a hundred-lines-long method.
+Actually, in normal cases,
+methods should not be longer than 10 lines.
+(I&#39;d say 5 lines indeed.) <a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">返回顶楼</a> <a href="http://gigix.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://gigix.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=gigix" title="发送站内短信" target="_blank"> </a> <a href="http://gigix.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=gigix" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/90347?page=2#313291" title="gigix回帖:我的重构哪里不规范？" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/90347?page=2#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/90347?page=2#" title="差" target="_blank">0</a> 请登录后投票  * 诺铁</p>
+<ul>
+<li>等级: <img src="&quot;四星会员&quot;" alt="四星会员"></li>
+<li><a href="http://notyy.javaeye.com/" target="_blank"><img src="&quot;诺铁的博客: 诺铁心斋&quot;" alt="诺铁的博客"></a></li>
+<li>文章: 277</li>
+<li>积分: 398</li>
+<li><img src="" alt="">
+  发表时间：2007-06-15  </li>
+</ul>
+<p>因为要后续使用而把局部变量提到成员变量是最差的作法。
+你需要的不是重构，是重设计。 <a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">返回顶楼</a> <a href="http://notyy.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://notyy.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=%E8%AF%BA%E9%93%81" title="发送站内短信" target="_blank"> </a> <a href="http://notyy.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=%E8%AF%BA%E9%93%81" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/90347?page=2#313301" title="诺铁回帖:我的重构哪里不规范？" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/90347?page=2#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/90347?page=2#" title="差" target="_blank">0</a> 请登录后投票  * gigix</p>
+<ul>
+<li>等级: <img src="&quot;资深会员&quot;" alt="资深会员">资深会员</li>
+<li><a href="http://gigix.javaeye.com/" target="_blank"><img src="&quot;gigix的博客: 透明之眼&quot;" alt="gigix的博客"></a></li>
+<li>文章: 4810</li>
+<li>积分: 2991</li>
+<li>来自: 北京</li>
+<li><img src="" alt="">
+  发表时间：2007-06-15  </li>
+</ul>
+<p>诺铁 写道</p>
+<p>因为要后续使用而把局部变量提到成员变量是最差的作法。
+你需要的不是重构，是重设计。
+please man ...
+sigh <a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">返回顶楼</a> <a href="http://gigix.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://gigix.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=gigix" title="发送站内短信" target="_blank"> </a> <a href="http://gigix.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=gigix" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/90347?page=2#313312" title="gigix回帖:我的重构哪里不规范？" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/90347?page=2#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/90347?page=2#" title="差" target="_blank">0</a> 请登录后投票  * xly_971223</p>
+<ul>
+<li>等级: <img src="&quot;五星会员&quot;" alt="五星会员"></li>
+<li><a href="http://xuliangyong.javaeye.com/" target="_blank"><img src="&quot;xly_971223的博客: 一生一火花&quot;" alt="xly_971223的博客"></a></li>
+<li>文章: 1048</li>
+<li>积分: 650</li>
+<li>来自: 北京</li>
+<li><img src="" alt="">
+  发表时间：2007-06-15  </li>
+</ul>
+<p>ojava 写道</p>
+<p>公司新加代码规范条目：所定义的方法尽量不要超过100行。
+某一方面来说，可以避免这种流水账式的代码吧！
+并且强制我们进行Xiaohanne所说的面向接口不要面向实现的编程。
+100行？太长了吧
+我一般情况保持在20行左右 <a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">返回顶楼</a> <a href="http://xuliangyong.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://xuliangyong.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=xly_971223" title="发送站内短信" target="_blank"> </a> <a href="http://xuliangyong.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=xly_971223" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/90347?page=2#313402" title="xly_971223回帖:我的重构哪里不规范？" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/90347?page=2#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/90347?page=2#" title="差" target="_blank">0</a> 请登录后投票  * gigix</p>
+<ul>
+<li>等级: <img src="&quot;资深会员&quot;" alt="资深会员">资深会员</li>
+<li><a href="http://gigix.javaeye.com/" target="_blank"><img src="&quot;gigix的博客: 透明之眼&quot;" alt="gigix的博客"></a></li>
+<li>文章: 4810</li>
+<li>积分: 2991</li>
+<li>来自: 北京</li>
+<li><img src="" alt="">
+  发表时间：2007-06-15  </li>
+</ul>
+<p>xly_971223 写道</p>
+<p>ojava 写道</p>
+<p>公司新加代码规范条目：所定义的方法尽量不要超过100行。
+某一方面来说，可以避免这种流水账式的代码吧！
+并且强制我们进行Xiaohanne所说的面向接口不要面向实现的编程。
+100行？太长了吧
+我一般情况保持在20行左右
+3.5 lines in average <a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">返回顶楼</a> <a href="http://gigix.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://gigix.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=gigix" title="发送站内短信" target="_blank"> </a> <a href="http://gigix.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=gigix" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/90347?page=2#313404" title="gigix回帖:我的重构哪里不规范？" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/90347?page=2#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/90347?page=2#" title="差" target="_blank">0</a> 请登录后投票  * xly_971223</p>
+<ul>
+<li>等级: <img src="&quot;五星会员&quot;" alt="五星会员"></li>
+<li><a href="http://xuliangyong.javaeye.com/" target="_blank"><img src="&quot;xly_971223的博客: 一生一火花&quot;" alt="xly_971223的博客"></a></li>
+<li>文章: 1048</li>
+<li>积分: 650</li>
+<li>来自: 北京</li>
+<li><img src="" alt="">
+  发表时间：2007-06-15  </li>
+</ul>
+<p>诺铁 写道</p>
+<p>因为要后续使用而把局部变量提到成员变量是最差的作法。
+你需要的不是重构，是重设计。
+重构跟重新设计是冲突的吗
+在功能不变的情况下，我们可以通过重新设计完成重构 <a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">返回顶楼</a> <a href="http://xuliangyong.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://xuliangyong.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=xly_971223" title="发送站内短信" target="_blank"> </a> <a href="http://xuliangyong.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=xly_971223" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/90347?page=2#313406" title="xly_971223回帖:我的重构哪里不规范？" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/90347?page=2#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/90347?page=2#" title="差" target="_blank">0</a> 请登录后投票  * xly_971223</p>
+<ul>
+<li>等级: <img src="&quot;五星会员&quot;" alt="五星会员"></li>
+<li><a href="http://xuliangyong.javaeye.com/" target="_blank"><img src="&quot;xly_971223的博客: 一生一火花&quot;" alt="xly_971223的博客"></a></li>
+<li>文章: 1048</li>
+<li>积分: 650</li>
+<li>来自: 北京</li>
+<li><img src="" alt="">
+  发表时间：2007-06-15  </li>
+</ul>
+<p>gigix 写道</p>
+<p>xly_971223 写道</p>
+<p>ojava 写道</p>
+<p>公司新加代码规范条目：所定义的方法尽量不要超过100行。
+某一方面来说，可以避免这种流水账式的代码吧！
+并且强制我们进行Xiaohanne所说的面向接口不要面向实现的编程。
+100行？太长了吧
+我一般情况保持在20行左右
+3.5 lines in average
+这个。。。。
+有点难度 。。。 <a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">返回顶楼</a> <a href="http://xuliangyong.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://xuliangyong.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=xly_971223" title="发送站内短信" target="_blank"> </a> <a href="http://xuliangyong.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=xly_971223" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/90347?page=2#313412" title="xly_971223回帖:我的重构哪里不规范？" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/90347?page=2#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/90347?page=2#" title="差" target="_blank">0</a> 请登录后投票  * 抛出异常的爱</p>
+<ul>
+<li>等级: <img src="&quot;五钻会员&quot;" alt="五钻会员"></li>
+<li><a href="http://loveexception.javaeye.com/" target="_blank"><img src="&quot;抛出异常的爱的博客: 设计可以拯救国家&quot;" alt="抛出异常的爱的博客"></a></li>
+<li>文章: 12053</li>
+<li>积分: 2782</li>
+<li>来自: 北京</li>
+<li><img src="" alt="">
+  发表时间：2007-06-15  </li>
+</ul>
+<p>javastudy 写道</p>
+<p>ojava 写道</p>
+<p>公司新加代码规范条目：所定义的方法尽量不要超过100行。
+某一方面来说，可以避免这种流水账式的代码吧！
+并且强制我们进行Xiaohanne所说的面向接口不要面向实现的编程。
+得在设计时就得想到拉
+我只能说呸。。。。只有日本人能想的到。。。 <a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">返回顶楼</a> <a href="http://loveexception.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://loveexception.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=%E6%8A%9B%E5%87%BA%E5%BC%82%E5%B8%B8%E7%9A%84%E7%88%B1" title="发送站内短信" target="_blank"> </a> <a href="http://loveexception.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=%E6%8A%9B%E5%87%BA%E5%BC%82%E5%B8%B8%E7%9A%84%E7%88%B1" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/90347?page=2#313519" title="抛出异常的爱回帖:我的重构哪里不规范？" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/90347?page=2#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/90347?page=2#" title="差" target="_blank">0</a> 请登录后投票  * sg552</p>
+<ul>
+<li>等级: <img src="&quot;一星会员&quot;" alt="一星会员"></li>
+<li><a href="http://sg552.javaeye.com/" target="_blank"><img src="&quot;sg552的博客: sg552&quot;" alt="sg552的博客"></a></li>
+<li>文章: 566</li>
+<li>积分: 141</li>
+<li>来自: 北京</li>
+<li><img src="" alt="">
+  发表时间：2007-06-15  </li>
+</ul>
+<p>重构—— 改善现有代码的设计。 看看这本书吧。LZ
+另外，多测试，常测试，保证每个重构都是成功的。
+至于具体细节，就要看经验了。 <a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">返回顶楼</a> <a href="http://sg552.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://sg552.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=sg552" title="发送站内短信" target="_blank"> </a> <a href="http://sg552.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=sg552" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/90347?page=2#313526" title="sg552回帖:我的重构哪里不规范？" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/90347?page=2#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/90347?page=2#" title="差" target="_blank">0</a> 请登录后投票  * gigix</p>
+<ul>
+<li>等级: <img src="&quot;资深会员&quot;" alt="资深会员">资深会员</li>
+<li><a href="http://gigix.javaeye.com/" target="_blank"><img src="&quot;gigix的博客: 透明之眼&quot;" alt="gigix的博客"></a></li>
+<li>文章: 4810</li>
+<li>积分: 2991</li>
+<li>来自: 北京</li>
+<li><img src="" alt="">
+  发表时间：2007-06-15  </li>
+</ul>
+<p>javastudy 写道</p>
+<p>gigix 写道</p>
+<p>xly_971223 写道</p>
+<p>ojava 写道</p>
+<p>公司新加代码规范条目：所定义的方法尽量不要超过100行。
+某一方面来说，可以避免这种流水账式的代码吧！
+并且强制我们进行Xiaohanne所说的面向接口不要面向实现的编程。
+100行？太长了吧
+我一般情况保持在20行左右
+3.5 lines in average
+有点太短了吧
+that&#39;s our stat in previous project
+you can try to show me an example: why do you need a method longer than 5 lines?
+(some complex algorithm implementations are exceptions.) <a href="http://www.javaeye.com/topic/90347?page=2#" target="_blank">返回顶楼</a> <a href="http://gigix.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://gigix.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=gigix" title="发送站内短信" target="_blank"> </a> <a href="http://gigix.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=gigix" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/90347?page=2#313548" title="gigix回帖:我的重构哪里不规范？" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/90347?page=2#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/90347?page=2#" title="差" target="_blank">0</a> 请登录后投票</p>
+<p><a href="http://www.javaeye.com/topic/90347?page=1" target="_blank">« 上一页</a> <a href="http://www.javaeye.com/topic/90347?page=1" target="_blank">1</a> 2 <a href="http://www.javaeye.com/topic/90347?page=3" target="_blank">3</a> <a href="http://www.javaeye.com/topic/90347?page=4" target="_blank">4</a> <a href="http://www.javaeye.com/topic/90347?page=5" target="_blank">5</a> <a href="http://www.javaeye.com/topic/90347?page=3" target="_blank">下一页 »</a>
+<a href="http://www.javaeye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.javaeye.com/forums/board/develop" target="_blank">软件开发和项目管理版</a> → <a href="http://www.javaeye.com/forums/tag/test" target="_blank">软件测试</a>
+跳转论坛:Java编程和Java企业应用 Web前端技术 移动编程和手机应用开发 C/C++编程 Ruby编程 Python编程 PHP编程 Flash编程和RIA Microsoft .Net 综合技术 软件开发和项目管理 行业应用 入门讨论 招聘求职 海阔天空</p>
+<ul>
+<li><a href="http://www.javaeye.com/" target="_blank">首页</a></li>
+<li><a href="http://www.javaeye.com/news" target="_blank">新闻</a></li>
+<li><a href="http://www.javaeye.com/forums" target="_blank">论坛</a></li>
+<li><a href="http://www.javaeye.com/ask" target="_blank">问答</a></li>
+<li><a href="http://www.javaeye.com/wiki" target="_blank">专栏</a></li>
+<li><a href="http://www.javaeye.com/blogs" target="_blank">博客</a></li>
+<li><a href="http://www.javaeye.com/groups" target="_blank">圈子</a></li>
+<li><a href="http://www.javaeye.com/job" target="_blank">招聘</a></li>
+<li><a href="http://www.javaeye.com/index/service" target="_blank">服务</a></li>
+<li><a href="http://www.javaeye.com/search" target="_blank">搜索</a></li>
+<li><a href="http://java.javaeye.com/" target="_blank">Java</a></li>
+<li><a href="http://webapp.javaeye.com/" target="_blank">Web</a></li>
+<li><a href="http://ruby.javaeye.com/" target="_blank">Ruby</a></li>
+<li><a href="http://python.javaeye.com/" target="_blank">Python</a></li>
+<li><a href="http://agile.javaeye.com/" target="_blank">敏捷</a></li>
+<li><a href="http://mysql.javaeye.com/" target="_blank">MySQL</a></li>
+<li><a href="http://runqian.javaeye.com/" target="_blank">润亁报表</a></li>
+<li><a href="http://book.javaeye.com/" target="_blank">图书</a></li>
+<li><a href="http://www.javaeye.com/index/service" target="_blank">广告服务</a></li>
+<li><a href="http://webmaster.javaeye.com/" target="_blank">JavaEye黑板报</a></li>
+<li><a href="http://www.javaeye.com/index/aboutus" target="_blank">关于我们</a></li>
+<li><a href="http://www.javaeye.com/index/contactus" target="_blank">联系我们</a></li>
+<li><a href="http://www.javaeye.com/index/friend_links" target="_blank">友情链接</a></li>
+</ul>
+<p>© 2003-2010 JavaEye.com. 上海炯耐计算机软件有限公司版权所有 [ <a href="http://www.miibeian.gov.cn/" target="_blank">沪ICP备05023328号</a> ] <img src="" alt=""></p>
 
       
     </div>
@@ -2316,8 +915,8 @@ First, rewinding</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/git&github/">git&github</a></li></span></span> | <span class="tags">Tagged <a href="/tags/git&github/" class="label label-primary">git&github</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-gitgithub--Git详解之三：Git分支/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-gitgithub--Git详解之三：Git分支" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_总结类/">Java_总结类</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_总结类/" class="label label-success">Java_总结类</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--我的重构哪里不规范？讨论第2页/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_总结类--我的重构哪里不规范？讨论第2页" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -2772,6 +1371,95 @@ PPT：<a href="https://speakerdeck.com/rmurphey/writing-testable-javascript-moch
 
 
 
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-gitgithub--GitSubmodule的坑/">Git Submodule的坑</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-gitgithub--GitSubmodule的坑/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="git-submodule-">Git Submodule的坑</h1>
+<h1 id="git-submodule-">Git Submodule的坑</h1>
+<p>MAY 8TH, 2013</p>
+<h2 id="-">前言</h2>
+<p>随着近几年的发展，Git已经成为开源界的标准的版本控制工具。开源界的重量级项目，如Linux, Android, Eclipse, Gnome, KDE, Qt, ROR, Debian，无一例外的都是使用git来进行版本控制。如果你还不会Git，那么恕我直言，你已经out了，赶紧抽空充充电吧。本文并不打算做Git入门级介绍，想学习git的同学，推荐国内作者蒋鑫写的<a href="http://book.douban.com/subject/6526452/" target="_blank">《Git权威指南》</a>。</p>
+<p>对于一些比较大的工程，为了便于复用，常常需要抽取子项目。例如我开发的猿题库客户端现在包括3门考试，客户端涉及的公共UI、公共底层逻辑、公共的第三方库、以及公共的答题卡扫描算法就被我分别抽取成了子项目。这些子项目都以git submodule的形式，增加到工程中。</p>
+<p>在使用了git submodule一段时间后，我发现了一些submodule的问题，在此分享给大家。</p>
+<h2 id="-submodule-">更新submodule的坑</h2>
+<p>submodule项目和它的父项目本质上是2个独立的git仓库。只是父项目存储了它依赖的submodule项目的版本号信息而已。如果你的同事更新了submodule，然后更新了父项目中依赖的版本号。你需要在git pull之后，调用 git submodule update来更新submodule信息。</p>
+<p>这儿的坑在于，如果你git pull之后，忘记了调用 git submodule update，那么你极有可能再次把旧的submodule依赖信息提交上去。对于那些习惯使用 git commit -a的人来说，这种危险会更大一些。所以建议大家:</p>
+<ol>
+<li>git pull之后，立即执行git status, 如果发现submodule有修改，立即执行git submodule update</li>
+<li>尽量不要使用 git commit -a， git add命令存在的意义就是让你对加入暂存区的文件做二次确认，而 git commit -a相当于跳过了这个确认过程。</li>
+</ol>
+<p>更复杂一些，如果你的submodule又依赖了submodule，那么很可能你需要在git pull 和 git submodule update之后，再分别到每个submodule中再执行一次git submodule update，这里可以使用 git submodule foreach命令来实现： </p>
+<p>git submodule foreach git submodule update</p>
+<h2 id="-submodule-">修改submodule的坑</h2>
+<p>有些时候你需要对submodule做一些修改，很常见的做法就是切到submodule的目录，然后做修改，然后commit和push。</p>
+<p>这里的坑在于，默认git submodule update并不会将submodule切到任何branch，所以，默认下submodule的HEAD是处于游离状态的(‘detached HEAD’ state)。所以在修改前，记得一定要用git checkout master将当前的submodule分支切换到master，然后才能做修改和提交。</p>
+<p>如果你不慎忘记切换到master分支，又做了提交，可以用cherry-pick命令挽救。具体做法如下：</p>
+<ol>
+<li>用 </li>
+</ol>
+<p>git checkout master
+ 将HEAD从游离状态切换到 master 分支, 这时候，git会报Warning说有一个提交没有在branch上，记住这个提交的change-id（假如change-id为 aaaa)</p>
+<ol>
+<li>用 </li>
+</ol>
+<p>git cherry-pick aaaa
+ 来将刚刚的提交作用在master分支上</p>
+<ol>
+<li>用 </li>
+</ol>
+<p>git push
+ 将更新提交到远程版本库中</p>
+<p>以下是相关命令的操作示范和命令行输出结果：
+12345678910111213 ➜ ui_common git:(df697f9) git checkout masterWarning: you are leaving 1 commit behind, not connected toany of your branches:  df697f9 forget to check out masterIf you want to keep them by creating a new branch, this may be a good timeto do so with: git branch new_branch_name df697f911e5a0f09d883f8f360977e470c53d81eSwitched to branch &#39;master&#39;➜ ui_common git:(master) git cherry-pick df697f9</p>
+<h2 id="-">使用第三方工具</h2>
+<p>对于submodule的重度使用者，有几个工具可作推荐：</p>
+<ol>
+<li><a href="http://source.android.com/source/version-control.html" target="_blank">Repo</a> Google用于管理Android项目的工具。</li>
+<li><a href="http://gitslave.sourceforge.net/" target="_blank">Gitslave</a></li>
+<li><a href="https://github.com/apenwarr/git-subtree/" target="_blank">Git Subtree</a></li>
+</ol>
+<p>以上工具，我都没有实际用过，所以无法提供更多信息。</p>
+<h2 id="tips">Tips</h2>
+<p>由于常常使用submodule的相关命令，可以在 ~/.gitconfig文件中将其设置别名，方便操作，我设置的所有相关别名如下：
+1234567891011121314 [alias] st = status -s ci = commit l = log --oneline --decorate -12 --color ll = log --oneline --decorate --color lc = log --graph --color co = checkout br = branch rb = rebase dci = dcommit sbi = submodule init sbu = submodule update sbp = submodule foreach git pull sbc = submodule foreach git co master</p>
+<h2 id="-">参考链接</h2>
+<ol>
+<li><a href="http://codingkilledthecat.wordpress.com/2012/04/28/why-your-company-shouldnt-use-git-submodules/" target="_blank">《why-your-company-shouldnt-use-git-submodules》</a> (需翻墙)</li>
+<li><a href="http://fiji.sc/Git_submodule_tutorial" target="_blank">《Git_submodule_tutorial》</a></li>
+</ol>
+<p>Posted by 唐巧 May 8th, 2013  <a href="http://blog.devtang.com/blog/categories/shell/" target="_blank">shell</a></p>
+<p>原创文章，版权声明：自由转载-非商用-非衍生-保持署名 | <a href="http://creativecommons.org/licenses/by-nc-nd/3.0/deed.zh" target="_blank">Creative Commons BY-NC-ND 3.0</a></p>
+<p><a href="http://blog.devtang.com/blog/2013/05/08/git-submodule-issues/" target="_blank"><a href="http://blog.devtang.com/blog/2013/05/08/git-submodule-issues/">http://blog.devtang.com/blog/2013/05/08/git-submodule-issues/</a></a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/git&github/">git&github</a></li></span></span> | <span class="tags">Tagged <a href="/tags/git&github/" class="label label-primary">git&github</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-gitgithub--GitSubmodule的坑/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-gitgithub--GitSubmodule的坑" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -2842,7 +1530,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:43:39</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:47:45</em></span></div>
 </div>
 <div class="clearfix"></div>
 

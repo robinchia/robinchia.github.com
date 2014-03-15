@@ -110,6 +110,1040 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--ApacheFTP实用代码/">Apache FTP 实用代码</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--ApacheFTP实用代码/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="apache-ftp-">Apache FTP 实用代码</h1>
+<h2 id="-apache-commons-net-ftputil-">结合网上两个使用apache commons-net包的两个优秀的代码，结合实际，写出了如下的FtpUtil，供参考！</h2>
+<p>参考网址：<a href="http://www.iteye.com/topic/173786" target="_blank"><a href="http://www.iteye.com/topic/173786">http://www.iteye.com/topic/173786</a></a>，<a href="http://hi.baidu.com/victorlin23/blog/item/edc62a35dbae8a1a91ef3947.html" target="_blank"><a href="http://hi.baidu.com/victorlin23/blog/item/edc62a35dbae8a1a91ef3947.html">http://hi.baidu.com/victorlin23/blog/item/edc62a35dbae8a1a91ef3947.html</a></a></p>
+<h2 id="-"> </h2>
+<p>package com.pccw.portlet.publictools;</p>
+<p>import java.io.File;</p>
+<p>import java.io.FileOutputStream;</p>
+<p>import java.io.IOException;</p>
+<p>import java.io.InputStream;</p>
+<p>import java.io.OutputStream;</p>
+<p>import java.io.RandomAccessFile;</p>
+<p>import java.net.SocketException;</p>
+<p>import java.util.ArrayList;</p>
+<p>import java.util.List;</p>
+<p>import org.apache.commons.logging.Log;</p>
+<p>import org.apache.commons.logging.LogFactory;</p>
+<p>import org.apache.commons.net.ftp.FTP;</p>
+<p>import org.apache.commons.net.ftp.FTPClient;</p>
+<p>import org.apache.commons.net.ftp.FTPFile;</p>
+<p>import org.apache.commons.net.ftp.FTPReply;</p>
+<p>//<em>/</em></p>
+<p> /* FTP工具类</p>
+<p> /*</p>
+<p> /* @author WangXianfeng 1:16:50 PM Jul 16, 2011</p>
+<p> /*/</p>
+<p>public class FtpUtil {</p>
+<pre><code>   private FTPClient ftpClient;
+
+   private static Log log = LogFactory.getLog(FtpUtil.class);
+
+
+
+   //*/*
+
+    /* 根路径为&quot;/&quot;,如果需要链接服务器之后跳转到路径，则在path中定义
+
+    /* @param ftpConfig
+
+    /* @throws SocketException
+
+    /* @throws IOException
+
+    /*/
+
+   public boolean connectServer(FtpConfig ftpConfig) throws SocketException,
+
+                 IOException {
+
+          String server = ftpConfig.getServer();
+
+          int port = ftpConfig.getPort();
+
+          String user = ftpConfig.getUsername();
+
+          String password = ftpConfig.getPassword();
+
+          String path = ftpConfig.getPath();
+
+          return connectServer(server, port, user, password, path);
+
+   }
+
+   //*/*
+
+    /* 连接ftp服务器
+
+    /* @param server 服务器ip
+
+    /* @param port 端口，通常为21
+
+    /* @param user 用户名
+
+    /* @param password 密码
+
+    /* @param path 进入服务器之后的默认路径
+
+    /* @return 连接成功返回true，否则返回false
+
+    /* @throws SocketException
+
+    /* @throws IOException
+
+    /*/
+
+   public boolean connectServer(String server, int port, String user,
+
+                 String password, String path) throws SocketException, IOException {
+
+          ftpClient = new FTPClient();
+
+          ftpClient.connect(server, port);
+
+          ftpClient.setControlEncoding(&quot;GBK&quot;);
+
+          log.info(&quot;Connected to &quot; + server + &quot;.&quot;);
+
+          log.info(&quot;FTP server reply code:&quot; + ftpClient.getReplyCode());
+
+          if (FTPReply.isPositiveCompletion(ftpClient.getReplyCode())) {
+
+                 if (ftpClient.login(user, password)) {
+
+                        // Path is the sub-path of the FTP path
+
+                        if (path.length() != 0) {
+
+                               ftpClient.changeWorkingDirectory(path);
+
+                        }
+
+                        return true;
+
+                 }
+
+          }
+
+          disconnect();
+
+          return false;
+
+   }
+
+   //*/*
+
+    /* 断开与远程服务器的连接
+
+    /* @throws IOException
+
+    /*/
+
+   public void disconnect() throws IOException {
+
+          if (ftpClient.isConnected()) {
+
+                 ftpClient.disconnect();
+
+          }
+
+   }
+
+
+
+   //*/*
+
+    /* 从FTP服务器上下载文件,支持断点续传，下载百分比汇报
+
+    /* @param remote 远程文件路径及名称
+
+    /* @param local 本地文件完整绝对路径
+
+    /* @return 下载的状态
+
+    /* @throws IOException
+
+    /*/
+
+   public DownloadStatus download(String remote, String local)
+
+                 throws IOException {
+
+          // 设置被动模式
+
+          ftpClient.enterLocalPassiveMode();
+
+          // 设置以二进制方式传输
+
+          ftpClient.setFileType(FTP.BINARY_FILE_TYPE);
+
+          DownloadStatus result;
+
+
+
+          // 检查远程文件是否存在
+
+          FTPFile[] files = ftpClient.listFiles(new String(
+
+                        remote.getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+          if (files.length != 1) {
+
+                 log.info(&quot;远程文件不存在&quot;);
+
+                 return DownloadStatus.RemoteFileNotExist;
+
+          }
+
+
+
+          long lRemoteSize = files[0].getSize();
+
+          File f = new File(local);
+
+          // 本地存在文件，进行断点下载
+
+          if (f.exists()) {
+
+                 long localSize = f.length();
+
+                 // 判断本地文件大小是否大于远程文件大小
+
+                 if (localSize &gt;= lRemoteSize) {
+
+                        log.info(&quot;本地文件大于远程文件，下载中止&quot;);
+
+                        return DownloadStatus.LocalFileBiggerThanRemoteFile;
+
+                 }
+
+
+
+                 // 进行断点续传，并记录状态
+
+                 FileOutputStream out = new FileOutputStream(f, true);
+
+                 ftpClient.setRestartOffset(localSize);
+
+                 InputStream in = ftpClient.retrieveFileStream(new String(remote
+
+                               .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+                 byte[] bytes = new byte[1024];
+
+                 long step = lRemoteSize / 100;
+
+                 step = step==0?1:step;//文件过小，step可能为0
+
+                 long process = localSize / step;
+
+                 int c;
+
+                 while ((c = in.read(bytes)) != -1) {
+
+                        out.write(bytes, 0, c);
+
+                        localSize += c;
+
+                        long nowProcess = localSize / step;
+
+                        if (nowProcess &gt; process) {
+
+                               process = nowProcess;
+
+                               if (process % 10 == 0){
+
+                                      log.info(&quot;下载进度：&quot; + process);
+
+                               }
+
+                        }
+
+                 }
+
+                 in.close();
+
+                 out.close();
+
+                 boolean isDo = ftpClient.completePendingCommand();
+
+                 if (isDo) {
+
+                        result = DownloadStatus.DownloadFromBreakSuccess;
+
+                 } else {
+
+                        result = DownloadStatus.DownloadFromBreakFailed;
+
+                 }
+
+          } else {
+
+                 OutputStream out = new FileOutputStream(f);
+
+                 InputStream in = ftpClient.retrieveFileStream(new String(remote
+
+                               .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+                 byte[] bytes = new byte[1024];
+
+                 long step = lRemoteSize / 100;
+
+                 step = step==0?1:step;//文件过小，step可能为0
+
+                 long process = 0;
+
+                 long localSize = 0L;
+
+                 int c;
+
+                 while ((c = in.read(bytes)) != -1) {
+
+                        out.write(bytes, 0, c);
+
+                        localSize += c;
+
+                        long nowProcess = localSize / step;
+
+                        if (nowProcess &gt; process) {
+
+                               process = nowProcess;
+
+                               if (process % 10 == 0){
+
+                                      log.info(&quot;下载进度：&quot; + process);
+
+                               }
+
+                        }
+
+                 }
+
+                 in.close();
+
+                 out.close();
+
+                 boolean upNewStatus = ftpClient.completePendingCommand();
+
+                 if (upNewStatus) {
+
+                        result = DownloadStatus.DownloadNewSuccess;
+
+                 } else {
+
+                        result = DownloadStatus.DownloadNewFailed;
+
+                 }
+
+          }
+
+          return result;
+
+   }
+
+
+
+   public boolean changeDirectory(String path) throws IOException {
+
+          return ftpClient.changeWorkingDirectory(path);
+
+   }
+
+
+
+   public boolean createDirectory(String pathName) throws IOException {
+
+          return ftpClient.makeDirectory(pathName);
+
+   }
+
+
+
+   public boolean removeDirectory(String path) throws IOException {
+
+          return ftpClient.removeDirectory(path);
+
+   }
+
+
+
+   public boolean removeDirectory(String path, boolean isAll)
+
+                 throws IOException {
+
+
+
+          if (!isAll) {
+
+                 return removeDirectory(path);
+
+          }
+
+
+
+          FTPFile[] ftpFileArr = ftpClient.listFiles(path);
+
+          if (ftpFileArr == null || ftpFileArr.length == 0) {
+
+                 return removeDirectory(path);
+
+          }
+
+          //  
+
+          for (FTPFile ftpFile : ftpFileArr) {
+
+                 String name = ftpFile.getName();
+
+                 if (ftpFile.isDirectory()) {
+
+                        log.info(&quot;/* [sD]Delete subPath [&quot; + path + &quot;/&quot; + name + &quot;]&quot;);
+
+                        if (!ftpFile.getName().equals(&quot;.&quot;)
+
+                                      &amp;&amp; (!ftpFile.getName().equals(&quot;..&quot;))) {
+
+                               removeDirectory(path + &quot;/&quot; + name, true);
+
+                        }
+
+                 } else if (ftpFile.isFile()) {
+
+                        log.info(&quot;/* [sF]Delete file [&quot; + path + &quot;/&quot; + name + &quot;]&quot;);
+
+                        deleteFile(path + &quot;/&quot; + name);
+
+                 } else if (ftpFile.isSymbolicLink()) {
+
+
+
+                 } else if (ftpFile.isUnknown()) {
+
+
+
+                 }
+
+          }
+
+          return ftpClient.removeDirectory(path);
+
+   }
+
+
+
+   //*/*
+
+    /* 查看目录是否存在
+
+    /* @param path
+
+    /* @return
+
+    /* @throws IOException
+
+    /*/
+
+   public boolean isDirectoryExists(String path) throws IOException {
+
+          boolean flag = false;
+
+          FTPFile[] ftpFileArr = ftpClient.listFiles(path);
+
+          for (FTPFile ftpFile : ftpFileArr) {
+
+                 if (ftpFile.isDirectory()
+
+                               &amp;&amp; ftpFile.getName().equalsIgnoreCase(path)) {
+
+                        flag = true;
+
+                        break;
+
+                 }
+
+          }
+
+          return flag;
+
+   }
+
+
+
+   //*/*
+
+    /* 得到某个目录下的文件名列表
+
+    /* @param path
+
+    /* @return
+
+    /* @throws IOException
+
+    /*/
+
+   public List&lt;String&gt; getFileList(String path) throws IOException {
+
+          // listFiles return contains directory and file, it&#39;s FTPFile instance
+
+          // listNames() contains directory, so using following to filer
+
+          // directory.
+
+          // String[] fileNameArr = ftpClient.listNames(path);
+
+          FTPFile[] ftpFiles = ftpClient.listFiles(path);
+
+
+
+          List&lt;String&gt; retList = new ArrayList&lt;String&gt;();
+
+          if (ftpFiles == null || ftpFiles.length == 0) {
+
+                 return retList;
+
+          }
+
+          for (FTPFile ftpFile : ftpFiles) {
+
+                 if (ftpFile.isFile()) {
+
+                        retList.add(ftpFile.getName());
+
+                 }
+
+          }
+
+          return retList;
+
+   }
+
+
+
+   public boolean deleteFile(String pathName) throws IOException {
+
+          return ftpClient.deleteFile(pathName);
+
+   }
+
+
+
+   //*/*
+
+    /* 上传文件到FTP服务器，支持断点续传
+
+    /* @param local 本地文件名称，绝对路径
+
+    /* @param remote 远程文件路径，按照Linux上的路径指定方式，支持多级目录嵌套，支持递归创建不存在的目录结构
+
+    /* @return 上传结果
+
+    /* @throws IOException
+
+    /*/
+
+   public UploadStatus upload(String local, String remote) throws IOException {
+
+          // 设置PassiveMode传输
+
+          ftpClient.enterLocalPassiveMode();
+
+          // 设置以二进制流的方式传输
+
+          ftpClient.setFileType(FTP.BINARY_FILE_TYPE);
+
+          ftpClient.setControlEncoding(&quot;GBK&quot;);
+
+          UploadStatus result;
+
+          // 对远程目录的处理
+
+          String remoteFileName = remote;
+
+          if (remote.contains(&quot;/&quot;)) {
+
+                 remoteFileName = remote.substring(remote.lastIndexOf(&quot;/&quot;) + 1);
+
+                 // 创建服务器远程目录结构，创建失败直接返回
+
+                 if (createDirecroty(remote, ftpClient) == UploadStatus.CreateDirectoryFail) {
+
+                        return UploadStatus.CreateDirectoryFail;
+
+                 }
+
+          }
+
+
+
+          // 检查远程是否存在文件
+
+          FTPFile[] files = ftpClient.listFiles(new String(remoteFileName
+
+                        .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+          if (files.length == 1) {
+
+                 long remoteSize = files[0].getSize();
+
+                 File f = new File(local);
+
+                 long localSize = f.length();
+
+                 if (remoteSize == localSize) { // 文件存在
+
+                        return UploadStatus.FileExits;
+
+                 } else if (remoteSize &gt; localSize) {
+
+                        return UploadStatus.RemoteFileBiggerThanLocalFile;
+
+                 }
+
+
+
+                 // 尝试移动文件内读取指针,实现断点续传
+
+                 result = uploadFile(remoteFileName, f, ftpClient, remoteSize);
+
+
+
+                 // 如果断点续传没有成功，则删除服务器上文件，重新上传
+
+                 if (result == UploadStatus.UploadFromBreakFailed) {
+
+                        if (!ftpClient.deleteFile(remoteFileName)) {
+
+                               return UploadStatus.DeleteRemoteFaild;
+
+                        }
+
+                        result = uploadFile(remoteFileName, f, ftpClient, 0);
+
+                 }
+
+          } else {
+
+                 result = uploadFile(remoteFileName, new File(local), ftpClient, 0);
+
+          }
+
+          return result;
+
+   }
+
+
+
+   //*/*
+
+    /* 递归创建远程服务器目录
+
+    /* @param remote 远程服务器文件绝对路径
+
+    /* @param ftpClient FTPClient对象
+
+    /* @return 目录创建是否成功
+
+    /* @throws IOException
+
+    /*/
+
+   public UploadStatus createDirecroty(String remote, FTPClient ftpClient)
+
+                 throws IOException {
+
+          UploadStatus status = UploadStatus.CreateDirectorySuccess;
+
+          String directory = remote.substring(0, remote.lastIndexOf(&quot;/&quot;) + 1);
+
+          if (!directory.equalsIgnoreCase(&quot;/&quot;)
+
+                        &amp;&amp; !ftpClient.changeWorkingDirectory(new String(directory
+
+                                      .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;))) {
+
+                 // 如果远程目录不存在，则递归创建远程服务器目录
+
+                 int start = 0;
+
+                 int end = 0;
+
+                 if (directory.startsWith(&quot;/&quot;)) {
+
+                        start = 1;
+
+                 } else {
+
+                        start = 0;
+
+                 }
+
+                 end = directory.indexOf(&quot;/&quot;, start);
+
+                 while (true) {
+
+                        String subDirectory = new String(remote.substring(start, end)
+
+                                      .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;);
+
+                        if (!ftpClient.changeWorkingDirectory(subDirectory)) {
+
+                               if (ftpClient.makeDirectory(subDirectory)) {
+
+                                      ftpClient.changeWorkingDirectory(subDirectory);
+
+                               } else {
+
+                                      log.info(&quot;创建目录失败&quot;);
+
+                                      return UploadStatus.CreateDirectoryFail;
+
+                               }
+
+                        }
+
+                        start = end + 1;
+
+                        end = directory.indexOf(&quot;/&quot;, start);
+
+                        // 检查所有目录是否创建完毕
+
+                        if (end &lt;= start) {
+
+                               break;
+
+                        }
+
+                 }
+
+          }
+
+          return status;
+
+   }
+
+
+
+   //*/*
+
+    /* 上传文件到服务器,新上传和断点续传
+
+    /* @param remoteFile 远程文件名，在上传之前已经将服务器工作目录做了改变
+
+    /* @param localFile 本地文件File句柄，绝对路径
+
+    /* @param processStep 需要显示的处理进度步进值
+
+    /* @param ftpClient FTPClient引用
+
+    /* @return
+
+    /* @throws IOException
+
+    /*/
+
+   public UploadStatus uploadFile(String remoteFile, File localFile,
+
+                 FTPClient ftpClient, long remoteSize) throws IOException {
+
+          UploadStatus status;
+
+          // 显示进度的上传
+
+          System.out.println(&quot;localFile.length():&quot;+localFile.length());
+
+          long step = localFile.length() / 100;
+
+          step = step==0?1:step;//文件过小，step可能为0
+
+          long process = 0;
+
+          long localreadbytes = 0L;
+
+          RandomAccessFile raf = new RandomAccessFile(localFile, &quot;r&quot;);
+
+          OutputStream out = ftpClient.appendFileStream(new String(remoteFile
+
+                        .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+          // 断点续传
+
+          if (remoteSize &gt; 0) {
+
+                 ftpClient.setRestartOffset(remoteSize);
+
+                 process = remoteSize / step;
+
+                 raf.seek(remoteSize);
+
+                 localreadbytes = remoteSize;
+
+          }
+
+          byte[] bytes = new byte[1024];
+
+          int c;
+
+          while ((c = raf.read(bytes)) != -1) {
+
+                 out.write(bytes, 0, c);
+
+                 localreadbytes += c;
+
+                 if (localreadbytes / step != process) {
+
+                        process = localreadbytes / step;
+
+                        if (process % 10 == 0){
+
+                               log.info(&quot;上传进度：&quot; + process);
+
+                        }
+
+                 }
+
+          }
+
+          out.flush();
+
+          raf.close();
+
+          out.close();
+
+          boolean result = ftpClient.completePendingCommand();
+
+          if (remoteSize &gt; 0) {
+
+                 status = result ? UploadStatus.UploadFromBreakSuccess
+
+                               : UploadStatus.UploadFromBreakFailed;
+
+          } else {
+
+                 status = result ? UploadStatus.UploadNewFileSuccess
+
+                               : UploadStatus.UploadNewFileFailed;
+
+          }
+
+          return status;
+
+   }
+
+
+
+   public InputStream downFile(String sourceFileName) throws IOException {
+
+          return ftpClient.retrieveFileStream(sourceFileName);
+
+   }
+
+
+
+   public enum UploadStatus {
+
+          CreateDirectoryFail, // 远程服务器相应目录创建失败
+
+          CreateDirectorySuccess, // 远程服务器闯将目录成功
+
+          UploadNewFileSuccess, // 上传新文件成功
+
+          UploadNewFileFailed, // 上传新文件失败
+
+          FileExits, // 文件已经存在
+
+          RemoteFileBiggerThanLocalFile, // 远程文件大于本地文件
+
+          UploadFromBreakSuccess, // 断点续传成功
+
+          UploadFromBreakFailed, // 断点续传失败
+
+          DeleteRemoteFaild; // 删除远程文件失败
+
+   }
+
+
+
+   public enum DownloadStatus {
+
+          RemoteFileNotExist, // 远程文件不存在
+
+          DownloadNewSuccess, // 下载文件成功
+
+          DownloadNewFailed, // 下载文件失败
+
+          LocalFileBiggerThanRemoteFile, // 本地文件大于远程文件
+
+          DownloadFromBreakSuccess, // 断点续传成功
+
+          DownloadFromBreakFailed; // 断点续传失败
+
+   }
+</code></pre><p>}
+FtpConfig类：
+//<em>/</em>
+ /<em> 
+ /</em>/
+package com.pccw.portlet.publictools;
+//<em>/</em>
+ /<em> FTP配置类
+ /</em> @author WangXianfeng 1:18:45 PM Jul 16, 2011
+ /<em>/
+public class FtpConfig {
+    private String server;
+    private int port;
+    private String username;
+    private String password;
+    private String path;
+    gets  。。sets。。
+}
+测试类：
+import java.util.List;
+import com.pccw.portlet.publictools.FtpConfig;
+import com.pccw.portlet.publictools.FtpUtil;
+//</em>/<em>
+ /</em> 
+ /<em> @author WangXianfeng 1:20:45 PM Jul 16, 2011
+ /</em>/
+public class HelloWorld {
+    //<em>/</em>
+     /<em> @param args
+     /</em>/
+    public static void main(String[] args) throws Exception {
+        FtpConfig config = new FtpConfig();
+        config.setServer(&quot;192.168.0.199&quot;);
+        config.setPort(21);
+        config.setUsername(&quot;wxf&quot;);
+        config.setPassword(&quot;wxf&quot;);
+        config.setPath(&quot;bankafile&quot;);
+        FtpUtil ftp = new FtpUtil();
+        ftp.connectServer(config);
+        String localFile = &quot;c:\Seagull.rar&quot;;
+        ftp.upload(localFile, &quot;sea.rar&quot;);
+        List<String> files = ftp.getFileList(&quot;&quot;);
+        //ftp.changeDirectory(&quot;bankafile&quot;);</p>
+<pre><code>    for(String file:files){
+        System.out.println(file);
+        String local = &quot;D:\\ct\\199\\temp\\&quot; + file;
+        ftp.download(file, local);
+    }
+}
+</code></pre><p>}</p>
+<p>来源： <a href="[http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/](http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/)">[http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/](http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ftp/">ftp</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ftp/" class="label label-primary">ftp</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-ftp--ApacheFTP实用代码/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ftp--ApacheFTP实用代码" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--FTP的主动模式/">FTP的主动模式</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--FTP的主动模式/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="ftp-">FTP的主动模式</h1>
+<p>FTP的主动模式(active mode)和被动模式(passive mode)：(转)</p>
+<p>FTP的主动模式(active mode)和被动模式(passive mode)：(转)</p>
+<p>2010-03-01 23:57
+大多数的TCP服务是使用单个的连接，一般是客户向服务器的一个周知端口发起连接，然后使用这个连接进行通讯。但是，FTP协议却有所不同，它使用双向的多个连接 ，而且使用的端口很难预计。一般，FTP连接包括：
+一个控制连接 (control connection)
+这个连接用于传递客户端的命令和服务器端对命令的响应。它使用服务器的21端口，生存期是整个FTP会话时间。
+几个数据连接 (data connection)
+这些连接用于传输文件和其它数据，例如：目录列表等。这种连接在需要数据传输时建立，而一旦数据传输完毕就关闭，每次使用的端口也不一定相同。而且，数据 连接既可能是客户端发起的，也可能是服务器端发起的。
+在FTP协议中，控制连接使用周知端口21 ，因此使用ISA的IP PACKET FILTER就可以这种连接进行很好的安全保护。相反，数据传输连接的目的端口通常实现无法知道，因此处理这样的端口转发非常困难。F</p>
+<p>TP协议使用一个标准的端口21作为ftp-data端口，但是这个端口只用于连接的源地址是服务器端的情况，在这个端口上根本就没有监听进程。</p>
+<p>FTP的数据连接和控制连接的方向一般是相反的，也就是说，是服务器向客户端发起一个用于数据传输的连接。连接的端口是由服务器端和客户端协商确定的。FTP协议 的这个特征对ISA 转发以及防火墙和NAT的配置增加了很多困难。
+除此之外，还有另外一种FTP模式，叫做被动模式 (passive mod)。在这种模式下，数据连接是由客户程序发起的，和刚才讨论过的模式(我们可以叫做主动模式 )相反。</p>
+<p>是否采取被动模式取决于客户程序，在ftp命令行中使用passive命令就可以关闭/打开被动模式。</p>
+<p><strong>iptables**</strong>中配置vsftp**</p>
+<p>问题：配置iptables后， vsftpd不能用。常见现象是能够登录到服务器，LIST列目录失败(超时)。</p>
+<p>分析：</p>
+<p>主动模式 下，客户连接 TCP/21，服务器通过 TCP/20 连接客户的随机端口 </p>
+<p>————这种情况下，通过状态防火墙可以解决 iptables -A INPUT -m state --state NEW,RELATED,ESTABLISHED -j ACCEPT
+被动模式 下，客户连接 TCP/21，客户再通过其他端口连接服务器的随机端口</p>
+<p>卡住的原因，是因为服务器在被动模式下没有打开临时端口让 client 连过来，因此需要几个条件</p>
+<p>1、client 没有防火墙时，用主动模式连接即可
+2、server 没有防火墙时，用被动模式即可
+3、双方都有防火墙时，vsftpd 设置被动模式高端口范围，server 打开那段范围，client 用被动模式连接即可
+4、加载 ip_conntrack_ftp 模块，使 server 支持 connection tracking，支持临时打洞，client 用被动模式即可
+5、server 使用 ip_conntrack_ftp、client 使用 ip_conntrack_ftp 和 ip_nat_ftp，支持临时打洞和临时 NAT 穿越打洞，双方使用主动或被动模式均可</p>
+<ul>
+<li>“打洞”的配置说明：</li>
+<li>优点：不影响ftp配置；缺点： 客户会感觉到连接有些延迟。原因参见ip_conntract的实现原理</li>
+</ul>
+<p>在/etc/modprobe.conf中添加
+alias ip_conntrack ip_conntract_ftp ip_nat_ftp</p>
+<p>在/etc/rc.local中添加</p>
+<p>/sbin/modprobe ip_conntract
+/sbin/modprobe  ip_conntrack_ftp
+/sbin/modprobe  ip_nat_ftp</p>
+<p>这个作用就是完成上面所说的“临时打洞”的方法。</p>
+<ul>
+<li>限制被动模式连接端口的配置说明</li>
+<li>优点：对连接速度没有影响。缺点： 限制了被动模式下，客户端并发连接的数量。</li>
+</ul>
+<p>在/etc/vsftpd/vsftpd.conf中添加
+pasv_min_port=2222
+pasv_max_port=2225</p>
+<p>iptables中开放这段端口</p>
+<p>-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 21 -j ACCEPT
+-A INPUT -p tcp --dport 2222:2225 -j ACCEPT</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ftp/">ftp</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ftp/" class="label label-primary">ftp</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-ftp--FTP的主动模式/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ftp--FTP的主动模式" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper把Java程序作为Windows系统服务--IT/">使用Java Service Wrapper 把Java程序作为Windows系统服务 </a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper把Java程序作为Windows系统服务--IT/">feb. 2 2014</a></time></span>      
@@ -290,236 +1324,28 @@ wrapper.app.parameter.1= HelloWorld  &lt;要启动的类&gt;
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动 </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-webservice--Webservicesoapwsdl区别之个人见解/">Webservice soap wsdl区别之个人见解</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-webservice--Webservicesoapwsdl区别之个人见解/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-java-service-wrapper-tomcat-linux-tomcat-java-iteye-">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动 - Tomcat - Java - ITeye论坛</h1>
-<p><a href="http://www.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.iteye.com/login" target="_blank">登录</a> <a href="http://www.iteye.com/signup" target="_blank">注册</a></p>
-<p><a href="http://www.iteye.com/" target="_blank"><img src="&quot;ITeye-最棒的软件开发交流社区&quot;" alt="ITeye-最棒的软件开发交流社区"></a></p>
-<p>-</p>
-<p><a href="http://www.iteye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.iteye.com/forums/board/Java" target="_blank">Java企业应用论坛</a> →</p>
-<h1 id="-java-service-wrapper-tomcat-linux-">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动</h1>
-<p><a href="http://www.iteye.com/forums/board/Java" target="_blank">全部</a> <a href="http://www.iteye.com/forums/tag/Hibernate" target="_blank">Hibernate</a> <a href="http://www.iteye.com/forums/tag/Spring" target="_blank">Spring</a> <a href="http://www.iteye.com/forums/tag/Struts" target="_blank">Struts</a> <a href="http://www.iteye.com/forums/tag/iBATIS" target="_blank">iBATIS</a> <a href="http://www.iteye.com/forums/tag/%E4%BC%81%E4%B8%9A%E5%BA%94%E7%94%A8" target="_blank">企业应用</a> <a href="http://www.iteye.com/forums/tag/Lucene" target="_blank">Lucene</a> <a href="http://www.iteye.com/forums/tag/SOA" target="_blank">SOA</a> <a href="http://www.iteye.com/forums/tag/Java%E7%BB%BC%E5%90%88" target="_blank">Java综合</a> <a href="http://www.iteye.com/forums/tag/%E8%AE%BE%E8%AE%A1%E6%A8%A1%E5%BC%8F" target="_blank">设计模式</a> <a href="http://www.iteye.com/forums/tag/Tomcat" target="_blank">Tomcat</a> <a href="http://www.iteye.com/forums/tag/OO" target="_blank">OO</a> <a href="http://www.iteye.com/forums/tag/JBoss" target="_blank">JBoss</a>
-<a href="http://www.iteye.com/clicks/593" target="_blank">最成熟稳定甘特图控件,支持Java和.Net</a></p>
-<p>浏览 5354 次 锁定老帖子 <a href="">主题：使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动</a></p>
-<p>精华帖 (0) :: 良好帖 (0) :: 新手帖 (0) :: 隐藏帖 (0) 作者 正文 * wenson</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://wenson.iteye.com/" target="_blank"><img src="&quot;wenson的博客: 山下的人&quot;" alt="wenson的博客"></a></li>
-<li>性别: <img src="&quot;男&quot;" alt=""></li>
-<li>文章: 111</li>
-<li>积分: 80</li>
-<li>来自: 广州</li>
-<li><img src="" alt="">
-  发表时间：2008-01-11   最后修改：2009-02-02</li>
-</ul>
-<p><a href="http://www.iteye.com/topic/155159#" target="_blank">&lt;</a> <a href="http://www.iteye.com/topic/155159#" target="_blank">&gt;</a>  猎头职位: <a href="http://www.iteye.com/jobs/1847" target="_blank">北京:  ITeye网站诚聘产品交互设计</a></p>
-<p>相关文章: <a href="http://www.iteye.com/topic/155159#" title="关闭" target="_blank"> </a></p>
-<ul>
-<li><a href="http://www.iteye.com/topic/36657" title="把java程序做成windows服务（转）" target="_blank">把java程序做成windows服务（转）</a></li>
-<li><a href="http://www.iteye.com/topic/557980" title="tomcat源码—redirect和forward的实现" target="_blank">tomcat源码—redirect和forward的实现</a></li>
-<li><a href="http://www.iteye.com/topic/614683" title="tomcat集群时统计session与在线人数" target="_blank">tomcat集群时统计session与在线人数</a>
-推荐群组: <a href="http://ubuntu.group.iteye.com/" target="_blank">Ubuntu For Fun</a>
-<a href="http://www.iteye.com/wiki/topic/155159" target="_blank">更多相关推荐</a>
-<a href="http://www.iteye.com/forums/tag/Tomcat" target="_blank">Tomcat</a></li>
-</ul>
-<p>前几天总结了使用JSVC来设置tomcat作为linux服务并且开机自动启动，但是如果要更专业一点来控制tomcat的启动，使用Java Service Wrapper应该不失为一个好的选择，下面来总结一下Java Service Wrapper在Linux中对于tomcat启动的设置：
-<strong>1、</strong> 安装JDK、Tomcat,此处略过。比如tomcat安装在/opt/tomcat目录中。
-<strong>2</strong> 、使用命令wget 下载Java Service Wrapper(目前版本wrapper-linux-x86-32-3.2.3，官网：<a href="http://wrapper.tanukisoftware.org" target="_blank">http://wrapper.tanukisoftware.org</a>), 用命令tar -zxvf wrapper-linux-x86-32-3.2.3.tar.gz 解压，得到目录wrapper-linux-x86-32-3.2.3，使用ln -s wrapper-linux-x86-32-3.2.3 wrapper 给目录wrapper-linux-x86-32-3.2.3 建一个名称为wrapper的快捷方式。
-<strong>3</strong> 、复制wrapper\src\bin\sh.script.in到/opt/tomcat/bin目录，重命名为tomcat
-复制wrapper\src\conf\wrapper.conf.in到/opt/tomcat/conf目录，重命名为wrapper.conf
-复制wrapper\lib目录下的所有3个文件到/opt/tomcat/lib目录
-复制wrapper\bin目录下的wrapper文件到/opt/tomcat/bin目录
-<strong>4</strong> 、修改/opt/testapp/bin/tomcat文件
-APP_NAME=&quot;tomcat&quot;
-APP_LONG_NAME=&quot;Tomcat Application Server&quot;
-WRAPPER_CMD=&quot;./wrapper&quot;
-WRAPPER_CONF=&quot;../conf/wrapper.conf&quot;
-赋予执行权限
-chmod 775 /opt/tomcat/bin/tomcat
-chmod 775 /opt/tomcat/bin/tomcat
-<strong>5</strong> 、修改/opt/tomcat/conf/wrapper.conf文件，如：
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Java Application
-/# 设置环境变量
-set.JAVA_HOME=/usr/java/jdk1.6.0_01
-set.CATALINA_HOME=/opt/tomcat
-set.CATALINA_BASE=/opt/tomcat
-wrapper.java.command=/usr/java/jdk1.6.0_01/bin/java
-/# Java Main class. This class must implement the WrapperListener interface
-/# or guarantee that the WrapperManager class is initialized. Helper
-/# classes are provided to do this for you. See the Integration section
-/# of the documentation for details.
-/# 使用WrapperStartStopApp，这样可以通过命令带start/stop来启动/停止程序。
-wrapper.java.mainclass=org.tanukisoftware.wrapper.WrapperStartStopApp
-/# Java Classpath (include wrapper.jar) Add class path elements as
-/# needed starting from 1
-/# 设置执行tomcat的classpath文件
-wrapper.java.classpath.1=%CATALINA_HOME%/lib/wrapper.jar
-wrapper.java.classpath.2=%CATALINA_BASE%/bin/bootstrap.jar
-/# Java Library Path (location of Wrapper.DLL or libwrapper.so)
-/# 设置tomcat的lib路径
-wrapper.java.library.path.1=%CATALINA_HOME%/lib/
-/# Java Additional Parameters
-/# 设置额外参数
-wrapper.java.additional.1=-Djava.endorsed.dirs=%CATALINA_HOME%/common/endorsed
-wrapper.java.additional.2=-Dcatalina.base=%CATALINA_BASE%
-wrapper.java.additional.3=-Dcatalina.home=%CATALINA_HOME%
-wrapper.java.additional.4=-Djava.io.tmpdir=%CATALINA_BASE%/temp
-/# Initial Java Heap Size (in MB)
-/# 设置tomcat的JVM初始化堆的大小
-wrapper.java.initmemory=128
-/# Maximum Java Heap Size (in MB)
-/# 设置tomcat的JVM堆的最大值
-wrapper.java.maxmemory=512
-/# Application parameters. Add parameters as needed starting from 1
-/# 设置启动、停止和重启参数
-wrapper.app.parameter.1=org.apache.catalina.startup.Bootstrap
-wrapper.app.parameter.2=1
-wrapper.app.parameter.3=start
-wrapper.app.parameter.4=org.apache.catalina.startup.Bootstrap
-wrapper.app.parameter.5=true
-wrapper.app.parameter.6=1
-wrapper.app.parameter.7=stop
-wrapper.filter.trigger.1=java.lang.OutOfMemoryError
-wrapper.filter.action.1=RESTART
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Logging Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Format of output for the console. (See docs for formats)
-wrapper.console.format=PM
-/# Log Level for console output. (See docs for log levels)
-wrapper.console.loglevel=INFO
-/# Log file to use for wrapper output logging.
-/# 设置log文件路径
-wrapper.logfile=%CATALINA_BASE%/logs/wrapper.log
-/# Format of output for the log file. (See docs for formats)
-wrapper.logfile.format=LPTM
-/# Log Level for log file output. (See docs for log levels)
-wrapper.logfile.loglevel=INFO
-/# Maximum size that the log file will be allowed to grow to before
-/# the log is rolled. Size is specified in bytes. The default value
-/# of 0, disables log rolling. May abbreviate with the &#39;k&#39; (kb) or
-/# &#39;m&#39; (mb) suffix. For example: 10m = 10 megabytes.
-/# 设置log文件最大值
-wrapper.logfile.maxsize=5
-/# Maximum number of rolled log files which will be allowed before old
-/# files are deleted. The default value of 0 implies no limit.
-/#设置log文件最多个数
-wrapper.logfile.maxfiles=10
-/# Log Level for sys/event log output. (See docs for log levels)
-wrapper.syslog.loglevel=NONE
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Windows Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Title to use when running as a console
-/# windows下tomcat控制台名称
-wrapper.console.title=Tomcat6 Application Server
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Windows NT/2000/XP Service Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# WARNING - Do not modify any of these properties when an application
-/# using this configuration file has been installed as a service.
-/# Please uninstall the service before modifying this section. The
-/# service can then be reinstalled.
-/# Name of the service
-/# 设置服务名称
-wrapper.ntservice.name=tomcat6
-/# Display name of the service
-wrapper.ntservice.displayname=@app.long.name@
-/# Description of the service
-wrapper.ntservice.description=@app.description@
-/# Service dependencies. Add dependencies as needed starting from 1
-wrapper.ntservice.dependency.1=
-/# Mode in which the service is installed. AUTO_START or DEMAND_START
-/# 设置允许Tomcat服务自动启动
-wrapper.ntservice.starttype=AUTO_START
-/# Allow the service to interact with the desktop.
-wrapper.ntservice.interactive=false
-<strong>6</strong> 、设置tomcat开机自动运行：
-ln -s /opt/tomcat/bin/tomcat /etc/init.d/tomcat
-<strong>7</strong> 、测试,执行命令：service tomcat start|stop|restart|status
-至此，使用Java Service Wrapper来设置Tomcat作为Linux的服务完成，从此过程看来，Java Service Wrapper对tomcat的控制程度比tomcat自带的JSVC深入多了。
-目录结构：
-/opt/tomcat/bin
-                 | tomcat
-                 | wrapper
-/opt/tomcat/logs
-                 | wrapper.log（程序运行时自动产生）
-/opt/tomcat/conf
-                 | wrapper.conf
-/opt/tomcat/lib
-                 | libwrapper.so
-                 | wrapper.jar
-                 | test.jar</p>
-<p>声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。</p>
-<p>推荐链接</p>
-<ul>
-<li><a href="http://www.iteye.com/clicks/508" target="_blank">.Net程序员不用羡慕Android程序员，微软移动战役打响</a></li>
-<li><a href="http://www.iteye.com/clicks/716" target="_blank">想进外企，出国，跳槽，找工作？英语不好,快来充电吧</a></li>
-<li><a href="http://www.iteye.com/clicks/527" target="_blank">100万现金奖培训出来的程序员</a></li>
-<li><a href="http://www.iteye.com/clicks/609" target="_blank">-</a> <a href="http://www.iteye.com/topic/155159#" target="_blank">返回顶楼</a> <a href="http://wenson.iteye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://wenson.iteye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://my.iteye.com/messages/new?message%5Breceiver_name%5D=wenson" title="发送站内短信" target="_blank"> </a> <a href="http://wenson.iteye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://my.iteye.com/feed?subscription%5Bsubscribed_user_name%5D=wenson" title="关注作者" target="_blank"> </a>  * nwangwei</li>
-<li>等级: <img src="&quot;一星会员&quot;" alt="一星会员"></li>
-<li><a href="http://nwangwei.iteye.com/" target="_blank"><img src="&quot;nwangwei的博客: nwangwei&quot;" alt="nwangwei的博客"></a></li>
-<li>性别: <img src="&quot;男&quot;" alt=""></li>
-<li>文章: 41</li>
-<li>积分: 130</li>
-<li><img src="" alt="">
-  发表时间：2008-03-13  </li>
-</ul>
-<p>棒！
-tomcat的shutdown命令老是关不掉全部的java进程 <a href="http://www.iteye.com/topic/155159#" target="_blank">返回顶楼</a> <a href="http://nwangwei.iteye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://nwangwei.iteye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://my.iteye.com/messages/new?message%5Breceiver_name%5D=nwangwei" title="发送站内短信" target="_blank"> </a> <a href="http://nwangwei.iteye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://my.iteye.com/feed?subscription%5Bsubscribed_user_name%5D=nwangwei" title="关注作者" target="_blank"> </a> <a href="http://www.iteye.com/topic/155159#485194" title="nwangwei回帖:使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动" target="_blank">回帖地址</a></p>
-<p><a href="http://www.iteye.com/topic/155159#" title="好" target="_blank">0</a> <a href="http://www.iteye.com/topic/155159#" title="差" target="_blank">0</a> 请登录后投票</p>
-<p><a href="http://www.iteye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.iteye.com/forums/board/Java" target="_blank">Java企业应用版</a>
-跳转论坛:移动开发技术 Web前端技术 Java企业应用 编程语言技术 综合技术 入门技术 招聘求职 海阔天空</p>
-<ul>
-<li><a href="http://www.iteye.com/jobs/1555" title="北京:美团诚聘资深研发工程师（Java）" target="_blank">北京: 美团诚聘资深研发工程师（Java）</a></li>
-<li><a href="http://www.iteye.com/jobs/1554" title="北京:美团诚聘研发工程师（Java）" target="_blank">北京: 美团诚聘研发工程师（Java）</a></li>
-<li><a href="http://www.iteye.com/jobs/712" title="北京:ITeye官方招聘和猎头诚聘ITeye网站诚聘Java高级搜索工程师" target="_blank">北京: ITeye官方招聘和猎头诚聘ITeye网站诚聘Java</a></li>
-<li><a href="http://www.iteye.com/jobs/2068" title="吉林:用友汽车软件诚聘Java程序员" target="_blank">吉林: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1628" title="浙江:阿里巴巴诚聘高级Java工程师" target="_blank">浙江: 阿里巴巴诚聘高级Java工程师</a></li>
-<li><a href="http://www.iteye.com/jobs/2078" title="上海:用友汽车软件诚聘项目经理" target="_blank">上海: 用友汽车软件诚聘项目经理</a></li>
-<li><a href="http://www.iteye.com/jobs/1144" title="陕西:ThoughtWorks诚聘西安Senior Java Application Developer" target="_blank">陕西: ThoughtWorks诚聘西安Senior Java Applicatio</a></li>
-<li><a href="http://www.iteye.com/jobs/2067" title="重庆:用友汽车软件诚聘Java程序员" target="_blank">重庆: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/750" title="北京:杰嘉迪诚聘高级Java程序员" target="_blank">北京: 杰嘉迪诚聘高级Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/2111" title="北京:中油瑞飞/richfit诚聘JAVA开发工程师" target="_blank">北京: 中油瑞飞/richfit诚聘JAVA开发工程师</a></li>
-<li><a href="http://www.iteye.com/jobs/1891" title="北京:北大软件诚聘Java软件开发工程师（技术研发部110809）" target="_blank">北京: 北大软件诚聘Java软件开发工程师（技术研发部</a></li>
-<li><a href="http://www.iteye.com/jobs/755" title="北京:杰嘉迪诚聘Java程序员" target="_blank">北京: 杰嘉迪诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1231" title="北京:胡莱游戏诚聘年薪8-16万高级Java程序员" target="_blank">北京: 胡莱游戏诚聘年薪8-16万高级Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1541" title="上海:大众点评诚聘Java高级开发工程师（上海）" target="_blank">上海: 大众点评诚聘Java高级开发工程师（上海）</a></li>
-<li><a href="http://www.iteye.com/jobs/2066" title="湖北:用友汽车软件诚聘Java程序员" target="_blank">湖北: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1849" title="浙江:阿里巴巴诚聘C++开发工程师(搜索引擎和广告引擎方向，偏底层)" target="_blank">浙江: 阿里巴巴诚聘C++开发工程师(搜索引擎和广告</a></li>
-<li><a href="http://www.iteye.com/jobs/2065" title="安徽:用友汽车软件诚聘Java程序员" target="_blank">安徽: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/2080" title="上海:用友汽车软件诚聘软件研发工程师（实习岗位）" target="_blank">上海: 用友汽车软件诚聘软件研发工程师（实习岗位）</a></li>
-<li><p><a href="http://www.iteye.com/jobs/2064" title="上海:用友汽车软件诚聘高级Java程序员" target="_blank">上海: 用友汽车软件诚聘高级Java程序员</a></p>
-</li>
-<li><p><a href="http://www.iteye.com/" target="_blank">首页</a></p>
-</li>
-<li><a href="http://www.iteye.com/news" target="_blank">资讯</a></li>
-<li><a href="http://www.iteye.com/magazines" target="_blank">精华</a></li>
-<li><a href="http://www.iteye.com/forums" target="_blank">论坛</a></li>
-<li><a href="http://www.iteye.com/ask" target="_blank">问答</a></li>
-<li><a href="http://www.iteye.com/blogs" target="_blank">博客</a></li>
-<li><a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a></li>
-<li><a href="http://www.iteye.com/groups" target="_blank">群组</a></li>
-<li><a href="http://www.iteye.com/job" target="_blank">招聘</a></li>
-<li><a href="http://www.iteye.com/search" target="_blank">搜索</a></li>
-<li><a href="http://www.ciecloud.org/2012/index.html" target="_blank">云计算大会</a></li>
-<li><a href="http://www.iteye.com/index/service" target="_blank">广告服务</a></li>
-<li><a href="http://webmaster.iteye.com/" target="_blank">ITeye黑板报</a></li>
-<li><a href="http://www.iteye.com/index/contactus" target="_blank">联系我们</a></li>
-<li><a href="http://www.iteye.com/index/friend_links" target="_blank">友情链接</a></li>
-</ul>
-<p>© 2003-2011 ITeye.com. [ <a href="http://www.miibeian.gov.cn/" target="_blank">京ICP证110151号</a> 京公网安备110105010620 ]
-百联优力(北京)投资有限公司 版权所有
-上海炯耐计算机软件有限公司 提供商务支持 <img src="" alt=""></p>
+        <h1 id="webservice-soap-wsdl-">Webservice soap wsdl区别之个人见解</h1>
+<p><img src="" alt=""><img src="" alt=""> <img src="" alt=""> <a href="http://www.wudongqi.com/blogedit.asp?id=652" title="编辑该日志" target="_blank"><img src="" alt=""></a> <a href="http://www.wudongqi.com/blogedit.asp?action=del&amp;id=652" target="_blank"><img src="" alt=""></a>
+    ● Web Service实现业务诉求：Web Service是真正“办事”的那个，提供一种办事接口的统称。
+    ● WSDL提供“能办的事的文档说明”：对要提供的服务的一种描述格式。我想帮你的忙，但是我要告诉你我都能干什么，以及干这些事情需要的参数类型。
+    ● SOAP提供“请求”的规范：向服务接口传递请求的格式，包括方法和参数等。你想让人家办事，总得告诉人家你想干什么吧，SOAP就是定义这个“请求”的格式的，按照SOAP定义的“请求”格式“书写”请求就可以保证Web Service能够正确的解读你想让它干什么以及你为它提供了什么参数。在这个请求中，你需要描述的主要问题有：向哪个Web Service发送请求，请求的参数类型、参数值、返回值类型。这些都“填写”完毕，也就完成了符合SOAP规范的SOAP消息。
+    wsdl和soap虽然是web service的两大标准，但是两者并没有必然的联系，都可以独立使用。
+    wsdl提供了一个统一的接口，目前已经成为一个国际上公认的标准，通过wsdl提供的接口可以访问不同类型的资源（如java、c/#、C、C、C++等），因为wsdl是基于xml，与语言平台无关的。另外wsdl提供了binding和service元素，用以绑定接口到具体的服务，实现了接口与实现的分离。
+    soap（简单对象访问协议）是一种基于http的传输协议，用来访问远程服务
+    wsdl与soap的关系在于：wsdl绑定服务的时候可以设定使用的协议，协议可以是soap、http、smtp、ftp等任何一种传输协议，除此以外wsdl还可以绑定jms、ejb及local java等等，不过都是需要对binding和service元素做扩展的，而且需要扩展服务器的功能以支持这种扩展
+    soap协议是一种请求和应答协议规范，而http是web传输协议，soap的传输是可以基于http的，但也可以基于其他的传输协议，如ftp、smtp等。
+    简单对象访问协议（SOAP）是W3C组织的一个Note, 它描述了一种在分散的或分布式的环境中如何交换信息的轻量级协议。SOAP是一个基于XML的协议，它包括三个部分：SOAP封装(Envelop)，封装定义了一个描述消息中的内容是什么，是谁发送的，谁应当接受并处理它以及如何处理它们的框架；SOAP编码规则（Encoding Rules），用于表示应用程序需要使用的数据类型的实例；SOAP RPC表示(RPC Representation)，表示远程过程调用和应答的协定；SOAP可以和多种传输协议绑定（Binding），使用底层协议交换信息。在这个文档中，目前只定义了SOAP如何和HTTP以及HTTP扩展进行绑定的框架。
+    SOAP是个通信协议， SOAP在HTTP协议的基础上，把编写成XML的REQUEST参数, 放在HTTP BODY上提交个WEB SERVICE服务器(SERVLET，ASP什么的) 处理完成后，结果也写成XML作为RESPONSE送回用户端， 为了使用户端和WEB SERVICE可以相互对应，可以使用WSDL作为这种通信方式的描述文件，利用WSDL工具可以自动生成WS和用户端的框架文件，SOAP具备把复杂对象序列化捆绑到XML里去的能力。
+    SOAP的前身是RPC, 就是远程呼叫处理的协议，这个协议安全性不是很好，多数防火墙都会阻挡RPC的通信包，而SOAP则使用HTTP协议作为基本的协议，使用端口80使得SOAP可以透过防火墙，完成RPC的功能。
+    SOAP协议和HTTP协议一样，都是底层的通信协议，只是请求包的格式不同而已，SOAP包是XML格式的，现在我们编写WEB SERVICE不需要深入理解SOAP也没关系。如果SERVICE和CLIENT在同样的环境下使用SOAP，由于一般情况下都有自动生成SOAP程序框架的工具，因此不知道细节也没关系. 可是, 如果CLIENT和SERVICE的环境不同，比如说JAVA的Client和.NET的SERVICE进行通信，或者是VB CLIENT和TOMCAT下的JAVA SERVICE通信，还是要知道一点细节为好. 特别是, WSDL或者UDDI都不是标准，如果不让用就只好手工配制SOAP MESSAGE啦。</p>
 
       
     </div>
@@ -529,8 +1355,8 @@ tomcat的shutdown命令老是关不掉全部的java进程 <a href="http://www.it
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wrapper/">wrapper</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wrapper/" class="label label-primary">wrapper</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/webservice/">webservice</a></li></span></span> | <span class="tags">Tagged <a href="/tags/webservice/" class="label label-primary">webservice</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:27:47"datetime="2014-03-07 10:27:47"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-webservice--Webservicesoapwsdl区别之个人见解/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-webservice--Webservicesoapwsdl区别之个人见解" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -545,226 +1371,184 @@ tomcat的shutdown命令老是关不掉全部的java进程 <a href="http://www.it
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--发布Java程序为Windows（Linux）服务JavaServiceWrapper-/">发布Java程序为Windows（Linux）服务[Java Service Wrapper] </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-TCPIP--TCPIP网络层谜云之ICMP--ITeye技术网站/">TCP IP网络层谜云之ICMP </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--发布Java程序为Windows（Linux）服务JavaServiceWrapper-/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-TCPIP--TCPIP网络层谜云之ICMP--ITeye技术网站/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-java-windows-linux-java-service-wrapper-iteye-">发布Java程序为Windows（Linux）服务[Java Service Wrapper] - 点点知识小屋 - ITeye技术网站</h1>
-<p><a href="http://www.iteye.com/" target="_blank">首页</a> <a href="http://www.iteye.com/news" target="_blank">资讯</a> <a href="http://www.iteye.com/magazines" target="_blank">精华</a> <a href="http://www.iteye.com/forums" target="_blank">论坛</a> <a href="http://www.iteye.com/ask" target="_blank">问答</a> <a href="http://www.iteye.com/blogs" target="_blank">博客</a> <a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a> <a href="http://www.iteye.com/groups" target="_blank">群组</a> <a href="http://tsunzhang.iteye.com/blog/969521#" target="_blank">更多 ▼</a></p>
-<p><a href="http://www.iteye.com/job" target="_blank">招聘</a> <a href="http://www.iteye.com/search" target="_blank">搜索</a></p>
-<p><a href="http://tsunzhang.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://tsunzhang.iteye.com/login" target="_blank">登录</a> <a href="http://tsunzhang.iteye.com/signup" target="_blank">注册</a></p>
-<h1 id="-http-tsunzhang-iteye-com-"><a href="http://tsunzhang.iteye.com/" target="_blank">点点知识小屋</a></h1>
+        <h1 id="tcp-ip-icmp-iteye-">TCP IP网络层谜云之ICMP - - ITeye技术网站</h1>
+<p><a href="http://www.iteye.com/" target="_blank">首页</a> <a href="http://www.iteye.com/news" target="_blank">新闻</a> <a href="http://www.iteye.com/forums" target="_blank">论坛</a> <a href="http://www.iteye.com/ask" target="_blank">问答</a> <a href="http://www.iteye.com/blogs" target="_blank">博客</a> <a href="http://www.iteye.com/job" target="_blank">招聘</a> <a href="http://java-mzd.iteye.com/blog/1019089#" target="_blank">更多 ▼</a></p>
+<p><a href="http://www.iteye.com/wiki" target="_blank">专栏</a>  <a href="http://www.iteye.com/groups" target="_blank">群组</a> <a href="http://www.iteye.com/search" target="_blank">搜索</a></p>
+<p><a href="http://java-mzd.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.iteye.com/all" target="_blank">我的应用</a> <a href="http://java-mzd.iteye.com/login" target="_blank">登录</a> <a href="http://java-mzd.iteye.com/signup" target="_blank">注册</a></p>
+<h1 id="-java-mzd-http-java-mzd-iteye-com-"><a href="http://java-mzd.iteye.com/" target="_blank">java-mzd</a></h1>
+<p>永久域名 <a href="http://java-mzd.iteye.com/" target="_blank"><a href="http://java-mzd.iteye.com">http://java-mzd.iteye.com</a></a></p>
+<p><a href="http://java-mzd.iteye.com/blog/1019089#" target="_blank">2顶</a>
+<a href="http://java-mzd.iteye.com/blog/1019089#" target="_blank">4踩</a></p>
+<p><a href="http://java-mzd.iteye.com/blog/1050043" title="腾讯、淘宝、金山网络，实习生我该何去何从" target="_blank">腾讯、淘宝、金山网络，实习生我该何去何从</a> | <a href="http://java-mzd.iteye.com/blog/1019088" title="TCP/IP网络层谜云" target="_blank">TCP/IP网络层谜云</a></p>
+<p>2011-04-27</p>
+<h3 id="-tcp-ip-icmp-"><a href="">TCP/IP网络层谜云之ICMP</a></h3>
+<p><strong>文章分类:<a href="http://www.iteye.com/blogs/category/java" target="_blank">Java编程</a></strong>
+本文上接《<a href="http://java-mzd.iteye.com/blog/1019088" target="_blank">TCP/IP网络层谜云</a>》 <a href="http://java-mzd.iteye.com/blog/1019088" target="_blank"><a href="http://java-mzd.iteye.com/blog/1019088">http://java-mzd.iteye.com/blog/1019088</a></a></p>
+<p><strong>十四。为什么需要ICMP？</strong></p>
+<p><strong>因为IP协议不提供可靠性且不能保证信息传递，因此发生问题时，通知发送人是很重要的。</strong>（IP协议是一种不可靠的协议，无法进行差错控制。但IP协议可以借助其他协议来实现这一功能，如ICMP）</p>
+<p><strong>十五。什么是ICMP？</strong> </p>
+<p>ICMP： Internet Control Message Protocol 即Internet消息控制协议。</p>
+<p>ICMP定义了一套<strong>差错报文</strong>和<strong>控制报文</strong>，用于用户主机与路由之间交换不可到达地址、网络拥塞、重定向到更好的路径、报文生命周期超时等信息。</p>
+<p><strong>ICMP协议是一种提供</strong>（有关阻止数据包传递的）<strong>网络故障问题反馈信息的机制</strong>。（针对阻止数据包传递或者网络故障。）它让TCP等上层协议能够意识到数据包没有送达目的地。
+<strong>关于ICMP与TCP的差错控制对比？</strong></p>
+<p>比如主机A到主机B的通信，中间Router  r1 到Router  r2 的网络连接断了。</p>
+<p>通过ICMP，则<strong>可以快速诊断出出错原因</strong>，并且报告主机。（差错诊断）</p>
+<p>TCP的差错控制，主要是体现在，网络断了，收不到确认回复，TCP会一直再次发送数据包，直到收到确认回复。（差错处理）</p>
+<p>ICMP提供一组易懂的出错报告信息。发送的出错报文返回到发送原数据的设备，因为<strong>只有发送设备才是出错报文的逻辑接受者</strong>。<strong>发送设备随后可根据ICMP报文确定发生错误的类型，确定如何才能更好地重发失败的数据报</strong>。但是<strong>ICMP唯一的功能是报告问题而不是纠正错误，纠正错误的任务由发送方完成。</strong></p>
+<p><strong>十六。ICMP协议有哪些数据包？</strong></p>
+<p><strong>**</strong>一个ICMP数据包实际上就是一个（数据部分为ICMP协议数据的）<strong>**IP数据包。</strong> </p>
+<p>IP头</p>
+<p>ICMP头
+Type</p>
+<p>Code</p>
+<p>Checksum 
+ICMP数据</p>
+<p>如前所述，ICMP主要分为<strong>差错报文</strong>和<strong>控制报文</strong>。</p>
+<p><strong>差错报文包括</strong>：目标不可到达（网络、协议、主机、端口不可到达；禁止分割、目标网络不认识、目标主机不认识等等）、超时、参数问题、重定向（网络重定向、主机重定向等）等等</p>
+<p><strong>控制报文包括</strong>：请求回显（ping请求）、回显应答（ping应答）、地址掩码请求、地址掩码应答等等</p>
+<p>如上，我们可以发现，同一类型的错误（不可到达）可能有不同种类（网络不可到达、主机不可到达），因此，<strong>我们使用type来code两个标志来确定一个具体的错误。</strong></p>
+<p><strong>因为需要指出具体是哪个主机上的哪个程序发出的信息没有到达。</strong></p>
+<p><strong>因此，每一个ICMP的错误消息，应该包含：</strong></p>
+<p>1.具体的错误类型（Type/code 决定）</p>
+<p>2.引发ICMP错误消息的数据包的完全IP包头（哪个主机的数据）</p>
+<p>3.数据报的前8个字节----UDP报头或者TCP中的port部分(主机上的哪个程序)</p>
+<p>因此，<strong>ICMP错误消息的格式应该为如下</strong>：
+Type(8)</p>
+<p>Code(8)</p>
+<p>Checksum(16) Unused(32) Internet Header +64 Bits of Original Data Datagram</p>
+<p>控制报文因为控制的消息各不相同，所以有所差异。下面分析下请求回显（ping）和回显应答，其他的消息，大家可以触类旁通。</p>
+<hr>
+<p>Type</p>
+<p>Code</p>
+<p>Checksum Identifier</p>
+<p>Sequence Number Data</p>
+<p><strong>当主机**</strong>A<strong><strong>需要知道和主机</strong></strong>B<strong><strong>通信的状况</strong></strong>(<strong><strong>信息传递延时、丢包率</strong></strong>)<strong><strong>时，我们该怎么办呢？**</strong></strong>
+我们可以参考声纳和雷达的原理：主机A发送一个ICMP回显请求（type=8,code=0）报文,数据域中存放当前时间T1，目的IP为主机B。主机B收到该ICMP回显请求报文后，将目的IP和源IP调换位置，其他信息都不变（Indentifier，Sequence Number）,回复一个ICMP回显应答（type=0,code=0）。主机A收到改ICMP回显应答的时间为T2。则，到主机B的通信时间为：T2-T1。</p>
+<p>又因为，要考虑丢包，所以我们向主机B发送多个回显请求，用Sequence Number来区分各个请求，根据Sequence Number，即可知道应答对应的请求数据包。</p>
+<p>Ping命令就是这样的一个实现，其实我们在命令行下输入ping ip命令时，就是调用Ping程序。Ping程序根据输入的IP（域名）封装ICMP请求应答，发送出去，并且接受ICMP回显应答，进行解析，输出。</p>
+<p><strong>关于超时</strong>：IP报头中的生存期（TTL）属性，用来控制报文段在网络中的生存期。</p>
+<p>试想一下，当网络中的某些路由出现问题，Router A将IP a 的下一跳路由为Router B。同时在Router B中，又将IP a 的下一跳路由为 Router A。那么显然，两个路由器之将会间形成回路，通往网段a的数据包，将会一直在两个路由之间发送，导致网络流量爆炸，同时，数据包也无法正确的到达网络a。</p>
+<p>因此，当IP数据包每经过一个路由器时，路由器将IP数据包中的TTL值减一。当TTL值为0时，路由器判断数据包超时，发送ICMP超时信息给源主机。</p>
+<p><strong>当我们想知道：从主机**</strong>A<strong><strong>发送到主机</strong></strong>B<strong><strong>的数据包在网络中都经过了哪些路由器的时候，我们有什么办法呢？**</strong></strong>
+我们知道，当IP数据包在路由中出错时，路由器会向发送源发送一个ICMP错误报文，发送端从该ICMP错误报文中，可以得到该路由的IP。</p>
+<p>我们可以利用此原理。要得到从主机A到目标主机B之间的所有路由的IP，那么我们必须让IP数据包在每个路由器中都出错一次。</p>
+<p>又因此，TTL值在经过的每个路由器中都会减1。因此，我们可以利用TTL的超时信息，在每个路由中都发生一次。即可得到从从主机A到主机B之间的所有路由的IP。</p>
+<p>PS.怎么判断数据包正确到达了目标主机B？</p>
+<p>当IP数据包到达了目标主机，将不会再发送TTL超时错误。而且在目标主机B中，没有运行相对应的应用层程序，因此，将没有程序会回应我们发送的IP数据包。那么，我们将如何知道IP数据包已经到达了目标主机呢？</p>
+<p>我们可以为数据包分配一个目标主机几乎不可能监听的端口，从而，当IP数据包到达目标主机后，目标主机会回复相应的”不可到达、端口不可到达”的ICMP错误信息，从而，我们可以确认IP数据包已经到达了目标主机。</p>
+<p>综上，我们可以：源主机A发送IP数据包，IP为目标主机B，port几乎不可能监听的port，TTL从一开始一直往上增加，直道收到来自主机B的ICMP 不可到达（端口不可到达）信息。</p>
+<p>Tracerouter 命令就是实现这样功能的一个程序。我们可以通过tracerouter ip来调用此功能。</p>
+<p>PS.因为每次路由时的路由路径可能不一样，那么在tracerouter过程中，我们又如何解决这个问题？</p>
+<p>而且，如果目标主机正好监听了这一我们认为不可能监听的端口呢？</p>
+<p>针对这些问题，欢迎各位读者回答。</p>
+<p>PS。这是第四次更改了。。希望JE别抽风了。。让他们正常显示吧。。</p>
+<p>这年头，每个用心写总结的人。。你们都伤不起啊。。。</p>
+<p>好不容易写了一周啊。。</p>
+<p>从2000写到8000啊。。又从8000改到4000啊。。又从4000改到6600啊</p>
+<p>写了改</p>
+<p>改了啊。。</p>
+<p>伤不起啊。。</p>
+<p>好不容易写好了。。</p>
+<p>JE还不给力。。显示不正常啊。。</p>
+<p>又重新写了后面两个大问题好几遍啊。。好几遍啊</p>
+<p>伤不起啊。。。</p>
+<p><a href="http://java-mzd.iteye.com/blog/1019089#"><strong>2</strong>
+顶</a><a href="http://java-mzd.iteye.com/blog/1019089#"><strong>4</strong>
+踩</a>
+<a href="http://java-mzd.iteye.com/blog/1050043" title="腾讯、淘宝、金山网络，实习生我该何去何从" target="_blank">腾讯、淘宝、金山网络，实习生我该何去何从</a> | <a href="http://java-mzd.iteye.com/blog/1019088" title="TCP/IP网络层谜云" target="_blank">TCP/IP网络层谜云</a></p>
 <ul>
-<li><a href="http://tsunzhang.iteye.com/" target="_blank"><strong>博客</strong></a></li>
-<li><a href="http://tsunzhang.iteye.com/weibo" target="_blank">微博</a></li>
-<li><a href="http://tsunzhang.iteye.com/album" target="_blank">相册</a></li>
-<li><a href="http://tsunzhang.iteye.com/link" target="_blank">收藏</a></li>
-<li><a href="http://tsunzhang.iteye.com/blog/guest_book" target="_blank">留言</a></li>
-<li><a href="http://tsunzhang.iteye.com/blog/profile" target="_blank">关于我</a></li>
-</ul>
-<h3 id="-java-windows-linux-java-service-wrapper-"><a href="">发布Java程序为Windows（Linux）服务[Java Service Wrapper]</a> **</h3>
-<p><strong>博客分类：</strong></p>
-<ul>
-<li><a href="http://tsunzhang.iteye.com/category/60981" target="_blank">java</a>
-<a href="http://www.iteye.com/blogs/tag/Java" target="_blank">Java</a><a href="http://www.iteye.com/blogs/tag/Windows" target="_blank">Windows</a><a href="http://www.iteye.com/blogs/tag/Linux" target="_blank">Linux</a><a href="http://www.iteye.com/blogs/tag/JVM" target="_blank">JVM</a><a href="http://www.iteye.com/blogs/tag/MySQL" target="_blank">MySQL</a></li>
-</ul>
-<p>☆<strong>下载Windows版本</strong>：(请使用Community版本，因Professional和Standard版本需要购买Licenses)
-      ☆假设项目放在目录project文件夹下，发布的包放在project/lib下，日志文件放在project/log下，配置文件放在project/conf下，运行的jar为myjar.jar。
-      ☆在下载包后解压，将Java Service Wrapper包中src/bin/的App.bat.in，InstallApp-NT.bat.in，UninstallApp-NT.bat.in和bin/下的wrapper.exe放在project目录下，把后缀.in去掉。【App.bat(可以直接运行程序)，InstallApp-NT.bat(安装成Windows服务)，UninstallApp-NT.bat(卸载Windows服务)】。修改App.bat，InstallApp-NT.bat，UninstallApp-NT.bat中的set _WRAPPER_CONF=&quot;%_REALPATH%conf\wrapper.conf&quot;。
-      ☆把Java Service Wrapper包中lib目录下的Wrapper.DLL，wrapper.jar拷贝到project/lib下，在原来的运行的jar文件myjar.jar中的MANIFEST.MF增加Class-Path: 其他jar wrapper.jar wrapper.dll。
-      ☆把Java Service Wrapper包中src/conf目录下的wrapper.conf.in放到project/conf下，去掉后缀.in。然后修改为
-wrapper.java.classpath.1=dist/wrapper.jar
-wrapper.java.classpath.2=dist/myjar.jar
-wrapper.java.library.path.1=dist
-/#原来程序运行的入口
-wrapper.app.parameter.1=myapp.mainClass
-wrapper.logfile=log/wrapper.log
-wrapper.console.title=MyApp服务
-wrapper.ntservice.name=MyApp服务
-wrapper.ntservice.displayname=MyApp服务
-wrapper.ntservice.description=MyApp服务</p>
-<pre><code>  ☆然后直接运行App.bat，如果运行成功的话，然后就可以执行InstallApp-NT.bat发布成Windows服务，然后就可以设置成开机自启动了，不怕别人启动的时候自己的程序没有执行。另外如果在project/bin当成bat的目录的话没这么麻烦。
-</code></pre><!-- Linux-->
-
-<p>使用Java Service Wrapper将java程序作为linux服务并且开机自动启动
-以java应用程序为例，打包为tianlong.jar，程序入口为tianlong.QueueTest。
-下面在linux的/opt下建立tianlong目录，复制tianlong.jar到/opt/tianlong/lib目录下。
-1、下载Java Service Wrapper(请使用Community版本，因Professional和Standard版本需要购买Licenses), 解压。 
-      <a href="http://wrapper.tanukisoftware.org/" target="_blank"><a href="http://wrapper.tanukisoftware.org/">http://wrapper.tanukisoftware.org/</a></a>
-      复制src\bin\sh.script.in到/opt/tianlong/bin目录，重命名为QueueTest
-      复制wrapper\bin目录下的wrapper文件到/opt/tianlong/bin目录
-      复制src\conf\wrapper.conf.in到/opt/tianlong/conf目录，重命名为wrapper.conf
-      复制src\lib\lib目录下3个文件到/opt/tianlong/lib目录
-              wrapper.so
-              wrapper.jar
-              wrappertest.jar
-2、修改/opt/tianlong/bin/QueueTest文件
-      APP_NAME=&quot;QueueTest&quot; //注意这里，这里的应用服务名称应该与第1步的/opt/tianlong/bin里面的  QueueTest名字相同
-      APP_LONG_NAME=&quot;QueueTest Application Server&quot;
-      WRAPPER_CMD=&quot;./wrapper&quot; //这里的路径要写正确，这里是对应了/opt/tianlong/bin/wrapper这个文件
-      WRAPPER_CONF=&quot;../conf/wrapper.conf&quot; //这里的路径要写正确，这里是对应了/opt/tianlong/conf/wrapper.conf这个文件
-      赋予执行权限
-      chmod 775 /opt/testapp/bin/SocketServer
-      chmod 775 /opt/testapp/bin/wrapper
-3、修改/opt/tianlong/conf/wrapper.conf文件
-      wrapper.java.command=/usr/java/jdk1.6.0_07/bin/java   //这里是写java的安装路径
-      使用WrapperStartStopApp，这样可以通过命令带start/stop来启动/停止程序。
-      wrapper.java.mainclass=org.tanukisoftware.wrapper.WrapperStartStopApp
-      /#这里添加你用到的jar包文件，从1..n你自己全写上吧，不过wrapper是必须的
-      wrapper.java.classpath.1=../lib/wrapper.jar
-      wrapper.java.classpath.2=../lib/tianlong.jar     //这里表示将打包好的tianlong.jar放在/opt/tianlong/lib这个文件夹中
-      wrapper.java.classpath.3=../lib/asterisk-java-0.3.jar
-      wrapper.java.classpath.4=../lib/mysql-connector-java-5.1.6-bin.jar
-      wrapper.java.classpath.5=/usr/java/jdk1.6.0_07/lib/dt.jar
-      wrapper.java.classpath.6=/usr/java/jdk1.6.0_07/lib/tools.jar
-      wrapper.java.classpath.7=../cofig.properties   //这个是应用程序用到的配置文件。如果使用的应用程序需要用到  配置，就需要把这个文件包含进来
-      wrapper.java.library.path.1=../lib   //这里是表示wrapper使用到的jar包的路径，一般默认即可，绝对路径是：/opt/tianlong/lib
-      /#wrapper.java.initmemory=3
-        JVM启动时的初始内存大小,当前是3M,如果要自定义，将/#去掉，设置自己的值即可。
-      /#wrapper.java.maxmemory=64
-      JVM启动时的最大内存使用量,当前是64M,如果要自定义，将/#去掉，设置自己的值即可。
-      /#这个就是你自己可执行程序的主类(MainClass)，一般来说，就是包含public static void main的那个类
-      wrapper.app.parameter.1=tianlong.QueueTest
-      wrapper.app.parameter.2=1
-      wrapper.app.parameter.3=true
-      wrapper.app.parameter.4=tianlong.QueueTest
-      wrapper.app.parameter.5=true
-      wrapper.app.parameter.6=1
-      wrapper.app.parameter.7=stop
-4、让QueueTest开机自动运行
-      ln -s /opt/tianlong/bin/QueueTest  /etc/init.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc0.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc1.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc2.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc3.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc4.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc5.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc6.d/QueueTest
-5、测试 执行命令：service QueueTest start|stop|restart|status
-      程序运行时，Java Service Wrapper在/opt/tianlong/bin/目录下产生wrapper.log日志，
-      STATUS | wrapper  | 2009/02/25 17:04:01 | --&gt; Wrapper Started as Daemon
-      STATUS | wrapper  | 2009/02/25 17:04:01 | Java Service Wrapper Community Edition 3.3.2
-      STATUS | wrapper  | 2009/02/25 17:04:01 |   Copyright (C) 1999-2009 Tanuki Software, Ltd.  All Rights Reserved.
-      STATUS | wrapper  | 2009/02/25 17:04:01 |     <a href="http://wrapper.tanukisoftware.org" target="_blank">http://wrapper.tanukisoftware.org</a>
-      STATUS | wrapper  | 2009/02/25 17:04:01 |
-      STATUS | wrapper  | 2009/02/25 17:04:01 | Launching a JVM...
-      INFO   | jvm 1    | 2009/02/25 17:04:02 | WrapperManager: Initializing...
-出现上面这个就表示已经配置成功了。如果配置有错误的话，在wrapper.log里面会有提示。
-同时，如果程序配置成功的并且启动的话，在/opt/tianlong/bin里面会有一个QueueTest.pid。
-附目录结构
-/opt/tianlong/
-    cofig.properties
-/opt/tianlong/bin
-                 | QueueTest
-                 | wrapper
-                 | wrapper.log（程序运行时自动产生）
-/opt/tianlong/conf
-                | wrapper.conf
-/opt/tianlong/lib
-                | libwrapper.so
-                | wrapper.jar
-                | tianlong.jar
-                | mysql-connector-java-5.1.6-bin.jar
-                | asterisk-java-0.3.jar</p>
-<ul>
-<li><a href="http://dl.iteye.com/topics/download/b2a3facb-d7b0-3245-b5be-4eec51a884aa" target="_blank">wrapper-linux-x86-32-3.5.7.tar.gz</a> (415.6 KB)</li>
-<li><p>下载次数: 15</p>
-</li>
-<li><p><a href="http://dl.iteye.com/topics/download/8d826566-6eae-330c-b75f-9607844f3ea2" target="_blank">wrapper-windows-x86-32-3.5.7.zip</a> (556.5 KB)</p>
-</li>
-<li>下载次数: 5</li>
-</ul>
-<p>分享到： <a href="&quot;分享到新浪微博&quot;"><img src="" alt=""></a> <a href="&quot;分享到腾讯微博&quot;"><img src="" alt=""></a>
-<a href="http://tsunzhang.iteye.com/blog/970749" title="log4j配置简要说明" target="_blank">log4j配置简要说明</a> | <a href="http://tsunzhang.iteye.com/blog/899637" title="EXP-××××: 问题处理方法(整理中..)" target="_blank">EXP-××××: 问题处理方法(整理中..)</a></p>
-<ul>
-<li>2011-03-21 16:18:34</li>
-<li>浏览 411</li>
-<li><a href="http://tsunzhang.iteye.com/blog/969521#comments" target="_blank">评论(0)</a></li>
-<li>分类:<a href="http://www.iteye.com/blogs/category/language" target="_blank">编程语言</a></li>
-<li><a href="http://www.iteye.com/wiki/blog/969521" target="_blank">相关推荐</a><h3 id="-">评论</h3>
+<li>00:39</li>
+<li>浏览 (277)</li>
+<li><a href="http://java-mzd.iteye.com/blog/1019089#comments" target="_blank">评论</a> (2)</li>
+<li>分类: <a href="http://java-mzd.iteye.com/category/153171" target="_blank">TCP/IP</a></li>
+<li><a href="http://www.iteye.com/wiki/topic/1019089" target="_blank">相关推荐</a><h3 id="-">评论</h3>
 </li>
 </ul>
 <p><a href=""></a></p>
+<p>2 楼 <a href="http://leelege.iteye.com/" target="_blank">leelege</a> 2011-05-04   <a href="http://java-mzd.iteye.com/blog/1019089#" target="_blank">引用</a></p>
+<p>感谢楼主分享 期待更多内容～～
+1 楼 <a href="http://cosina.iteye.com/" target="_blank">cosina</a> 2011-04-28   <a href="http://java-mzd.iteye.com/blog/1019089#" target="_blank">引用</a></p>
+<p><img src="" alt="">   学倒不少！ 继续写哈哈</p>
 <h3 id="-">发表评论</h3>
-<p><a href="http://tsunzhang.iteye.com/login" target="_blank"><img src="" alt=""></a><a href="http://tsunzhang.iteye.com/login" target="_blank">您还没有登录,请您登录后再发表评论</a></p>
-<p><a href="http://tsunzhang.iteye.com/" target="_blank"><img src="&quot;coconut_zhang的博客: 点点知识小屋&quot;" alt="coconut_zhang的博客"></a></p>
-<p>coconut_zhang</p>
+<h3 id="-">表情图标</h3>
+<p><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""></p>
+<p>字体颜色: 标准深红红色橙色棕色黄色绿色橄榄青色蓝色深蓝靛蓝紫色灰色白色黑色 字体大小: 标准1 (xx-small)2 (x-small)3 (small)4 (medium)5 (large)6 (x-large)7 (xx-large) 对齐: 标准居左居中居右</p>
+<p>提示：选择您需要装饰的文字, 按上列按钮即可添加上相应的标签</p>
+<p>您还没有登录，请<a href="http://java-mzd.iteye.com/login" target="_blank">登录</a>后发表评论(快捷键 Alt+S / Ctrl+Enter)</p>
+<p><a href="http://java-mzd.iteye.com/" target="_blank"><img src="&quot;java_mzd的博客: &quot;" alt="java_mzd的博客"></a></p>
+<p>java_mzd</p>
 <ul>
-<li>浏览: 62966 次</li>
+<li>浏览: 70753 次</li>
 <li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
-<li>来自: 天津</li>
-<li><img src="" alt=""><h3 id="-http-tsunzhang-iteye-com-blog-user_visits-">最近访客 <a href="http://tsunzhang.iteye.com/blog/user_visits" target="_blank">更多访客&gt;&gt;</a></h3>
+<li>来自: 长沙</li>
+<li><img src="" alt=""></li>
+<li><a href="http://java-mzd.iteye.com/blog/profile" target="_blank">详细资料</a> <a href="http://java-mzd.iteye.com/blog/guest_book" target="_blank">留言簿</a></li>
+</ul>
+<h3 id="-">搜索本博客</h3>
+<h3 id="-http-java-mzd-iteye-com-blog-user_visits-">最近访客 <a href="http://java-mzd.iteye.com/blog/user_visits" target="_blank">&gt;&gt;更多访客</a></h3>
+<p><a href="http://aria.iteye.com/" target="_blank"><img src="&quot;aria的博客: &quot;" alt="aria的博客"></a></p>
+<p><a href="http://aria.iteye.com/" target="_blank">aria</a></p>
+<p><a href="http://zhxing.iteye.com/" target="_blank"><img src="&quot;zhxing的博客: ヾ孤星随缘ツ  http://t.sina.com.cn/samzhxing&quot;" alt="zhxing的博客"></a></p>
+<p><a href="http://zhxing.iteye.com/" target="_blank">zhxing</a>
+<a href="http://java-suddy.iteye.com/" target="_blank"><img src="&quot;java_suddy的博客: “平凡”的思想&quot;" alt="java_suddy的博客"></a></p>
+<p><a href="http://java-suddy.iteye.com/" target="_blank">java_suddy</a></p>
+<p><a href="http://liuxinglanyue.iteye.com/" target="_blank"><img src="&quot;liuxinglanyue的博客: liuxinglanyue&quot;" alt="liuxinglanyue的博客"></a></p>
+<p><a href="http://liuxinglanyue.iteye.com/" target="_blank">liuxinglanyue</a></p>
+<h3 id="-">博客分类</h3>
+<ul>
+<li><a href="http://java-mzd.iteye.com/" target="_blank">全部博客 (43)</a></li>
+<li><a href="http://java-mzd.iteye.com/category/133623" target="_blank">数据结构----------JAVA类集 (5)</a></li>
+<li><p><a href="http://java-mzd.iteye.com/category/153171" target="_blank">TCP/IP (7)</a></p>
+<h3 id="-http-java-mzd-iteye-com-blog-guest_book-">我的留言簿 <a href="http://java-mzd.iteye.com/blog/guest_book" target="_blank">&gt;&gt;更多留言</a></h3>
+</li>
+<li><p>楼主 你工作多久了。。。。
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39913" target="_blank">fanmingxing</a></p>
+</li>
+<li>写的不错，学习，谢谢！
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39693" target="_blank">chenge2k</a></li>
+<li>看了LZ的文章，发现工作快两年的我，就像是一块浮起来的木头，真的很惭愧！也不怪我拿 ...
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39618" target="_blank">GoTiger</a></li>
+</ul>
+<h3 id="-">其他分类</h3>
+<ul>
+<li><a href="http://java-mzd.iteye.com/blog/favorite" target="_blank">我的收藏</a> (23)</li>
+<li><a href="http://java-mzd.iteye.com/blog/code_favorite" target="_blank">我的代码</a> (0)</li>
+<li><a href="http://java-mzd.iteye.com/blog/topic" target="_blank">我的论坛主题帖</a> (3)</li>
+<li><a href="http://java-mzd.iteye.com/blog/post" target="_blank">我的所有论坛帖</a> (37)</li>
+<li><p><a href="http://java-mzd.iteye.com/blog/article" target="_blank">我的精华良好帖</a> (0)</p>
+<h3 id="-">最近加入群组</h3>
+</li>
+<li><p><a href="http://android.group.iteye.com/" target="_blank">Android</a></p>
 </li>
 </ul>
-<p><a href="http://jjunxiao.iteye.com/" target="_blank"><img src="&quot;jjunxiao的博客: jjunxiao&quot;" alt="jjunxiao的博客"></a></p>
-<p><a href="http://jjunxiao.iteye.com/" target="_blank">jjunxiao</a></p>
-<p><a href="http://eyubean-163-com.iteye.com/" target="_blank"><img src="&quot;毛广斌的博客: &quot;" alt="毛广斌的博客"></a></p>
-<p><a href="http://eyubean-163-com.iteye.com/" target="_blank">毛广斌</a>
-<a href="http://alex-zeng.iteye.com/" target="_blank"><img src="&quot;alex.zeng的博客: &quot;" alt="alex.zeng的博客"></a></p>
-<p><a href="http://alex-zeng.iteye.com/" target="_blank">alex.zeng</a></p>
-<p><a href="http://return-space.iteye.com/" target="_blank"><img src="&quot;return_space的博客: &quot;" alt="return_space的博客"></a></p>
-<p><a href="http://return-space.iteye.com/" target="_blank">return_space</a></p>
-<h3 id="-">文章分类</h3>
+<h3 id="-">存档</h3>
 <ul>
-<li><a href="http://tsunzhang.iteye.com/" target="_blank">全部博客 (128)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60979" target="_blank">hibernate,struts,spring (9)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60981" target="_blank">java (28)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60982" target="_blank">c,c++,c/# (39)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60983" target="_blank">eclipse,myeclipse,lomboz (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60984" target="_blank">tomcat,weblogic (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60985" target="_blank">javascript,ajax,web (4)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60980" target="_blank">oracle,sqlserver,mysql,sql (22)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/104329" target="_blank">linux,unix,windows (11)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/61096" target="_blank">文摘 (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/104330" target="_blank">生活 (0)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/183172" target="_blank">javascript (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/183173" target="_blank">ajax (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/183174" target="_blank">web (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/186108" target="_blank">strtus2.0实现上传 (1)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/186109" target="_blank">hibernate (3)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/186110" target="_blank">struts (3)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/186111" target="_blank">spring (3)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/187825" target="_blank">tomcat (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/187826" target="_blank">weblogic (1)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/191426" target="_blank">linux (1)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/191427" target="_blank">unix (1)</a></li>
-<li><p><a href="http://tsunzhang.iteye.com/category/191428" target="_blank">windows (1)</a></p>
-<h3 id="-">社区版块</h3>
-</li>
-<li><p><a href="http://tsunzhang.iteye.com/blog/news" target="_blank">我的资讯</a> (0)</p>
-</li>
-<li><a href="http://tsunzhang.iteye.com/blog/post" target="_blank">我的论坛</a> (221)</li>
-<li><a href="http://tsunzhang.iteye.com/blog/solution" target="_blank">我解决的问题</a> (0)</li>
-</ul>
-<h3 id="-">存档分类</h3>
-<ul>
-<li><a href="http://tsunzhang.iteye.com/blog/monthblog/2012-02" target="_blank">2012-02</a> (3)</li>
-<li><a href="http://tsunzhang.iteye.com/blog/monthblog/2011-11" target="_blank">2011-11</a> (4)</li>
-<li><a href="http://tsunzhang.iteye.com/blog/monthblog/2011-10" target="_blank">2011-10</a> (3)</li>
-<li><p><a href="http://tsunzhang.iteye.com/blog/monthblog_more" target="_blank">更多存档...</a></p>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-05" target="_blank">2011-05</a> (2)</li>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-04" target="_blank">2011-04</a> (7)</li>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-03" target="_blank">2011-03</a> (2)</li>
+<li><p><a href="http://java-mzd.iteye.com/blog/monthblog_more" target="_blank">更多存档...</a></p>
 <h3 id="-">评论排行榜</h3>
 </li>
-<li><p><a href="http://tsunzhang.iteye.com/blog/1064298" title="关于shell脚本中报 “/bin/sh^M: bad interpreter: 没有那个文件或目录”的解决方法" target="_blank">关于shell脚本中报 “/bin/sh^M: bad int ...</a></p>
+<li><p><a href="http://java-mzd.iteye.com/blog/1050043" title="腾讯、淘宝、金山网络，实习生我该何去何从" target="_blank">腾讯、淘宝、金山网络，实习生我该何去何从</a></p>
 </li>
-</ul>
-<h3 id="-">最新评论</h3>
-<ul>
-<li><a href="http://ronqi.iteye.com/" target="_blank">RonQi</a>： 今天在CentOS上面做Tomcat的自启动，那个脚本文件是在 ...
-<a href="http://tsunzhang.iteye.com/blog/1064298#bc2221452" target="_blank">关于shell脚本中报 “/bin/sh^M: bad interpreter: 没有那个文件或目录”的解决方法</a></li>
-<li><a href="http://huqingwei311.iteye.com/" target="_blank">huqingwei311</a>： 非常感谢楼主，我的问题也解决了
-<a href="http://tsunzhang.iteye.com/blog/758378#bc2216263" target="_blank">struts2与jasperreport整合不能显示图片imgags/px</a></li>
-<li><a href="http://beisicao.iteye.com/" target="_blank">beisicao</a>： ...
-<a href="http://tsunzhang.iteye.com/blog/732624#bc2208607" target="_blank">Applet安全限制和签名Applet</a></li>
-<li><a href="http://tsunzhang.iteye.com/" target="_blank">coconut_zhang</a>： hastune 写道Struts2拦截器都是放在栈里的。 AO ...
-<a href="http://tsunzhang.iteye.com/blog/811566#bc1997752" target="_blank">Struts2拦截器执行顺序</a></li>
-<li><a href="http://hastune.iteye.com/" target="_blank">hastune</a>： Struts2拦截器都是放在栈里的。AOP就是需要一个Invo ...
-<a href="http://tsunzhang.iteye.com/blog/811566#bc1997073" target="_blank">Struts2拦截器执行顺序</a>
+<li><a href="http://java-mzd.iteye.com/blog/1050926" title="淘宝、金山网络，百感交集" target="_blank">淘宝、金山网络，百感交集</a></li>
+<li><a href="http://java-mzd.iteye.com/blog/1007577" title="TCP/IP传输层，你懂多少？" target="_blank">TCP/IP传输层，你懂多少？</a></li>
+<li><a href="http://java-mzd.iteye.com/blog/1004784" title="淘宝武汉*面试归来" target="_blank">淘宝武汉/*面试归来</a></li>
+<li><p><a href="http://java-mzd.iteye.com/blog/862787" title="开源软件？自由软件？免费软件？你了解多少？" target="_blank">开源软件？自由软件？免费软件？你了解多少 ...</a></p>
+</li>
+<li><p><a href="http://java-mzd.iteye.com/rss" target="_blank"><img src="" alt="Rss"></a></p>
+</li>
+<li><a href="http://fusion.google.com/add?feedurl=http://java-mzd.iteye.com/rss" target="_blank"><img src="" alt="Rss_google"></a>
 声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
-© 2003-2011 ITeye.com. All rights reserved. [ 京ICP证110151号 京公网安备110105010620 ]
+© 2003-2011 ITeye.com. All rights reserved. [ 京ICP证110151号 ]
 <img src="" alt=""></li>
 </ul>
 
@@ -776,354 +1560,8 @@ wrapper.ntservice.description=MyApp服务</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wrapper/">wrapper</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wrapper/" class="label label-primary">wrapper</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-wrapper--发布Java程序为Windows（Linux）服务JavaServiceWrapper-/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wrapper--发布Java程序为Windows（Linux）服务JavaServiceWrapper-" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--被动模式下FTP的详细工作过程/">被动模式下FTP的详细工作过程</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--被动模式下FTP的详细工作过程/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-ftp-">被动模式下FTP的详细工作过程</h1>
-<p><strong>被动模式下FTP的详细工作过程</strong></p>
-<p>PASV FTP在工作的第一步，与PORT FTP一样，会首先使用21端口建立控制连接；但在第二步，由FTP客户端主动发起建立数据传输连接请求，服务器的数据传输端口为随机端口，因此，每次建立的数据传输连接通道，服务器所使用的端口都不相同。</p>
-<p>本示例客户端IP是192.168.120.168，服务器IP是192.168.120.240，因为客户端的MS-DOS不支持PASV模式，所以使用FlashFXP软件来连接服务器。通过抓包工具来查看用户从连接FTP服务器到退出FTP服务器经过的所有过程。
-使用FlashFXP所做的操作：1.输入FTP服务器的IP，要登入的用户名和密码。2.进入用户家目录，查看.bashrc和.bash_profile两个文件。3.退出FTP。</p>
-<p><strong>PASV FTP**</strong>的详细工作过程：**</p>
-<p><strong>1.</strong> 因为FTP使用的是TCP协议，所以客户端FlashFXP在连接服务器192.168.120.240时，首先会经历TCP的三次握手来建立控制通道。客户端使用任意的端口N（&gt;1024）来连接FTP服务器默认的21端口。这和PORT模式一样。
-<strong>2.</strong> 在TCP三次握手结束后，服务器端正式响应客户端的控制连接请求，控制通道建立。</p>
-<p><strong>3.</strong> 客户端向服务器发送含有ACK的数据段来确认控制连接建立并发送用户名。
-<strong>4.</strong> 服务器向客户端发送含有ACK的数据段来确认用户名。</p>
-<p><strong>5.</strong> 服务器向客户端询问密码。
-<strong>6.</strong> 客户端向服务器发送含有ACK的数据段来确认并发送密码，密码为明文。</p>
-<p><strong>7.</strong> 服务器向客户端发送含有ACK的数据段来确认密码收到。
-<strong>8.</strong> 服务器向客户端发送登陆成功的信息。</p>
-<p><strong>9.</strong> 客户端向服务器发送含有ACK的数据段来确认并发送查询系统类型的指令（见图一）。
-<strong>10.</strong> 服务器向客户端发送含有ACK的数据段来确认收到指令。</p>
-<p><strong>11.</strong> 服务器向客户端回应系统的类型为UNIX（见图二）。
-<strong>12.</strong> 客户端向服务器发送列出服务器的所有扩展命令和扩展功能的指令（见图三）。</p>
-<p><strong>13.</strong> 服务器响应客户端的FEAT请求（见图四）。
-<strong>14.</strong> 服务器响应客户端有EPSV（扩展PASV，支持非IPV4）的扩展功能（见图五）。</p>
-<p><strong>15.</strong> 客户端向服务器发送含有ACK的数据段来确认收到信息。
-<strong>16.</strong> 服务器响应客户端自己的其他特性（见图六）。MDTM：保留下载文件的日期/时间；REST STREAM：重设文件传输方式为stream形式。</p>
-<p><strong>17.</strong> 客户端确认收到服务器的信息。
-<strong>18.</strong> 服务器响应客户端进入到用户的家目录（见图七）。</p>
-<p><strong>19.</strong> 客户端确认收到服务器的信息。
-<strong>20.</strong> 客户端向服务器发送文件传输使用何种模式（Binary、ASCII）的指令（见图八）。</p>
-<p><strong>21.</strong> 服务器回应客户端使用Binary模式（见图九）。
-<strong>22.</strong> 客户端向服务器询问.bashrc文件的大小（见图十）。</p>
-<p><strong>23.</strong> 服务器回应客户端.bashrc文件的大小为124字节（见图十一）。
-<strong>24.</strong> 客户端向服务器发出PASV的指令（用来进行数据传输）（见图十二）。</p>
-<p><strong>25.</strong> 服务器回应客户端使用PASV模式，并且商量数据传输端口用232x256+151=59543（见图十三）。
-<strong>26.</strong> 客户端主动使用N+1端口来连接服务器的59543端口，并且向服务器发送含有SYN的数据段来开始进行数据传输连接的第1次握手（见图十四）。</p>
-<p><strong>27.</strong> 服务器向客户端发送含有SYN和ACK的数据段来进行第2次握手（见图十五）。
-<strong>28.</strong> 客户端向服务器发送含有ACK的数据段来进行第3次握手（见图十六）。</p>
-<p><strong>29.</strong> 3次握手过程完成，客户端向服务器发送查看.bashrc文件的指令（见图十七）。
-<strong>30.</strong> 服务器回应客户端使用Binary数据传输模式连接.bashrc文件（见图十八）。</p>
-<p><strong>31.</strong> 服务器开始进行数据传输。
-<strong>32.</strong> 服务器确定数据传输完毕，然后向客户端发送含有FIN和ACK的数据段来请求断开本次数据连接，第1次断开（见图十九）。</p>
-<p><strong>33.</strong> 客户端向服务器发送含有ACK的数据段答应服务器的断接请求，第2次断开（见图二十）。
-<strong>34.</strong> 服务器响应客户端文件发送完成的信息（见图二十一）。</p>
-<p><strong>35.</strong> 客户端向服务器发送含有ACK的数据段来确认收到信息。
-<strong>36.</strong> 客户端向服务器发送含有FIN和ACK的数据段来请求断开客户端到服务器之间的数据连接，第3次断开（见图二十二）。</p>
-<p><strong>37.</strong> 服务器向客户端发送含有ACK的数据段确认断开连接，第4次断开（见图二十三）
-<strong>38.</strong> 接下来是查看.bash_profile文件的过程。其过程和查看.bashrc文件的过程一样（在此不详述了），只是服务器和客户端的数据传输端口变了。服务器的数据传输端口是随机的；客户端的数据传输端口是N+2。</p>
-<p><strong>39.</strong> 客户端在查看完.bash_profile文件并彻底完成该次数据连接的4次断开后，向服务器发送退出的指令（见图二十四）。
-<strong>40.</strong> 服务器响应客户端的退出请求（见图二十五）。</p>
-<p><strong>41.</strong> 服务器向客户端发送含有FIN和ACK的数据段，请求断开控制连接（见图二十六）。这是第一次断开控制连接。
-<strong>42.</strong> 客户端向服务器发送含有ACK的数据段来应答服务器的断接请求（见图二十七）。这是第二次断开控制连接。</p>
-<p><strong>43.</strong> 客户端向服务器发送含有FIN和ACK的数据段，请求断开到服务器之间的控制连接（见图二十八）。这是第三次断开控制连接。
-<strong>44.</strong> 服务器向客户端发送含有ACK的数据段，来确认客户端的断接请求（见图二十九）。这样本次FTP控制连接完全断开。</p>
-<p><strong>通过查看本次示例（被动FTP）的详细过程，我们可以得到以下几点结果：</strong></p>
-<p><strong>1.</strong> 服务器的控制连接端口为21，数据传输端口随机（&gt;1024）并且每次的数据传输端口都不一样。
-<strong>2.</strong> 客户端的控制连接端口为N（&gt;1024），数据传输端口在第一次进行数据传输时为N+1,在第二次数据传输时为N+2，依次类推。</p>
-<p><strong>3.</strong> 服务器主动告诉客户端自己的数据传输端口。
-<strong>4.</strong> 客户端主动用数据传输端口N+x去连接服务器的随机数据传输端口。</p>
-<p><strong>5.</strong> 在一次FTP连接的过程中，只有一次控制连接，却可以有多次数据传输连接。
-<strong>6.</strong> 不管是控制连接还是数据传输连接，在每次从建立到完成都需要经过3次连接和4次断开的过程。（这符合TCP协议的要求）</p>
-<p><strong>本文档使用的图例：</strong></p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935974PU0j.gif" target="_blank"><img src="" alt="11"></a> 
-图一：客户端发送查询系统类型的指令</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935976j9JR.jpg" target="_blank"></a><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935977k2F8.gif"><img src="" alt="13"></a></p>
-<p>图二：服务器响应客户端系统类型为UNIX</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935978q1o9.gif" target="_blank"><img src="" alt="14"></a>
-图三：客户端请求服务器列出它的所有扩展命令和扩展功能</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935983sdRz.gif" target="_blank"><img src="" alt="15"></a></p>
-<p>图四：服务器响应客户端的FEAT请求</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936006Aznp.gif" target="_blank"><img src="" alt="16"></a>
-图五：服务器响应客户端有EPSV（扩展PASV，支持非IPV4）的扩展功能</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249360074yJ5.gif" target="_blank"><img src="" alt="18"></a></p>
-<p>图六：服务器响应客户端自己支持的其他特性</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936015iZgn.gif" target="_blank"><img src="" alt="20"></a>
-图七：服务器响应客户端进入到用户家目录</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936017ZmNc.gif" target="_blank"><img src="" alt="22"></a></p>
-<p>图八：客户端向服务器询问文件传输的模式</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936018IMjR.gif" target="_blank"><img src="" alt="23"></a>
-图九：服务器响应客户端使用Binary模式</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936020hNul.gif" target="_blank"><img src="" alt="24"></a></p>
-<p>图十：客户端向服务器询问.bashrc文件的大小</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936022sj6P.gif" target="_blank"><img src="" alt="25"></a>
-图十一：服务器回应客户端.bashrc文件的大小为124字节</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249360237iAu.gif" target="_blank"><img src="" alt="26"></a></p>
-<p>图十二：客户端向服务器发送PASV指令</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249361801LGh.gif" target="_blank"><img src="" alt="27"></a>
-图十三：服务器响应客户端使用PASV模式，并且商量数据传输端口用59543</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936181n4nW.gif" target="_blank"><img src="" alt="28"></a></p>
-<p>图十四：第一次数据传输连接之第一次握手</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_122493618223uT.gif" target="_blank"><img src="" alt="29"></a>
-图十五：第一次数据传输连接之第二次握手</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936183BjjV.gif" target="_blank"><img src="" alt="30"></a></p>
-<p>图十六：第一次数据传输连接之第三次握手</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936185srsz.gif" target="_blank"><img src="" alt="31"></a>
-图十七：客户端向服务器发送查看.bashrc文件的指令</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936186ZS1w.gif" target="_blank"><img src="" alt="32"></a></p>
-<p>图十八：服务器响应客户端使用Binary数据传输模式来连接.bashrc文件</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936188Q6dX.gif" target="_blank"><img src="" alt="34"></a>
-图十九：服务器发送FIN和ACK请求断开本次数据连接（第1次断开）</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936210T20g.gif" target="_blank"><img src="" alt="35"></a></p>
-<p>图二十：客户端发送ACK答应服务器的请求（第2次断开）</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936213ulWM.gif" target="_blank"><img src="" alt="36"></a>
-图二十一：服务器响应客户端文件发送完毕的信息</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936217J6aY.gif" target="_blank"><img src="" alt="38"></a></p>
-<p>图二十二：客户端向服务器发送含有FIN和ACK的数据段请求断开数据连接（第3次断开）</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936218Leca.gif" target="_blank"><img src="" alt="39"></a>
-图二十三：服务器向客户端发送含有ACK的数据段确认断开连接（第4次断开）</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936220HQq5.gif" target="_blank"><img src="" alt="56"></a></p>
-<p>图二十四：客户端向服务器发出退出的指令</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936221ejql.gif" target="_blank"><img src="" alt="57"></a>
-图二十五：服务器响应客户端的退出请求</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936223xMjK.gif" target="_blank"><img src="" alt="58"></a></p>
-<p>图二十六：服务器向客户端发送FIN和ACK请求断开控制连接（第1次断开）</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249362249BCE.gif" target="_blank"><img src="" alt="59"></a>
-图二十七：客户端向服务器发送ACK答应服务器请求（第2次断开）</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936225gvOK.gif" target="_blank"><img src="" alt="60"></a></p>
-<p>图二十八：客户端向服务器发送FIN和ACK请求断开控制连接（第3次断开）</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936226MLVx.gif" target="_blank"><img src="" alt="61"></a>
-图二十九：服务器向客户端发送ACK答应断开控制连接（第4次断开）</p>
-<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936227MSuY.gif" target="_blank"><img src="" alt="62"></a></p>
-<p>图三十：本次示例全部过程</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ftp/">ftp</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ftp/" class="label label-primary">ftp</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-ftp--被动模式下FTP的详细工作过程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ftp--被动模式下FTP的详细工作过程" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-Squid--windows下squid安装-水晶坊的博客-我的搜狐/">windows下squid安装 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-Squid--windows下squid安装-水晶坊的博客-我的搜狐/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="windows-squid-">windows下squid安装 - 水晶坊的博客 - 我的搜狐</h1>
-<h3 id="-">分享到</h3>
-<ul>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">一键分享</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">QQ空间</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">新浪微博</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">百度搜藏</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">人人网</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">腾讯微博</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">百度相册</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">开心网</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">腾讯朋友</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">百度贴吧</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">豆瓣网</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">搜狐微博</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">百度新首页</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">QQ好友</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">和讯微博</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">更多...</a></li>
-</ul>
-<p><a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">百度分享</a></p>
-<p><img src="" alt="">  <a href="http://crystalroom.i.sohu.com/" title="水晶坊" target="_blank">水晶坊</a></p>
-<h1 id="-">水晶坊</h1>
-<p>(@crystalroom)  被访问过 <em>5538</em> 次</p>
-<p><a href="http://crystalroom.i.sohu.com/profile/index.htm" target="_blank">查看更多&gt;&gt;</a>
-<a href="">送TA礼物</a> <a href="">发短消息</a> <a href="http://crystalroom.i.sohu.com/guestbook/index.htm" target="_blank">查看留言&gt;&gt;</a> <a href="">跟随</a> 留言:   对他说点什么  验证码  <img src="" alt=""> <a href="">看不清验证码？</a>    发表</p>
-<ul>
-<li><a href="http://crystalroom.i.sohu.com/" target="_blank">首页</a></li>
-<li><a href="http://crystalroom.i.sohu.com/scomment/index.htm" target="_blank">我说两句</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/index.htm" target="_blank">博客</a></li>
-<li><a href="http://crystalroom.i.sohu.com/album/index.htm" target="_blank">相册</a></li>
-<li><a href="http://crystalroom.i.sohu.com/video/index.htm" target="_blank">视频</a></li>
-<li><a href="http://t.sohu.com/people/Z194aWFvY2h1bkBjaGluYXJlbi5jb20=" target="_blank">微博</a></li>
-<li><a href="http://crystalroom.i.sohu.com/group/" target="_blank">圈子</a></li>
-<li><h3 id="-">添加导航模块</h3>
-</li>
-<li><p><a href="http://crystalroom.i.sohu.com/" target="_blank">首页</a></p>
-</li>
-<li><a href="http://crystalroom.i.sohu.com/scomment/index.htm" target="_blank">我说两句</a></li>
-<li><a href="http://crystalroom.i.sohu.com/album/index.htm" target="_blank">相册</a></li>
-<li><a href="http://crystalroom.i.sohu.com/video/index.htm" target="_blank">视频</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/index.htm" target="_blank">博客</a></li>
-<li><a href="http://t.sohu.com/people/Z194aWFvY2h1bkBjaGluYXJlbi5jb20=" target="_blank">微博</a></li>
-<li><a href="http://crystalroom.i.sohu.com/group/index.htm" target="_blank">圈子</a></li>
-<li><a href="http://crystalroom.i.sohu.com/app/baby/" target="_blank">育儿</a></li>
-<li><a href="http://crystalroom.i.sohu.com/app/wenda/" target="_blank">问答</a></li>
-</ul>
-<h3 id="-">添加自定义链接(仅限搜狐网链接)</h3>
-<p>网址：</p>
-<p>名称：
-<a href="">确认</a>  使用新窗口打开 <a href=""></a></p>
-<p><a href=""></a></p>
-<h1 id="windows-squid-">windows下squid安装</h1>
-<p><a href="">收藏到手机</a>    <a href="">转发</a>   <a href="">评论(1)</a></p>
-<p>2009-11-06 21:07</p>
-<p>1、到<a href="http://www.acmeconsulting.it/" target="_blank"><a href="http://www.acmeconsulting.it/">http://www.acmeconsulting.it/</a></a>网站获取最新版本的squid for windows,我的是 2.6ST</p>
-<p>2、解压缩 c:\squid</p>
-<p>3、在c:\squid\etc目录下，</p>
-<p>修改下列名字，最好保存原有文件Old</p>
-<p>   squid.conf.default 修改为 squid.conf</p>
-<p>   mime.conf.default 修改为 mime.conf</p>
-<p>   cachemgr.conf.default 修改为 cachemgr.conf</p>
-<p>4、建立d:\squid\var目录,在var目录下建立logs和cache目录，其中logs目录用于存放日志，cache目录用于存放硬盘缓存数据</p>
-<p>5、将squid安装为服务，命令格式：squid -i [-f configfile] [-n servicename]，如c:\squid\sbin\squid -i -n Squid_Proxy，将使用默认的配置文件c:\squid\etc\squid.conf，服务名称为Squid_Proxy</p>
-<p>6、修改配置文件squid.conf</p>
-<p>/# 监听80端口，并配置为加速模式</p>
-<p>http_port 80 vhost</p>
-<p>/#添加需要反向代理的域名等:</p>
-<p>cache_peer www.tx8.cn parent 80 0 no-query originserver name=www</p>
-<p>cache_peer_domain www www.tx8.cn</p>
-<p>/# cache目录和大小的设置，10GB硬盘空间和512M内存</p>
-<p>cache_dir ufs e:/squid/var/cache 10240 16 256</p>
-<p>cache_mem 512 MB</p>
-<p>/# 主机文件路径</p>
-<p>hosts_file d:/windows/system32/drivers/etc/hosts</p>
-<p>/# 设置日志目录和日志格式</p>
-<p>access_log e:/squid/var/logs/access.log squid</p>
-<p>cache_log e:/squid/var/logs/cache.log</p>
-<p>cache_store_log e:/squid/var/logs/store.log</p>
-<p>emulate_httpd_log on</p>
-<p>/# 允许所有用户访问
-acl all src 0.0.0.0/0.0.0.0</p>
-<p>http_access allow all</p>
-<p>/# 缓存管理员</p>
-<p>cache_mgr webmaster@example.com</p>
-<p>7、初始化cache目录</p>
-<p>c:\squid\sbin\squid -z</p>
-<p>如果配置文件出错的话，初始化cache目录将会出错。</p>
-<p>8、启动Squid_Proxy服务</p>
-<p>运行services.msc打开服务窗口，选择Squid_Proxy服务，将启动账号设置为开始建立的squid.</p>
-<p>net start squid_proxy</p>
-<p>9、检查Cache服务器运行是否正常</p>
-<p>找一台终端，修改终端的hosts文件，将域名指向cache服务器的ip地址，检查网站是否正常访问。</p>
-<p>也可以用自带的SquidClient 来检查；</p>
-<p>基本的使用方法</p>
-<p>/*取得squid运行状态信息： squidclient -p 80 mgr:info</p>
-<p>/*取得squid内存使用情况： squidclient -p 80 mgr:mem</p>
-<p>/*取得squid已经缓存的列表： squidclient -p 80 mgr:objects. use it carefully,it may crash</p>
-<p>/*取得squid的磁盘使用情况： squidclient -p 80 mgr:diskd</p>
-<p>/*更多的请查看：squidclient -h 或者 squidclient -p 80 mgr
-分享到： <a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" title="分享到新浪微博" target="_blank"></a> <a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" title="分享到QQ空间"></a> <a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" title="分享到人人网" target="_blank"></a> <a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" title="分享到搜狐微博"></a> <a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" title="分享到豆瓣网"></a></p>
-<p><a href="http://i.sohu.com/blog/home/entry/edit.htm?id=136068744" target="_blank">编辑</a>   <a href="">删除</a>   <a href="">阅读(572)</a>   <a href="">转发</a>   <a href="">评论(1)</a></p>
-<p>来自<a href="http://i.sohu.com/" target="_blank">我的搜狐</a> <a href="http://crystalroom.blog.sohu.com/136068744.html" target="_blank">在博客中查看</a></p>
-<p>分类：暂无分类
-上一篇： <a href="http://crystalroom.i.sohu.com/blog/view/153219018.htm" title="code" target="_blank">code</a></p>
-<p>下一篇： <a href="http://crystalroom.i.sohu.com/blog/view/136038839.htm" title="squid3.0安装需要安装工具包" target="_blank">squid3.0安装需要安装工具包</a></p>
-<h3 id="-">我要评论:此处评论内容会与搜狐博客同步哦！</h3>
-<p><a href="&quot;未登录&quot;"><img src="" alt=""></a></p>
-<p><a href="">评论</a></p>
-<p><a href=""></a>0 / 300
-同时转发</p>
-<ul>
-<li><a href="http://i.sohu.com/p/=v2=eMF2ITLATjk0nMN4AmNvbQ==/" target="_blank"><img src="" alt=""></a></li>
-</ul>
-<p><a href="http://i.sohu.com/p/=v2=eMF2ITLATjk0nMN4AmNvbQ==/" target="_blank">搜狐网友11693012</a> 作者你自己也亲自做通了的吗 我的SQUID服务启动时始终报1067的错误你知道否，留下QQ7628813，盼复</p>
-<p><a href="">回复</a>01月19日 15:07
-评论加载中</p>
-<ul>
-<li><a href="http://crystalroom.i.sohu.com/friend/index.htm" target="_blank">跟随</a> <a href="http://crystalroom.i.sohu.com/friend/index.htm" target="_blank">0</a></li>
-<li><a href="http://crystalroom.i.sohu.com/friend/fans.htm" target="_blank">跟随者</a> <a href="http://crystalroom.i.sohu.com/friend/fans.htm" target="_blank">1</a></li>
-<li><p><a href="http://crystalroom.i.sohu.com/" target="_blank">新鲜事</a> <a href="http://crystalroom.i.sohu.com/" target="_blank">0</a></p>
-</li>
-<li><p><a href="http://crystalroom.i.sohu.com/app/score/" target="_blank">等级</a> <em><a href="http://crystalroom.i.sohu.com/app/score/" target="_blank">0</a></em></p>
-</li>
-<li><a href="http://crystalroom.i.sohu.com/app/score/" target="_blank">金币</a> <em><a href="http://crystalroom.i.sohu.com/app/score/" target="_blank">0</a></em></li>
-<li><a href="http://crystalroom.i.sohu.com/app/score/" target="_blank">勋章</a> <em><a href="http://crystalroom.i.sohu.com/app/score/" target="_blank">暂无勋章！</a></em></li>
-<li><a href="http://crystalroom.i.sohu.com/app/score/" target="_blank">礼物</a> <a href="http://crystalroom.i.sohu.com/app/score/" target="_blank">暂无礼物！</a>  <h3 id="-ta-"><a href=""></a>TA推荐的人</h3>
-</li>
-</ul>
-<p>正在加载...</p>
-<h3 id="-">博客分类</h3>
-<ul>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm" target="_blank">全部分类</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?cid=6333433" title="阿里开发" target="_blank">阿里开发</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?cid=6265638" title="TX8管理" target="_blank">TX8管理</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?cid=6257567" title="硬件" target="_blank">硬件</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?cid=4959662" title="javascript" target="_blank">javascript</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?cid=4403105" title="网站设计" target="_blank">网站设计</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?cid=4093803" title="网络技术" target="_blank">网络技术</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?cid=4093605" title="技术方案" target="_blank">技术方案</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?cid=3928722" title="股票" target="_blank">股票</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?cid=3919387" title="linux技术" target="_blank">linux技术</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?cid=3919261" title="数据库技术" target="_blank">数据库技术</a></li>
-<li><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?cid=3919259" title="asp技术" target="_blank">asp技术</a><h3 id="-">博客标签</h3>
-</li>
-</ul>
-<p><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=fdisk" title="1篇" target="_blank">fdisk</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=frame" title="1篇" target="_blank">frame</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=javascript" title="1篇" target="_blank">javascript</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=linux" title="1篇" target="_blank">linux</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=named.conf" title="1篇" target="_blank">named.conf</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=parent" title="1篇" target="_blank">parent</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=xml" title="1篇" target="_blank">xml</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%B2%BB%C4%DC%CA%B6%B1%F0%D3%B2%C5%CC" title="1篇" target="_blank">不能识别硬盘</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%B2%CE%CA%FD" title="1篇" target="_blank">参数</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%B4%E6%B4%A2%B9%FD%B3%CC" title="1篇" target="_blank">存储过程</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%B4%FA%C0%ED" title="1篇" target="_blank">代理</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%B5%E7%D0%C5" title="1篇" target="_blank">电信</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%B5%F7%D3%C3" title="1篇" target="_blank">调用</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%B6%AF%CC%AC%BD%E2%CE%F6" title="1篇" target="_blank">动态解析</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%B8%BA%D4%D8%BE%F9%BA%E2" title="1篇" target="_blank">负载均衡</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%B8%F1%CA%BD" title="1篇" target="_blank">格式</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%B9%C9%D6%B8%C6%DA%BB%F5" title="1篇" target="_blank">股指期货</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%BD%F8%B6%C8%CC%F5" title="1篇" target="_blank">进度条</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%C1%BD%B8%F6%B3%C2%C1%D0" title="1篇" target="_blank">两个陈列</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%C2%B7%D3%C9%B1%ED" title="1篇" target="_blank">路由表</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%C2%B7%D3%C9" title="3篇" target="_blank">路由</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%C4%DA%B4%E6" title="1篇" target="_blank">内存</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%C5%E4%D6%C3" title="1篇" target="_blank">配置</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%C6%BD%BA%E2" title="1篇" target="_blank">平衡</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%C6%F4%B6%AF" title="1篇" target="_blank">启动</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%C9%CF%B4%AB" title="1篇" target="_blank">上传</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%C9%CF%CD%F8" title="1篇" target="_blank">上网</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%CA%BE%C0%FD" title="1篇" target="_blank">示例</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%CB%AB%CD%F8%B9%D8" title="1篇" target="_blank">双网关</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%CD%F8%BF%A8" title="1篇" target="_blank">网卡</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%CD%F8%C2%E7" title="1篇" target="_blank">网络</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%CD%F8%CD%A8" title="1篇" target="_blank">网通</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%CF%C2%C0%AD%B2%CB%B5%A5" title="1篇" target="_blank">下拉菜单</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%CF%DF%C2%B7" title="1篇" target="_blank">线路</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%D3%B2%C5%CC%B7%D6%C7%F8" title="1篇" target="_blank">硬盘分区</a><a href="http://crystalroom.i.sohu.com/blog/show/entry/list.htm?tag=%D3%B2%C5%CC" title="1篇" target="_blank">硬盘</a></p>
-<h3 id="-http-blog-sohu-com-"><a href="http://blog.sohu.com/" target="_blank">更多&gt;&gt;</a>精彩博文</h3>
-<ul>
-<li><a href="http://cat898-com.i.sohu.com/" target="_blank">黎明</a><a href="http://cat898-com.i.sohu.com/blog/view/261882543.htm" target="_blank">抗震救灾为何堵成一片</a></li>
-<li><a href="http://taoduanfang.i.sohu.com/" target="_blank">陶短房</a><a href="http://taoduanfang.i.sohu.com/blog/view/261756188.htm" target="_blank">曝壹基金管理费惊人</a></li>
-<li><a href="http://xuqianchuan.i.sohu.com/" target="_blank">徐潜川</a><a href="http://xuqianchuan.i.sohu.com/blog/view/261829390.htm" target="_blank">揭开器官买卖黑市内幕</a></li>
-<li><a href="http://sangedoudou.i.sohu.com/" target="_blank">兜兜</a><a href="http://sangedoudou.i.sohu.com/blog/view/261771925.htm" target="_blank">幼升小必考题及报考攻略</a></li>
-<li><a href="http://zt.blog.sohu.com/s2013/mango/index.shtml" target="_blank">专题</a><a href="http://zt.blog.sohu.com/s2013/mango/index.shtml" target="_blank">晒搭配成为超人气封面女郎</a></li>
-<li><a href="http://niangzi456.i.sohu.com/" target="_blank">月儿雾</a><a href="http://niangzi456.i.sohu.com/blog/view/261811580.htm" target="_blank">新娘婚前美容四大误区</a>
-<a href=""></a></li>
-</ul>
-<p><a href="http://z.i.sohu.com/help/helpqa.html" target="_blank">帮助</a> - <a href="http://sohucallcenter.blog.sohu.com/" target="_blank">客服中心</a> - <a href="http://q.sohu.com/group/23063" target="_blank">意见建议</a> - <a href="mailto:jubao@contact.sohu.com">举报</a> - <a href="http://www.sohu.com/" target="_blank">搜狐首页</a></p>
-<p>Copyright © 2013 Sohu.com Inc. All rights reserved. 搜狐公司 版权所有
-<img src="" alt=""> <img src="" alt=""></p>
-<p>This ad is supporting your extension Allow Right-Click: <a href="">More info</a> | <a href="">Privacy Policy</a> | <a href="http://crystalroom.i.sohu.com/blog/view/136068744.htm#" target="_blank">Hide on this page</a>
-<a href="http://feedback.q.sohu.com/" target="_blank">意见反馈</a><a href="&quot;返回页面顶部&quot;"></a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/Squid/">Squid</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Squid/" class="label label-primary">Squid</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-Squid--windows下squid安装-水晶坊的博客-我的搜狐/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-Squid--windows下squid安装-水晶坊的博客-我的搜狐" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/TCPIP/">TCPIP</a></li></span></span> | <span class="tags">Tagged <a href="/tags/TCPIP/" class="label label-primary">TCPIP</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-TCPIP--TCPIP网络层谜云之ICMP--ITeye技术网站/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-TCPIP--TCPIP网络层谜云之ICMP--ITeye技术网站" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1203,7 +1641,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:43:39</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 16:47:45</em></span></div>
 </div>
 <div class="clearfix"></div>
 
