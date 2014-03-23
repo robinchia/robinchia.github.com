@@ -275,6 +275,203 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-oracle-oracle---数据库调整和优化：Slony-I/">数据库调整和优化： Slony</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:35.000Z"> <a href="/2014/02/02/2014-02-02-DB-oracle-oracle---数据库调整和优化：Slony-I/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-slony-i">数据库调整和优化： Slony-I</h1>
+<p><a href="http://wap.oschina.net/" target="_blank">首页</a> » <a href="http://wap.oschina.net/project/tag/81" target="_blank">数据库调整和优化</a> » <a href="http://wap.oschina.net/p/slony-i" target="_blank">Slony-I</a></p>
+<h1 id="slony-i">Slony-I</h1>
+<p><a href="">简介</a> <a href="http://wap.oschina.net/p/slony-i/similar_projects" target="_blank">类似项目(25)</a> <a href="http://wap.oschina.net/p/slony-i/news" target="_blank">新闻(0)</a> <a href="http://wap.oschina.net/p/slony-i/discuss" target="_blank">讨论区(0)</a></p>
+<p>Slony-I可以来实现PostgreSQL数据库的主从复制。</p>
+<p><img src="" alt=""></p>
+<p>下面是Slony-I 的安装配置简明指南，实现主副数据库的同步。后面我会再介绍Pgbouncer的安装和配置</p>
+<ol>
+<li>主副数据库机器
+Master:
+hostname: M_DB
+inet addr:10.0.0.11
+OS: Linux 2.6.9-42.ELsmp
+CPU:Intel(R) Xeon(R) CPU L5320 @ 1.86GHz
+MemTotal: 254772 kB
+PgSQL: postgresql-8.3.0
+Slave:
+hostname:S_DB
+inet addr:10.0.0.12
+OS: Linux 2.6.9-42.ELsmp
+CPU:Intel(R) Xeon(R) CPU L5320 @ 1.86GHz
+MemTotal: 514440 kB
+PgSQL: postgresql-8.3.0
+/#在M_DB和S_DB上安装postgresql-8.3.0, 安装和配置过程参见我的上一篇Blog，确保超级用户是postgres，数据库名是URT。
+/#检查M_DB和S_DB上的超级用户postgres是否可以访问对方的机器
+/#分别在M_DB和S_DB上执行
+sudo -u postgres /home/y/pgsql/bin/createlang plpgsql URT
+/#分别在M_DB和S_DB上的URT数据库里创建相同的表accounts。</li>
+<li>安装Slony-I
+/#分别在M_DB和S_DB上安装Slony-I
+tar xfj slony1-1.2.13.tar.bz2
+cd slony1-1.2.13
+./configure –with-pgconfigdir=/home/y/pgsql/bin
+gmake all
+sudo gmake install</li>
+<li>Slony Config
+创建urt<em>replica_init.sh文件:
+/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
+/#!/bin/sh
+SLONIK=/home/y/pgsql/bin/slonik
+/#slonik可执行文件位置
+CLUSTER=URT
+/#你的集群的名称
+SET_ID=1
+/#你的复制集的名称
+MASTER=1
+/#主服务器ID
+HOST1=M_DB
+/#源库IP或主机名
+DBNAME1=URT
+/#需要复制的源数据库
+SLONY_USER=postgres
+/#源库数据库超级用户名
+SLAVE=2
+/#从服务器ID
+HOST2=S_DB
+/#目的库IP或主机名
+DBNAME2=URT
+/#需要复制的目的数据库
+PGBENCH_USER=postgres
+/#目的库用户名
+$SLONIK &lt;&lt;_EOF</em>
+/#这句是定义集群名
+cluster name = $CLUSTER;
+/#这两句是定义复制节点
+node $MASTER admin conninfo = &#39;dbname=$DBNAME1 host=$HOST1 user=$SLONY<em>USER &#39;;
+node $SLAVE admin conninfo = &#39;dbname=$DBNAME2 host=$HOST2 user=$PGBENCH_USER &#39;;
+/#初始化集群和主节点，id从1开始，如果只有一个集群，那么肯定是1
+/#comment里可以写一些自己的注释，随意
+init cluster ( id = $MASTER, comment = &#39;Primary Node&#39; );
+/#下面是从节点
+store node ( id = $SLAVE, comment = &#39;Slave Node&#39; );
+/#配置主从两个节点的连接信息，就是告诉Slave服务器如何来访问Master服务器
+/#下面是主节点的连接参数
+store path ( server = $MASTER, client = $SLAVE,
+conninfo = &#39;dbname=$DBNAME1 host=$HOST1 user=$SLONY_USER &#39;);
+/#下面是从节点的连接参数
+store path ( server = $SLAVE, client = $MASTER,
+conninfo = &#39;dbname=$DBNAME2 host=$HOST2 user=$PGBENCH_USER &#39;);
+/#设置复制中角色，主节点是原始提供者，从节点是接受者
+store listen ( origin = $MASTER, provider = 1, receiver = 2 );
+store listen ( origin = $SLAVE, provider = 2, receiver = 1 );
+/#创建一个复制集，id也是从1开始
+create set ( id = $SET_ID, origin = $MASTER, comment = &#39;All pgbench tables&#39; );
+/#向自己的复制集种添加表，每个需要复制的表添加一条set命令，id从1开始，逐次递加，步进为1；
+/#fully qualified name是表的全称：模式名.表名
+/#这里的复制集id需要和前面创建的复制集id一致
+set add table ( set id = $SET_ID, origin = $MASTER,
+id = 1, fully qualified name = &#39;public.accounts&#39;,
+comment = &#39;Table accounts&#39; );
+_EOF</em>
+/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
+/#在M_DB或者S_DB上执行
+./urt_replica_init.sh</li>
+<li>Slony Start
+创建Master.slon文件:
+/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
+cluster_name=&quot;URT&quot;
+conn_info=&quot;dbname=URT host=M_DB user=postgres&quot;
+/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
+创建Slave.slon文件:
+/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
+cluster_name=&quot;URT&quot;
+conn_info=&quot;dbname=URT host=S_DB user=postgres&quot;
+/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
+/#在M_DB上执行
+/home/y/pgsql/bin/slon -f master.slon &gt;&gt; master.log &amp;
+/#在S_DB上执行
+/home/y/pgsql/bin/slon -f slave.slon &gt;&gt; slave.log &amp;</li>
+<li>Slony Subscribe
+创建urt<em>replica_subscribe.sh文件:
+/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
+/#!/bin/sh
+SLONIK=/home/y/pgsql/bin/slonik
+/#slonik可执行文件位置
+CLUSTER=URT
+/#你的集群的名称
+SET_ID=1
+/#你的复制集的名称
+MASTER=1
+/#主服务器ID
+HOST1=M_DB
+/#源库IP或主机名
+DBNAME1=URT
+/#需要复制的源数据库
+SLONY_USER=postgres
+/#源库数据库超级用户名
+SLAVE=2
+/#从服务器ID
+HOST2=S_DB
+/#目的库IP或主机名
+DBNAME2=URT
+/#需要复制的目的数据库
+PGBENCH_USER=postgres
+/#目的库用户名
+$SLONIK &lt;&lt;_EOF</em>
+/#这句是定义集群名
+cluster name = $CLUSTER;
+/#这两句是定义复制节点
+node $MASTER admin conninfo = &#39;dbname=$DBNAME1 host=$HOST1 user=$SLONY<em>USER&#39;;
+node $SLAVE admin conninfo = &#39;dbname=$DBNAME2 host=$HOST2 user=$PGBENCH_USER &#39;;
+/#提交复制集
+subscribe set ( id = $SET_ID, provider = $MASTER, receiver = $SLAVE, forward = no);
+_EOF</em>
+/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
+/#在M_DB或者S_DB上执行
+./urt_replica_subscribe.sh</li>
+<li>测试
+修改M_DB上URT数据里的accounts表，S_DB上的accounts表也会随之改变</li>
+</ol>
+<p>开发语言： 不详
+收录时间：2008年10月06日
+主页:<a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2F" target="_blank"><a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2F">http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2F</a></a>
+文档:<a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdocumentation%2F%0A" target="_blank"><a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdocumentation%2F%0A">http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdocumentation%2F%0A</a></a>
+下载:<a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdownloads%2F" target="_blank"><a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdownloads%2F">http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdownloads%2F</a></a>
+网友评论(0)</p>
+<p>帐号：
+密码：
+<a href="http://wap.oschina.net/home/reg" target="_blank">注册新帐号</a>
+不能超过250个字</p>
+<p>快速通道:<a href="http://wap.oschina.net/" target="_blank">首页</a>|<a href="http://wap.oschina.net/news/list" target="_blank">新闻</a>|<a href="http://wap.oschina.net/project/list" target="_blank">项目</a>|<a href="http://wap.oschina.net/discuss" target="_blank">讨论区</a>
+开源中国社区(OsChina.NET)
+2009/10/26 星期一 14:12
+<a href="http://www.oschina.net/" target="_blank">进入Web版</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/oracle/">oracle</a></li><li><a href="/categories/DB/oracle/oracle-/">oracle-</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/oracle/" class="label label-success">oracle</a><a href="/tags/oracle-/" class="label label-info">oracle-</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:35"datetime="2014-03-07 09:54:35"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-oracle-oracle---数据库调整和优化：Slony-I/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-oracle-oracle---数据库调整和优化：Slony-I" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-oracle-oracle---如何写这个sql语句_Oracle数据库管理_ITPUB论坛-it168旗下专业技术社区/">如何写这个sql语句 _Oracle数据库管理_ITPUB论坛</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:35.000Z"> <a href="/2014/02/02/2014-02-02-DB-oracle-oracle---如何写这个sql语句_Oracle数据库管理_ITPUB论坛-it168旗下专业技术社区/">feb. 2 2014</a></time></span>      
@@ -830,108 +1027,27 @@ IT168文库精选文档推荐 <a href="http://wenku.it168.com/d_000088434.shtml"
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-oracle-oracle---用BCV备份Oracle数据库/">用BCV备份Oracle数据库</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-linux-redhat--CentOS62图形界面自定义开启终端快捷键/">CentOS 6.2图形界面自定义开启终端快捷键</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:35.000Z"> <a href="/2014/02/02/2014-02-02-DB-oracle-oracle---用BCV备份Oracle数据库/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:35.000Z"> <a href="/2014/02/02/2014-02-02-linux-redhat--CentOS62图形界面自定义开启终端快捷键/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-bcv-oracle-">用BCV备份Oracle数据库</h1>
-<p>用BCV备份Oracle数据库
-BCV（业务连续卷）是Business Continuance Volume的简写，EMC的产品TimeFinder的理念。可用于海量数据库的备份和测试库的建立等。
-  对海量数据进行备份的挑战之一就是对产品库系统的影响。如果采用传统方法，其备份周期，数据库文件处于热备份的时间会很长，备份期间会严重影响系统性能。
-  而BCV备份采用磁盘同步，磁盘分割更底层的方式，使数据库热备份在几分钟就可以完成。
-  采用BCV备份的步骤如下
-  1）Resynch BCVs with Production
-  2）Put Production Databases in Hot Backup Mode
-  3）Split BCV
-  4）Take Production Databases out of Hot Backup Mode
-  分割完毕后的BCVs，可以将数据备份到磁带上，再与Production同步。也可以挂载在其他主机上进行恢复，建立测试数据库。
-  公司中多个TB级的数据库备份的第2到第4步，都在15分钟以内完成。</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/oracle/">oracle</a></li><li><a href="/categories/DB/oracle/oracle-/">oracle-</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/oracle/" class="label label-success">oracle</a><a href="/tags/oracle-/" class="label label-info">oracle-</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:35"datetime="2014-03-07 09:54:35"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-oracle-oracle---用BCV备份Oracle数据库/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-oracle-oracle---用BCV备份Oracle数据库" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-linux-redhat--虚拟机软件VMwareWorkstation10官方正式版（附序列号）/">虚拟机软件VMware Workstation 10官方正式版（附序列号）</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:35.000Z"> <a href="/2014/02/02/2014-02-02-linux-redhat--虚拟机软件VMwareWorkstation10官方正式版（附序列号）/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-vmware-workstation-10-">虚拟机软件VMware Workstation 10官方正式版（附序列号）</h1>
-<h2 id="-vmware-workstation-10-">虚拟机软件VMware Workstation 10官方正式版（附序列号）</h2>
-<p>在 虚拟机软件中VMware Workstation算是一款非常强大较稳定的软件了，今天 VMware Workstation 10.0正式发布了，最让人欣喜的是该版本终于有了简体中 文版了，从现在开始我们可以抛弃掉那个汉化包了，当然VMware Workstation 10.0不仅仅是有了简体中文这么简单，他支持Windows 8、平板电脑传感器和即 将过期的虚拟机，可使你的工作无缝、直观、更具关联性。</p>
-<p>可以将Windows 8.1物理PC转变为虚拟机；Unity模式增强，与Windows 8.1 UI 更改无缝配合工作；</p>
-<p>·加强控制，虚拟机将以指定的时间间隔查询服务器，从而将受限虚拟机的策略 文件中的当前系统时间存储为最后受信任的时间戳；</p>
-<p>·在平板电脑运行时可以利用加速计、陀螺仪、罗盘以及环境光线传感器； </p>
-<p>·支持多达16个虚拟CPU、8 TB SATA磁盘和64 GB RAM；</p>
-<p>·新的虚拟SATA磁盘控制器；</p>
-<p>·现在支持20个虚拟网络；</p>
-<p>·USB3流支持更快的文件复制；</p>
-<p>·改进型应用和Windows虚拟机启动时间；</p>
-<p>·固态磁盘直通；</p>
-<p>·增加多监视设置；</p>
-<p>·VMware-KVM 提供了使用多个虚拟机的新界面。</p>
-<p><img src="http://a.hiphotos.bdimg.com/album/pic/item/908fa0ec08fa513de60c36e03f6d55fbb2fbd96e.jpg" alt=""></p>
-<p><strong>PS：本版原生自带简体。不需要再汉化！</strong></p>
-<p>直观、更具关联性。</p>
-<p><strong>VMware Workstation 10.0下载地址：</strong></p>
-<p><a href="https://download3.vmware.com/software/wkst/file/VMware-workstation-full-10.0.0-1295980.exe" target="_blank"><strong><a href="https://download3.vmware.com/software/wkst/file/VMware-workstation-full-10.0.0-1295980.exe">https://download3.vmware.com/software/wkst/file/VMware-workstation-full-10.0.0-1295980.exe</a></strong></a></p>
-<p><strong>**VMware Workstation 10.0.1</strong>官方中文下载地址：
-<a href="http://download3.vmware.com/software/wkst/file/VMware-workstation-full-10.0.1-1379776.exe" target="_blank"><a href="http://download3.vmware.com/software/wkst/file/VMware-workstation-full-10.0.1-1379776.exe">http://download3.vmware.com/software/wkst/file/VMware-workstation-full-10.0.1-1379776.exe</a></a>**</p>
-<p><strong><a href="http://www.400gb.com/file/29264846" title="VMware-workstation-full-10keygen注册机" target="_blank">VMware-workstation-full-10keygen注册机</a></strong>   <strong><a href="http://www.400gb.com/file/29264846" target="_blank">http://www.400gb.com/file/29264846</a></strong></p>
-<p><strong>VMware Workstation 10.0下载地址：</strong></p>
-<p><strong><a href="http://pan.baidu.com/share/link?shareid=3806157122&amp;uk=1126415953" target="_blank"><a href="http://pan.baidu.com/share/link?shareid=3806157122&amp;uk=1126415953">http://pan.baidu.com/share/link?shareid=3806157122&amp;uk=1126415953</a></a>
-注册机下载：<a href="http://pan.baidu.com/share/link?shareid=3865501324&amp;uk=1126415953" target="_blank"><a href="http://pan.baidu.com/share/link?shareid=3865501324&amp;uk=1126415953">http://pan.baidu.com/share/link?shareid=3865501324&amp;uk=1126415953</a></a></strong></p>
-<p><strong>永久Key：
-5F29M-48312-8ZDF9-A8A5K-2AM0Z</strong></p>
-<p>KEY：</p>
-<p>M109C-N0J5L-08J8A-02ARP-CE64F</p>
-<p>4F207-8HJ1M-WZCP8-000N0-92Q6G</p>
-<p>0A6Z5-8H1EJ-WZCL1-PK072-23DJG</p>
-<p>0F0Q9-8F38L-RZXT9-4U054-ACW5F</p>
-<p>JA02E-09H47-QZD81-W3A52-A3014</p>
-<p>4F2AG-A0HEJ-JZWH8-L01N6-8C3Q3</p>
-<p><strong>Windows版：</strong><a href="http://jump.bdimg.com/safecheck/index?url=x+Z5mMbGPAs0fPjV59o0dBpB+jZXxXzVStXWQbSAqcvBKaT2Zy84fJVLJOFvA9ZQ/wRMgCs2brjPe9w6GldCYP65cTJv369KVRO7XtOB2R8SxZVPK2iaH1lbkzG0xrCJMQAumKirwSozYzx2CSxzVYAvdOiQgTBS3bmCOpv//TuRABNjKWjedFqKX7b2bI5gxr16sSAoYCX5GBjsM0wkMDDV+m4DEe0HxnUQITL5rzNWZhAVR4xoKDA8Zu4mdgY0" target="_blank"><strong><a href="http://download3.vmware.com/software/wkst/file/VMware-workstation-full-10.0.0-1295980.exe">http://download3.vmware.com/software/wkst/file/VMware-workstation-full-10.0.0-1295980.exe</a></strong></a>
-<strong>linux x86：</strong><a href="http://jump.bdimg.com/safecheck/index?url=x+Z5mMbGPAs0fPjV59o0dBpB+jZXxXzVStXWQbSAqcvBKaT2Zy84fJVLJOFvA9ZQ/wRMgCs2brjPe9w6GldCYP65cTJv369KKIRWckqZGz8SxZVPK2iaH+DBhsh4++l2MQAumKirwSozYzx2CSxzVcWf+pq1s+3MFMN9ULVyvikfRO7dgYr9wq1ZUm+pVLlYEHc/ox0t2+22xRr6lbXuFeKGWHlJaCXOKx9ZkgqMdbm8vebLlYkpghUOkzbx4Wisdj2oeHoEzTI=" target="_blank"><strong><a href="http://download3.vmware.com/software/wkst/file/VMware-Workstation-Full-10.0.0-1295980.i386.bundle">http://download3.vmware.com/software/wkst/file/VMware-Workstation-Full-10.0.0-1295980.i386.bundle</a></strong></a>
-<strong>linux x64：</strong><a href="http://jump.bdimg.com/safecheck/index?url=x+Z5mMbGPAs0fPjV59o0dBpB+jZXxXzVStXWQbSAqcvBKaT2Zy84fJVLJOFvA9ZQ/wRMgCs2brjPe9w6GldCYP65cTJv369KKIRWckqZGz8SxZVPK2iaH+DBhsh4++l2MQAumKirwSozYzx2CSxzVSHdwVDIR1d227njhkva+FovSKyJA7lJwK1ZUm+pVLlYEHc/ox0t2+22xRr6lbXuFeKGWHlJaCXOKx9ZkgqMdbm8vebLlYkpghUOkzbx4Wisdj2oeHoEzTI=" target="_blank"><strong><a href="http://download3.vmware.com/software/wkst/file/VMware-Workstation-Full-10.0.0-1295980.x86_64.bundle">http://download3.vmware.com/software/wkst/file/VMware-Workstation-Full-10.0.0-1295980.x86_64.bundle</a></strong></a></p>
-<p>VMware Player 是最简单的虚拟机，VMware Player 是在 PC 上同时运行多个操作系统的最简单方法。玩虚拟机，首选VMware Player。</p>
-<pre><code>推荐理由：①它是VMware Workstation的官方精简版，更适合个人用户使用。
-</code></pre><p>②免费。</p>
-<p>③体积小，仅100MB多一点。</p>
-<p>④主界面清爽简洁，几乎所有的功能都不需要手工设置。</p>
-<p>⑤对软驱、光驱、蓝牙和USB设备有很完善的支持。</p>
-<p>⑥Player不仅对系统版本没有要求，对硬件也没有硬性要求，基本上是PC都能使用。</p>
-<p>⑦同时支持32位64位主机和虚拟。⑧虚拟系统完美支持Aero(磨砂玻璃特效)，支持DirectX 9 3D加速。</p>
-<p>直接下载链接：</p>
-<p><strong>VMware Player and VMware Player Plus 6.0:</strong> <a href="https://download3.vmware.com/software/player/file/VMware-player-6.0.0-1295980.exe?HashKey=994a6ddfe8e1940e452647db8f3cdc71&amp;ext=.exe&amp;params=%7B%22sourcefilesize%22%3A%2294M%22%2C%22dlgcode%22%3A%22PLAYER-600-A%22%2C%22languagecode%22%3A%22en%22%2C%22source%22%3A%22DOWNLOADS%22%2C%22downloadtype%22%3A%22manual%22%2C%22eula%22%3A%22N%22%2C%22downloaduuid%22%3A%2292dda063-afb8-40dc-a50c-671a3a5ef5af%22%2C%22purchased%22%3A%22N%22%2C%22dlgtype%22%3A%22Product+Binaries%22%2C%22productversion%22%3A%226.0.0%22%2C%22productfamily%22%3A%22VMware+Player%22%7D&amp;AuthKey=1378333450_30aa6b9f4407f895514881ad175ec6c5&amp;ext=.exe" target="_blank"><a href="https://download3.vmware.com/software/player/file/VMware-player-6.0.0-1295980.exe?HashKey=994a6ddfe8e1940e452647db8f3cdc71&amp;ext=.exe?ms=%7B%22sourcefilesize%22%3A%2294M%22%2C%22dlgcode%22%3A%22PLAYER-600-A%22%2C%22languagecode%22%3A%22en%22%2C%22source%22%3A%22DOWNLOADS%22%2C%22downloadtype%22%3A%22manual%22%2C%22eula%22%3A%22N%22%2C%22downloaduuid%22%3A%2292dda063-afb8-40dc-a50c-671a3a5ef5af%22%2C%22purchased%22%3A%22N%22%2C%22dlgtype%22%3A%22Product+Binaries%22%2C%22productversion%22%3A%226.0.0%22%2C%22productfamily%22%3A%22VMware+Player%22%7D&amp;AuthKey=1378333450_30aa6b9f4407f895514881ad175ec6c5&amp;ext=.exe">https://download3.vmware.com/software/player/file/VMware-player-6.0.0-1295980.exe?HashKey=994a6ddfe8e1940e452647db8f3cdc71&amp;ext=.exe?ms=%7B%22sourcefilesize%22%3A%2294M%22%2C%22dlgcode%22%3A%22PLAYER-600-A%22%2C%22languagecode%22%3A%22en%22%2C%22source%22%3A%22DOWNLOADS%22%2C%22downloadtype%22%3A%22manual%22%2C%22eula%22%3A%22N%22%2C%22downloaduuid%22%3A%2292dda063-afb8-40dc-a50c-671a3a5ef5af%22%2C%22purchased%22%3A%22N%22%2C%22dlgtype%22%3A%22Product+Binaries%22%2C%22productversion%22%3A%226.0.0%22%2C%22productfamily%22%3A%22VMware+Player%22%7D&amp;AuthKey=1378333450_30aa6b9f4407f895514881ad175ec6c5&amp;ext=.exe</a></a></p>
-<p><strong>VMware Player and VMware Player Plus 6.0 for Linux 32-bit:</strong> <a href="https://download3.vmware.com/software/player/file/VMware-Player-6.0.0-1295980.i386.bundle?HashKey=8c92f19c9ff5623e93a5147d6002ec06&amp;params=%7B%22sourcefilesize%22%3A%22222M%22%2C%22dlgcode%22%3A%22PLAYER-600-A%22%2C%22languagecode%22%3A%22en%22%2C%22source%22%3A%22DOWNLOADS%22%2C%22downloadtype%22%3A%22manual%22%2C%22eula%22%3A%22N%22%2C%22downloaduuid%22%3A%22de2df9e1-680d-4d64-bd7b-c203cb51a19b%22%2C%22purchased%22%3A%22N%22%2C%22dlgtype%22%3A%22Product+Binaries%22%2C%22productversion%22%3A%226.0.0%22%2C%22productfamily%22%3A%22VMware+Player%22%7D&amp;AuthKey=1378333645_ba275adf24b7a3b1ce04b323d6950883" target="_blank">https://download3.vmware.com/software/player/file/VMware-Player-6.0.0-1295980.i386.bundle?HashKey=8c92f19c9ff5623e93a5147d6002ec06&amp;params=%7B%22sourcefilesize%22%3A%22222M%22%2C%22dlgcode%22%3A%22PLAYER-600-A%22%2C%22languagecode%22%3A%22en%22%2C%22source%22%3A%22DOWNLOADS%22%2C%22downloadtype%22%3A%22manual%22%2C%22eula%22%3A%22N%22%2C%22downloaduuid%22%3A%22de2df9e1-680d-4d64-bd7b-c203cb51a19b%22%2C%22purchased%22%3A%22N%22%2C%22dlgtype%22%3A%22Product+Binaries%22%2C%22productversion%22%3A%226.0.0%22%2C%22productfamily%22%3A%22VMware+Player%22%7D&amp;AuthKey=1378333645_ba275adf24b7a3b1ce04b323d6950883</a></p>
-<p><strong>VMware Player and VMware Player Plus 6.0 for Linux 64-bit:</strong> <a href="https://download3.vmware.com/software/player/file/VMware-Player-6.0.0-1295980.x86_64.bundle?HashKey=eadb3587f1992b4c34d5c3beffe6cb56&amp;params=%7B%22sourcefilesize%22%3A%22191M%22%2C%22dlgcode%22%3A%22PLAYER-600-A%22%2C%22languagecode%22%3A%22en%22%2C%22source%22%3A%22DOWNLOADS%22%2C%22downloadtype%22%3A%22manual%22%2C%22eula%22%3A%22N%22%2C%22downloaduuid%22%3A%2280b2e8d4-4df6-41c4-bd77-1ab496c5f317%22%2C%22purchased%22%3A%22N%22%2C%22dlgtype%22%3A%22Product+Binaries%22%2C%22productversion%22%3A%226.0.0%22%2C%22productfamily%22%3A%22VMware+Player%22%7D&amp;AuthKey=1378333902_17241d1228dcb4406283ef18d19ca38d" target="_blank"><a href="https://download3.vmware.com/software/player/file/VMware-Player-6.0.0-1295980.x86_64.bundle?HashKey=eadb3587f1992b4c34d5c3beffe6cb56?ms=%7B%22sourcefilesize%22%3A%22191M%22%2C%22dlgcode%22%3A%22PLAYER-600-A%22%2C%22languagecode%22%3A%22en%22%2C%22source%22%3A%22DOWNLOADS%22%2C%22downloadtype%22%3A%22manual%22%2C%22eula%22%3A%22N%22%2C%22downloaduuid%22%3A%2280b2e8d4-4df6-41c4-bd77-1ab496c5f317%22%2C%22purchased%22%3A%22N%22%2C%22dlgtype%22%3A%22Product+Binaries%22%2C%22productversion%22%3A%226.0.0%22%2C%22productfamily%22%3A%22VMware+Player%22%7D&amp;AuthKey=1378333902_17241d1228dcb4406283ef18d19ca38d">https://download3.vmware.com/software/player/file/VMware-Player-6.0.0-1295980.x86_64.bundle?HashKey=eadb3587f1992b4c34d5c3beffe6cb56?ms=%7B%22sourcefilesize%22%3A%22191M%22%2C%22dlgcode%22%3A%22PLAYER-600-A%22%2C%22languagecode%22%3A%22en%22%2C%22source%22%3A%22DOWNLOADS%22%2C%22downloadtype%22%3A%22manual%22%2C%22eula%22%3A%22N%22%2C%22downloaduuid%22%3A%2280b2e8d4-4df6-41c4-bd77-1ab496c5f317%22%2C%22purchased%22%3A%22N%22%2C%22dlgtype%22%3A%22Product+Binaries%22%2C%22productversion%22%3A%226.0.0%22%2C%22productfamily%22%3A%22VMware+Player%22%7D&amp;AuthKey=1378333902_17241d1228dcb4406283ef18d19ca38d</a></a></p>
+        <h1 id="centos-6-2-">CentOS 6.2图形界面自定义开启终端快捷键</h1>
+<p>菜单：</p>
+<p>System-&gt;Preferences-&gt;Keyboard Shortcuts</p>
+<p>在Desktop分类下找到“Run a terminal”</p>
+<p>点击Run a terminal，按下需要的快捷键，比如Ctrl+Alt+T，即可。</p>
+<p>补充终端窗口下的快捷:</p>
+<p>复制：Shift+Ctrl+C</p>
+<p>粘贴：Shift+Ctrl+V</p>
+<p>开启新窗口：Shift+Ctrl+N</p>
+<p>开启新分页（Tab）：Shift+Ctrl+T</p>
+<p>分页之间切换：</p>
+<p>1、Alt+1...9</p>
+<p>2、Ctrl+Page Down/Page UP</p>
 
       
     </div>
@@ -942,7 +1058,7 @@ BCV（业务连续卷）是Business Continuance Volume的简写，EMC的产品Ti
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/linux/">linux</a></li></span><span class="breadcrumb"><li><a href="/categories/linux/">linux</a></li><li><a href="/categories/linux/redhat/">redhat</a></li></span></span> | <span class="tags">Tagged <a href="/tags/linux/" class="label label-primary">linux</a><a href="/tags/redhat/" class="label label-success">redhat</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:35"datetime="2014-03-07 09:54:35"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-linux-redhat--虚拟机软件VMwareWorkstation10官方正式版（附序列号）/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-linux-redhat--虚拟机软件VMwareWorkstation10官方正式版（附序列号）" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-linux-redhat--CentOS62图形界面自定义开启终端快捷键/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-linux-redhat--CentOS62图形界面自定义开启终端快捷键" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1022,7 +1138,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 20:45:44</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-23 21:54:38</em></span></div>
 </div>
 <div class="clearfix"></div>
 

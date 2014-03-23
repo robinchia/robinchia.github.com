@@ -201,178 +201,26 @@ Oracle 提供了一系列丰富的技术，可用于对表、索引和索引组�
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-oracle-oracle---数据库调整和优化：Slony-I/">数据库调整和优化： Slony</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-oracle-oracle---用BCV备份Oracle数据库/">用BCV备份Oracle数据库</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:35.000Z"> <a href="/2014/02/02/2014-02-02-DB-oracle-oracle---数据库调整和优化：Slony-I/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:35.000Z"> <a href="/2014/02/02/2014-02-02-DB-oracle-oracle---用BCV备份Oracle数据库/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-slony-i">数据库调整和优化： Slony-I</h1>
-<p><a href="http://wap.oschina.net/" target="_blank">首页</a> » <a href="http://wap.oschina.net/project/tag/81" target="_blank">数据库调整和优化</a> » <a href="http://wap.oschina.net/p/slony-i" target="_blank">Slony-I</a></p>
-<h1 id="slony-i">Slony-I</h1>
-<p><a href="">简介</a> <a href="http://wap.oschina.net/p/slony-i/similar_projects" target="_blank">类似项目(25)</a> <a href="http://wap.oschina.net/p/slony-i/news" target="_blank">新闻(0)</a> <a href="http://wap.oschina.net/p/slony-i/discuss" target="_blank">讨论区(0)</a></p>
-<p>Slony-I可以来实现PostgreSQL数据库的主从复制。</p>
-<p><img src="" alt=""></p>
-<p>下面是Slony-I 的安装配置简明指南，实现主副数据库的同步。后面我会再介绍Pgbouncer的安装和配置</p>
-<ol>
-<li>主副数据库机器
-Master:
-hostname: M_DB
-inet addr:10.0.0.11
-OS: Linux 2.6.9-42.ELsmp
-CPU:Intel(R) Xeon(R) CPU L5320 @ 1.86GHz
-MemTotal: 254772 kB
-PgSQL: postgresql-8.3.0
-Slave:
-hostname:S_DB
-inet addr:10.0.0.12
-OS: Linux 2.6.9-42.ELsmp
-CPU:Intel(R) Xeon(R) CPU L5320 @ 1.86GHz
-MemTotal: 514440 kB
-PgSQL: postgresql-8.3.0
-/#在M_DB和S_DB上安装postgresql-8.3.0, 安装和配置过程参见我的上一篇Blog，确保超级用户是postgres，数据库名是URT。
-/#检查M_DB和S_DB上的超级用户postgres是否可以访问对方的机器
-/#分别在M_DB和S_DB上执行
-sudo -u postgres /home/y/pgsql/bin/createlang plpgsql URT
-/#分别在M_DB和S_DB上的URT数据库里创建相同的表accounts。</li>
-<li>安装Slony-I
-/#分别在M_DB和S_DB上安装Slony-I
-tar xfj slony1-1.2.13.tar.bz2
-cd slony1-1.2.13
-./configure –with-pgconfigdir=/home/y/pgsql/bin
-gmake all
-sudo gmake install</li>
-<li>Slony Config
-创建urt<em>replica_init.sh文件:
-/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
-/#!/bin/sh
-SLONIK=/home/y/pgsql/bin/slonik
-/#slonik可执行文件位置
-CLUSTER=URT
-/#你的集群的名称
-SET_ID=1
-/#你的复制集的名称
-MASTER=1
-/#主服务器ID
-HOST1=M_DB
-/#源库IP或主机名
-DBNAME1=URT
-/#需要复制的源数据库
-SLONY_USER=postgres
-/#源库数据库超级用户名
-SLAVE=2
-/#从服务器ID
-HOST2=S_DB
-/#目的库IP或主机名
-DBNAME2=URT
-/#需要复制的目的数据库
-PGBENCH_USER=postgres
-/#目的库用户名
-$SLONIK &lt;&lt;_EOF</em>
-/#这句是定义集群名
-cluster name = $CLUSTER;
-/#这两句是定义复制节点
-node $MASTER admin conninfo = &#39;dbname=$DBNAME1 host=$HOST1 user=$SLONY<em>USER &#39;;
-node $SLAVE admin conninfo = &#39;dbname=$DBNAME2 host=$HOST2 user=$PGBENCH_USER &#39;;
-/#初始化集群和主节点，id从1开始，如果只有一个集群，那么肯定是1
-/#comment里可以写一些自己的注释，随意
-init cluster ( id = $MASTER, comment = &#39;Primary Node&#39; );
-/#下面是从节点
-store node ( id = $SLAVE, comment = &#39;Slave Node&#39; );
-/#配置主从两个节点的连接信息，就是告诉Slave服务器如何来访问Master服务器
-/#下面是主节点的连接参数
-store path ( server = $MASTER, client = $SLAVE,
-conninfo = &#39;dbname=$DBNAME1 host=$HOST1 user=$SLONY_USER &#39;);
-/#下面是从节点的连接参数
-store path ( server = $SLAVE, client = $MASTER,
-conninfo = &#39;dbname=$DBNAME2 host=$HOST2 user=$PGBENCH_USER &#39;);
-/#设置复制中角色，主节点是原始提供者，从节点是接受者
-store listen ( origin = $MASTER, provider = 1, receiver = 2 );
-store listen ( origin = $SLAVE, provider = 2, receiver = 1 );
-/#创建一个复制集，id也是从1开始
-create set ( id = $SET_ID, origin = $MASTER, comment = &#39;All pgbench tables&#39; );
-/#向自己的复制集种添加表，每个需要复制的表添加一条set命令，id从1开始，逐次递加，步进为1；
-/#fully qualified name是表的全称：模式名.表名
-/#这里的复制集id需要和前面创建的复制集id一致
-set add table ( set id = $SET_ID, origin = $MASTER,
-id = 1, fully qualified name = &#39;public.accounts&#39;,
-comment = &#39;Table accounts&#39; );
-_EOF</em>
-/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
-/#在M_DB或者S_DB上执行
-./urt_replica_init.sh</li>
-<li>Slony Start
-创建Master.slon文件:
-/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
-cluster_name=&quot;URT&quot;
-conn_info=&quot;dbname=URT host=M_DB user=postgres&quot;
-/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
-创建Slave.slon文件:
-/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
-cluster_name=&quot;URT&quot;
-conn_info=&quot;dbname=URT host=S_DB user=postgres&quot;
-/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
-/#在M_DB上执行
-/home/y/pgsql/bin/slon -f master.slon &gt;&gt; master.log &amp;
-/#在S_DB上执行
-/home/y/pgsql/bin/slon -f slave.slon &gt;&gt; slave.log &amp;</li>
-<li>Slony Subscribe
-创建urt<em>replica_subscribe.sh文件:
-/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
-/#!/bin/sh
-SLONIK=/home/y/pgsql/bin/slonik
-/#slonik可执行文件位置
-CLUSTER=URT
-/#你的集群的名称
-SET_ID=1
-/#你的复制集的名称
-MASTER=1
-/#主服务器ID
-HOST1=M_DB
-/#源库IP或主机名
-DBNAME1=URT
-/#需要复制的源数据库
-SLONY_USER=postgres
-/#源库数据库超级用户名
-SLAVE=2
-/#从服务器ID
-HOST2=S_DB
-/#目的库IP或主机名
-DBNAME2=URT
-/#需要复制的目的数据库
-PGBENCH_USER=postgres
-/#目的库用户名
-$SLONIK &lt;&lt;_EOF</em>
-/#这句是定义集群名
-cluster name = $CLUSTER;
-/#这两句是定义复制节点
-node $MASTER admin conninfo = &#39;dbname=$DBNAME1 host=$HOST1 user=$SLONY<em>USER&#39;;
-node $SLAVE admin conninfo = &#39;dbname=$DBNAME2 host=$HOST2 user=$PGBENCH_USER &#39;;
-/#提交复制集
-subscribe set ( id = $SET_ID, provider = $MASTER, receiver = $SLAVE, forward = no);
-_EOF</em>
-/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#/#
-/#在M_DB或者S_DB上执行
-./urt_replica_subscribe.sh</li>
-<li>测试
-修改M_DB上URT数据里的accounts表，S_DB上的accounts表也会随之改变</li>
-</ol>
-<p>开发语言： 不详
-收录时间：2008年10月06日
-主页:<a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2F" target="_blank"><a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2F">http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2F</a></a>
-文档:<a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdocumentation%2F%0A" target="_blank"><a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdocumentation%2F%0A">http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdocumentation%2F%0A</a></a>
-下载:<a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdownloads%2F" target="_blank"><a href="http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdownloads%2F">http://wap.oschina.net/home/goweb?url=http%3A%2F%2Fwww.slony.info%2Fdownloads%2F</a></a>
-网友评论(0)</p>
-<p>帐号：
-密码：
-<a href="http://wap.oschina.net/home/reg" target="_blank">注册新帐号</a>
-不能超过250个字</p>
-<p>快速通道:<a href="http://wap.oschina.net/" target="_blank">首页</a>|<a href="http://wap.oschina.net/news/list" target="_blank">新闻</a>|<a href="http://wap.oschina.net/project/list" target="_blank">项目</a>|<a href="http://wap.oschina.net/discuss" target="_blank">讨论区</a>
-开源中国社区(OsChina.NET)
-2009/10/26 星期一 14:12
-<a href="http://www.oschina.net/" target="_blank">进入Web版</a></p>
+        <h1 id="-bcv-oracle-">用BCV备份Oracle数据库</h1>
+<p>用BCV备份Oracle数据库
+BCV（业务连续卷）是Business Continuance Volume的简写，EMC的产品TimeFinder的理念。可用于海量数据库的备份和测试库的建立等。
+  对海量数据进行备份的挑战之一就是对产品库系统的影响。如果采用传统方法，其备份周期，数据库文件处于热备份的时间会很长，备份期间会严重影响系统性能。
+  而BCV备份采用磁盘同步，磁盘分割更底层的方式，使数据库热备份在几分钟就可以完成。
+  采用BCV备份的步骤如下
+  1）Resynch BCVs with Production
+  2）Put Production Databases in Hot Backup Mode
+  3）Split BCV
+  4）Take Production Databases out of Hot Backup Mode
+  分割完毕后的BCVs，可以将数据备份到磁带上，再与Production同步。也可以挂载在其他主机上进行恢复，建立测试数据库。
+  公司中多个TB级的数据库备份的第2到第4步，都在15分钟以内完成。</p>
 
       
     </div>
@@ -383,7 +231,7 @@ _EOF</em>
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/oracle/">oracle</a></li><li><a href="/categories/DB/oracle/oracle-/">oracle-</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/oracle/" class="label label-success">oracle</a><a href="/tags/oracle-/" class="label label-info">oracle-</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:35"datetime="2014-03-07 09:54:35"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-oracle-oracle---数据库调整和优化：Slony-I/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-oracle-oracle---数据库调整和优化：Slony-I" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-oracle-oracle---用BCV备份Oracle数据库/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-oracle-oracle---用BCV备份Oracle数据库" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -912,7 +760,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 20:45:44</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-23 21:54:38</em></span></div>
 </div>
 <div class="clearfix"></div>
 

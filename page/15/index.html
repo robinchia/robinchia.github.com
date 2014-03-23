@@ -110,235 +110,108 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/">HAProxy的独门武器：ebtree</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--RadixSort/">RadixSort</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--RadixSort/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="haproxy-ebtree">HAProxy的独门武器：ebtree</h1>
-<h1 id="1-haproxy-ebtree-">1. HAProxy和ebtree简介</h1>
-<p>HAProxy是法国人Willy Tarreau个人开发的一个开源软件，目标是应对客户端10000以上的同时连接，为后端应用服务器、数据库服务器提供高性能的负载均衡服务。
-在底层数据结构方面，旧版本HAProxy曾经使用过红黑树，用于任务调度、负载均衡等方面。但是Willy Tarreau认为，在事件响应非常频繁的情况下，任务插入、删除的频率非常高，这时候使用红黑树存在性能瓶颈，尤其不能接受红黑树删除节点的时间复杂度为O(log n)。因此，他发明了一种新的数据结构，叫做<strong>弹性二叉树（elastic binary tree）</strong>，简称ebtree。
-目前新版本的HAProxy（本文编写时最新版本为1.4.23）已使用ebtree，而除了HAProxy之外，还没有其它著名的开源软件使用ebtree。可以这么说，HAProxy最有特色的地方就是ebtree，ebtree名符其实是HAProxy的独门武器。
-ebtree是不平衡的二叉搜索树（BST），而红黑树、AVL树等都是平衡的BST。传统的BST最怕的就是退化成线性搜索，因此，红黑树等BST插入、删除时都需要对树进行平衡化，而平衡化是一个从叶子节点开始，向根节点方向递归向上的过程，时间复杂度是O(log n)。
-有鉴于此，ebtree为了实现删除节点时O(1)的时间复杂度，必然放弃保持树的平衡，为了拒绝由此而来的副作用——退化成线性搜索（或者更准确地说，退化成不受限制的线性搜索），不可避免地引入了一些新的成员和新的思路，且待我慢慢道来。</p>
-<h1 id="2-ebtree-">2. ebtree节点的组成</h1>
-<p>一个ebtree的节点（以下简称ebnode）分为node部分和leaf部分（Willy Tarreau是这样描述的，但我觉得称为树干部分和叶子部分更合适一些，以下就按我的理解来叙述）。<strong>树干</strong>负责关联其它ebnode，由父指针（node_p）和分支（Willy Tarreau称之为root，包括左分支L和右分支R），以及一个控制树的高度的特殊成员（bit）组成，<strong>叶子</strong>负责携带数据（data，一般是数据的键值，所以下文都称为key），另外包含一个指向上层的指针（leaf_p）。
-一棵ebtree只有一个根节点（root），包含两个左右分支的指针（L、R）。所有的ebnode总是挂在根节点的左分支下面，根节点的右分支总是为空。在ebtree的遍历过程中，判断当前节点是否根节点就是判断其右指针是否为空。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/Ebnode.png" target="_blank"><img src="" alt="Ebnode"></a></p>
-<p>-</p>
-<h1 id="3-">3. 各个指针的附加属性</h1>
-<p>在32位平台中，一个指针占用4个字节，例如，地址值0xaabbcc00的下一个地址值是0xaabbcc04，再下一个是0xaabbcc08，也就是说，指针的值的最后两个比特不能表示一个合法地址。因此，Willy Tarreau充分利用这一点，来保存上述几个指针的特殊属性。这是一个很重要的优化，每个ebnode可以节省几个成员，整个ebtree就节省大量存储空间。
-1）L和R既可以指向其它ebnode的树干，也可以指向其它ebnode的叶子，还可以指向自己的叶子。在ebtree的遍历过程中，对树干和叶子有不同的处理逻辑，L和R有必要知道自己所指向的是树干还是叶子。
-2）可以知道node_p和leaf_p究竟挂在其它ebnode的左分支下面，还是挂在其右分支下面。
-3）根节点右分支不挂任何树干和叶子，可以把它也利用上，指示该ebtree是否允许重复键值。
-熟悉红黑树的读者都知道，红黑树也有同样的优化方法，表示红黑树节点颜色的属性并不占用内存空间。</p>
-<h1 id="4-bit-">4. bit的定义</h1>
-<p>引入bit就是为了<strong>限制树的高度</strong>，避免极端不平衡。在一棵不允许重复键值的ebtree中，key是32位的情况下，bit的取值范围是从0到31，此时，它的定义是：<strong>子树所有的键中，第一个不同的二进制位的位置</strong>。允许重复键值的ebtree稍后再详细介绍。
-例如，下图的右下角子树中只有两个键，左边叶子节点的键值为300，右边叶子节点的键值为400，300的二进制是100101100，400的二进制是110010000，从右边数起第7位起（注意，程序员都是从0开始数数的），300和400左边的位都相同，所以，bit等于7。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/bit.png" target="_blank"><img src="" alt="bit"></a></p>
-<p>这时候，读者可能会问，这样定义bit为什么能够限制树的高度呢？不用着急，马上隆重介绍bit的两个重要意义！</p>
-<h1 id="5-bit-">5. bit的第一个重要意义</h1>
-<p>这里只讨论键值大于等于零的情况，事实上，ebtree可以支持键值为负数，不过，我还没有仔细研究过这种情况，应该是对符号位进行某些转换处理。
-bit的第一个重要意义：<strong>同一个ebnode中的bit和key，联合决定该ebnode属下的子树内，所有key的取值范围</strong>。
-先看下图挂在根节点下面，key = 300的那个ebnode，bit = 8，300的二进制为100101100，从右边数起第8位是最高位那个1，参考bit的定义，也就是说，该子树所有的键，第8位左边都是0，所以，它们的取值范围是从0到511（二进制111111111）。
-再看最下面那个ebnode，bit = 5，250的二进制为11111010，从右边数起第5位是第三个1，再对照bit的定义，该子树的键，第5位左边都是11，所以，它们的取值范围是从192（二进制11000000）到255（二进制11111111）。
-同理，最右边那个ebnode，bit = 7，key = 400，取值范围是256-511。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/bit1.png" target="_blank"><img src="" alt="bit1"></a></p>
-<h1 id="6-bit-">6. bit的第二个重要意义和查找过程</h1>
-<p>bit的第二个重要意义：<strong>如果要查找的数据x在该子树的取值范围内，bit可以指示其可能会在左分支下面还是右分支下面</strong>。
-ebtree的具体查找过程是，遍历到某个ebnode时，如果key = x，返回查找结果；如果x已经超出bit规定的取值范围，返回查找失败；否则，取x的第bit位，如果bit = 0，那么从该ebnode的左分支查找，反之，从右分支查找；如果已到达叶子还是没有匹配，返回查找失败。
-还是上一节那个图，假如要找的键x = 249，二进制为11111001，从根节点左分支开始查找，bit = 8，右边数起第8位为0，于是从它的左分支继续查找，bit = 5，249右边数起第5位为1，于是从它的右分支继续查找，此时已到达叶子，且250 != 249，本次查找失败。
-假如要找的键x = 300，因为就在查找路径的节点上，直接返回结果。
-假如要找的键x = 600，已经超出该子树中bit规定的取值范围，返回查找失败。</p>
-<h1 id="7-">7. 插入不可重复的键值</h1>
-<p>首先，要介绍的是空树的情况。由前面的叙述可以得知，一棵ebtree为空树当且仅当它的根节点的左分支为空。所以，此时插入的ebnode就直接挂在根节点的左分支下面，由于新插入的ebnode不存在左右分支，也没有父节点（上层ebnode），显然也不需要bit来控制树的高度，因此，该ebnode的树干都没有使用。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert0.png" target="_blank"><img src="" alt="insert0"></a></p>
-<p>其次，介绍ebtree只有一个ebnode时，再插入一个ebnode的情况。此时，新的ebnode必定插入在根节点与旧的ebnode之间，如果新的键值大于原来的键值，旧的ebnode挂在新的ebnode的左分支下面，新的ebnode的叶子挂在自己的右分支下面，再计算bit；反之，则左右相反，再计算bit。
-下图的例子，是已有key = 200，再插入key = 300的情形。读者可以根据上面的描述画出已有key = 200，再插入key = 100的情形。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert1.png" target="_blank"><img src="" alt="insert1"></a></p>
-<p>然后，就可以介绍在ebtree中插入新的ebnode的<strong>五种基本情形</strong>。在这里，都以上图为初始状态。任何具有更多ebnode的情形，都可以通过对ebtree的遍历，递推到其中一种情形。</p>
-<p>1) <strong>新的键值可以插入子树中，而且小于子树中的最小键值。</strong></p>
-<p>假如新插入ebnode的key为100，根据bit的第二个重要意义，100应该在该子树的左分支下面，而且，100小于200，于是，该ebnode插入在原图的左分支上，自己的左分支指向自己的叶子，自己的右分支指向原来子树的左分支。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_1.png" target="_blank"><img src="" alt="insert2_1"></a></p>
-<p>键值范围[0, 200)都属于这种情形。</p>
-<p>2) <strong>新的键值可以插入子树中，该键值在确定要插入的两个ebnode的键值之间，且应该在该子树的左分支下面。</strong></p>
-<p>假如新插入ebnode的key为225，根据bit的第二个重要意义，225应该在该子树的左分支下面，而且，225大于200，于是，该ebnode插入在原图的左分支上，自己的左分支指向原来子树的左分支，自己的右分支指向自己的叶子。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_2.png" target="_blank"><img src="" alt="insert2_2"></a></p>
-<p>键值范围(200, 255]都属于这种情形。</p>
-<p>3) <strong>新的键值可以插入子树中，该键值在确定要插入的两个ebnode的键值之间，且应该在该子树的右分支下面。</strong></p>
-<p>假如新插入ebnode的key为275，根据bit的第二个重要意义，275应该在该子树的右分支下面，而且，275小于300，于是，该ebnode插入在原图的右分支上，自己的左分支指向自己的叶子，自己的右分支指向原来子树的右分支。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_3.png" target="_blank"><img src="" alt="insert2_3"></a></p>
-<p>键值范围(255, 300)都属于这种情形。</p>
-<p>4) <strong>新的键值可以插入子树中，而且大于子树中的最大键值。</strong></p>
-<p>假如新插入ebnode的key为400，根据bit的第二个重要意义，400应该在该子树的右分支下面，而且，400大于300，于是，该ebnode插入在原图的右分支上，自己的左分支指向原来子树的右分支，自己的右分支指向自己的叶子。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_4.png" target="_blank"><img src="" alt="insert2_4"></a></p>
-<p>键值范围(300, 511]都属于这种情形。</p>
-<p>5) <strong>新的键值不可以插入子树中。</strong></p>
-<p>假如新插入ebnode的key为600，根据bit的第一个重要意义，600不可插入到子树中，于是，该ebnode插入在原图的子树之上，自己的左分支指向原来的子树，自己的右分支指向自己的叶子。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_5.png" target="_blank"><img src="" alt="insert2_5"></a></p>
-<p>键值范围(511, +∞)都属于这种情形。</p>
-<h1 id="8-bit-">8. bit的第三个重要意义和插入重复的键值</h1>
-<p>ebtree是专门为任务调度而生的，同样的优先级，必须保证能够按照任务触发的次序来进行访问。所以，ebtree支持存储重复的键值，这一点并不是所有的BST都支持，可以说是ebtree的优点。而且，解决键值冲突不会退化成链表。
-bit的第三个重要意义：<strong>bit为负值表示该子树下所有的键都是重复的，而且，该值表示重复子树的层次</strong>。当然，必须要在根节点右指针允许的情况下。
-插入第一个重复键值，例如300（ebnode底纹为点点），可以参考上一节的第二种和第四种基本情形，不同的是，bit为-1。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup1.png" target="_blank"><img src="" alt="insert_dup1"></a></p>
-<p>如果再插入一个重复键值300（ebnode底纹为方格），应该在重复键值子树上插入，而且是向上生长。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup2.png" target="_blank"><img src="" alt="insert_dup2"></a></p>
-<p>上图已经有四个ebnode，信息量较大，为了后续叙述方便，把它简化，去掉几个指针域，保留bit和key，得到下图。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup2s.png" target="_blank"><img src="" alt="insert_dup2s"></a></p>
-<p>再插入一个300（ebnode底纹为斜方格），得到下面的ebtree。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup3s.png" target="_blank"><img src="" alt="insert_dup3s"></a></p>
-<p>再插入两个300（ebnode底纹分别为左斜线和右斜线），得到下面的ebtree。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup5s.png" target="_blank"><img src="" alt="insert_dup5s"></a></p>
-<p>读者可以思考一下，如果再来一个、两个、三个300，应该在哪里插入？如果插入不同于300的其它键值，应该在哪里插入？
-从上面几张图，大家可以看到，一个ebnode的树干和叶子会随着树的增长而拉长到不同的层次上，好像很有弹性的样子，这就是弹性二叉树名字的由来。</p>
-<h1 id="9-">9. 删除节点</h1>
-<p>删除一个ebnode，概括起来比较简单，就是把要删除的叶子和该叶子的父亲（树干部分）删除，然后把兄弟挂到祖父下面。因为不需要对树进行平衡化，不需要访问其它ebnode，效率很高。
-具体操作，分为两种情况：
-1）被删除的叶子直连自己的树干，可直接删除该ebnode，然后对它的兄弟重新指派原来的祖父为父亲。
-2）被删除的叶子不是直连自己的树干，以该叶子的父亲（其它ebnode的树干）替换该ebnode的树干，然后删除该ebnode，再把它的兄弟重新指派原来的祖父为父亲。</p>
-<h1 id="10-">10. 总结</h1>
-<p>没有最好的数据结构，只有最合适的数据结构。ebtree有它的优点：
-1）支持存储重复的键值，而且，在此情况下，也不会退化成线性操作。
-2）删除节点时，不需要对树进行平衡化。
-3）插入键值时，很可能不需要深入到树的叶子，当然，很多BST都这样。
-4）查询键值时，可以预知子树的取值范围，从而可以选择访问还是不访问该子树。
-缺点也很明显：
-1）逻辑比较复杂，熟悉的人不多（希望读者看完本文之后都有茅塞顿开的感觉）。
-2）ebnode占用空间比较多，如果把bit也算一个指针，相当于花了5个指针才携带1个数据。
-3）键值严重依赖于可以进行位运算的数据类型。
-总而言之，ebtree适合有高频率插入、删除操作（例如50万次/秒）的使用场合，不适合查询较多、插入、删除较少的场合，非常不适合用于缓存。</p>
-<h1 id="11-">11. 参考资料</h1>
-<ul>
-<li><a href="http://1wt.eu/articles/ebtree/" target="_blank"><a href="http://1wt.eu/articles/ebtree/">http://1wt.eu/articles/ebtree/</a></a></li>
-<li>Willy Tarreau个人网站对ebtree的介绍，不过存在不少误导的地方</li>
-<li><a href="http://blog.nklike.com/%E5%BC%80%E6%BA%90%E8%BD%AF%E4%BB%B6/ebtree%E4%BB%8B%E7%BB%8D/" target="_blank"><a href="http://blog.nklike.com/开源软件/ebtree介绍/">http://blog.nklike.com/开源软件/ebtree介绍/</a></a></li>
-<li>淘宝空见对上文的翻译，也有不够准确的地方</li>
-<li><a href="http://wenku.it168.com/d_000555847.shtml" target="_blank"><a href="http://wenku.it168.com/d_000555847.shtml">http://wenku.it168.com/d_000555847.shtml</a></a></li>
-<li><p>对ebtree的描述错误比较多</p>
-<h3 id="-">您可能感兴趣的文章</h3>
-</li>
-<li><p><a href="http://tech.uc.cn/?p=696" target="_blank">使用搜索技术实现URL智能匹配</a></p>
-</li>
-<li><a href="http://tech.uc.cn/?p=1738" target="_blank">HAProxy几个重要的结构体</a></li>
-<li><a href="http://tech.uc.cn/?p=300" target="_blank">Nginx的http配置结构体的组织结构</a></li>
-</ul>
-<p>来源： <a href="[http://tech.uc.cn/?p=1031](http://tech.uc.cn/?p=1031)">[http://tech.uc.cn/?p=1031](http://tech.uc.cn/?p=1031)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ScoreRank/">ScoreRank</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ScoreRank/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="scorerank">ScoreRank</h1>
-<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 得分排行</a></h1>
+        <h1 id="radixsort">RadixSort</h1>
+<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 基数排序法</a></h1>
 <h2 id="-">说明</h2>
-<p>假设有一教师依学生座号输入考试分数，现希望在输入完毕后自动显示学生分数的排行，当然学生的分数可能相同。</p>
+<p>在之前所介绍过的排序方法，都是属于“比较性”的排序法，也就是每次排序时 ，都是比较整个键值的大小以进行排序。
+这边所要介绍的“基数排序法”（radix sort）则是属于“分配式排序”（distribution sort），基数排序法又称“桶子法”（bucket sort）或bin sort，顾名思义，它是透过键值的部份资讯，将要排序的元素分配至某些“桶”中，藉以达到排序的作用，基数排序法是属于稳定性的排序，其时间复杂度为O (nlog(r)m)，其中r为所采取的基数，而m为堆数，在某些时候，基数排序法的效率高于其它的比较性排序法。</p>
 <h2 id="-">解法</h2>
-<p>这个问题基本上要解不难，只要使用额外的一个排行阵列走访分数阵列就可以了，直接使用下面的程式片段作说明：
-for(i = 0; i &lt; count; i++) {
-    juni[i] = 1;
-    for(j = 0; j &lt; count; j++) {
-        if(score[j] &gt; score[i])
-            juni[i]++;
-    }
-}
-printf(&quot;得分\t排行\n&quot;);
-for(i = 0; i &lt; count; i++)
-    printf(&quot;%d\t%d\n&quot;, score[i], juni[i]);</p>
-<p>上面这个方法虽然简单，但是反覆计算的次数是n^2，如果n值变大，那么运算的时间就会拖长；改变juni阵列的长度为n+2，并将初始值设定为0，如下所示：
-<img src="&quot;得分排行&quot;" alt="得分排行">
-接下来走访分数阵列，并在分数所对应的排行阵列索引元素上加1，如下所示：
-<img src="&quot;得分排行&quot;" alt="得分排行">
-将排行阵列最右边的元素设定为1，然后依序将右边的元素值加至左边一个元素，最后排行阵列中的“分数+1””就是得该分数的排行，如下所示：
-<img src="&quot;得分排行&quot;" alt="得分排行"> 这样的方式看起来复杂，其实不过在计算某分数之前排行的人数，假设89分之前的排行人数为x人，则89分自然就是x+1了，这也是为什么排行阵列最右边要设定为1的原因；如果89分有y人，则88分自然就是x+y+1，整个阵列右边元素向左加的原因正是如此。
-如果分数有负分的情况，由于C/C++或Java等程式语言无法处理负的索引，所以必须加上一个偏移值，将所有的分数先往右偏移一个范围即可，最后显示的时候记得减回偏移值就可以了。</p>
+<p>基数排序的方式可以采用LSD（Least sgnificant digital）或MSD（Most sgnificant digital），LSD的排序方式由键值的最右边开始，而MSD则相反，由键值的最左边开始。
+以LSD为例，假设原来有一串数值如下所示：
+73, 22, 93, 43, 55, 14, 28, 65, 39, 81
+首先根据个位数的数值，在走访数值时将它们分配至编号0到9的桶子中：
+0 1 2 3 4 5 6 7 8 9 81    65    39 43 14 55   28 93 22 73
+接下来将这些桶子中的数值重新串接起来，成为以下的数列：</p>
+<hr>
+<p>81, 22, 73, 93, 43, 14, 55, 65, 28, 39
+接着再进行一次分配，这次是根据十位数来分配：
+0 1 2 3 4 5 6 7 8 9 28 39 14 22  43 55 65 73 81 93
+接下来将这些桶子中的数值重新串接起来，成为以下的数列：</p>
+<hr>
+<p>14, 22, 28, 39, 43, 55, 65, 73, 81, 93
+这时候整个数列已经排序完毕；如果排序的对象有三位数以上，则持续进行以上的动作直至最高位数为止。
+LSD的基数排序适用于位数小的数列，如果位数多的话，使用MSD的效率会比较好，MSD的方式恰与LSD相反，是由高位数为基底开始进行分配，其他的演 算方式则都相同。</p>
 <h2 id="-">实作</h2>
 <ul>
 <li><p>C
 /#include <stdio.h>
 /#include <stdlib.h>
-/#define MAX 100
-/#define MIN 0
 int main(void) {
-int score[MAX+1] = {0};
-int juni[MAX+2] = {0};
-int count = 0, i;
-do {
-printf(&quot;输入分数，-1结束：&quot;);
-scanf(&quot;%d&quot;, &amp;score[count++]);
-} while(score[count-1] != -1);
-count--;
-for(i = 0; i &lt; count; i++)
-juni[score[i]]++;
-juni[MAX+1] = 1;
-for(i = MAX; i &gt;= MIN; i--)
-juni[i] = juni[i] + juni[i+1];
-printf(&quot;得分\t排行\n&quot;);
-for(i = 0; i &lt; count; i++)
-printf(&quot;%d\t%d\n&quot;, score[i], juni[score[i]+1]);
+int data[10] = {73, 22, 93, 43, 55, 14, 28, 65, 39, 81};
+int temp[10][10] = {0};
+int order[10] = {0};
+int i, j, k, n, lsd;
+k = 0;
+n = 1;
+printf(&quot;\n排序前: &quot;);
+for(i = 0; i &lt; 10; i++)
+printf(&quot;%d &quot;, data[i]);
+putchar(&#39;\n&#39;);
+while(n &lt;= 10) {
+for(i = 0; i &lt; 10; i++) {
+lsd = ((data[i] / n) % 10);
+temp[lsd][order[lsd]] = data[i];
+order[lsd]++;
+}
+printf(&quot;\n重新排列: &quot;);
+for(i = 0; i &lt; 10; i++) {
+if(order[i] != 0)
+for(j = 0; j &lt; order[i]; j++) {
+data[k] = temp[i][j];
+printf(&quot;%d &quot;, data[k]);
+k++;
+}
+order[i] = 0;
+}
+n /*= 10;
+k = 0;
+}
+putchar(&#39;\n&#39;);
+printf(&quot;\n排序后: &quot;);
+for(i = 0; i &lt; 10; i++)
+printf(&quot;%d &quot;, data[i]);
 return 0;
 }</p>
 </li>
 <li><p>Java
-import java.io./*;
-public class ScoreRank {
-public static void main(String[] args)
-throws NumberFormatException, IOException {
-final int MAX = 100;
-final int MIN = 0;
-int[] score = new int[MAX+1];
-int[] juni = new int[MAX+2];
-BufferedReader reader =
-new BufferedReader(
-new InputStreamReader(System.in));
-int count = 0;
-do {
-System.out.print(&quot;输入分数，-1结束：&quot;);
-score[count++] =
-Integer.parseInt(reader.readLine());
-} while((score[count-1] != -1));
-count--;
-for(int i = 0; i &lt; count; i++)
-juni[score[i]]++;
-juni[MAX+1] = 1;
-for(int i = MAX; i &gt;= MIN; i--)
-juni[i] = juni[i] + juni[i+1];
-System.out.println(&quot;得分\t排行&quot;);
-for(int i = 0; i &lt; count; i++) {
-System.out.println(score[i] + &quot;\t&quot; +
-juni[score[i]+1]);
+public class RadixSort {
+public static void sort(int[] number, int d) {
+int k = 0;
+int n = 1;
+int[][] temp = new int[number.length][number.length];
+int[] order = new int[number.length];
+while(n &lt;= d) {
+for(int i = 0; i &lt; number.length; i++) {
+int lsd = ((number[i] / n) % 10);
+temp[lsd][order[lsd]] = number[i];
+order[lsd]++;
+}
+for(int i = 0; i &lt; number.length; i++) {
+if(order[i] != 0)
+for(int j = 0; j &lt; order[i]; j++) {
+number[k] = temp[i][j];
+k++;
+}
+order[i] = 0;
+}
+n /*= 10;
+k = 0;
+}
+}
+public static void main(String[] args) {
+int[] data =
+{73, 22, 93, 43, 55, 14, 28, 65, 39, 81, 33, 100};
+RadixSort.sort(data, 100);
+for(int i = 0; i &lt; data.length; i++) {
+System.out.print(data[i] + &quot; &quot;);
 }
 }
 }</p>
@@ -353,8 +226,8 @@ juni[score[i]+1]);
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:34:44"datetime="2014-03-07 10:34:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ScoreRank/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--ScoreRank" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:34:39"datetime="2014-03-07 10:34:39"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--RadixSort/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--RadixSort" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -369,44 +242,480 @@ juni[score[i]+1]);
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--QuickSort3/">QuickSort3</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--Quine/">Quine</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--QuickSort3/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--Quine/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="quicksort3">QuickSort3</h1>
-<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 快速排序法（三）</a></h1>
+        <h1 id="quine">Quine</h1>
+<h1 id="-algorithm-gossip-quine-"><a href="">Algorithm Gossip: 自产生程式（quine）</a></h1>
 <h2 id="-">说明</h2>
-<p>之前说过轴的选择是快速排序法的效率关键之一，在这边的快速排序法的轴选择方式更加快了快速排序法的效率，它是来自演算法名书 Introduction to Algorithms 之中。</p>
+<p>自产生程式（quine）就是要写一个程式，这个程式的目的就是描述它自己，简单的说，如果您写了一个.java，编译它后产生一个.class档，然后 您将.java档案删除，您的.class档不需要.java档，它也可以印出.java档的内容。</p>
 <h2 id="-">解法</h2>
-<p>先说明这个快速排序法的概念，它以最右边的值s作比较的标准，将整个数列分为三个部份，一个是小于s的部份，一个是大于s的部份，一个是未处理的部份，如下所示 ：
-<img src="&quot;快速排序&quot;" alt="快速排序">
-在排序的过程中，i 与 j 都会不断的往右进行比较与交换，最后数列会变为以下的状态：
-<img src="&quot;快速排序&quot;" alt="快速排序">
-然后将s的值置于中间，接下来就以相同的步骤会左右两边的数列进行排序的动作，如下所示：
-<img src="&quot;快速排序&quot;" alt="快速排序">
-整个演算的过程，直接摘录书中的虚拟码来作说明：
-QUICKSORT(A, p, r)
-if p &lt; r
-then q &lt;- PARTITION(A, p, r)
-QUICKSORT(A, p, q-1)
-QUICKSORT(A, q+1, r)
-end QUICKSORT
-PARTITION(A, p, r)
-x &lt;- A[r]
-i &lt;- p-1
-for j &lt;- p to r-1
-do if A[j] &lt;= x
-then i &lt;- i+1
-exchange A[i]&lt;-&gt;A[j]
-exchange A[i+1]&lt;-&gt;A[r]
-return i+1
-end PARTITION
-一个实际例子的演算如下所示：
-<img src="&quot;快速排序&quot;" alt="快速排序"></p>
+<p>根据计算理论（Computation Theorem）递回原理，任何的程式语言都可以简单的写出自产生程式。简单指的是写出自产生程式并不需要特别的算法，只要利用Turing Machine的扩充多带Turing Machine的操作原理就可以写出。
+撇开计算理论这看似高深的学科不谈们用一般的解释来说明如何写自产生程式，程式分做A、B两个部分，A部分描述B部分的功能，B部分则 负责将A的描述印出来，A似乎必须倚赖建构好的B，但B要有A才能列印，这看似矛盾，但其实不然，做法是将B编码，放置在不同的字元带上，几个字元带并不 是重点，看程式语言的语法而定，您可能需要多几个带，或少几个带，编码好之后，A部分完成，开始进入B部分，B部分不断在多个字元带上来回，并挑选出字元 并显示出来。</p>
+<h2 id="-">实作</h2>
+<p>直接看实例会容易懂些，以下是以Java程式实作的自产生程式，还考虑了程式缩排与可读性。
+<a href="">PrintSelf.java</a>
+<a href="http://www.nyx.org/%7Egthompso/quine.htm" target="_blank">The Quine Page</a> 有各种语言的自产生程式之实现。</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:34:32"datetime="2014-03-07 10:34:32"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--Quine/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--Quine" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-压缩-解压--Java实现将多个文件打包压缩成tar_gz文件-易锐的日志-网易博客/">Java实现将多个文件打包压缩成tar_gz文件 </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-压缩-解压--Java实现将多个文件打包压缩成tar_gz文件-易锐的日志-网易博客/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-tar_gz-">Java实现将多个文件打包压缩成tar_gz文件 - 易锐的日志 - 网易博客</h1>
+<p><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://www.163.com/" target="_blank">网易 </a></p>
+<p><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://news.163.com/" target="_blank">新闻</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://t.163.com/" target="_blank">微博</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://email.163.com/" target="_blank">邮箱</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://photo.163.com/" target="_blank">相册</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://yuedu.163.com/" target="_blank">阅读</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://www.youdao.com/" target="_blank">有道</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://photo.163.com/pp/square/" target="_blank">摄影</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://aipai.163.com?from=163blog" target="_blank">爱拍</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://fm.163.com/?fmblogzx0628" target="_blank">闪电邮</a><a href="http://m.123.163.com/?frombkcp" target="_blank">手机邮</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://yxp.163.com/" target="_blank">印像派</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://dream.163.com/?from=bkcp" target="_blank">梦幻人生</a> <a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://sitemap.163.com/" target="_blank">更多</a></p>
+<p><a href="http://blog.163.com/?frompersonalbloghome" target="_blank">博客 </a></p>
+<p><a href="http://blog.163.com/services/wapblog.html?frompersonalbloghome" target="_blank">手机博客</a><a href="http://blog.163.com/clone/clone.html?frompersonalbloghome" target="_blank">博客搬家</a><a href="http://blog.163.com/vip.do?frompersonalbloghome" target="_blank">博客VIP服务</a> <a href="http://blog.163.com/blog_admin/blog/static/721279201082863728829/?frompersonalbloghome" target="_blank">LiveWriter写博</a><a href="http://blog.163.com/blog_admin/blog/static/721279201092713253500/?frompersonalbloghome" target="_blank">word写博</a><a href="http://blog.163.com/services/mailblog.html?frompersonalbloghome" target="_blank">邮件写博</a><a href="http://blog.163.com/services/emsblog.html?frompersonalbloghome" target="_blank">短信写博</a> <a href="http://blog.163.com/showMultiUser.do?frompersonalbloghome" target="_blank">群博客</a><a href="http://blog.163.com/BLOG_YOUCAI/" target="_blank">博客油菜地</a><a href="http://blog.163.com/ht/?frompersonalbloghome" target="_blank">博客话题</a><a href="http://blog.163.com/hot/history/?frompersonalbloghome" target="_blank">博客热点</a><a href="http://q.163.com/#home?frompersonalbloghome" target="_blank">博客圈子</a><a href="http://blog.163.com/findFriend.do?type=5?frompersonalbloghome" target="_blank">找朋友</a>
+<a href="http://blog.163.com/public/explore/?frompersonalbloghome" target="_blank">发现</a></p>
+<p><a href="http://blog.163.com/g/?frompersonalbloghome" target="_blank">小组</a>
+<a href="http://blog.163.com/public/theme/?frompersonalbloghome" target="_blank">风格</a></p>
+<p><a href="http://blog.163.com/randomUser.do" title="随便看看"></a></p>
+<p><a href="http://blog.163.com/vip.do" target="_blank">博客VIP服务</a></p>
+<p><a href="http://reg.163.com/reg/reg.jsp?product=blog&amp;url=http://blog.163.com/ntesRegBlank.html&amp;loginurl=http://blog.163.com/" target="_blank">创建博客</a> <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/#" target="_blank">登录</a>  </p>
+<p> 关注</p>
+<p>重要提醒：系统检测到您的帐号可能存在被盗风险，请尽快<a href="http://reg.163.com/Main.jsp?username=kliumin@126.com" target="_blank">查看风险提示</a>，并立即<a href="http://blog.163.com/kliumin@126/settings/?fromnewcenter#m=0&amp;t=7" target="_blank">修改密码</a>。  |  <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/" target="_blank">关闭</a></p>
+<p>网易博客安全提醒：系统检测到您当前密码的安全性较低，为了您的账号安全，建议您适时修改密码    <a href="http://blog.163.com/kliumin@126/settings/?fromnewcenter#m=0&amp;t=7" target="_blank">立即修改</a>  |  <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/" target="_blank">关闭</a>
+<a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/" target="_blank"></a>   <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/">显示下一条</a>  |  <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/" target="_blank">关闭</a></p>
+<p><a href="http://blog.163.com/public/explore/?fromblogbanner"></a>
+<a href="http://www.lofter.com/invite/163blog/?email="></a></p>
+<h1 id="-">易锐的博客</h1>
+<p>我的博客
+ <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/#"></a></p>
+<h2 id="-">导航</h2>
+<ul>
+<li><a href="http://blog.163.com/kliumin@126/" target="_blank">首页</a></li>
+<li><a href="http://blog.163.com/kliumin@126/blog/" target="_blank">日志</a></li>
+<li><a href="http://blog.163.com/kliumin@126/album/" target="_blank">相册</a></li>
+<li><a href="http://blog.163.com/kliumin@126/music/" target="_blank">音乐</a></li>
+<li><a href="http://blog.163.com/kliumin@126/collection/" target="_blank">收藏</a></li>
+<li><a href="http://blog.163.com/kliumin@126/friends/" target="_blank">博友</a></li>
+<li><a href="http://blog.163.com/kliumin@126/profile/" target="_blank">关于我</a></li>
+</ul>
+<h2 id="-">日志</h2>
+<p><a href="http://blog.163.com/kliumin@126/blog/static/81651185200910413622503/" target="_blank">eclipse注释规范设置</a></p>
+<h3 id="java-tar-gz-">Java实现将多个文件打包压缩成tar.gz文件</h3>
+<p>2009-11-06 15:30:06|  分类： <a href="http://blog.163.com/kliumin@126/blog/#m=0&amp;t=1&amp;c=fks_087067087087088066084083085095092087087070085087094070" title="默认分类" target="_blank">默认分类</a> |  标签： |字号大中小 <a href="">订阅</a></p>
+<p>后缀为tar.gz的文件实际上时先将文件（单个或多个）打包成后缀为tar的（tar包）文件，再用gzip压缩成gz文件，如此来说我们便可以用两步来实现此功能，请看代码：</p>
+<p>import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.zip.GZIPOutputStream;</p>
+<p>import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
+import org.apache.commons.compress.utils.IOUtils;</p>
+<p>//<em>/</em>
+ /<em> @Title: GZIPUtil.java
+ /</em> @Description: gzip文件压缩和解压缩工具类
+ /<em> @author LM
+ /</em> @date 2009-11-4 下午06:23:29
+ /<em> @version V1.0
+ /</em>/
+public class GZIPUtil {</p>
+<p> //<em>/</em>
+  /<em>
+  /</em> @Title: pack
+  /<em> @Description: 将一组文件打成tar包
+  /</em> @param sources 要打包的原文件数组
+  /<em> @param target 打包后的文件
+  /</em> @return File    返回打包后的文件
+  /<em> @throws
+  /</em>/
+ public static File pack(File[] sources, File target){
+  FileOutputStream out = null;
+  try {
+   out = new FileOutputStream(target);
+  } catch (FileNotFoundException e1) {
+   e1.printStackTrace();
+  }
+  TarArchiveOutputStream os = new TarArchiveOutputStream(out);
+  for (File file : sources) {
+   try {
+    os.putArchiveEntry(new TarArchiveEntry(file));
+    IOUtils.copy(new FileInputStream(file), os);
+    os.closeArchiveEntry();</p>
+<p>   } catch (FileNotFoundException e) {
+    e.printStackTrace();
+   } catch (IOException e) {
+    e.printStackTrace();
+   }
+  }
+  if(os != null) {
+   try {
+    os.flush();
+    os.close();
+   } catch (IOException e) {
+    e.printStackTrace();
+   }
+  }</p>
+<p>  return target;
+ }</p>
+<p> //<em>/</em>
+  /<em>
+  /</em> @Title: compress
+  /<em> @Description: 将文件用gzip压缩
+  /</em> @param  source 需要压缩的文件
+  /<em> @return File    返回压缩后的文件
+  /</em> @throws
+  /*/
+ public static File compress(File source) {
+  File target = new File(source.getName() + &quot;.gz&quot;);
+  FileInputStream in = null;
+  GZIPOutputStream out = null;
+  try {
+   in = new FileInputStream(source);
+   out = new GZIPOutputStream(new FileOutputStream(target));
+   byte[] array = new byte[1024];
+   int number = -1;
+   while((number = in.read(array, 0, array.length)) != -1) {
+    out.write(array, 0, number);
+   }
+  } catch (FileNotFoundException e) {
+   e.printStackTrace();
+   return null;
+  } catch (IOException e) {
+   e.printStackTrace();
+   return null;
+  } finally {
+   if(in != null) {
+    try {
+     in.close();
+    } catch (IOException e) {
+     e.printStackTrace();
+     return null;
+    }
+   }</p>
+<p>   if(out != null) {
+    try {
+     out.close();
+    } catch (IOException e) {
+     e.printStackTrace();
+     return null;
+    }
+   }
+  }
+  return target;
+ }</p>
+<p> public static void main(String[] args) {
+  File[] sources = new File[] {new File(&quot;task.xml&quot;), new File(&quot;app.properties&quot;)};
+  File target = new File(&quot;release_package.tar&quot;);
+  compress(pack(sources, target));
+ }
+}</p>
+<p>可以打包压缩，那么解压缩就是反其道而行，有时间再来写一篇解压缩的。
+  评论这张</p>
+<p><img src="" alt=""> 转发至微博
+<img src="" alt=""> 转发至微博</p>
+<p><img src="" alt=""> 0人  |  分享到：         </p>
+<p>阅读(674)| 评论(0)| 引用 (0) |举报</p>
+<p><a href="http://blog.163.com/kliumin@126/blog/static/81651185200910413622503/" target="_blank">eclipse注释规范设置</a></p>
+<h3 id="-">历史上的今天</h3>
+<h3 id="-">相关文章</h3>
+<h3 id="-">最近读者</h3>
+<h3 id="-">评论</h3>
+<p><a href=""></a></p>
+<p>this.p={ m:2, b:2, id:&#39;fks_083066081080089069080083087095092087087070085087094070&#39;, blogTitle:&#39;Java实现将多个文件打包压缩成tar.gz文件&#39;, blogAbstract:&#39;<P\>后缀为tar.gz的文件实际上时先将文件（单个或多个）打包成后缀为tar的（tar包）文件，再用gzip压缩成gz文件，如此来说我们便可以用两步来实现此功能，请看代码：</P\>\r\n<P\>imp<wbr\>ort java.io.File;<BR\>imp<wbr\>ort java.io.FileInputStream;<BR\>imp<wbr\>ort java.io.FileNotFoundException;<BR\>imp<wbr\>ort java.io.FileOutputStream;<BR\>imp<wbr\>ort java.io.IOException;<BR\>imp<wbr\>ort java.util.zip.GZIPOutputStream;</P\>\r\n<P\>imp<wbr\>ort org.apache.commons.compress.archivers.tar.TarArchiveEntry;</P\>&#39;, blogTag:&#39;&#39;, blogUrl:&#39;blog/static/8165118520091063306587&#39;, isPublished:1, istop:false, type:0, modifyTime:0, publishTime:1257492606587, permalink:&#39;blog/static/8165118520091063306587&#39;, commentCount:0, mainCommentCount:0, recommendCount:0, bsrk:-100, publisherId:0, recomBlogHome:false, attachmentsFileIds:[], vote:{}, groupInfo:{}, friendstatus:&#39;none&#39;, followstatus:&#39;unFollow&#39;, pubSucc:&#39;&#39;, visitorProvince:&#39;广东&#39;, visitorCity:&#39;深圳&#39;, postAddInfo:{}, mset:&#39;000&#39;, mcon:&#39;&#39;, srk:-100, remindgoodnightblog:false, isBlackVisitor:false, isShowYodaoAd:false, hostIntro:&#39;&#39;, hmcon:&#39;&#39; }   {list a as x} {if !!x} <div class="iblock nbw-fce nbw-f40"> <a class="fc03 noul" target="_blank" hidefocus="true" href="http://blog.163.com/${x.visitorName}/"> {if x.visitorName==visitor.userName} <img alt="${x.visitorNickname|escape}" onerror="location.f40" class="cwd bdwa bdc0" src="${fn1(x.visitorName)}&r=${visitor.imageUpdateTime}"/> {else} <img alt="${x.visitorNickname|escape}" onerror="location.f40" class="cwd bdwa bdc0" src="${fn1(x.visitorName)}"/> {/if} </a> <div class="cwd vname thide"> {if x.moveFrom==&#39;wap&#39;} <a class="noul pnt" target="_blank" href="http://blog.163.com/services/wapblog.html?frompersonalbloghome"><span title="来自网易手机博客" class="iblock wapIcon"> </span></a> {elseif x.moveFrom==&#39;iphone&#39;} <a class="noul pnt" target="_blank"><span title="来自iPhone客户端" class="iblock iphoneIcon"> </span></a> {elseif x.moveFrom==&#39;android&#39;} <a class="noul pnt" target="_blank"><span title="来自Android客户端" class="iblock androidIcon"> </span></a> {elseif x.moveFrom==&#39;mobile&#39;} <a class="noul pnt" target="_blank" href="http://blog.163.com/services/emsblog.html?frompersonalbloghome"><span title="来自网易短信写博" class="iblock wapIcon"> </span></a> {/if} <a class="fc03 m2a" target="_blank" hidefocus="true" href="http://blog.163.com/${x.visitorName}/"> ${fn(x.visitorNickname,8)|escape} </a> </div> </div> {/if} {/list}   {if !!a} <a target="_blank" href="http://blog.163.com/${a.userName}/"><img class="bdwa bdc0 pnt" onerror="location.f60" src="${fn1(a.userName)}"/></a> <a target="_blank" class="fc03 m2a" href="http://blog.163.com/${a.userName}/">${fn(a.nickname,8)|escape}</a> <div class="intro fc05">${a.selfIntro|escape}{if great260}${suplement}{/if}</div> <div class="acts ztag"></div> <div class="mbga phide xtag"> <div class="mbgai"> </div> <a class="fc03 xtag m2a" href="/#" target="_blank"></a> </div> {/if}  &lt;/#--最新日志，群博日志--&gt;  {list a as x} {if !!x} <li class="thide"><a target="_blank" class="fc03 m2a" href="${furl()}${x.permalink}/?latestBlog">${fn(x.title,26)|escape}</a></li> {/if} {/list}  &lt;/#--推荐日志--&gt;  <p class="fc06">推荐过这篇日志的人：</p> <div> {list a as x} {if !!x} <div class="iblock nbw-fce nbw-f40"> <a class="fc03 noul" target="_blank" hidefocus="true" href="http://blog.163.com/${x.recommenderName}/"> <img alt="${x.recommenderNickname}" onerror="location.f40" class="cwd bdwa bdc0" src="${fn1(x.recommenderName)}"/> </a> <div class="cwd thide"> <a class="fc03 m2a" target="_blank" hidefocus="true" href="http://blog.163.com/${x.recommenderName}/"> ${fn(x.recommenderNickname,6)|escape} </a> </div> </div> {/if} {/list} </div> {if !!b&amp;&amp;b.length&gt;0} <p class="fc06">他们还推荐了：</p> <ul> {list b as y} {if !!y} <li class="rrb"><span class="iblock">·</span><a class="fc03 m2a" target="_blank" href="http://blog.163.com/${y.recommendBlogPermalink}/?from=blog/static/8165118520091063306587">${y.recommendBlogTitle}</a></li> {/if} {/list} </ul> {/if}  &lt;/#--引用记录--&gt;  <span class="pleft fc07">引用记录：</span> <ul class="tbac"> {list d as x} <li class="clearfix"> <span class="pleft iblock">·</span> <div class="tbl thide pleft"><span><a target="_blank" class="fc07 m2a" href="${x.referBlogUrl}">${x.referBlogTitle}</a></span></div> <div class="tbr pleft"><span><a target="_blank" class="fc07 m2a" href="${x.referHomePage}">${x.referUserName}</a></span></div> </li> {/list} </ul>  &lt;/#--博主推荐--&gt;  {list a as x} {if !!x} <li class="thide"><a target="_blank" class="fc03 m2a" href="http://blog.163.com/${x.userName}/${x.permalink}/?recommendBlog" title="${x.title|default:""|escape}">${x.title|default:&quot;&quot;|escape}</a></li> {/if} {/list}  &lt;/#--随机阅读--&gt;  {list a as x} {if !!x} <li class="thide"><a target="_blank" class="fc03 m2a" href="http://blog.163.com/${x.userName}/${x.permalink}/?personalRecomBlog" title="${x.title|default:""|escape}">${x.title|default:&quot;&quot;|escape}</a></li> {/if} {/list}  &lt;/#--首页推荐--&gt;  {list a as x} {if !!x} <li class="thide"><a target="_blank" class="fc03 m2a" target="_blank" href="${x.blogUrl|default:""|escape}?recommendReader" title="${x.blogTile|default:""|escape}">${x.blogTile|default:&quot;&quot;|escape}</a></li> {/if} {/list}  &lt;/#--相关文章--&gt;  <ul> {list a as x} {if x_index&gt;9}{break}{/if} {if !!x} <li class="thide fc03"> <a class="m2a" target="_blank" target="_blank" href="${x.url|default:""}?fromdm&fromSearch&isFromSearchEngine=${isFromSearchEngine|default:"no"}" title="${x.title|default:""|escape}">${x.title|default:&quot;&quot;|escape}</a><span class="fc07">${fn2(parseInt(x.date),&#39;yyyy-MM-dd HH:mm:ss&#39;)}</span> </li> {/if} {/list} </ul>  &lt;/#--历史上的今天--&gt;  <ul> {list a as x} {if x_index&gt;4}{break}{/if} {if !!x} <li class="thide fc03"> <a class="m2a" target="_blank" href="http://blog.163.com/${x.userName}/${x.permalink|default:""}" title="${x.title|default:""|escape}">${fn1(x.title,60)|escape}</a><span class="fc07">${fn2(x.publishTime,&#39;yyyy-MM-dd HH:mm:ss&#39;)}</span> </li> {/if} {/list} </ul>  &lt;/#--右边模块结构--&gt;  <div class="uinfo ztag"></div> <h4 class="fc07 fs0 ltt">最新日志</h4> <ul class="ztag blst"></ul> <h4 class="fc07 fs0 ltt phide ztag">该作者的其他文章</h4> <ul class="ztag blst"></ul> <h4 class="fc07 fs0 ltt phide ztag">博主推荐</h4> <ul class="ztag blst"></ul> <h4 class="fc07 fs0 ltt phide ztag">相关日志</h4> <ul class="ztag blst"></ul> <h4 class="fc07 fs0 ltt phide ztag">随机阅读</h4> <ul class="ztag blst"></ul> <h4 class="fc07 fs0 ltt phide ztag">首页推荐</h4> <ul class="ztag blst"></ul> <div class="more"><a target="_blank" class="fc03 m2a" href="http://blog.163.com">更多&gt;&gt;</a></div> <br/><a id="yodaoad_suggest" target="_blank" href="http://fankui.163.com/ft/comment.fb?pid=12004&fid=16023" class="fc05 m2a phide">对“推广广告”提建议</a> <br/><br/> <div id="yodaoad_r" style="display:none;_zoom:1;"></div>  &lt;/#--评论模块结构--&gt;  <div class="publish ztag"></div> <div class="bdwt bds2 bdc0 phide" id="yodaoad_2" style="_zoom:1;"></div> <div class="ztag bdwt bds2 bdc0"> <div class="case"></div> <div class="clearfix"></div> </div>  &lt;/#--引用模块结构--&gt;  <div class="close"> <span class="ztag iblock icn0 icn0-57"> </span> </div> <div class="ztag phide"></div>  &lt;/#--博主发起的投票--&gt;  {list a as x} {if !!x} <li> <a href="http://blog.163.com/${x.userName}/" target="_blank" class="m2a fc03">${x.nickName|escape}</a>  投票给 {var first_option = true;} {list x.voteDetailList as voteToOption} {if voteToOption==1} {if first_option==false},{/if}  “${b[voteToOption_index]}”   {/if} {/list} {if (x.role!=&quot;-1&quot;) },“我是${c[x.role]}”  {/if}     <span class="fc07">    ${fn1(x.voteTime)}</span> {if x.userName==&#39;&#39;}{/if} {/if} {/list}</p>
+<h2 id="-">页脚</h2>
+<p><a href="http://corp.163.com/index_gb.html" target="_blank">公司简介</a> - <a href="http://gb.corp.163.com/gb/contactus.html" target="_blank">联系方法</a> - <a href="http://corp.163.com/gb/job/job.html" target="_blank">招聘信息</a> - <a href="http://help.163.com/?b13abk1" target="_blank">客户服务</a> - <a href="http://corp.163.com/gb/legal/legal.html" target="_blank">隐私政策</a> - <a href="http://blog.163.com/public/theme/" target="_blank">博客风格</a> - <a href="http://blog.163.com/services/wapblog.html" target="_blank">手机博客</a> - <a href="http://blog.163.com/vip.do" target="_blank">VIP博客</a> - <a href="">订阅此博客</a></p>
+<p>网易公司版权所有 ©1997-2011</p>
+<p><a rel="nofollow" class="pr" target="_blank" href="http://help.163.com/special/007525FT/blog.html?b13aze1">帮助</a> <span class="fr iblock space icn1 icn1-4"> </span> <a class="pr" target="_blank" href="http://blog.163.com/activation.do?host=activation&&username=${u}">${u}</a>   {list wl as x} <div class="grp">${x.g}</div> {list x.l as y} <a class="itm noul" href="/#" hidefocus="true" name="{if typeof(y.v)=='string'}${y.v}{else}${y_index}{/if}">${y.n}</a> {/list} {/list}   {if defined(&#39;wl&#39;)} {list wl as x}<a class="itm noul" href="/#" hidefocus="true" name="${x.v}">${x.n}</a>{/list} {/if}</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/压缩-解压/">压缩-解压</a></li></span></span> | <span class="tags">Tagged <a href="/tags/压缩-解压/" class="label label-primary">压缩-解压</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-压缩-解压--Java实现将多个文件打包压缩成tar_gz文件-易锐的日志-网易博客/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-压缩-解压--Java实现将多个文件打包压缩成tar_gz文件-易锐的日志-网易博客" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-压缩-解压--java打tar/">java打tar</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-压缩-解压--java打tar/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-tar">java打tar</h1>
+<p><strong>java**</strong>打tar.gz包**</p>
+<p>2011-01-26 00:36</p>
+<p>package src.com.snow.test;</p>
+<p>import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.zip.GZIPOutputStream;</p>
+<p>import org.apache.tools.tar.TarEntry;
+import org.apache.tools.tar.TarOutputStream;
+import org.apache.tools.zip.ZipOutputStream;</p>
+<p>//<em> 
+ /</em> 功能：压缩文件成tar.gz格式 
+ /<em>/
+public class TarUtils {
+ private static int BUFFER = 1024 /</em> 4; // 缓冲大小
+ private static byte[] B_ARRAY = new byte[BUFFER];</p>
+<p> //<em>
+  /</em> 方法功能：打包单个文件或文件夹 参数：inputFileName 要打包的文件夹或文件的路径 targetFileName 打包后的文件路径
+  /*/
+ public void execute(String inputFileName, String targetFileName) {
+  File inputFile = new File(inputFileName);
+  String base = inputFileName
+    .substring(inputFileName.lastIndexOf(&quot;/&quot;) + 1);
+  TarOutputStream out = getTarOutputStream(targetFileName);
+  tarPack(out, inputFile, base);
+  try {
+   if (null != out) {
+    out.close();
+   }
+  } catch (IOException e) {
+   e.printStackTrace();
+  }
+  compress(new File(targetFileName));
+ }</p>
+<p> //<em>
+  /</em> 方法功能：打包多个文件或文件夹 参数：inputFileNameList 要打包的文件夹或文件的路径的列表 targetFileName
+  /<em> 打包后的文件路径
+  /</em>/
+ public void execute(List<String> inputFileNameList, String targetFileName) {
+  TarOutputStream out = getTarOutputStream(targetFileName);</p>
+<p>  for (String inputFileName : inputFileNameList) {
+   File inputFile = new File(inputFileName);
+   String base = inputFileName.substring(inputFileName
+     .lastIndexOf(&quot;/&quot;) + 1);
+   tarPack(out, inputFile, base);
+  }</p>
+<p>  try {
+   if (null != out) {
+    out.close();
+   }
+  } catch (IOException e) {
+   e.printStackTrace();
+  }
+  compress(new File(targetFileName));
+ }</p>
+<p> //<em>
+  /</em> 方法功能：打包成tar文件 参数：out 打包后生成文件的流 inputFile 要压缩的文件夹或文件 base 打包文件中的路径
+  /*/</p>
+<p> private void tarPack(TarOutputStream out, File inputFile, String base) {
+  if (inputFile.isDirectory()) // 打包文件夹
+  {
+   packFolder(out, inputFile, base);
+  } else // 打包文件
+  {
+   packFile(out, inputFile, base);
+  }
+ }</p>
+<p> //<em>
+  /</em> 方法功能：遍历文件夹下的内容，如果有子文件夹，就调用tarPack方法 参数：out 打包后生成文件的流 inputFile 要压缩的文件夹或文件
+  /<em> base 打包文件中的路径
+  /</em>/
+ private void packFolder(TarOutputStream out, File inputFile, String base) {
+  File[] fileList = inputFile.listFiles();
+  try {
+   // 在打包文件中添加路径
+   out.putNextEntry(new TarEntry(base + &quot;/&quot;));
+  } catch (IOException e) {
+   e.printStackTrace();
+  }
+  base = base.length() == 0 ? &quot;&quot; : base + &quot;/&quot;;
+  for (File file : fileList) {
+   tarPack(out, file, base + file.getName());
+  }
+ }</p>
+<p> //<em>
+  /</em> 方法功能：打包文件 参数：out 压缩后生成文件的流 inputFile 要压缩的文件夹或文件 base 打包文件中的路径
+  /*/
+ private void packFile(TarOutputStream out, File inputFile, String base) {
+  TarEntry tarEntry = new TarEntry(base);</p>
+<p>  // 设置打包文件的大小，如果不设置，打包有内容的文件时，会报错
+  tarEntry.setSize(inputFile.length());
+  try {
+   out.putNextEntry(tarEntry);
+  } catch (IOException e) {
+   e.printStackTrace();
+  }
+  FileInputStream in = null;
+  try {
+   in = new FileInputStream(inputFile);
+  } catch (FileNotFoundException e) {
+   e.printStackTrace();
+  }
+  int b = 0;</p>
+<p>  try {
+   while ((b = in.read(B_ARRAY, 0, BUFFER)) != -1) {
+    out.write(B_ARRAY, 0, b);
+   }
+  } catch (IOException e) {
+   e.printStackTrace();
+  } catch (NullPointerException e) {
+   System.err
+     .println(&quot;NullPointerException info ======= [FileInputStream is null]&quot;);
+  } finally {
+   try {
+    if (null != in) {
+     in.close();
+    }
+    if (null != out) {
+     out.closeEntry();
+    }
+   } catch (IOException e) {</p>
+<p>   }
+  }
+ }</p>
+<p> //<em>
+  /</em> 方法功能：把打包的tar文件压缩成gz格式 参数：srcFile 要压缩的tar文件路径
+  /*/
+ private void compress(File srcFile) {
+  File target = new File(srcFile.getAbsolutePath() + &quot;.gz&quot;);
+  FileInputStream in = null;
+  GZIPOutputStream out = null;
+  try {
+   in = new FileInputStream(srcFile);
+   out = new GZIPOutputStream(new FileOutputStream(target));
+   int number = 0;
+   while ((number = in.read(B_ARRAY, 0, BUFFER)) != -1) {
+    out.write(B_ARRAY, 0, number);
+   }
+  } catch (FileNotFoundException e) {
+   e.printStackTrace();
+  } catch (IOException e) {
+   e.printStackTrace();
+  } finally {
+   try {
+    if (in != null) {
+     in.close();
+    }</p>
+<pre><code>if (out != null) {
+ out.close();
+}
+</code></pre><p>   } catch (IOException e) {
+    e.printStackTrace();
+   }
+  }
+ }</p>
+<p> //<em>
+  /</em> 方法功能：获得打包后文件的流 参数：targetFileName 打包后文件的路径
+  /*/
+ private TarOutputStream getTarOutputStream(String targetFileName) {
+  // 如果打包文件没有.tar后缀名，就自动加上
+  targetFileName = targetFileName.endsWith(&quot;.tar&quot;) ? targetFileName
+    : targetFileName + &quot;.tar&quot;;
+  FileOutputStream fileOutputStream = null;
+  try {
+   fileOutputStream = new FileOutputStream(targetFileName);
+  } catch (FileNotFoundException e) {
+   e.printStackTrace();
+  }
+  BufferedOutputStream bufferedOutputStream = new BufferedOutputStream(
+    fileOutputStream);
+  TarOutputStream out = new TarOutputStream(bufferedOutputStream);</p>
+<p>  // 如果不加下面这段，当压缩包中的路径字节数超过100 byte时，就会报错
+  out.setLongFileMode(TarOutputStream.LONGFILE_GNU);
+  return out;
+ }</p>
+<p>}</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/压缩-解压/">压缩-解压</a></li></span></span> | <span class="tags">Tagged <a href="/tags/压缩-解压/" class="label label-primary">压缩-解压</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-压缩-解压--java打tar/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-压缩-解压--java打tar" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--LinearSearch/">LinearSearch</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--LinearSearch/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="linearsearch">LinearSearch</h1>
+<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 循序搜寻法（使用卫兵）</a></h1>
+<h2 id="-">说明</h2>
+<p>搜寻的目的，是在“已排序的资料”中寻找指定的资料，而当中循序搜寻是最基本的搜寻法，只要从资料开头寻找到最后，看看是否找到资料即可。</p>
+<h2 id="-">解法</h2>
+<p>初学者看到循序搜寻，多数都会使用以下的方式来进行搜寻：
+while(i &lt; MAX) {
+    if(number[i] == k) {
+        printf(&quot;找到指定值&quot;);
+        break;
+    }
+    i++;
+}</p>
+<p>这个方法基本上没有错，但是可以加以改善，可以利用设定卫兵的方式，省去if判断式，卫兵通常设定在数列最后或是最前方，假设设定在列前方好了（索引0的 位置），我们从数列后方向前找，如果找到指定的资料时，其索引值不是0，表示在数列走访完之前就找到了，在程式的撰写上，只要使用一个while回圈就可 以了。
+下面的程式为了配合卫兵的设置，自行使用快速排序法先将产生的数列排序，然后才进行搜寻，若只是数字的话，通常您可以使用程式语言函式库所提供的搜寻函式。</p>
 <h2 id="-">实作</h2>
 <ul>
 <li><p>C
@@ -415,23 +724,35 @@ end PARTITION
 /#include <time.h>
 /#define MAX 10
 /#define SWAP(x,y) {int t; t = x; x = y; y = t;}
+int search(int[]);
 int partition(int[], int, int);
 void quicksort(int[], int, int);
 int main(void) {
-int number[MAX] = {0};
-int i, num;
+int number[MAX+1] = {0};
+int i, find;
 srand(time(NULL));
-printf(&quot;排序前：&quot;);
-for(i = 0; i &lt; MAX; i++) {
+for(i = 1; i &lt;= MAX; i++)
 number[i] = rand() % 100;
+quicksort(number, 1, MAX);
+printf(&quot;数列：&quot;);
+for(i = 1; i &lt;= MAX; i++)
 printf(&quot;%d &quot;, number[i]);
-}
-quicksort(number, 0, MAX-1);
-printf(&quot;\n排序后：&quot;);
-for(i = 0; i &lt; MAX; i++)
-printf(&quot;%d &quot;, number[i]);
+printf(&quot;\n输入搜寻值：&quot;);
+scanf(&quot;%d&quot;, &amp;number[0]);
+if(find = search(number))
+printf(&quot;\n找到数值于索引 %d &quot;, find);
+else
+printf(&quot;\n找不到数值&quot;);
 printf(&quot;\n&quot;);
 return 0;
+}
+int search(int number[]) {
+int i, k;
+k = number[0];
+i = MAX;
+while(number[i] != k)
+i--;
+return i;
 }
 int partition(int number[], int left, int right) {
 int i, j, s;
@@ -456,339 +777,27 @@ quicksort(number, q+1, right);
 }</p>
 </li>
 <li><p>Java
-public class QuickSort {
-public static void sort(int[] number) {
-sort(number, 0, number.length-1);
+public class LinearSearch {
+public static int search(int[] number, int des) {
+int[] tmp = new int[number.length + 1];
+for(int i = 1; i &lt; tmp.length; i++) {
+tmp[i] = number[i-1];
 }
-private static void sort(int[] number,
-int left, int right) {
-if(left &lt; right) {
-int q = partition(number, left, right);
-sort(number, left, q-1);
-sort(number, q+1, right);
-}
-}
-private static int partition(int number[],
-int left, int right) {
-int s = number[right];
-int i = left - 1;
-for(int j = left; j &lt; right; j++) {
-if(number[j] &lt;= s) {
-i++;
-swap(number, i, j);
-}
-}
-swap(number, i+1, right);
-return i+1;
-}
-private static void swap(int[] number, int i, int j) {
-int t;
-t = number[i];
-number[i] = number[j];
-number[j] = t;
-}
-}</p>
-</li>
-</ul>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:34:22"datetime="2014-03-07 10:34:22"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--QuickSort3/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--QuickSort3" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/">haproxy 解决 多主机session共享问题 的三种方法</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="haproxy-session-">haproxy 解决 多主机session共享问题 的三种方法</h1>
-<p>haproxy 解决 多主机session共享问题 的三种方法</p>
-<p>1 session知识储备
-2 haproxy三种方法保持客户端session一致
-3 实验环境及结构
-4 安装配置及管理
-5 本实验中使用到相同的index.php代码
-6 联系方法及扩展阅读
-感谢 不就是要我命 QQ 47034839 提供测试主机 
-1 session知识储备
-Session是由应用服务器维持的一个服务器端的存储空间，用户在连接服务器时，会由服务器生成一个唯一的SessionID,用该SessionID 为标识符来存取服务器端的Session存储空间。
-而SessionID这一数据则是保存到客户端，用Cookie保存的，用户提交页面时，会将这一 SessionID提交到服务器端，来存取Session数据。
-服务器也通过URL重写的方式来传递SessionID的值，因此不是完全依赖Cookie。如果客户端Cookie禁用，则服务器可以自动通过重写URL的方式来保存Session的值，并且这个过程对程序员透明。
-php.ini 里几个session相关值的 其它的值请参考《PHP与Mysql5程序设计》
-session.use_cookies = 1  /#表示 服务端和客户端交互session是通过cookie的方式 默认值
-session.name = 9ai9     /#默认值是PHPSESSID 我这里改成9ai9是为了和默认值区别
-session.cache_limiter = nocache /#此设置确保对每个请求，在可能提供缓存的版本前，先请求发送到最初的服务器。这个值联系到下文中 cookie识别中的相关参数
-2 haproxy三种方法保持客户端session一致
-  2.1 用户IP 识别 </p>
-<p>haroxy 将用户IP经过hash计算后 指定到固定的真实服务器上（类似于nginx 的IP hash 指令）
-配置指令        balance source
-实例访问<a href="http://sourceip.9ai9.net:8080/" target="_blank"><a href="http://sourceip.9ai9.net:8080">http://sourceip.9ai9.net:8080</a></a>
-  2.2 cookie 识别<br>haproxy 将WEB服务端发送给客户端的cookie中插入(或添加加前缀)haproxy定义的后端的服务器COOKIE ID。
-配置指令例举  cookie  SESSION_COOKIE  insert indirect nocache
-<a href="http://cookie.9ai9.net:8080/" target="_blank"><a href="http://cookie.9ai9.net:8080">http://cookie.9ai9.net:8080</a></a>
-用firebug可以观察到用户的请求头的cookie里 有类似&quot; Cookie 9ai9=0bc588656ca05ecf7588c65f9be214f5; SESSION_COOKIE=12&quot; SESSION_COOKIE=12就是haproxy添加的内容
-  2.3 session 识别<br>haproxy 将后端服务器产生的session和后端服务器标识存在haproxy中的一张表里。客户端请求时先查询这张表。
-配置指令例举 appsession 9ai9 len 64 timeout 5h request-learn 
-注意 9ai9 这个值替换成 你的php.ini 里session.name的值。
-实例访问 <a href="http://appsession.9ai9.net:8080/" target="_blank"><a href="http://appsession.9ai9.net:8080">http://appsession.9ai9.net:8080</a></a>
-  2.4 只做简单轮询对比 
-实例访问 <a href="http://nosession.9ai9.net:8080/" target="_blank"><a href="http://nosession.9ai9.net:8080">http://nosession.9ai9.net:8080</a></a>
-3 实验环境及结构
-CentOS 5.3 64
-haproxy  113.106.185.245
-WEB1 REALsrv_70  184.82.239.70
-WEB2  REALsrv_120 220.162.237.120<br>4 安装配置及管理
-useradd -M -s /sbin/nologin haproxy
-wget <a href="http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz" target="_blank"><a href="http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz">http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz</a></a>
-tar zxvf haproxy-1.4.13.tar.gz 
-cd haproxy-1.4.13
-make TARGET=linux26 PREFIX=/usr/local/haproxy install
-mkdir /usr/local/haproxy/conf
-vim /usr/local/haproxy/conf/haproxy.cfg</p>
-<ol>
-<li>global</li>
-<li>log     127.0.0.1 local0 info </li>
-<li>maxconn 4096</li>
-<li>user    haproxy</li>
-<li>group   haproxy</li>
-<li>daemon</li>
-<li>nbproc  1</li>
-<li>pidfile /var/run/haproxy.pid</li>
-<li>defaults</li>
-<li>mode    http</li>
-<li>maxconn         2000</li>
-<li>contimeout      5000</li>
-<li>clitimeout      30000</li>
-<li>srvtimeout      30000</li>
-<li>option          httplog</li>
-<li>option          redispatch</li>
-<li>option          abortonclose</li>
-<li>retries         3</li>
-<li>listen admin_stats</li>
-<li>bind 113.106.185.245:443</li>
-<li>mode http</li>
-<li>log 127.0.0.1 local0 err</li>
-<li>stats   uri     /qhappy_stats</li>
-<li>stats   realm   9ai9.net\ Qhappy</li>
-<li>stats   auth    qhappy:qhappy</li>
-<li>stats   refresh   5s </li>
-<li>listen site_status</li>
-<li>bind 113.106.185.245:445</li>
-<li>mode http</li>
-<li>log  127.0.0.1 local0 err</li>
-<li>monitor-uri     /site_status</li>
-<li>frontend  WEB_SITE</li>
-<li>bind    0.0.0.0:8080</li>
-<li>mode    http</li>
-<li>log     global</li>
-<li>option  httplog</li>
-<li>option  httpclose</li>
-<li>option  forwardfor</li>
-<li>acl     COOKIE          hdr_reg(host)   -i ^(cookie.9ai9.net)</li>
-<li>acl     SOURCE          hdr_reg(host)   -i ^(sourceip.9ai9.net)</li>
-<li>acl     APPSESSION      hdr_reg(host)   -i ^(appsession.9ai9.net)</li>
-<li>acl     NOSESSION       hdr_reg(host)   -i ^(nosession.9ai9.net)</li>
-<li>use_backend COOKIE_srv          if COOKIE</li>
-<li>use_backend SOURCE_srv          if SOURCE</li>
-<li>use_backend APPSESSION_srv      if APPSESSION</li>
-<li>use_backend NOSESSION_srv       if NOSESSION</li>
-<li>/#        default_backend ai_server</li>
-<li>backend COOKIE_srv</li>
-<li>mode    http</li>
-<li>cookie  SESSION_COOKIE  insert indirect nocache</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend SOURCE_srv</li>
-<li>mode    http</li>
-<li>balance source</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend APPSESSION_srv</li>
-<li>mode    http</li>
-<li>appsession 9ai9 len 64 timeout 5h request-learn</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1
-1.</li>
-<li>backend NOSESSION_srv</li>
-<li>mode    http</li>
-<li>balance roundrobin</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend ai_server</li>
-<li>mode    http</li>
-<li>balance roundrobin</li>
-<li>cookie  SERVERID</li>
-<li>server REALsrv_70 184.82.239.70:80 cookie 2 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120 220.162.237.120:80 cookie 1 check inter 1500 rise 3 fall 3 weight 1
-<em>复制代码</em>
-haproxy 启动重启等管理脚本
-cd /etc/init.d/
-wget <a href="http://www.9ai9.net/download/shell/haproxy" target="_blank"><a href="http://www.9ai9.net/download/shell/haproxy">http://www.9ai9.net/download/shell/haproxy</a></a>
-chmod 755 haproxy
-chkconfig --add haproxy
-使用方法 你懂的
-/etc/init.d/haproxy {start|stop|status|checkconfig|restart|try-restart|reload|force-reload}
-5 本实验中使用到相同的index.php代码 如下</li>
-<li>&lt;?php</li>
-<li>session_start();</li>
-<li>$_SESSION[&#39;time&#39;] =date(&quot;Y:m:d:H:s&quot;,time());</li>
-<li>echo &quot;本次访问时间&quot;.&quot;<font color=red>&quot;.$_SESSION[&#39;time&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;访问的服务器地址是&quot;.&quot;<font color=red>&quot;.$_SERVER[&#39;SERVER_ADDR&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;访问的服务器域名是&quot;.&quot;<font color=red>&quot;.$_SERVER[&#39;SERVER_NAME&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;SESSIONNAME是&quot;.&quot;<font color=red>&quot;.session_name().&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;SESSIONID是&quot;.&quot;<font color=red>&quot;.session_id().&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>?&gt;
-<em>复制代码</em>6 联系方法及扩展阅读
-笔者 水煮鱼@溢  微博 <a href="http://t.qq.com/cllxy1234" target="_blank"><a href="http://t.qq.com/cllxy1234">http://t.qq.com/cllxy1234</a></a> 欢迎收听
-haproxy 官网 <a href="http://haproxy.1wt.eu/download/1.4/doc/configuration.txt" target="_blank"><a href="http://haproxy.1wt.eu/download/1.4/doc/configuration.txt">http://haproxy.1wt.eu/download/1.4/doc/configuration.txt</a></a>
-董旗宇  <a href="http://www.9ai9.net/download/art/HAProxy" target="_blank"><a href="http://www.9ai9.net/download/art/HAProxy">http://www.9ai9.net/download/art/HAProxy</a></a>配置使用说明.pdf<br>刘天斯  <a href="http://blog.liuts.com/post/223/" target="_blank"><a href="http://blog.liuts.com/post/223/">http://blog.liuts.com/post/223/</a></a>
-linuxtone <a href="http://bbs.linuxtone.org/thread-73-1-1.html" target="_blank"><a href="http://bbs.linuxtone.org/thread-73-1-1.html">http://bbs.linuxtone.org/thread-73-1-1.html</a></a></li>
-</ol>
-<p>来源： <a href="[http://bbs.linuxtone.org/thread-9526-1-1.html](http://bbs.linuxtone.org/thread-9526-1-1.html)">[http://bbs.linuxtone.org/thread-9526-1-1.html](http://bbs.linuxtone.org/thread-9526-1-1.html)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/">JosephusProblem</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="josephusproblem">JosephusProblem</h1>
-<h1 id="-algorithm-gossip-josephus-problem-"><a href="">Algorithm Gossip: 约瑟夫问题（Josephus Problem）</a></h1>
-<h2 id="-">说明</h2>
-<p>据说著名犹太历史学家 Josephus有过以下的故事：在罗马人占领乔塔帕特后，39 个犹太人与Josephus及他的朋友躲到一个洞中，39个犹太人决定宁愿死也不要被敌人到，于是决定了一个自杀方式，41个人排成一个圆圈，由第1个人 开始报数，每报数到第3人该人就必须自杀，然后再由下一个重新报数，直到所有人都自杀身亡为止。
-然而Josephus 和他的朋友并不想遵从，Josephus要他的朋友先假装遵从，他将朋友与自己安排在第16个与第31个位置，于是逃过了这场死亡游戏。</p>
-<h2 id="-">解法</h2>
-<p>约瑟夫问题可用代数分析来求解，将这个问题扩大好了，假设现在您与m个朋友不幸参与了这个游戏，您要如何保护您与您的朋友？只要画两个圆圈就可以让自己与朋友免于死亡游戏，这两个圆圈内圈是排列顺序，而外圈是自杀顺序，如下图所示：
-<img src="&quot;约瑟夫问题&quot;" alt="约瑟夫问题"> 使用程式来求解的话，只要将阵列当作环状来处理就可以了，在阵列中由计数1开始，每找到三个无资料区就填入一个计数，直而计数达41为止，然后将阵列由索引1开始列出，就可以得知每个位置的自杀顺序，这就是约瑟夫排列，41个人而报数3的约琴夫排列如下所示：
-14 36 1 38 15 2 24 30 3 16 34 4 25 17 5 40 31 6 18 26 7 37 19 8 35 27 9 20 32 10 41 21 11 28 39 12 22 33 13 29 23
-由上可知，最后一个自杀的是在第31个位置，而倒数第二个自杀的要排在第16个位置，之前的人都死光了，所以他们也就不知道约琴夫与他的朋友并没有遵守游戏规则了。</p>
-<h2 id="-">实作</h2>
-<ul>
-<li><p>C
-/#include <stdio.h>
-/#include <stdlib.h>
-/#define N 41
-/#define M 3
-int main(void) {
-int man[N] = {0};
-int count = 1;
-int i = 0, pos = -1;
-int alive = 0;
-while(count &lt;= N) {
-do {
-pos = (pos+1) % N; // 环状处理
-if(man[pos] == 0)
-i++;
-if(i == M) { // 报数为3了
-i = 0;
-break;
-}
-} while(1);
-man[pos] = count;
-count++;
-}
-printf(&quot;\n约琴夫排列：&quot;);
-for(i = 0; i &lt; N; i++)
-printf(&quot;%d &quot;, man[i]);
-printf(&quot;\n\n您想要救多少人？&quot;);
-scanf(&quot;%d&quot;, &amp;alive);
-printf(&quot;\nL表示这%d人要放的位置：\n&quot;, alive);
-for(i = 0; i &lt; N; i++) {
-if(man[i] &gt; alive)
-printf(&quot;D&quot;);
-else
-printf(&quot;L&quot;);
-if((i+1) % 5 == 0)
-printf(&quot; &quot;);
-}
-printf(&quot;\n&quot;);
-return 0;
-}</p>
-</li>
-<li><p>Java
-public class Josephus {
-public static int[] arrayOfJosephus(
-int number, int per) {
-int[] man = new int[number];
-for(int count = 1, i = 0, pos = -1;
-count &lt;= number; count++) {
-do {
-pos = (pos+1) % number; // 环状处理
-if(man[pos] == 0)
-i++;
-if(i == per) { // 报数为3了
-i = 0;
-break;
-}
-} while(true);
-man[pos] = count;
-}
-return man;
+tmp[0] = des;
+int k = tmp[0];
+int i = number.length;
+while(tmp[i] != k)
+i--;
+return i - 1;
 }
 public static void main(String[] args) {
-int[] man = Josephus.arrayOfJosephus(41, 3);
-int alive = 3;
-System.out.println(&quot;约琴夫排列：&quot;);
-for(int i = 0; i &lt; 41; i++)
-System.out.print(man[i] + &quot; &quot;);
-System.out.println(&quot;\nL表示3个存活的人要放的位置：&quot;);
-for(int i = 0; i &lt; 41; i++) {
-if(man[i] &gt; alive)
-System.out.print(&quot;D&quot;);
+int[] number = {1, 4, 2, 6, 7, 3, 9, 8};
+QuickSort.sort(number);
+int find = LinearSearch.search(number, 3);
+if(find != 0)
+System.out.println(&quot;找到数值于索引&quot; + find);
 else
-System.out.print(&quot;L&quot;);
-if((i+1) % 5 == 0)
-System.out.print(&quot; &quot;);
-}
-System.out.println();
+System.out.println(&quot;找不到数值&quot;);
 }
 }</p>
 </li>
@@ -802,8 +811,8 @@ System.out.println();
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:37:19"datetime="2014-03-07 10:37:19"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:37:05"datetime="2014-03-07 10:37:05"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--LinearSearch/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--LinearSearch" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -883,7 +892,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-15 20:45:44</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-23 21:54:37</em></span></div>
 </div>
 <div class="clearfix"></div>
 
