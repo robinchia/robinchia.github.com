@@ -110,69 +110,67 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/">redis源码分析</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（三）-IO性能的重要指标/">说说IO（三）</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（三）-IO性能的重要指标/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="redis-">redis源码分析-多集合求交集算法</h1>
-<p>源码redis源码过程中学习了它内部多个set求交集的算法，觉得挺不错的，实现也相对简单。</p>
-<p>不过要发挥这个算法的效果，前提是保证集合是<strong>散列型</strong>的，比如hash，set。 对链表或者数组等集合求交集方法后面介绍。</p>
-<p>先来看看redis中多个set求交集的主要部分。
-//<em> Sort sets from the smallest to largest, this will improve our     /</em> algorithm&#39;s performace /<em>/    qsort(dv,setsnum,sizeof(dict/</em>),qsortCompareSetsByCardinality);</p>
-<p>di= dictGetIterator(dv[0]); while((de = dictNext(di)) != NULL) {</p>
-<p>robj/<em>ele; for (j = 1; j &lt; setsnum; j++) if (dictFind(dv[j],dictGetEntryKey(de)) == NULL) break; if (j != setsnum) continue; //</em> at least one set does not contain the member /*/</p>
-<p>ele= dictGetEntryKey(de); if (!dstkey) {</p>
-<p>addReplyBulk(c,ele);</p>
-<p>cardinality++; } else {</p>
-<p>dictAdd(dstset-&gt;ptr,ele,NULL);</p>
-<p>incrRefCount(ele); } }</p>
-<p>看代码比较难理解，redis里的set数据结构本质就是个dict(hash表), 所以可以利用本身就做过hash这点，交集算法主要步骤u如下：</p>
-<p>1、对多个set集合根据集合大小排序，最小的排最前面，下标0，</p>
-<p>2、得到最小set集合的迭代器，后面需要</p>
-<p>3、遍历第二步得到的迭代器，本质上就是遍历最小的set集合中所有的元素，然后把每一步遍历得到的元素去其他set集合里查看是否存在，只要发现在一个集合中不存在就直接跳出，因为对其他集合(下标0到N)比较是按前面排序的顺序，即从第二小的集合比较，到最大集合。这样可以最大程度的提前跳出比较。当这个元素在其他集合都存在的时候，说明这个元素是交集中的值。</p>
-<p>redis求交的大致思路如此。但是如果我们的集合是数组类的，那么要使用这种算法，需要先把所有数组集合的元素都计算hash值，这样做根本没必要，反而得不偿失。</p>
-<p>我对这类集合求交算法如下(java代码)：</p>
-<p> Collections.sort(sort_list); //第一步和redis的交集算法一样，也是根据集合大小从小到大的排序</p>
-<p>// hashMap 求交</p>
-<p>HashMap<Long, Integer> hashMap = new HashMap<Long, Integer>();// 我需要再创建一个hashMap</p>
-<p>boolean first = true; //是否是最小集合</p>
-<p>List<Long> list = null;</p>
-<p>for (int i = 0; i &lt; sort_list.size(); i++) {</p>
-<p>int index = sort_list.get(i).getIndex();// 得到集合的下标</p>
-<p>list = values[index].getLongList();//真正的多个集合是通过values[]保存的，这里根据上面的下标就得到了这个集合</p>
-<p>for (int j = 0; j &lt; list.size(); j++) {//遍历这个集合</p>
-<p>if (first) {//如果是最小的集合，直接将元素插入到前面的hashmap中，value值为1，表示出现一次</p>
-<p>hashMap.put(list.get(j), 1);</p>
-<p>} else {//当不是最小集合的时候，取出元素先判断hashmap里是否存在，不存在的话就根本不需要做无谓的插入，这里的插入前提是之前一直有同样的数据存在，但hashmap存在这个值，并不表示是有效值，比如第一次出现了，但是后面的集合没有出现，所以需要一个value的计数器。</p>
-<p>if (hashMap.containsKey(list.get(j))) {</p>
-<p>int temp = hashMap.get(list.get(j));</p>
-<p>hashMap.put(list.get(j), temp + 1);//如果存在这个元素，则给对应的value+1</p>
-<p>}</p>
-<p>}</p>
-<p>}</p>
-<p>first = false;//第一次遍历后，就标记为false</p>
-<p>}</p>
-<p>//<em>/</em></p>
-<p> /* 得到交集后的结果，这个需要遍历之前的hashmap，判断value值等于集合的数量就表示这个是交集中的值</p>
-<p> /*/</p>
-<p>List<String> result = new ArrayList();</p>
-<p>Entry<Long, Integer> entry = null;</p>
-<p>for (Iterator iterator = hashMap.entrySet().iterator(); iterator</p>
-<p>.hasNext();) {</p>
-<p>entry = (Entry<Long, Integer>) iterator.next();</p>
-<p>if (entry.getValue() &gt;= keyN.length) {// 多个集合的交集</p>
-<p>result.add(entry.getKey());//把结果保存到结果集中</p>
-<p>}</p>
-<p>}
-上面的算法其实没有必要对集合做排序，只需要得出最小的集合就可以了。</p>
-<p>两个算法的相似处是对比较都做了优化。redis的交集算法，从最小集合开始比较，使判断提前跳出，不做无谓的比较。</p>
-<p>第二个算法也是做了排序，从最小集合开始，首先就把这个hashmap的大小限制住了，后面不管有多大的集合，都不可能超过hashmap的范围。其次减少了无谓的数据插入，只要在之前有这个元素才做插入。</p>
-<p>用哪种交集算法还要考虑自己的数据特点。单论两种算法，不管是在空间和时间上，前者都比后者强。但是一般的集合并不是散列类型的数据，那么还是用第二种吧，再根据自己的数据特点做优化。
-来源： <a href="[http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/](http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/)">[http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/](http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/)</a> </p>
+        <h1 id="-io-io-">说说IO（三）- IO性能的重要指标</h1>
+<p><strong>最重要的三个指标</strong></p>
+<p><strong>IOPS</strong></p>
+<p>IOPS，即每秒钟处理的IO请求数量。IOPS是随机访问类型业务（OLTP类）很重要的一个参考指标。</p>
+<ul>
+<li><strong>一块物理硬盘能提供多少IOPS**</strong>？**</li>
+</ul>
+<p>从磁盘上进行数据读取时，比较重要的几个时间是：<strong>寻址时间</strong>（找到数据块的起始位置），<strong>旋转时间</strong>（等待磁盘旋转到数据块的起始位置），<strong>传输时间</strong>（读取数据的时间和返回的时间）。其中寻址时间是固定的（磁头定位到数据的存储的扇区即可），旋转时间受磁盘转速的影响，传输时间受数据量大小的影响和接口类型的影响（不用硬盘接口速度不同），但是在随机访问类业务中，他的时间也很少。因此，在硬盘接口相同的情况下，IOPS主要受限于寻址时间和传输时间。以一个15K的硬盘为例，寻址时间固定为4ms，传输时间为60s/15000/*1/2=2ms，忽略传输时间。1000ms/6ms=167个IOPS。</p>
+<ul>
+<li><strong>OS**</strong>的一次IO<strong><strong>请求对应物理硬盘一个IO</strong></strong>吗？**</li>
+</ul>
+<p>在没有文件系统、没有VM（卷管理）、没有RAID、没有存储设备的情况下，这个答案还是成立的。但是当这么多中间层加进去以后，这个答案就不是这样了。物理硬盘提供的IO是有限的，也是整个IO系统存在瓶颈的最大根源。所以，如果一块硬盘不能提供，那么多块在一起并行处理，这不就行了吗？确实是这样的。可以看到，<strong>越是高端的存储设备的**</strong>cache越大，硬盘越多，一方面通过cache异步处理IO，另一方面通过盘数增加，尽可能把一个OS的IO<strong>**分布到不同硬盘上，从而提高性能</strong>。文件系统则是在cache上会影响，而VM则可能是一个IO分布到多个不同设备上（Striping）。</p>
+<p>所以，<strong>一个**</strong>OS的IO在经过多个中间层以后，发生在物理磁盘上的IO<strong>**是不确定的。可能是一对一个，也可能一个对应多个</strong>。</p>
+<ul>
+<li><strong>IOPS**</strong>能算出来吗？**</li>
+</ul>
+<p>对单块磁盘的IOPS的计算没有没问题，但是当系统后面接的是一个存储系统时、考虑不同读写比例，IOPS则很难计算，而需要根据实际情况进行测试。主要的因素有：  </p>
+<ul>
+<li></li>
+<li><strong>存储系统本身有自己的缓存</strong>。缓存大小直接影响IOPS，理论上说，缓存越大能cache的东西越多，在cache命中率保持的情况下，IOPS会越高。</li>
+<li><strong>RAID**</strong>级别**。不同的RAID级别影响了物理IO的效率。</li>
+<li><strong>读写混合比例</strong>。对读操作，一般只要cache能足够大，可以大大减少物理IO，而都在cache中进行；对写操作，不论cache有多大，最终的写还是会落到磁盘上。因此，100%写的IOPS要越狱小于100%的读的IOPS。同时，100%写的IOPS大致等同于存储设备能提供的物理的IOPS。</li>
+<li><strong>一次IO**</strong>请求数据量的多少**。一次读写1KB和一次读写1MB，显而易见，结果是完全不同的。</li>
+</ul>
+<p>当时上面N多因素混合在一起以后，IOPS的值就变得扑朔迷离了。所以，一般需要通过实际应用的测试才能获得。 </p>
+<p><strong>IO Response Time</strong></p>
+<p>即IO的响应时间。IO响应时间是从操作系统内核发出一个IO请求到接收到IO响应的时间。因此，IO Response time除了包括磁盘获取数据的时间，还包括了操作系统以及在存储系统内部IO等待的时间。一般看，随IOPS增加，因为IO出现等待，IO响应时间也会随之增加。对一个OLTP系统，10ms以内的响应时间，是比较合理的。下面是一些IO性能示例：</p>
+<ul>
+<li><strong>一个8K的IO会比一个64K的IO**</strong>速度快**，因为数据读取的少些。</li>
+<li><strong>一个64K的IO会比8个8K的IO**</strong>速度快**，因为前者只请求了一个IO而后者是8个IO。</li>
+<li><strong>串行IO会比随机IO**</strong>快**，因为串行IO相对随机IO说，即便没有Cache，串行IO在磁盘处理上也会少些操作。</li>
+</ul>
+<p>需要注意，IOPS与IO Response Time有着密切的联系。一般情况下，IOPS增加，说明IO请求多了，IO Response Time会相应增加。但是会出现IOPS一直增加，但是IO Response Time变得非常慢，超过20ms甚至几十ms，这时候的IOPS虽然还在提高，但是意义已经不大，因为整个IO系统的服务时间已经不可取。</p>
+<p><strong>Throughput</strong></p>
+<p>为吞吐量。这个指标衡量标识了最大的数据传输量。如上说明，<strong>这个值在顺序访问或者大数据量访问的情况下会比较重要</strong>。尤其在大数据量写的时候。</p>
+<p>吞吐量不像IOPS影响因素很多，吞吐量一般受限于一些比较固定的因素，如：网络带宽、IO传输接口的带宽、硬盘接口带宽等。一般他的值就等于上面几个地方中某一个的瓶颈。</p>
+<p><strong>一些概念</strong></p>
+<p> <strong>IO Chunk Size</strong></p>
+<p>即单个IO操作请求数据的大小。一次IO操作是指从发出IO请求到返回数据的过程。IO Chunk Size与应用或业务逻辑有着很密切的关系。比如像Oracle一类数据库，由于其block size一般为8K，读取、写入时都此为单位，因此，8K为这个系统主要的IO Chunk Size。<strong>IO Chunk Size</strong></p>
+<p>小，考验的是IO系统的IOPS能力；<strong>IO Chunk Size</strong>大，考验的时候IO系统的IO吞吐量。</p>
+<hr>
+<p><strong>Queue Deep</strong></p>
+<p>熟悉数据库的人都知道，SQL是可以批量提交的，这样可以大大提高操作效率。IO请求也是一样，IO请求可以积累一定数据，然后一次提交到存储系统，这样一些相邻的数据块操作可以进行合并，减少物理IO数。而且Queue Deep如其名，就是设置一起提交的IO请求数量的。一般Queue Deep在IO驱动层面上进行配置。</p>
+<p>Queue Deep与IOPS有着密切关系。Queue Deep主要考虑批量提交IO请求，自然只有IOPS是瓶颈的时候才会有意义，如果IO都是大IO，磁盘已经成瓶颈，Queue Deep意义也就不大了。一般来说，IOPS的峰值会随着Queue Deep的增加而增加(不会非常显著)，Queue Deep一般小于256。</p>
+<hr>
+<p><strong>随机访问（随机IO**</strong>）、顺序访问（顺序IO<strong>**）</strong></p>
+<p>随机访问的特点是<strong>每次**</strong>IO<strong>**请求的数据在磁盘上的位置跨度很大</strong>（如：分布在不同的扇区），因此N个非常小的IO请求（如：1K），必须以N次IO请求才能获取到相应的数据。</p>
+<p>顺序访问的特点跟随机访问相反，<strong>它请求的数据在磁盘的位置是连续的</strong>。当系统发起N个非常小的IO请求（如：1K）时，因为一次IO是有代价的，系统会取完整的一块数据（如4K、8K），所以当第一次IO完成时，后续IO请求的数据可能已经有了。这样可以减少IO请求的次数。这也就是所谓的预取。</p>
+<p>随机访问和顺序访问同样是有应用决定的。如数据库、小文件的存储的业务，大多是随机IO。而视频类业务、大文件存取，则大多为顺序IO。</p>
+<p><strong>选取合理的观察指标：</strong></p>
+<p>以上各指标中，不用的应用场景需要观察不同的指标，因为应用场景不同，有些指标甚至是没有意义的。</p>
+<p><strong>随机访问和IOPS</strong>: 在随机访问场景下，IOPS往往会到达瓶颈，而这个时候去观察Throughput，则往往远低于理论值。</p>
+<p><strong>顺序访问和Throughput</strong>：在顺序访问的场景下，Throughput往往会达到瓶颈（磁盘限制或者带宽），而这时候去观察IOPS，往往很小。</p>
 
       
     </div>
@@ -182,8 +180,8 @@ var _js2load = [];
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/IO/">IO</a></li></span></span> | <span class="tags">Tagged <a href="/tags/IO/" class="label label-primary">IO</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（三）-IO性能的重要指标/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-IO--说说IO（三）-IO性能的重要指标" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -198,826 +196,45 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/">java集合类总结</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（二）-IO模型/">说说IO（二）</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（二）-IO模型/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="java-">java集合类总结</h1>
-<p><img src="" alt=""> Saving Data...
-正在保存数据...
-正在儲存資料...</p>
+        <h1 id="-io-io-">说说IO（二）- IO模型</h1>
+<p>这部分的东西在网络编程经常能看到，不过在所有IO处理中都是类似的。</p>
+<p><strong>IO**</strong>请求的两个阶段**：</p>
+<pre><code>   **等待资源阶段**：IO请求一般需要请求特殊的资源（如磁盘、RAM、文件），当资源被上一个使用者使用没有被释放时，IO请求就会被阻塞，直到能够使用这个资源。
 
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--java集合类总结" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结/">JAVA集合小结</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-">JAVA集合小结</h1>
-<pre><code>[首页](http://www.blogjava.net/EvanLiu/)    [新随笔](http://www.blogjava.net/EvanLiu/admin/EditPosts.aspx?opt=1)    [联系](http://www.blogjava.net/EvanLiu/contact.aspx?id=1)    [聚合](http://www.blogjava.net/EvanLiu/rss)[![]()](http://www.blogjava.net/EvanLiu/rss)    [管理](http://www.blogjava.net/EvanLiu/admin/EditPosts.aspx)
-</code></pre><p>随笔 - 37  文章 - 11  trackbacks - 0</p>
-<h3 id="-">常用链接</h3>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/MyPosts.html" target="_blank">我的随笔</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/MyComments.html" target="_blank">我的评论</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/OtherPosts.html" target="_blank">我的参与</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/RecentComments.html" target="_blank">最新评论</a></li>
-</ul>
-<h3 id="-2-">留言簿(2)</h3>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/Contact.aspx?id=1" target="_blank">给我留言</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/default.aspx?opt=msg" target="_blank">查看公开留言</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/admin/MyMessages.aspx" target="_blank">查看私人留言</a></li>
-</ul>
-<h1 id="-">随笔分类</h1>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/category/28081.html" target="_blank">CSS(3)</a><a href="http://www.blogjava.net/EvanLiu/category/28081.html/rss" title="Subscribe to CSS(3)" target="_blank"><img src="&quot;Subscribe to CSS(3" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/30287.html" target="_blank">DB(3)</a><a href="http://www.blogjava.net/EvanLiu/category/30287.html/rss" title="Subscribe to DB(3)" target="_blank"><img src="&quot;Subscribe to DB(3" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/32587.html" target="_blank">EJB</a><a href="http://www.blogjava.net/EvanLiu/category/32587.html/rss" title="Subscribe to EJB" target="_blank"><img src="&quot;Subscribe to EJB&quot;" alt=""></a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/39491.html" target="_blank">Hibernate</a><a href="http://www.blogjava.net/EvanLiu/category/39491.html/rss" title="Subscribe to Hibernate" target="_blank"><img src="&quot;Subscribe to Hibernate&quot;" alt=""></a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/27635.html" target="_blank">HTML(3)</a><a href="http://www.blogjava.net/EvanLiu/category/27635.html/rss" title="Subscribe to HTML(3)" target="_blank"><img src="&quot;Subscribe to HTML(3" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/39492.html" target="_blank">ibatis</a><a href="http://www.blogjava.net/EvanLiu/category/39492.html/rss" title="Subscribe to ibatis" target="_blank"><img src="&quot;Subscribe to ibatis&quot;" alt=""></a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/27270.html" target="_blank">Java基础(11)</a><a href="http://www.blogjava.net/EvanLiu/category/27270.html/rss" title="Subscribe to Java基础(11)" target="_blank"><img src="&quot;Subscribe to Java基础(11" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/27535.html" target="_blank">JS(3)</a><a href="http://www.blogjava.net/EvanLiu/category/27535.html/rss" title="Subscribe to JS(3)" target="_blank"><img src="&quot;Subscribe to JS(3" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/27568.html" target="_blank">JSP(1)</a><a href="http://www.blogjava.net/EvanLiu/category/27568.html/rss" title="Subscribe to JSP(1)" target="_blank"><img src="&quot;Subscribe to JSP(1" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/26865.html" target="_blank">Spring(1)</a><a href="http://www.blogjava.net/EvanLiu/category/26865.html/rss" title="Subscribe to Spring(1)" target="_blank"><img src="&quot;Subscribe to Spring(1" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/26866.html" target="_blank">Struts(2)</a><a href="http://www.blogjava.net/EvanLiu/category/26866.html/rss" title="Subscribe to Struts(2)" target="_blank"><img src="&quot;Subscribe to Struts(2" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/26867.html" target="_blank">Struts2(1)</a><a href="http://www.blogjava.net/EvanLiu/category/26867.html/rss" title="Subscribe to Struts2(1)" target="_blank"><img src="&quot;Subscribe to Struts2(1" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/32696.html" target="_blank">Swing</a><a href="http://www.blogjava.net/EvanLiu/category/32696.html/rss" title="Subscribe to Swing" target="_blank"><img src="&quot;Subscribe to Swing&quot;" alt=""></a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/29139.html" target="_blank">设计模式(7)</a><a href="http://www.blogjava.net/EvanLiu/category/29139.html/rss" title="Subscribe to 设计模式(7)" target="_blank"><img src="&quot;Subscribe to 设计模式(7" alt="">&quot;)</a></li>
-</ul>
-<h1 id="-">随笔档案</h1>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/03.html" target="_blank">2009年3月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/02.html" target="_blank">2009年2月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/08.html" target="_blank">2008年8月 (5)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/06.html" target="_blank">2008年6月 (2)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/05.html" target="_blank">2008年5月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/04.html" target="_blank">2008年4月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/03.html" target="_blank">2008年3月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/02.html" target="_blank">2008年2月 (2)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/01.html" target="_blank">2008年1月 (7)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/12.html" target="_blank">2007年12月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11.html" target="_blank">2007年11月 (4)</a></li>
-</ul>
-<h3 id="-http-www-blogjava-net-evanliu-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/EvanLiu/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/11/17/188042.html#302714" target="_blank">1. re: Oracle分页SQL[未登录]</a></li>
-<li>@aegean
-select /* from bill_account_book where rownum &gt; 10 这个是明显的错误</li>
-<li>--test</li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/11/16/188042.html#302607" target="_blank">2. re: Oracle分页SQL</a></li>
-<li>我觉得你现在的第一条语句没什么错误啊</li>
-<li>--aegean</li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/08/22/162799.html#292193" target="_blank">3. re: 一个失败了的需求--button模拟file提交数据</a></li>
-<li>grdgvf</li>
-<li>--htf</li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/04/27/188042.html#267749" target="_blank">4. re: Oracle分页SQL</a></li>
-<li>收下了 正在愁人呢 不错 谢啦</li>
-<li>--路人甲</li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/03/04/255272.html#257900" target="_blank">5. re: ThreadLocal学习</a></li>
-<li>ThreadLocal的文章小弟这是第一次看到...
-之前学hibernate的时候, myeclipse自动生成的SessionFactory里也看到这个方法, 呵 学习学习</li>
-<li>--gouflv</li>
-</ul>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/08/31/224453.html" target="_blank">1. java.util.ConcurrentModificationException(5307)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/03/23/188042.html" target="_blank">2. Oracle分页SQL(3697)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html" target="_blank">3. JAVA集合小结(2831)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/06/15/207964.html" target="_blank">4. struts validate之ValidatorActionForm(709)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/06/16/208276.html" target="_blank">5. struts validate之ApplicationResources.properties内容读取乱码(570)</a></li>
-</ul>
-<h3 id="-">评论排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/03/23/188042.html" target="_blank">1. Oracle分页SQL(6)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/04/08/189602.html" target="_blank">2. String StringBuffer(2)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/24/162799.html" target="_blank">3. 一个失败了的需求--button模拟file提交数据(1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html" target="_blank">4. JAVA集合小结(1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/02/18/255272.html" target="_blank">5. ThreadLocal学习(1)</a>
-<a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html" target="_blank">JAVA集合小结</a></li>
-</ul>
-<p><img src="" alt="">
-<img src="" alt=""></p>
-<p>下面是我自己画的，关系画得没上面好，但我自己看着清楚些</p>
-<p><img src="" alt="">
-还有一张下载来的：
-<img src="" alt="">
-有序否</p>
-<p>允许元素重复否 Collection</p>
-<p>否</p>
-<p>是 List</p>
-<p>是</p>
-<p>是 Set</p>
-<p>AbstractSet</p>
-<p>否</p>
-<p>否 HashSet TreeSet</p>
-<p>是（用二叉树排序） Map</p>
-<p>AbstractMap</p>
-<p>否</p>
-<p>使用key-value来映射和存储数据，Key必须惟一，value可以重复 HashMap TreeMap</p>
-<p>是（用二叉树排序）</p>
-<p>几个面试常见问题：
-1.Q:ArrayList和Vector有什么区别？HashMap和HashTable有什么区别？
-   A:Vector和HashTable是线程同步的（synchronized）。性能上，ArrayList和HashMap分别比Vector和Hashtable要好。
-2.Q:大致讲解java集合的体系结构
-   A:List、Set、Map是这个集合体系中最主要的三个接口。
-      其中List和Set继承自Collection接口。
-      Set不允许元素重复。HashSet和TreeSet是两个主要的实现类。
-      List有序且允许元素重复。ArrayList、LinkedList和Vector是三个主要的实现类。
-      Map也属于集合系统，但和Collection接口不同。Map是key对value的映射集合，其中key列就是一个集合。key不能重复，但是value可以重复。HashMap、TreeMap和Hashtable是三个主要的实现类。
-      SortedSet和SortedMap接口对元素按指定规则排序，SortedMap是对key列进行排序。
-3.Q：Comparable和Comparator区别
-    A:调用java.util.Collections.sort(List list)方法来进行排序的时候，List内的Object都必须实现了Comparable接口。
-        java.util.Collections.sort(List list，Comparator c)，可以临时声明一个Comparator 来实现排序。
-        Collections.sort(imageList, new Comparator() {
-            public int compare(Object a, Object b) {
-                int orderA = Integer.parseInt( ( (Image) a).getSequence());
-                int orderB = Integer.parseInt( ( (Image) b).getSequence());
-                return orderA - orderB;
-           }
-        });
-        如果需要改变排列顺序
-        改成return orderb - orderA 即可。
-4.Q:简述equals()和hashCode()
-    A:...不知道。下回分解
-public interface
-Collection
-            extends Iterable
-public interface
-List
-            extends Collection
-public abstract class
-AbstractList
-            extends AbstractCollection
-            implements List
-public class
-Vector
-            extends AbstractList
-            implements List,
-                                   RandomAccess,
-                                   java.lang.Cloneable,
-                                   java.io.Serializable
-<strong>基于Array</strong>
-<strong>是“sychronized”的
-public class
-ArrayList
-       </strong>extends <strong>AbstractList
-       </strong>implements <strong>List,
-                          RandomAccess,
-                          Cloneable,
-                          java.io.Serializable
-**</strong>基于Array<strong>
-</strong>ArrayList是非同步的。所以在性能上要比Vector优越一些
-public class
-LinkedList
-        extends AbstractSequentialList
-        implements List,
-                          Queue,
-                          Cloneable,
-                          java.io.Serializable
-不基于Array
-<strong><strong>基于Array的List（Vector，ArrayList）适合查询，而LinkedList（链表）适合添加，删除操作
-</strong></strong>List基本上都是以Array为基础。但是Set则是在HashMap的基础上来实现的，这个就是Set和List的根本区别<strong>
-</strong>public abstract class AbstractSet
-    extends AbstractCollection
-    implements Set
-<strong><strong>public class HashSet
-    extends AbstractSet
-    implements Set, Cloneable, java.io.Serializable
-</strong></strong>HashSet的存储方式是把HashMap中的Key作为Set的对应存储项<strong>
-</strong>public class LinkedHashSet
-    extends HashSet
-    implements Set, Cloneable, java.io.Serializable
-public class TreeSet
-    extends AbstractSet
-    implements SortedSet, Cloneable, java.io.Serializable
-<strong>**它是通过SortedMap来实现的</strong>
-<strong>public interface Map<K,V>
-public abstract class AbstractMap<K,V>
-    implements Map<K,V>
-public class HashMap<K,V>
-    extends AbstractMap<K,V>
-    implements Map<K,V>, Cloneable, Serializable
-public class TreeMap<K,V>
-    extends AbstractMap<K,V>
-    implements SortedMap<K,V>, Cloneable, java.io.Serializable
-</strong>HashMap通过hashcode对其内容进行快速查找，而TreeMap中所有的元素都保持着某种固定的顺序，如果你需要得到一个有序的结果你就应该使用TreeMap（HashMap中元素的排列顺序是不固定的）
-<strong>**</strong>更详细的可以看：
-<a href="http://www.frontfree.net/view/article_695.html" target="_blank"><a href="http://www.frontfree.net/view/article_695.html">http://www.frontfree.net/view/article_695.html</a></a>
-<a href="http://blog.csdn.net/happyzhm5/archive/2007/03/17/1532101.aspx" target="_blank"><a href="http://blog.csdn.net/happyzhm5/archive/2007/03/17/1532101.aspx">http://blog.csdn.net/happyzhm5/archive/2007/03/17/1532101.aspx</a></a>
-<a href="http://blog.csdn.net/Java_apprentice/archive/2007/07/20/1700351.aspx" target="_blank"><a href="http://blog.csdn.net/Java_apprentice/archive/2007/07/20/1700351.aspx">http://blog.csdn.net/Java_apprentice/archive/2007/07/20/1700351.aspx</a></a>
-**</p>
-<h1 id="-java-equals-hashcode-http-www-blogjava-net-evanliu-archive-2007-11-12-tmsoft-lsxy-com-index-php-id-82-load-read-http-www-blogjava-net-evanliu-archive-2007-11-12-tmsoft-lsxy-com-index-php-id-82-load-read-"><strong>**</strong>解析Java对象的equals()和hashCode()的使用: <a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/tmsoft.lsxy.com/index.php?id=82&amp;load=read" target="_blank"><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/tmsoft.lsxy.com/index.php?id=82&amp;load=read">http://www.blogjava.net/EvanLiu/archive/2007/11/12/tmsoft.lsxy.com/index.php?id=82&amp;load=read</a></a>**</h1>
-<hr>
-<p>posted on 2007-11-12 10:06 <a href="http://www.blogjava.net/EvanLiu/" target="_blank">EvanLiu</a> 阅读(2831) <a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html#Post" target="_blank">评论(1)</a>  <a href="http://www.blogjava.net/EvanLiu/admin/EditPosts.aspx?postid=159884" target="_blank">编辑</a>  <a href="http://www.blogjava.net/EvanLiu/AddToFavorite.aspx?id=159884" target="_blank">收藏</a> 所属分类: <a href="http://www.blogjava.net/EvanLiu/category/27270.html" target="_blank">Java基础</a><img src="" alt=""></p>
-<p><a href=""></a>
-<strong>FeedBack:</strong></p>
-<p><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html#188079" title="permalink: re: JAVA集合小结" target="_blank">/#</a> <a href=""></a>re: JAVA集合小结<a href=""></a> 2008-03-23 20:49 <a href="http://www.blogjava.net/zhukuanglong/" target="_blank">矿矿</a></p>
-<p>不 大 懂
-我是新手！！  <a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html#post" target="_blank">回复</a>  <a href="http://www.blogjava.net/comment?author=%e7%9f%bf%e7%9f%bf" title="查看该作者发表过的评论" target="_blank">更多评论</a>
-<a href=""></a>  <a href=""></a>
-Copyright ©2010 EvanLiu Powered by: <a href="http://www.cnblogs.com/" target="_blank">博客园</a> 模板提供：<a href="http://blog.hjenglish.com/" target="_blank">沪江博客</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Hash表分析以及Java实现/">Hash表分析以及Java实现</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Hash表分析以及Java实现/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="hash-java-">Hash表分析以及Java实现</h1>
-<p><a href="http://www.iteye.com/" target="_blank">首页</a> <a href="http://www.iteye.com/news" target="_blank">新闻</a> <a href="http://www.iteye.com/forums" target="_blank">论坛</a> <a href="http://www.iteye.com/ask" target="_blank">问答</a> <a href="http://www.iteye.com/blogs" target="_blank">博客</a> <a href="http://www.iteye.com/job" target="_blank">招聘</a> <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">更多 ▼</a></p>
-<p><a href="http://www.iteye.com/wiki" target="_blank">专栏</a>  <a href="http://www.iteye.com/groups" target="_blank">群组</a> <a href="http://www.iteye.com/search" target="_blank">搜索</a></p>
-<p><a href="http://java-mzd.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.iteye.com/all" target="_blank">我的应用</a> <a href="http://java-mzd.iteye.com/login" target="_blank">登录</a> <a href="http://java-mzd.iteye.com/signup" target="_blank">注册</a></p>
-<h1 id="-java-mzd-http-java-mzd-iteye-com-"><a href="http://java-mzd.iteye.com/" target="_blank">java-mzd</a></h1>
-<p>永久域名 <a href="http://java-mzd.iteye.com/" target="_blank"><a href="http://java-mzd.iteye.com">http://java-mzd.iteye.com</a></a></p>
-<p><a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">8顶</a>
-<a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">3踩</a></p>
-<p><a href="http://java-mzd.iteye.com/blog/829890" title="简单Spring容器实现" target="_blank">简单Spring容器实现</a> | <a href="http://java-mzd.iteye.com/blog/826692" title="查找表分析（总论）" target="_blank">查找表分析（总论）</a></p>
-<p>2010-11-29</p>
-<h3 id="-hash-java-"><a href="">Hash表分析以及Java实现</a></h3>
-<p><strong>文章分类:<a href="http://www.iteye.com/blogs/category/tech" target="_blank">综合技术</a></strong>
-       这篇博客主要探讨<strong>Hash表</strong>中的一些原理/概念，及根据这些原理/概念，自己设计一个用来存放/查找数据的Hash表，并且与JDK中的HashMap类进行比较。</p>
-<p>我们分一下七个步骤来进行。 </p>
-<p><strong>一。    **</strong>Hash<strong>**表概念</strong></p>
-<hr>
-<p><strong>二 .      **</strong>Hash<strong>**构造函数的方法，及适用范围</strong></p>
-<hr>
-<p><strong>三.**</strong>      <strong><strong>Hash</strong></strong>处理冲突方法，各自特征**</p>
-<hr>
-<p><strong>四.**</strong>      <strong><strong>Hash</strong></strong>查找过程**</p>
-<hr>
-<p><strong>五.**</strong>      <strong><strong>实现一个使用</strong></strong>Hash<strong><strong>存数据的场景</strong></strong>-------Hash<strong>**查找算法，插入算法</strong></p>
-<hr>
-<p><strong>六.**</strong>      <strong><strong>JDK</strong></strong>中<strong><strong>HashMap</strong></strong>的实现**</p>
-<hr>
-<p><strong>七.**</strong>      <strong><strong>Hash</strong></strong>表与<strong><strong>HashMap</strong></strong>的对比，性能分析**</p>
-<p> <strong>一。    **</strong>Hash<strong>**表概念 </strong></p>
-<pre><code>           在查找表中我们已经说过，在Hash表中，**记录在表中的位置和其关键字之间存在着一种确定的关系**。这样       我们就能预先知道所查关键字在表中的位置，从而直接通过下标找到记录。使ASL趋近与0.
-
-
-
-          1) ** **哈希(Hash)函数是一个映象，即： 将关键字的集合映射到某个地址集合上，它的设置很灵活，只要这个地       址集合的大小不超出允许范围即可；
-
-         2)  由于哈希函数是一个压缩映象，因此，在一般情况下，很容易产生“冲突”现象，即： key1¹ key2，而  f            (key1) = f(key2)。
-
-          3).  只能尽量减少冲突而不能完全避免冲突，这是因为通常关键字集合比较大，其元素包括所有可能的关键字，       而地址集合的元素仅为哈希表中的地址值
-
-
-
-   在构造这种特殊的“查找表” 时，除了需要选择一个**“好”(尽可能少产生冲突)**的哈希函数之外；还需要找到一      种**“处理冲突”** 的方法。
-</code></pre><p><strong>二 .    **</strong>Hash<strong>**构造函数的方法，及适用范围</strong></p>
-<ul>
-<li><strong>直接定址法</strong></li>
-<li><strong>数字分析法</strong></li>
-<li><strong>平方取中法</strong></li>
-<li><strong>折叠法</strong></li>
-<li><strong>除留余数法</strong></li>
-<li><strong>随机数法</strong>      </li>
-</ul>
-<pre><code>  （1）直接定址法：
-
-            哈希函数为关键字的线性函数，H(key) = key 或者 H(key) = a ´ key + b
-
-          **此法仅适合于**：地址集合的大小 = = 关键字集合的大小，其中a和b为常数。
-
- （2）数字分析法：
-
-         假设关键字集合中的每个关键字都是由 s 位数字组成 (u1, u2, …, us)，分析关键字集中的全体，                  并从中提取分布均匀的若干位或它们的组合作为地址。
-
-         **此法适于:**能预先估计出全体关键字的每一位上各种数字出现的频度。
-
- （3）平方取中法：
-
-           以关键字的平方值的中间几位作为存储地址。求“关键字的平方值” 的目的是“扩大差别” ，同                    时平方值的中间各位又能受到整个关键字中各位的影响。
-
-         **此法适于:**关键字中的每一位都有某些数字重复出现频度很高的现象。
-
- （4）折叠法：
-
-        将关键字分割成若干部分，然后取它们的叠加和为哈希地址。两种叠加处理的方法：移位叠加:将分                割后的几部分低位对齐相加；间界叠加:从一端沿分割界来回折叠，然后对齐相加。
-
-        **此法适于：**关键字的数字位数特别多。
-
- （5）除留余数法：
-
-         设定哈希函数为:H(key) = key MOD p   ( p≤m )，其中， m为表长，p 为不大于 m 的素数，或                 是不含 20 以下的质因子
-
- （6）随机数法：
-
-       设定哈希函数为:H(key) = Random(key)其中，Random 为伪随机函数
-
-       **此法适于：**对长度不等的关键字构造哈希函数。
-
-
-
-     实际造表时，采用何种构造哈希函数的方法取决于建表的关键字集合的情况(包括关键字的范围和形态)，以及哈希表    长度（哈希地址范围），**总的原则是使产生冲突的可能性降到尽可能地小。**
-</code></pre><p><strong>三.**</strong>      <strong><strong>Hash</strong></strong>处理冲突方法，各自特征**</p>
-<p> <strong>“**</strong>处理冲突”<strong><strong>的实际含义是：</strong></strong>为产生冲突的关键字寻找下一个哈希地址。**</p>
-<ul>
-<li><strong> **</strong>开放定址法**</li>
-<li><strong> **</strong>再哈希法**</li>
-<li><strong> **</strong>链地址法**</li>
-</ul>
-<hr>
-<pre><code>  （1）开放定址法：
-
-           为产生冲突的关键字地址 H(key) 求得一个地址序列： H0, H1, H2, …, Hs  1≤s≤m-1，Hi = ( H(key)                  +di  ) MOD m，其中： i=1, 2, …, s，H(key)为哈希函数;m为哈希表长;
-
-
-
-  （2）链地址法：
-</code></pre><p><img src="" alt=""></p>
-<pre><code>         将所有哈希地址相同的记录都链接在同一链表中。
-
-
-
-  （3）再哈希法：
-
-           方法：构造若干个哈希函数，当发生冲突时，根据另一个哈希函数计算下一个哈希地址，直到冲突不再发                  生。即：Hi=Rhi(key)     i=1,2,……k，其中：Rhi——不同的哈希函数，特点：计算时间增加****
-</code></pre><p> <strong>四.**</strong>      <strong><strong>Hash</strong></strong>查找过程**</p>
+   **使用资源阶段**：真正进行数据接收和发生。
+</code></pre><p><strong>      </strong>举例说就是<strong>排队</strong>和<strong>服务。<em>**</em></strong></p>
+<p><strong> </strong>在<strong>等待数据</strong>阶段，IO分为阻塞IO和非阻塞IO。</p>
+<p><strong>      **</strong>阻塞IO**：资源不可用时，IO请求一直阻塞，直到反馈结果（有数据或超时）。</p>
+<p><strong>      **</strong>非阻塞IO**：资源不可用时，IO请求离开返回，返回数据标识资源不可用</p>
+<p><strong> </strong>在<strong>使用资源</strong>阶段，IO分为同步IO和异步IO。</p>
+<p><strong>      **</strong>同步IO**：应用阻塞在发送或接收数据的状态，直到数据成功传输或返回失败。</p>
+<p><strong>       异步IO</strong>：应用发送或接收数据后立刻返回，数据写入OS缓存，由OS完成数据发送或接收，并返回成功或失败的信息给应用。</p>
 <p><img src="" alt=""></p>
-<p><strong> </strong>      对于给定值 K,计算哈希地址 i = H(K)，若 r[i] = NULL  则查找不成功，若 r[i].key = K  则查找成功， 否则 “求     下一地址 Hi” ，直至r[Hi] = NULL  (查找不成功)  或r[Hi].key = K  (查找成功) 为止。</p>
-<p> <strong>五.**</strong>      <strong><strong>实现一个使用</strong></strong>Hash<strong><strong>存数据的场景</strong></strong>-------Hash<strong>**查找算法，插入算法</strong></p>
-<pre><code>     假设我们要设计的是一个用来保存中南大学所有在校学生个人信息的数据表。因为在校学生数量也不是特别巨大(8W?)，每个学生的学号是唯一的,因此，我们可以简单的应用直接定址法，声明一个10W大小的数组，每个学生的学号作为主键。然后每次要添加或者查找学生，只需要根据需要去操作即可。
-
-  但是，显然这样做是**很脑残**的。这样做系统的可拓展性和复用性就非常差了，比如有一天人数超过10W了？如果是用来保存别的数据呢？或者我只需要保存20条记录呢？声明大小为10W的数组显然是太浪费了的。
-
-
-
- 如果我们是用来保存大数据量（比如银行的用户数，4大的用户数都应该有3-5亿了吧？），这时候我们计算出来的HashCode就很可能会有冲突了， 我们的系统应该有“处理冲突”的能力，此处我们**通过挂链法“处理冲突”**。
-
-
-
- 如果我们的数据量非常巨大，并且还持续在增加，如果我们仅仅只是通过挂链法来处理冲突，可能我们的链上挂了上万个数据后，这个时候再通过静态搜索来查找链表，显然性能也是非常低的。所以我们的系统应该还能实现自动扩容，**当容量达到某比例后，即自动扩容，使装载因子保存在一个固定的水平上**。
-</code></pre><p>综上所述，我们对这个Hash容器的基本要求应该有如下几点：</p>
-<pre><code>         **满足Hash表的查找要求（废话）**
-</code></pre><hr>
-<p><strong>             能支持从小数据量到大数据量的自动转变（自动扩容）</strong></p>
-<hr>
-<p><strong>             使用挂链法解决冲突</strong></p>
-<p>好了，既然都分析到这一步了，咱就闲话少叙，直接开始上代码吧。</p>
-<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>package cn.javamzd.collection.search;  </li>
-<li></li>
-<li>public class MyMap<K, V> {  </li>
-<li>private int size;// 当前容量  </li>
-<li>private static int INIT_CAPACITY = 16;// 默认容量  </li>
-<li>private Entry<K, V>[] container;// 实际存储数据的数组对象  </li>
-<li>private static float LOAD_FACTOR = 0.75f;// 装载因子  </li>
-<li>private int max;// 能存的最大的数=capacity/*factor  </li>
-<li></li>
-<li>// 自己设置容量和装载因子的构造器  </li>
-<li>public MyMap(int init_Capaticy, float load_factor) {  </li>
-<li>if (init_Capaticy &lt; 0)  </li>
-<li>throw new IllegalArgumentException(&quot;Illegal initial capacity: &quot;  </li>
-<li><ul>
-<li>init_Capaticy);  </li>
-</ul>
-</li>
-<li>if (load_factor &lt;= 0 || Float.isNaN(load_factor))  </li>
-<li>throw new IllegalArgumentException(&quot;Illegal load factor: &quot;  </li>
-<li><ul>
-<li>load_factor);  </li>
-</ul>
-</li>
-<li>this.LOAD_FACTOR = load_factor;  </li>
-<li>max = (int) (init_Capaticy /* load_factor);  </li>
-<li>container = new Entry[init_Capaticy];  </li>
-<li>}  </li>
-<li></li>
-<li>// 使用默认参数的构造器  </li>
-<li>public MyMap() {  </li>
-<li>this(INIT_CAPACITY, LOAD_FACTOR);  </li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* 存 </li>
-<li>/*  </li>
-<li>/* @param k </li>
-<li>/* @param v </li>
-<li>/* @return </li>
-<li>/*/  </li>
-<li>public boolean put(K k, V v) {  </li>
-<li>// 1.计算K的hash值  </li>
-<li>// 因为自己很难写出对不同的类型都适用的Hash算法，故调用JDK给出的hashCode()方法来计算hash值  </li>
-<li>int hash = k.hashCode();  </li>
-<li>//将所有信息封装为一个Entry  </li>
-<li>Entry<K,V> temp=new Entry(k,v,hash);  </li>
-<li>if(setEntry(temp, container)){  </li>
-<li>// 大小加一  </li>
-<li>size++;  </li>
-<li>return true;  </li>
-<li>}  </li>
-<li>return false;  </li>
-<li>}  </li>
-<li></li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* 扩容的方法 </li>
-<li>/*  </li>
-<li>/* @param newSize </li>
-<li>/*            新的容器大小 </li>
-<li>/*/  </li>
-<li>private void reSize(int newSize) {  </li>
-<li>// 1.声明新数组  </li>
-<li>Entry<K, V>[] newTable = new Entry[newSize];  </li>
-<li>max = (int) (newSize /* LOAD_FACTOR);  </li>
-<li>// 2.复制已有元素,即遍历所有元素，每个元素再存一遍  </li>
-<li>for (int j = 0; j &lt; container.length; j++) {  </li>
-<li>Entry<K, V> entry = container[j];  </li>
-<li>//因为每个数组元素其实为链表，所以…………  </li>
-<li>while (null != entry) {  </li>
-<li>setEntry(entry, newTable);  </li>
-<li>entry = entry.next;  </li>
-<li>}  </li>
-<li>}  </li>
-<li>// 3.改变指向  </li>
-<li>container = newTable;  </li>
-<li></li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/*将指定的结点temp添加到指定的hash表table当中 </li>
-<li>/* 添加时判断该结点是否已经存在 </li>
-<li>/* 如果已经存在，返回false </li>
-<li>/* 添加成功返回true </li>
-<li>/* @param temp </li>
-<li>/* @param table </li>
-<li>/* @return </li>
-<li>/*/  </li>
-<li>private boolean setEntry(Entry<K,V> temp,Entry[] table){  </li>
-<li>// 根据hash值找到下标  </li>
-<li>int index = indexFor(temp.hash, table.length);  </li>
-<li>//根据下标找到对应元素  </li>
-<li>Entry<K, V> entry = table[index];  </li>
-<li>// 3.若存在  </li>
-<li>if (null != entry) {  </li>
-<li>// 3.1遍历整个链表，判断是否相等  </li>
-<li>while (null != entry) {  </li>
-<li>//判断相等的条件时应该注意，除了比较地址相同外，引用传递的相等用equals()方法比较  </li>
-<li>//相等则不存，返回false  </li>
-<li>if ((temp.key == entry.key||temp.key.equals(entry.key)) &amp;&amp; temp.hash == entry.hash&amp;&amp;(temp.value==entry.value||temp.value.equals(entry.value))) {  </li>
-<li>return false;  </li>
-<li>}  </li>
-<li>//不相等则比较下一个元素  </li>
-<li>else if (temp.key != entry.key &amp;&amp; temp.value != entry.value) {  </li>
-<li>//到达队尾，中断循环  </li>
-<li>if(null==entry.next){  </li>
-<li>break;  </li>
-<li>}  </li>
-<li>// 没有到达队尾，继续遍历下一个元素  </li>
-<li>entry = entry.next;  </li>
-<li>}  </li>
-<li>}  </li>
-<li>// 3.2当遍历到了队尾，如果都没有相同的元素，则将该元素挂在队尾  </li>
-<li>addEntry2Last(entry,temp);  </li>
-<li></li>
-<li>}  </li>
-<li>// 4.若不存在,直接设置初始化元素  </li>
-<li>setFirstEntry(temp,index,table);  </li>
-<li>return true;  </li>
-<li>}  </li>
-<li></li>
-<li>private void addEntry2Last(Entry<K, V> entry, Entry<K, V> temp) {  </li>
-<li>if (size &gt; max) {  </li>
-<li>reSize(container.length /* 4);  </li>
-<li>}  </li>
-<li>entry.next=temp;  </li>
-<li></li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* 将指定结点temp，添加到指定的hash表table的指定下标index中 </li>
-<li>/* @param temp </li>
-<li>/* @param index </li>
-<li>/* @param table </li>
-<li>/*/  </li>
-<li>private void setFirstEntry(Entry<K, V> temp, int index, Entry[] table) {  </li>
-<li>// 1.判断当前容量是否超标，如果超标，调用扩容方法  </li>
-<li>if (size &gt; max) {  </li>
-<li>reSize(table.length /* 4);  </li>
-<li>}  </li>
-<li>// 2.不超标，或者扩容以后，设置元素  </li>
-<li>table[index] = temp;  </li>
-<li>//！！！！！！！！！！！！！！！  </li>
-<li>//因为每次设置后都是新的链表，需要将其后接的结点都去掉  </li>
-<li>//NND，少这一行代码卡了哥哥7个小时（代码重构）  </li>
-<li>temp.next=null;  </li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* 取 </li>
-<li>/*  </li>
-<li>/* @param k </li>
-<li>/* @return </li>
-<li>/*/  </li>
-<li>public V get(K k) {  </li>
-<li>Entry<K, V> entry = null;  </li>
-<li>// 1.计算K的hash值  </li>
-<li>int hash = k.hashCode();  </li>
-<li>// 2.根据hash值找到下标  </li>
-<li>int index = indexFor(hash, container.length);  </li>
-<li>// 3。根据index找到链表  </li>
-<li>entry = container[index];  </li>
-<li>// 3。若链表为空，返回null  </li>
-<li>if (null == entry) {  </li>
-<li>return null;  </li>
-<li>}  </li>
-<li>// 4。若不为空，遍历链表，比较k是否相等,如果k相等，则返回该value  </li>
-<li>while (null != entry) {  </li>
-<li>if (k == entry.key||entry.key.equals(k)) {  </li>
-<li>return entry.value;  </li>
-<li>}  </li>
-<li>entry = entry.next;  </li>
-<li>}  </li>
-<li>// 如果遍历完了不相等，则返回空  </li>
-<li>return null;  </li>
-<li></li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* 根据hash码，容器数组的长度,计算该哈希码在容器数组中的下标值 </li>
-<li>/*  </li>
-<li>/* @param hashcode </li>
-<li>/* @param containerLength </li>
-<li>/* @return </li>
-<li>/*/  </li>
-<li>public int indexFor(int hashcode, int containerLength) {  </li>
-<li>return hashcode &amp; (containerLength - 1);  </li>
-<li></li>
-<li>}  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* 用来实际保存数据的内部类,因为采用挂链法解决冲突，此内部类设计为链表形式 </li>
-<li>/*  </li>
-<li>/* @param <K>key </li>
-<li>/* @param <V> </li>
-<li>/*            value </li>
-<li>/*/  </li>
-<li>class Entry<K, V> {  </li>
-<li>Entry<K, V> next;// 下一个结点  </li>
-<li>K key;// key  </li>
-<li>V value;// value  </li>
-<li>int hash;// 这个key对应的hash码，作为一个成员变量，当下次需要用的时候可以不用重新计算  </li>
-<li></li>
-<li>// 构造方法  </li>
-<li>Entry(K k, V v, int hash) {  </li>
-<li>this.key = k;  </li>
-<li>this.value = v;  </li>
-<li>this.hash = hash;  </li>
-<li></li>
-<li>}  </li>
-<li></li>
-<li>//相应的getter()方法  </li>
-<li></li>
-<li>}  </li>
-<li>}<br>package cn.javamzd.collection.search; public class MyMap<K, V> { private int size;// 当前容量 private static int INIT_CAPACITY = 16;// 默认容量 private Entry<K, V>[] container;// 实际存储数据的数组对象 private static float LOAD_FACTOR = 0.75f;// 装载因子 private int max;// 能存的最大的数=capacity/<em>factor // 自己设置容量和装载因子的构造器 public MyMap(int init_Capaticy, float load_factor) { if (init_Capaticy &lt; 0) throw new IllegalArgumentException(&quot;Illegal initial capacity: &quot; + init_Capaticy); if (load_factor &lt;= 0 || Float.isNaN(load_factor)) throw new IllegalArgumentException(&quot;Illegal load factor: &quot; + load_factor); this.LOAD_FACTOR = load_factor; max = (int) (init_Capaticy /</em> load_factor); container = new Entry[init_Capaticy]; } // 使用默认参数的构造器 public MyMap() { this(INIT_CAPACITY, LOAD_FACTOR); } //<em>/</em> /<em> 存 /</em> /<em> @param k /</em> @param v /<em> @return /</em>/ public boolean put(K k, V v) { // 1.计算K的hash值 // 因为自己很难写出对不同的类型都适用的Hash算法，故调用JDK给出的hashCode()方法来计算hash值 int hash = k.hashCode(); //将所有信息封装为一个Entry Entry<K,V> temp=new Entry(k,v,hash); if(setEntry(temp, container)){ // 大小加一 size++; return true; } return false; } //<em>/</em> /<em> 扩容的方法 /</em> /<em> @param newSize /</em> 新的容器大小 /<em>/ private void reSize(int newSize) { // 1.声明新数组 Entry<K, V>[] newTable = new Entry[newSize]; max = (int) (newSize /</em> LOAD_FACTOR); // 2.复制已有元素,即遍历所有元素，每个元素再存一遍 for (int j = 0; j &lt; container.length; j++) { Entry<K, V> entry = container[j]; //因为每个数组元素其实为链表，所以………… while (null != entry) { setEntry(entry, newTable); entry = entry.next; } } // 3.改变指向 container = newTable; } //<em>/</em> /<em>将指定的结点temp添加到指定的hash表table当中 /</em> 添加时判断该结点是否已经存在 /<em> 如果已经存在，返回false /</em> 添加成功返回true /<em> @param temp /</em> @param table /<em> @return /</em>/ private boolean setEntry(Entry<K,V> temp,Entry[] table){ // 根据hash值找到下标 int index = indexFor(temp.hash, table.length); //根据下标找到对应元素 Entry<K, V> entry = table[index]; // 3.若存在 if (null != entry) { // 3.1遍历整个链表，判断是否相等 while (null != entry) { //判断相等的条件时应该注意，除了比较地址相同外，引用传递的相等用equals()方法比较 //相等则不存，返回false if ((temp.key == entry.key||temp.key.equals(entry.key)) &amp;&amp; temp.hash == entry.hash&amp;&amp;(temp.value==entry.value||temp.value.equals(entry.value))) { return false; } //不相等则比较下一个元素 else if (temp.key != entry.key &amp;&amp; temp.value != entry.value) { //到达队尾，中断循环 if(null==entry.next){ break; } // 没有到达队尾，继续遍历下一个元素 entry = entry.next; } } // 3.2当遍历到了队尾，如果都没有相同的元素，则将该元素挂在队尾 addEntry2Last(entry,temp); } // 4.若不存在,直接设置初始化元素 setFirstEntry(temp,index,table); return true; } private void addEntry2Last(Entry<K, V> entry, Entry<K, V> temp) { if (size &gt; max) { reSize(container.length /<em> 4); } entry.next=temp; } //</em>/<em> /</em> 将指定结点temp，添加到指定的hash表table的指定下标index中 /<em> @param temp /</em> @param index /<em> @param table /</em>/ private void setFirstEntry(Entry<K, V> temp, int index, Entry[] table) { // 1.判断当前容量是否超标，如果超标，调用扩容方法 if (size &gt; max) { reSize(table.length /<em> 4); } // 2.不超标，或者扩容以后，设置元素 table[index] = temp; //！！！！！！！！！！！！！！！ //因为每次设置后都是新的链表，需要将其后接的结点都去掉 //NND，少这一行代码卡了哥哥7个小时（代码重构） temp.next=null; } //</em>/<em> /</em> 取 /<em> /</em> @param k /<em> @return /</em>/ public V get(K k) { Entry<K, V> entry = null; // 1.计算K的hash值 int hash = k.hashCode(); // 2.根据hash值找到下标 int index = indexFor(hash, container.length); // 3。根据index找到链表 entry = container[index]; // 3。若链表为空，返回null if (null == entry) { return null; } // 4。若不为空，遍历链表，比较k是否相等,如果k相等，则返回该value while (null != entry) { if (k == entry.key||entry.key.equals(k)) { return entry.value; } entry = entry.next; } // 如果遍历完了不相等，则返回空 return null; } //<em>/</em> /<em> 根据hash码，容器数组的长度,计算该哈希码在容器数组中的下标值 /</em> /<em> @param hashcode /</em> @param containerLength /<em> @return /</em>/ public int indexFor(int hashcode, int containerLength) { return hashcode &amp; (containerLength - 1); } //<em>/</em> /<em> 用来实际保存数据的内部类,因为采用挂链法解决冲突，此内部类设计为链表形式 /</em> /<em> @param <K>key /</em> @param <V> /<em> value /</em>/ class Entry<K, V> { Entry<K, V> next;// 下一个结点 K key;// key V value;// value int hash;// 这个key对应的hash码，作为一个成员变量，当下次需要用的时候可以不用重新计算 // 构造方法 Entry(K k, V v, int hash) { this.key = k; this.value = v; this.hash = hash; } //相应的getter()方法 } }</li>
-</ol>
-<p> 代码中有相当清楚的注释了</p>
-<p>在文章的最后这里，我要强烈的宣泄下感情</p>
-<p>MLGBD，本来以为分析的挺到位了，写出这个东西也就最多需要个把小时吧</p>
-<p>结果因为通宵作业，脑袋运转不灵</p>
-<p>硬是花了哥三个小时才写出了</p>
-<p>好不容易些出来了</p>
-<p>我日</p>
-<p>看着代码比较混乱</p>
-<p>然后就对代码重构了下</p>
-<p>把逻辑抽象清楚，进行重构就花了个多小时</p>
-<p>好不容易构造好了</p>
-<p>就开始了TMD的一直报错了----------大数据量测试时到大概5000就死循环了</p>
-<p>各种调试，各种分析都觉得没错误</p>
-<p> 最后花了哥7个小时终于找出来了</p>
-<p>我擦</p>
-<p>第一次初始化加的时候，因为每个元素的next都是空的</p>
-<p>而扩充容量resize()时，因为冲突处理是链式结构的</p>
-<p>当将他们重新hash添加的时候，重复的这些鸟元素的next是有元素的</p>
-<p>一定要设置为null</p>
-<p><strong>七.性能分析：</strong></p>
-<pre><code>  1.因为冲突的存在，其查找长度不可能达到O(1)
-
-  2哈希表的平均查找长度是装载因子a 的函数，而不是 n 的函数。
-
-  3.用哈希表构造查找表时，可以选择一个适当的装填因子  ，使得平均查找长度限定在某个范围内。
-</code></pre><p>   最后给出我们这个HashMap的性能</p>
-<p>  测试代码
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public class Test {  </li>
-<li></li>
-<li>public static void main(String[] args) {  </li>
-<li>MyMap<String, String> mm = new MyMap<String, String>();   </li>
-<li>Long aBeginTime=System.currentTimeMillis();//记录BeginTime  </li>
-<li>for(int i=0;i&lt;1000000;i++){  </li>
-<li>mm.put(&quot;&quot;+i, &quot;&quot;+i/*100);  </li>
-<li>}  </li>
-<li>Long aEndTime=System.currentTimeMillis();//记录EndTime  </li>
-<li>System.out.println(&quot;insert time--&gt;&quot;+(aEndTime-aBeginTime));  </li>
-<li></li>
-<li>Long lBeginTime=System.currentTimeMillis();//记录BeginTime  </li>
-<li>mm.get(&quot;&quot;+100000);  </li>
-<li>Long lEndTime=System.currentTimeMillis();//记录EndTime  </li>
-<li>System.out.println(&quot;seach time---&gt;&quot;+(lEndTime-lBeginTime));  </li>
-<li>}  </li>
-<li><p>}<br>public class Test { public static void main(String[] args) { MyMap<String, String> mm = new MyMap<String, String>(); Long aBeginTime=System.currentTimeMillis();//记录BeginTime for(int i=0;i&lt;1000000;i++){ mm.put(&quot;&quot;+i, &quot;&quot;+i/*100); } Long aEndTime=System.currentTimeMillis();//记录EndTime System.out.println(&quot;insert time--&gt;&quot;+(aEndTime-aBeginTime)); Long lBeginTime=System.currentTimeMillis();//记录BeginTime mm.get(&quot;&quot;+100000); Long lEndTime=System.currentTimeMillis();//记录EndTime System.out.println(&quot;seach time---&gt;&quot;+(lEndTime-lBeginTime)); } }</p>
-<p>100W个数据时，全部存储时间为1S多一点，而<strong>搜寻时间为0 </strong></p>
-</li>
-</ol>
-<p>insert time--&gt;1536
-seach time---&gt;0</p>
-<p>好了，牢骚发完了</p>
-<p>本来今天想写个<strong>有关大访问量处理的一些基本概念</strong>的文章</p>
-<p>全泡汤了,明天写吧</p>
-<p><a href="http://java-mzd.iteye.com/blog/827523#"><strong>8</strong>
-顶</a><a href="http://java-mzd.iteye.com/blog/827523#"><strong>3</strong>
-踩</a>
-<a href="http://java-mzd.iteye.com/blog/829890" title="简单Spring容器实现" target="_blank">简单Spring容器实现</a> | <a href="http://java-mzd.iteye.com/blog/826692" title="查找表分析（总论）" target="_blank">查找表分析（总论）</a></p>
+<p><strong>按照Unix**</strong>的5<strong><strong>个IO</strong></strong>模型划分**</p>
 <ul>
-<li>01:46</li>
-<li>浏览 (854)</li>
-<li><a href="http://java-mzd.iteye.com/blog/827523#comments" target="_blank">评论</a> (8)</li>
-<li>分类: <a href="http://java-mzd.iteye.com/category/133623" target="_blank">数据结构----------JAVA类集</a></li>
-<li><a href="http://www.iteye.com/wiki/topic/827523" target="_blank">相关推荐</a><h3 id="-">评论</h3>
-</li>
+<li>阻塞IO</li>
+<li>非阻塞IO</li>
+<li>IO复用</li>
+<li>信号驱动的IO</li>
+<li>异步IO</li>
 </ul>
-<p><a href=""></a></p>
-<p>8 楼 <a href="http://dengyi04405.iteye.com/" target="_blank">dengyi04405</a> 2010-12-16   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
-<p>错了...是mm.get(&quot;&quot;+36309) 为null，在最后resize的时候挂在9的一起，然后丢失了。
-setEntry(entry, newTable);   ----entry在first时next=null
-entry = entry.next;---永远是null
-7 楼 <a href="http://dengyi04405.iteye.com/" target="_blank">dengyi04405</a> 2010-12-16   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
-<p>resize()好像还是有bug，挂在一个链地址下的数据resize时只能取出第一个，后面的数据就丢失了。
-for(int i=0;i&lt;90000;i++) 循环后mm.get(&quot;&quot;+100000)   是null
-不知道是不是，楼主看看<img src="" alt="">  </p>
-<p>6 楼 <a href="http://java-mzd.iteye.com/" target="_blank">java_mzd</a> 2010-12-01   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
-<p>heng_aa 写道</p>
-<p>无聊又测了一下，死循环是因为while没有这种情况的判断，我是加上这些代码的：
-else if(temp.key == entry.key &amp;&amp; temp.value != entry.value) {
-entry.value = temp.value;
-return true;
-}
-还有我查找不到数据，应该是在109行那里少加了这句吧，return true;因为没有这句下面的setFirstEntry(temp,index,table); 还会执行。<br>看看是不是这样！！！
-恩~~确实需要加上这个判断~
-不然当传入相同的key不同的value的时候，不会覆盖掉原理的value
-这时候linked里面就会有相同的key，不同的value，后面那个value就没意义了。
-  只是，这样还是没有死循环吖。。囧
-恩，无论如何，这个BUG是确实需要改进的。
-5 楼 <a href="http://heng-aa.iteye.com/" target="_blank">heng_aa</a> 2010-11-30   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
-<p>无聊又测了一下，死循环是因为while没有这种情况的判断，我是加上这些代码的：
-else if(temp.key == entry.key &amp;&amp; temp.value != entry.value) {
-entry.value = temp.value;
-return true;
-}
-还有我查找不到数据，应该是在109行那里少加了这句吧，return true;因为没有这句下面的setFirstEntry(temp,index,table); 还会执行。<br>看看是不是这样！！！</p>
-<p>4 楼 <a href="http://java-mzd.iteye.com/" target="_blank">java_mzd</a> 2010-11-30   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
-<p>heng_aa 写道</p>
-<p>我测试了一下，发现几个问题。如果放入相同的key不同的value,程序就死循环了！还有扩容后，indexFor（）的算值就不同了，也就是说通过这个算法查找不到值了。无聊试一下而已，不过我也学到了不少东西，看这些问题能不能改进？？
-谢谢提醒哦
-分几点分析吧
-扩容后，通过indexFor()计算的值肯定是需要变化的啊，因为这个时候计算规则变了啊
-需要把每个元素重新散列到数组里去啊，这时候通过get()再取的时候，计算的时候，indexFor()是按照新的数组大小来的，所以肯定还是能找到的啊
-至于死循环的问题，在重构代码前我测试是正常的，重构后忘了测试这个问题了。。
-囧。。。等晚上再测试下再回答你吧。
-3 楼 <a href="http://heng-aa.iteye.com/" target="_blank">heng_aa</a> 2010-11-30   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
-<p>我测试了一下，发现几个问题。如果放入相同的key不同的value,程序就死循环了！还有扩容后，indexFor（）的算值就不同了，也就是说通过这个算法查找不到值了。无聊试一下而已，不过我也学到了不少东西，看这些问题能不能改进？？</p>
-<p>2 楼 <a href="http://java-mzd.iteye.com/" target="_blank">java_mzd</a> 2010-11-29   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
-<p>smithfox 写道</p>
-<p>好文，对动态大数据量的Hash处理很有用.
-幸苦了，注意身体呀!
-多谢关照~~
-1 楼 <a href="http://smithfox.iteye.com/" target="_blank">smithfox</a> 2010-11-29   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
-<p>好文，对动态大数据量的Hash处理很有用.
-幸苦了，注意身体呀!</p>
-<h3 id="-">发表评论</h3>
-<h3 id="-">表情图标</h3>
-<p><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""></p>
-<p>字体颜色: 标准深红红色橙色棕色黄色绿色橄榄青色蓝色深蓝靛蓝紫色灰色白色黑色 字体大小: 标准1 (xx-small)2 (x-small)3 (small)4 (medium)5 (large)6 (x-large)7 (xx-large) 对齐: 标准居左居中居右</p>
-<p>提示：选择您需要装饰的文字, 按上列按钮即可添加上相应的标签</p>
-<p>您还没有登录，请<a href="http://java-mzd.iteye.com/login" target="_blank">登录</a>后发表评论(快捷键 Alt+S / Ctrl+Enter)</p>
-<p><a href="http://java-mzd.iteye.com/" target="_blank"><img src="&quot;java_mzd的博客: &quot;" alt="java_mzd的博客"></a></p>
-<p>java_mzd</p>
+<p>从性能上看，异步IO的性能无疑是最好的。</p>
+<p><strong>各种IO**</strong>的特点**</p>
 <ul>
-<li>浏览: 70475 次</li>
-<li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
-<li>来自: 长沙</li>
-<li><img src="" alt=""></li>
-<li><a href="http://java-mzd.iteye.com/blog/profile" target="_blank">详细资料</a> <a href="http://java-mzd.iteye.com/blog/guest_book" target="_blank">留言簿</a></li>
+<li><strong>阻塞IO</strong>：使用简单，但随之而来的问题就是会形成阻塞，需要独立线程配合，而这些线程在大多数时候都是没有进行运算的。Java的BIO使用这种方式，问题带来的问题很明显，一个Socket需要一个独立的线程，因此，会造成线程膨胀。</li>
+<li><strong>非阻塞IO</strong>：采用轮询方式，不会形成线程的阻塞。Java的NIO使用这种方式，对比BIO的优势很明显，可以使用一个线程进行所有Socket的监听（select）。大大减少了线程数。</li>
 </ul>
-<h3 id="-">搜索本博客</h3>
-<h3 id="-http-java-mzd-iteye-com-blog-user_visits-">最近访客 <a href="http://java-mzd.iteye.com/blog/user_visits" target="_blank">&gt;&gt;更多访客</a></h3>
-<p><a href="http://msnvip.iteye.com/" target="_blank"><img src="&quot;msnvip的博客: msnvip&quot;" alt="msnvip的博客"></a></p>
-<p><a href="http://msnvip.iteye.com/" target="_blank">msnvip</a></p>
-<p><a href="http://kai2008.iteye.com/" target="_blank"><img src="&quot;qinjingkai的博客: 开门见山&quot;" alt="qinjingkai的博客"></a></p>
-<p><a href="http://kai2008.iteye.com/" target="_blank">qinjingkai</a>
-<a href="http://yanxd.iteye.com/" target="_blank"><img src="&quot;yanxd的博客: &quot;" alt="yanxd的博客"></a></p>
-<p><a href="http://yanxd.iteye.com/" target="_blank">yanxd</a></p>
-<p><a href="http://luwei-yinzhijie-com.iteye.com/" target="_blank"><img src="&quot;_bulrush的博客: &quot;" alt="_bulrush的博客"></a></p>
-<p><a href="http://luwei-yinzhijie-com.iteye.com/" target="_blank">_bulrush</a></p>
-<h3 id="-">博客分类</h3>
 <ul>
-<li><a href="http://java-mzd.iteye.com/" target="_blank">全部博客 (43)</a></li>
-<li><a href="http://java-mzd.iteye.com/category/133623" target="_blank">数据结构----------JAVA类集 (5)</a></li>
-<li><p><a href="http://java-mzd.iteye.com/category/153171" target="_blank">TCP/IP (7)</a></p>
-<h3 id="-http-java-mzd-iteye-com-blog-guest_book-">我的留言簿 <a href="http://java-mzd.iteye.com/blog/guest_book" target="_blank">&gt;&gt;更多留言</a></h3>
-</li>
-<li><p>楼主 你工作多久了。。。。
--- by <a href="http://java-mzd.iteye.com/blog/guest_book#39913" target="_blank">fanmingxing</a></p>
-</li>
-<li>写的不错，学习，谢谢！
--- by <a href="http://java-mzd.iteye.com/blog/guest_book#39693" target="_blank">chenge2k</a></li>
-<li>看了LZ的文章，发现工作快两年的我，就像是一块浮起来的木头，真的很惭愧！也不怪我拿 ...
--- by <a href="http://java-mzd.iteye.com/blog/guest_book#39618" target="_blank">GoTiger</a></li>
-</ul>
-<h3 id="-">其他分类</h3>
-<ul>
-<li><a href="http://java-mzd.iteye.com/blog/favorite" target="_blank">我的收藏</a> (23)</li>
-<li><a href="http://java-mzd.iteye.com/blog/code_favorite" target="_blank">我的代码</a> (0)</li>
-<li><a href="http://java-mzd.iteye.com/blog/topic" target="_blank">我的论坛主题帖</a> (3)</li>
-<li><a href="http://java-mzd.iteye.com/blog/post" target="_blank">我的所有论坛帖</a> (34)</li>
-<li><p><a href="http://java-mzd.iteye.com/blog/article" target="_blank">我的精华良好帖</a> (0)</p>
-<h3 id="-">最近加入群组</h3>
-</li>
-<li><p><a href="http://android.group.iteye.com/" target="_blank">Android</a></p>
-</li>
-</ul>
-<h3 id="-">存档</h3>
-<ul>
-<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-05" target="_blank">2011-05</a> (2)</li>
-<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-04" target="_blank">2011-04</a> (7)</li>
-<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-03" target="_blank">2011-03</a> (2)</li>
-<li><p><a href="http://java-mzd.iteye.com/blog/monthblog_more" target="_blank">更多存档...</a></p>
-<h3 id="-">评论排行榜</h3>
-</li>
-<li><p><a href="http://java-mzd.iteye.com/blog/1050043" title="腾讯、淘宝、金山网络，实习生我该何去何从" target="_blank">腾讯、淘宝、金山网络，实习生我该何去何从</a></p>
-</li>
-<li><a href="http://java-mzd.iteye.com/blog/1007577" title="TCP/IP传输层，你懂多少？" target="_blank">TCP/IP传输层，你懂多少？</a></li>
-<li><a href="http://java-mzd.iteye.com/blog/1004784" title="淘宝武汉*面试归来" target="_blank">淘宝武汉/*面试归来</a></li>
-<li><a href="http://java-mzd.iteye.com/blog/1050926" title="淘宝、金山网络，百感交集" target="_blank">淘宝、金山网络，百感交集</a></li>
-<li><p><a href="http://java-mzd.iteye.com/blog/862787" title="开源软件？自由软件？免费软件？你了解多少？" target="_blank">开源软件？自由软件？免费软件？你了解多少 ...</a></p>
-</li>
-<li><p><a href="http://java-mzd.iteye.com/rss" target="_blank"><img src="" alt="Rss"></a></p>
-</li>
-<li><a href="http://fusion.google.com/add?feedurl=http://java-mzd.iteye.com/rss" target="_blank"><img src="" alt="Rss_google"></a>
-声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
-© 2003-2011 ITeye.com. All rights reserved. [ 京ICP证110151号 ]
-<img src="" alt=""></li>
+<li><strong>同步IO</strong>：同步IO保证一个IO操作结束之后才会返回，因此同步IO效率会低一些，但是对应用来说，编程方式会简单。Java的BIO和NIO都是使用这种方式进行数据处理。</li>
+<li><strong>异步IO</strong>：由于异步IO请求只是写入了缓存，从缓存到硬盘是否成功不可知，因此异步IO相当于把一个IO拆成了两部分，一是发起请求，二是获取处理结果。因此，对应用来说增加了复杂性。但是异步IO的性能是所有很好的，而且异步的思想贯穿了IT系统放放面面。</li>
 </ul>
 
       
@@ -1028,8 +245,8 @@ return true;
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Hash表分析以及Java实现/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--Hash表分析以及Java实现" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/IO/">IO</a></li></span></span> | <span class="tags">Tagged <a href="/tags/IO/" class="label label-primary">IO</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（二）-IO模型/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-IO--说说IO（二）-IO模型" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1044,292 +261,186 @@ return true;
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist/">DWR如何获得返回对象 list Map Set list</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-IO--java中的io系统详解/">java中的io系统详解</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-IO--java中的io系统详解/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="dwr-list-map-set-list">DWR如何获得返回对象 list Map Set list</h1>
-<p><strong>DWR**</strong>如何获得返回对象<strong>**list Map Set list.add(JavaBean)</strong></p>
-<p><strong>1**</strong>、调用没有返回值和参数的JAVA方法**</p>
-<p>1.1、dwr.xml的配置</p>
-<p><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod1"/>
-</create>
-</allow>
-</dwr></p>
-<p><allow>标签中包括可以暴露给javascript访问的东西。</p>
-<p><create>标签中指定javascript中可以访问的java类，并定义DWR应当如何获得要进行远程的类的实例。creator=&quot;new&quot;属性指定java类实例的生成方式，new意味着DWR应当调用类的默认构造函数来获得实例，其他的还有spring方式，通过与IOC容器Spring进行集成来获得实例等等。javascript=&quot; testClass &quot;属性指定javascript代码访问对象时使用的名称。</p>
-<p><param>标签指定要公开给javascript的java类名。</p>
-<p><include>标签指定要公开给javascript的方法。不指定的话就公开所有方法。</p>
-<p><exclude>标签指定要防止被访问的方法。
-1.2、javascript中调用
-首先，引入javascript脚本</p>
-<p><script src='dwr/interface/ testClass.js'></script></p>
-<p><script src="/dwr/engine.js"></script></p>
-<p><script src="/dwr/util.js"></script>
-其中TestClass.js是dwr根据配置文件自动生成的，engine.js和util.js是dwr自带的脚本文件。
-其次，编写调用java方法的javascript函数
-Function callTestMethod1(){
-       testClass.testMethod1();
-}
-<strong>2**</strong>、调用有简单返回值的java方法**</p>
-<p><strong>2.1**</strong>、dwr.xml的配置<strong><em>**</em></strong>配置同1.1</p>
-<p><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod2"/>
-</create>
-</allow>
-</dwr>
-2.2、javascript中调用
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数和接收返回值的回调函数
-Function callTestMethod2(){
-       testClass.testMethod2(callBackFortestMethod2);
-}
-Function callBackFortestMethod2(data){
-      //其中date接收方法的返回值
-      //可以在这里对返回值进行处理和显示等等
-alert(&quot;the return value is &quot; + data);
-}
-其中callBackFortestMethod2是接收返回值的回调函数**</p>
-<p><strong>3**</strong>、调用有简单参数的java方法**</p>
-<p><strong>3.1**</strong>、dwr.xml的配置<strong><em>**</em></strong>配置同1.1</p>
-<p><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod3"/>
-</create>
-</allow>
-</dwr>
-3.2、javascript中调用
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数
-Function callTestMethod3(){
-                  //定义要传到java方法中的参数
-       var data;
-       //构造参数
-       data = “test String”;
-       testClass.testMethod3(data);
-}**</p>
-<p><strong>4**</strong>、调用返回JavaBean的java方法<strong><strong>4.1</strong></strong>、dwr.xml的配置<em>**</em><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod4"/>
-</create></p>
-<p>&lt;convert converter=&quot;bean&quot; match=&quot;&quot;com.dwr.TestBean&quot;&gt;
-                   <param name="include" value="username,password" />
-</convert>
-</allow>
-</dwr></p>
-<p><creator><strong>**标签负责公开用于Web远程的类和类的方法，<convertor>标签则负责这些方法的参数和返回类型。convert元素的作用是告诉DWR在服务器端Java 对象表示和序列化的JavaScript之间如何转换数据类型。DWR自动地在Java和JavaScript表示之间调整简单数据类型。这些类型包括Java原生类型和它们各自的封装类表示，还有String、Date、数组和集合类型。DWR也能把JavaBean转换成JavaScript 表示，但是出于安全性的原因，要求显式的配置，<convertor>标签就是完成此功能的。converter=&quot;bean&quot;属性指定转换的方式采用JavaBean命名规范，match=&quot;&quot;com.dwr.TestBean&quot;属性指定要转换的javabean名称，<param>标签指定要转换的JavaBean属性。
-4.2、javascript中调用
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数和接收返回值的回调函数
-Function callTestMethod4(){
-       testClass.testMethod4(callBackFortestMethod4);
-}
-Function callBackFortestMethod4(data){
-      //其中date接收方法的返回值
-//对于JavaBean返回值，有两种方式处理
-              //不知道属性名称时，使用如下方法
-            for(var property in data){
-               alert(&quot;property:&quot;+property);
-               alert(property+&quot;:&quot;+data[property]);
-            }
-//知道属性名称时，使用如下方法
-            alert(data.username);
-            alert(data.password);
-}
-其中callBackFortestMethod4是接收返回值的回调函数</strong></p>
-<p><strong>5**</strong>、调用有JavaBean参数的java方法<strong><strong>5.1</strong></strong>、dwr.xml的配置
-<em>**</em>配置同4.1</p>
-<p><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod5"/>
-</create></p>
-<p><convert converter="bean" match="com.dwr.TestBean">
-                   <param name="include" value="username,password" />
-</convert>
-</allow>
-</dwr>
-5.2、javascript中调用
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数
-Function callTestMethod5(){
-                  //定义要传到java方法中的参数
-       var data;
-       //构造参数，date实际上是一个object
-       data = { username:&quot;user&quot;, password:&quot;password&quot; }
-       testClass.testMethod5(data);
-}**</p>
-<p><strong>6**</strong>、调用返回List、Set或者Map的java方法<strong><strong>6.1</strong></strong>、dwr.xml的配置<strong><em>**</em></strong>配置同4.1</p>
-<p><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod6"/>
-</create></p>
-<p><convert converter="bean" match="com.dwr.TestBean"></p>
-<p><param name="include" value="username,password" />
-</convert>
-</allow>
-</dwr>
-注意：如果List、Set或者Map中的元素均为简单类型（包括其封装类）或String、Date、数组和集合类型，则不需要<convert>标签。
-6.2、javascript中调用(以返回List为例，List的元素为TestBean)
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数和接收返回值的回调函数
-Function callTestMethod6(){
-       testClass.testMethod6(callBackFortestMethod6);
-}
-Function callBackFortestMethod6(data){
-      //其中date接收方法的返回值
-//对于JavaBean返回值，有两种方式处理
-              //不知道属性名称时，使用如下方法
-            for(var i=0;i&lt;data.length;i++){
-for(var property in data){
-                   alert(&quot;property:&quot;+property);
-                   alert(property+&quot;:&quot;+data[property]);
-                }
-}
-//知道属性名称时，使用如下方法
-for(var i=0;i&lt;data.length;i++){
-                alert(data.username);
-                alert(data.password);
-}
-}**</p>
-<p><strong>7**</strong>、调用有List、Set或者Map参数的java方法**</p>
-<p><strong>7.1**</strong>、dwr.xml的配置<em>**</em><dwr></p>
-<p><allow></p>
-<p><create creator="new" javascript="testClass" ></p>
-<p><param name="class" value="/com.dwr.TestClass" /></p>
-<p><include method="testMethod7"/>
-</create></p>
-<p><convert converter="bean" match="com.dwr.TestBean"></p>
-<p><param name="include" value="username,password" />
-</convert>
-</allow></p>
-<p><signatures>
-&lt;![CDATA[
-import java.util.List;
-import com.dwr.TestClass;
-import com.dwr.TestBean;
-TestClass.testMethod7(List<TestBean>);
-]]&gt;
-</signatures>
-</dwr></p>
-<p><signatures><em>**</em>标签是用来声明java方法中List、Set或者Map参数所包含的确切类，以便java代码作出判断。
-7.2、javascript中调用(以返回List为例，List的元素为TestBean)
-首先，引入javascript脚本
-其次，编写调用java方法的javascript函数
-Function callTestMethod7(){
-//定义要传到java方法中的参数
-       var data;
-       //构造参数，date实际上是一个object数组，即数组的每个元素均为object
-data = [
-                       {
-                          username:&quot;user1&quot;,
-                          password:&quot;password2&quot;
-                       },
-                       {
-                          username:&quot;user2&quot;,
-                          password:&quot; password2&quot;
-                       }
-                   ];
-       testClass.testMethod7(data);
-}
-注意：
-1、对于第6种情况，如果java方法的返回值为Map，则在接收该返回值的javascript回调函数中如下处理：
-function callBackFortestMethod(data){
-            //其中date接收方法的返回值
-            for(var property in data){
-                   var bean = data[property];
-                   alert(bean.username);
-                   alert(bean.password);
-               }
-}
-2、对于第7种情况，如果java的方法的参数为Map（假设其key为String，value为TestBean），则在调用该方法的javascript函数中用如下方法构造要传递的参数：
-function callTestMethod (){
-               //定义要传到java方法中的参数
-               var data;
-               //构造参数，date实际上是一个object，其属性名为Map的key，属性值为Map的value
-               data = {
-                          &quot;key1&quot;:{
-                              username:&quot;user1&quot;,
-                             password:&quot;password2&quot;
-                          },
-                          &quot;key2&quot;:{
-                             username:&quot;user2&quot;,
-                             password:&quot; password2&quot;
-                          }
-                      };
-               testClass.testMethod(data);
-}
-并且在dwr.xml中增加如下的配置段</p>
-<p><signatures>
-&lt;![CDATA[
-import java.util.List;
-import com.dwr.TestClass;
-import com.dwr.TestBean;
-TestClass.testMethod7(Map<String,TestBean>);
-]]&gt;
-</signatures>
-3、由以上可以发现，对于java方法的返回值为List(Set)的情况，DWR将其转化为Object数组，传递个javascript；对于java方法的返回值为Map的情况，DWR将其转化为一个Object，其中Object的属性为原Map的key值，属性值为原Map相应的value值。
-4、如果java方法的参数为List(Set)和Map的情况，javascript中也要根据3种所说，构造相应的javascript数据来传递到java中。**</p>
-<p><strong>======================================================================================</strong></p>
-<p><a href=""></a><strong>Scripting Introduction</strong></p>
-<p><strong>DWR**</strong>根据dwr.xml生成和Java代码类似的Javascript代码。**</p>
-<p><strong>相对而言Java同步调用，创建与Java代码匹配的Ajax远程调用接口的最大挑战来至与实现Ajax的异步调用特性。</strong></p>
-<p><strong>DWR**</strong>通过引入回调函数来解决这个问题，当结果被返回时，DWR会调用这个函数。**</p>
-<p><strong>有两种推荐的方式来使用DWR实现远程方法调用。可以通过把回调函数放在参数列表里，也可以把回调函数放到元数据对象里。</strong></p>
-<p><strong>当然也可以把回调函数做为第一个参数，但是不建议使用这种方法。因为这种方法在处理</strong><a href="http://wiki.javascud.org/display/dwrcn/Accessing+Servlet+Objects" title="Accessing Servlet Objects" target="_blank">自动处理http对象</a><strong>时(查看&quot;Alternative Method&quot;)上会有问题。这个方法主要是为向下兼容而存在的。</strong></p>
-<p><a href=""></a><strong>简单的回调函数</strong></p>
-<p><strong>假设你有一个这样的Java方法：</strong></p>
-<p><strong>public class Remote {    public String getData(int index) { ... }}</strong></p>
-<p><strong>我们可以在Javascript中这样使用：</strong></p>
-<p><strong><script type="text/javascript"    src="[WEBAPP]/dwr/interface/Remote.js"> </script><script type="text/javascript"    src="[WEBAPP]/dwr/engine.js"> </script>...function handleGetData(str) {  alert(str);}Remote.getData(42, handleGetData);</strong></p>
-<p><strong>42**</strong>是Java方法getData()的一个参数。**</p>
-<p><strong>此外你也可以使用这种减缩格式：</strong></p>
-<p><strong>Remote.getData**</strong>(42, function(str) { alert(str); });**</p>
-<p><a href=""></a><strong>调用元数据对象(Meta-Data)</strong></p>
-<p><strong>另外一种语法时使用&quot;调用元数据对象&quot;来指定回调函数和其他的选项。上面的例子可以写成这样：</strong></p>
-<p><strong>Remote.getData**</strong>(42, {  callback:function(str) { alert(str); }});**</p>
-<p><strong>这种方法有很多优点：易于阅读，更重要的指定额外的调用选项。</strong></p>
-<p><a href=""></a><strong>超时和错误处理</strong></p>
-<p><strong>在回调函数的元数据中你可以指定超时和错误的处理方式。例如：</strong></p>
-<p><strong>Remote.getData**</strong>(42, {  callback:function(str) { alert(str); },  timeout:5000,  errorHandler:function(message) { alert(&quot;Oops: &quot; + message); }});**</p>
-<p><a href=""></a><strong>查找回调函数</strong></p>
-<p><strong>有些情况下我们很难区分各种回调选项(记住，Javascript是不支持函数重载的)。例如：</strong></p>
-<p><strong>Remote.method**</strong>({ timeout:3 }, { errorHandler:somefunc });**</p>
-<p><strong>这两个参数之一是bean的参数，另一个是元数据对象，但是我们不能清楚的告诉DWR哪个是哪个。为了可以跨浏览器，我们假定null == undefined。 所以当前的情况，规则是：</strong></p>
-<ul>
-<li><strong>如果第一个或最后一个是一个函数，那么它就是回调函数，没有元数据对象，并且其他参数都是Java的方法参数。</strong></li>
-<li><strong>另外，如果最后一个参数是一个对象，这个对象中有一个callback成员，并且它是个函数，那么这个对象就是元数据对象，其他的都是Java方法参数。</strong></li>
-<li><strong>另外，如果第一个参数是 null ，我们就假设没有回调函数，并且其他的都是Java方法参数。尽管如此，我们会检查最后一个参数是不是null，如果是就发出警告。</strong></li>
-<li><strong>最后如果最后一个参数是null，那么就没有callback函数。</strong></li>
-<li><strong>另外，发出错误信号是个糟糕的请求格式。</strong></li>
-</ul>
-<p><a href=""></a><strong>创造一个与Java对象匹配的Javascript对象</strong></p>
-<p><strong>假设你有这样的Java方法：</strong></p>
-<p><strong>public class Remote {  public void setPerson(Person p) {    this.person = p;  }}</strong></p>
-<p><strong>Person**</strong>对象的结构是这样的：**</p>
-<p><strong>public Person {  private String name;  private int age;  private Date[] appointments;  // getters and setters ...}</strong></p>
-<p><strong>那么你可以在Javascript中这样写：</strong></p>
-<p><strong>var**</strong>p = {  name:&quot;Fred Bloggs&quot;,  age:42,  appointments:[ new Date(), new Date(&quot;1 Jan 2008&quot;) ]};Remote.setPerson(p);**</p>
-<p><strong>在Javascript没有出现的字段，在Java中就不会被设置。</strong></p>
-<p><strong>因为setter都是返回&#39;void&#39;，我们就不需要使用callback函数了。如果你想要一个返回void的服务端方法的完整版，你也可以加上callback函数。很明显DWR不会向它传递任何参数。</strong></p>
+        <h1 id="java-io-">java中的io系统详解</h1>
+<p>Java 流在处理上分为字符流和字节流。字符流处理的单元为 2 个字节的 Unicode 字符，分别操作字符、字符数组或字符串，而字节流处理单元为 1 个字节，操作字节和字节数组。</p>
+<p>Java 内用 Unicode 编码存储字符，字符流处理类负责将外部的其他编码的字符流和 java 内 Unicode 字符流之间的转换。而类 InputStreamReader 和 OutputStreamWriter 处理字符流和字节流的转换。字符流（一次可以处理一个缓冲区）一次操作比字节流（一次一个字节）效率高。 </p>
+<p><strong>( 一 )以字节为导向的 stream------InputStream/OutputStream</strong></p>
+<p>InputStream 和 OutputStream 是两个 abstact 类，对于字节为导向的 stream 都扩展这两个鸡肋（基类 ^_^ ） ;</p>
+<p>1、 InputStream</p>
+<p><img src="http://www.blogjava.net/images/blogjava_net/sinojava/etc/42134.gif" alt="42134.gif"> </p>
+<p>1.1</p>
+<p>ByteArrayInputStream -- 把内存中的一个缓冲区作为 InputStream 使用 .</p>
+<p>construct---</p>
+<p>(A)ByteArrayInputStream(byte[]) 创建一个新字节数组输入流（ ByteArrayInputStream ），它从指定字节数组中读取数据（ 使用 byte 作为其缓冲区数组）</p>
+<p>(B)---ByteArrayInputStream(byte[], int, int) 创建一个新字节数组输入流，它从指定字节数组中读取数据。</p>
+<p>---mark:: 该字节数组未被复制。</p>
+<p>1.2</p>
+<p>StringBufferInputStream -- 把一个 String 对象作为 InputStream .</p>
+<p>construct---  </p>
+<p>StringBufferInputStream(String) 据指定串创建一个读取数据的输入流串。</p>
+<p>注释：不推荐使用 StringBufferInputStream 方法。 此类不能将字符正确的转换为字节。</p>
+<p>同 JDK 1.1 版中的类似，从一个串创建一个流的最佳方法是采用 StringReader 类。</p>
+<p>1.3</p>
+<p>FileInputStream -- 把一个文件作为 InputStream ，实现对文件的读取操作</p>
+<p>construct---</p>
+<p>(A)FileInputStream(File name) 创建一个输入文件流，从指定的 File 对象读取数据。</p>
+<p>(B)FileInputStream(FileDescriptor) 创建一个输入文件流，从指定的文件描述器读取数据。</p>
+<p>(C)-FileInputStream(String  name) 创建一个输入文件流，从指定名称的文件读取数据。</p>
+<p>method ---- read() 从当前输入流中读取一字节数据。</p>
+<p>read(byte[]) 将当前输入流中 b.length 个字节数据读到一个字节数组中。</p>
+<p>read(byte[], int, int) 将输入流中 len 个字节数据读入一个字节数组中。</p>
+<p>1.4</p>
+<p>PipedInputStream ：实现了 pipe 的概念，主要在线程中使用 . 管道输入流是指一个通讯管道的接收端。</p>
+<p>一个线程通过管道输出流发送数据，而另一个线程通过管道输入流读取数据，这样可实现两个线程间的通讯。</p>
+<p>construct---</p>
+<p>PipedInputStream() 创建一个管道输入流，它还未与一个管道输出流连接。</p>
+<p>PipedInputStream(PipedOutputStream) 创建一个管道输入流 , 它已连接到一个管道输出流。</p>
+<p>1.5</p>
+<p>SequenceInputStream ：把多个 InputStream 合并为一个 InputStream . “序列输入流”类允许应用程序把几个输入流连续地合并起来，</p>
+<p>并且使它们像单个输入流一样出现。每个输入流依次被读取，直到到达该流的末尾。</p>
+<p>然后“序列输入流”类关闭这个流并自动地切换到下一个输入流。</p>
+<p>construct---</p>
+<p>SequenceInputStream(Enumeration) 创建一个新的序列输入流，并用指定的输入流的枚举值初始化它。</p>
+<p>SequenceInputStream(InputStream, InputStream) 创建一个新的序列输入流，初始化为首先 读输入流 s1, 然后读输入流 s2 。 </p>
+<p>2、 OutputSteam</p>
+<p><img src="http://www.blogjava.net/images/blogjava_net/sinojava/etc/42135.gif" alt="42135.gif">
+2.1</p>
+<p>ByteArrayOutputStream ： 把信息存入内存中的一个缓冲区中 . 该类实现一个以字节数组形式写入数据的输出流。</p>
+<p>当数据写入缓冲区时，它自动扩大。用 toByteArray() 和 toString() 能检索数据。</p>
+<p>constructor</p>
+<p>(A)--- ByteArrayOutputStream() 创建一个新的字节数组输出流。</p>
+<p>(B)--- ByteArrayOutputStream() 创建一个新的字节数组输出流。</p>
+<p>(C)--- ByteArrayOutputStream(int) 创建一个新的字节数组输出流，并带有指定大小字节的缓冲区容量。</p>
+<p>toString(String) 根据指定字符编码将缓冲区内容转换为字符串，并将字节转换为字符。</p>
+<p>write(byte[], int, int) 将指定字节数组中从偏移量 off 开始的 len 个字节写入该字节数组输出流。</p>
+<p>write(int) 将指定字节写入该字节数组输出流。</p>
+<p>writeTo(OutputStream) 用 out.write(buf, 0, count) 调用输出流的写方法将该字节数组输出流的全部内容写入指定的输出流参数。</p>
+<p>2.2  </p>
+<p>FileOutputStream: 文件输出流是向 File 或 FileDescriptor 输出数据的一个输出流。</p>
+<p>constructor</p>
+<p>(A)FileOutputStream(File  name) 创建一个文件输出流，向指定的 File 对象输出数据。</p>
+<p>(B)FileOutputStream(FileDescriptor) 创建一个文件输出流，向指定的文件描述器输出数据。</p>
+<p>(C)FileOutputStream(String  name) 创建一个文件输出流，向指定名称的文件输出数据。</p>
+<p>(D)FileOutputStream(String, boolean) 用指定系统的文件名，创建一个输出文件。</p>
+<p>2.3</p>
+<p>PipedOutputStream: 管道输出流是指一个通讯管道的发送端。 一个线程通过管道输出流发送数据，</p>
+<p>而另一个线程通过管道输入流读取数据，这样可实现两个线程间的通讯。</p>
+<p>constructor</p>
+<p>(A)PipedOutputStream() 创建一个管道输出流，它还未与一个管道输入流连接。</p>
+<p>(B)PipedOutputStream(PipedInputStream) 创建一个管道输出流，它已连接到一个管道输入流。 </p>
+<p><strong>( 二 )以字符为导向的 stream Reader/Writer</strong></p>
+<p>以 Unicode 字符为导向的 stream ，表示以 Unicode 字符为单位从 stream 中读取或往 stream 中写入信息。</p>
+<p>Reader/Writer 为 abstact 类</p>
+<p>以 Unicode 字符为导向的 stream 包括下面几种类型：</p>
+<ol>
+<li>Reader</li>
+</ol>
+<p><img src="http://www.blogjava.net/images/blogjava_net/sinojava/etc/42136.gif" alt="42136.gif"> </p>
+<p>1.1</p>
+<p>  CharArrayReader ：与 ByteArrayInputStream 对应此类实现一个可用作字符输入流的字符缓冲区</p>
+<p>constructor</p>
+<p>CharArrayReader(char[]) 用指定字符数组创建一个 CharArrayReader 。</p>
+<p>CharArrayReader(char[], int, int) 用指定字符数组创建一个 CharArrayReader</p>
+<p>1.2</p>
+<p>StringReader ： 与 StringBufferInputStream 对应其源为一个字符串的字符流。</p>
+<p>StringReader(String) 创建一新的串读取者。</p>
+<p>1.3</p>
+<p>FileReader ： 与 FileInputStream 对应</p>
+<p>1.4</p>
+<p>PipedReader ：与 PipedInputStream 对应</p>
+<ol>
+<li><p>Writer</p>
+<p><img src="http://www.blogjava.net/images/blogjava_net/sinojava/etc/42137.gif" alt="42137.gif"></p>
+</li>
+</ol>
+<p>2.1    CharArrayWrite ： 与 ByteArrayOutputStream 对应</p>
+<p>2.2   StringWrite ：无与之对应的以字节为导向的 stream</p>
+<p>2.3  FileWrite ： 与 FileOutputStream 对应</p>
+<p>2.4  PipedWrite ：与 PipedOutputStream 对应 </p>
+<p>3、两种不同导向的 stream 之间的转换  </p>
+<p>3.1</p>
+<p>InputStreamReader 和 OutputStreamReader ：</p>
+<p>把一个以字节为导向的 stream 转换成一个以字符为导向的 stream 。</p>
+<p>InputStreamReader 类是从字节流到字符流的桥梁：它读入字节，并根据指定的编码方式，将之转换为字符流。</p>
+<p>使用的编码方式可能由名称指定，或平台可接受的缺省编码方式。</p>
+<p>InputStreamReader 的 read() 方法之一的每次调用，可能促使从基本字节输入流中读取一个或多个字节。</p>
+<p>为了达到更高效率，考虑用 BufferedReader 封装 InputStreamReader ，</p>
+<p>BufferedReader in = new BufferedReader(new InputStreamReader(System.in));</p>
+<p>例如： // 实现从键盘输入一个整数</p>
+<ol>
+<li>String s = null;             </li>
+<li>InputStreamReader re = new InputStreamReader(System.in);  </li>
+<li><pre><code>       BufferedReader br = new BufferedReader(re);  
+</code></pre></li>
+<li><pre><code>       try {  
+</code></pre></li>
+<li><pre><code>       s = br.readLine();  
+</code></pre></li>
+<li><pre><code>       System.out.println(&quot;s= &quot; + Integer.parseInt(s));  
+</code></pre></li>
+<li><pre><code>       br.close();  
+</code></pre></li>
+<li><pre><code>       }  
+</code></pre></li>
+<li><pre><code>       catch (IOException e)  
+</code></pre></li>
+<li><pre><code>       {  
+</code></pre></li>
+<li><pre><code>       e.printStackTrace();  
+</code></pre></li>
+<li><pre><code>       }  
+</code></pre></li>
+<li><pre><code>       catch (NumberFormatException e)// 当应用程序试图将字符串转换成一种数值类型，但该字符串不能转换为适当格式时，抛出该异常。  
+</code></pre></li>
+<li><pre><code>       {  
+</code></pre></li>
+<li><pre><code>       System.out.println(&quot; 输入的不是数字 &quot;);  
+</code></pre></li>
+<li><pre><code>       }  
+</code></pre></li>
+</ol>
+<p>InputStreamReader(InputStream) 用缺省的字符编码方式，创建一个 InputStreamReader 。</p>
+<p>InputStreamReader(InputStream, String) 用已命名的字符编码方式，创建一个 InputStreamReader 。</p>
+<p>OutputStreamWriter 将多个字符写入到一个输出流，根据指定的字符编码将多个字符转换为字节。</p>
+<p>每个 OutputStreamWriter 合并它自己的 CharToByteConverter, 因而是从字符流到字节流的桥梁。</p>
+<p><strong>（三）Java IO 的一般使用原则 ：  </strong></p>
+<p>一、按数据来源（去向）分类：</p>
+<p>1 、是文件： FileInputStream, FileOutputStream, ( 字节流 )FileReader, FileWriter( 字符 )</p>
+<p>2 、是 byte[] ： ByteArrayInputStream, ByteArrayOutputStream( 字节流 )</p>
+<p>3 、是 Char[]: CharArrayReader, CharArrayWriter( 字符流 )</p>
+<p>4 、是 String: StringBufferInputStream, StringBufferOuputStream ( 字节流 )StringReader, StringWriter( 字符流 )</p>
+<p>5 、网络数据流： InputStream, OutputStream,( 字节流 ) Reader, Writer( 字符流 )</p>
+<p>二、按是否格式化输出分：</p>
+<p>1 、要格式化输出： PrintStream, PrintWriter</p>
+<p>三、按是否要缓冲分：</p>
+<p>1 、要缓冲： BufferedInputStream, BufferedOutputStream,( 字节流 ) BufferedReader, BufferedWriter( 字符流 )</p>
+<p>四、按数据格式分：</p>
+<p>1 、二进制格式（只要不能确定是纯文本的） : InputStream, OutputStream 及其所有带 Stream 结束的子类</p>
+<p>2 、纯文本格式（含纯英文与汉字或其他编码方式）； Reader, Writer 及其所有带 Reader, Writer 的子类</p>
+<p>五、按输入输出分：</p>
+<p>1 、输入： Reader, InputStream 类型的子类</p>
+<p>2 、输出： Writer, OutputStream 类型的子类</p>
+<p>六、特殊需要：</p>
+<p>1 、从 Stream 到 Reader,Writer 的转换类： InputStreamReader, OutputStreamWriter</p>
+<p>2 、对象输入输出： ObjectInputStream, ObjectOutputStream</p>
+<p>3 、进程间通信： PipeInputStream, PipeOutputStream, PipeReader, PipeWriter</p>
+<p>4 、合并输入： SequenceInputStream</p>
+<p>5 、更特殊的需要： PushbackInputStream, PushbackReader, LineNumberInputStream, LineNumberReader</p>
+<p>决定使用哪个类以及它的构造进程的一般准则如下（不考虑特殊需要）：</p>
+<p>首先，考虑最原始的数据格式是什么： 原则四</p>
+<p>第二，是输入还是输出：原则五</p>
+<p>第三，是否需要转换流：原则六第 1 点</p>
+<p>第四，数据来源（去向）是什么：原则一</p>
+<p>第五，是否要缓冲：原则三 （特别注明：一定要注意的是 readLine() 是否有定义，有什么比 read, write 更特殊的输入或输出方法）</p>
+<p>第六，是否要格式化输出：原则二 </p>
 
       
     </div>
@@ -1339,8 +450,716 @@ TestClass.testMethod7(Map<String,TestBean>);
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/IO/">IO</a></li></span></span> | <span class="tags">Tagged <a href="/tags/IO/" class="label label-primary">IO</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-IO--java中的io系统详解/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-IO--java中的io系统详解" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（一）-IO的分层/">说说IO（一）</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（一）-IO的分层/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-io-io-">说说IO（一）- IO的分层</h1>
+<p>IO性能对于一个系统的影响是至关重要的。一个系统经过多项优化以后，瓶颈往往落在数据库；而数据库经过多种优化以后，瓶颈最终会落到IO。而IO性能的发展，明显落后于CPU的发展。Memchached也好，NoSql也好，这些流行技术的背后都在直接或者间接地回避IO瓶颈，从而提高系统性能。</p>
+<p><strong>IO**</strong>系统的分层：**</p>
+<p><img src="" alt=""></p>
+<ol>
+<li>三层结构</li>
+</ol>
+<p>上图层次比较多，但总的就是三部分。<strong>磁盘</strong>（存储）、<strong>VM</strong>（卷管理）和<strong>文件系统</strong>。专有名词不好理解，打个比方说：磁盘就相当于一块待用的空地；LVM相当于空地上的围墙（把空地划分成多个部分）；文件系统则相当于每块空地上建的楼房（决定了有多少房间、房屋编号如何，能容纳多少人住）；而房子里面住的人，则相当于系统里面存的数据。</p>
+<ul>
+<li><strong>文件系统—数据如何存放？</strong></li>
+</ul>
+<p>对应了上图的File System和Buffer Cache。</p>
+<p><strong>File System**</strong>（文件系统）：解决了空间管理的问题**，即：数据如何存放、读取。</p>
+<p><strong>Buffer Cache</strong>：解决数据缓冲的问题。对读，进行cache，即：缓存经常要用到的数据；对写，进行buffer，缓冲一定数据以后，一次性进行写入。</p>
+<ul>
+<li><strong>VM—磁盘空间不足了怎么办？</strong></li>
+</ul>
+<p>对应上图的Vol Mgmt。</p>
+<p>VM其实跟IO没有必然联系。他是处于文件系统和磁盘（存储）中间的一层。<strong>VM**</strong>屏蔽了底层磁盘对上层文件系统的影响**。当没有VM的时候，文件系统直接使用存储上的地址空间，因此文件系统直接受限于物理硬盘，这时如果发生磁盘空间不足的情况，对应用而言将是一场噩梦，不得不新增硬盘，然后重新进行数据复制。而VM则可以实现动态扩展，而对文件系统没有影响。另外，VM也可以把多个磁盘合并成一个磁盘，对文件系统呈现统一的地址空间，这个特性的杀伤力不言而喻。</p>
+<ul>
+<li><strong>存储—数据放在哪儿？如何访问？如何提高IO速度？</strong></li>
+</ul>
+<p>对应上图的Device Driver、IO Channel和Disk Device</p>
+<p>数据最终会放在这里，因此，效率、数据安全、容灾是这里需要考虑的问题。而提高存储的性能，则可以直接提高物理IO的性能</p>
+<pre><code>2. Logical IO vs Physical IO
+</code></pre><p>逻辑IO是操作系统发起的IO，这个数据可能会放在磁盘上，也可能会放在内存（文件系统的Cache）里。</p>
+<p>物理IO是设备驱动发起的IO，这个数据最终会落在磁盘上。</p>
+<pre><code>  逻辑IO和物理IO不是一一对应的。
+</code></pre>
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/IO/">IO</a></li></span></span> | <span class="tags">Tagged <a href="/tags/IO/" class="label label-primary">IO</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-IO--说说IO（一）-IO的分层/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-IO--说说IO（一）-IO的分层" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE--JSTLEL详解/">JSTL EL 详解</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE--JSTLEL详解/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="jstl-el-">JSTL EL 详解</h1>
+<p><a href="http://www.javawind.net/" target="_blank">风信Java论坛</a> &gt;&gt; <a href="http://www.javawind.net/document.html" target="_blank">Java document</a> &gt;&gt; JSTL EL 详解 # JSTL EL 详解  <strong>EL**</strong>表达式**</p>
+<p><strong>概述**</strong>：** <a href="http://www.javawind.net/document.html" target="_blank">JavaWind.net Document</a>
+      在JSP页面中，使用标签库代替传统的Java片段语言来实现页面的显示逻辑已经不是新技术了，然而，由自定义标签很容易造成重复定义和非标准的实现。鉴于此，出现了JSTL（JSP Standard Tag Library），为大多数JSP页面逻辑提供了实现的JSTL技术，该技术本身就是一个标签库。
+      Sun公司Java规范标准的JSTL由apache jakarta组织负责维护。作为开源的标准技术，它一直在不断地完善。JSTL的发布包有两个版本：Standard-1.0 Taglib、Standard-1.1 Taglib，它们在使用时是不同的。
+      Standard-1.0 Taglib（JSTL1.0）支持Servlet2.3和JSP1.2规范，Web应用服务器Tomcat4支持这些规范，而它的发布也在Tomcat 4.1.24测试通过了。
+      Standard-1.1 Taglib（JSTL1.1）支持Servlet2.4和JSP2.0规范，Web应用服务器Tomcat5支持这些规范，它的发布在Tomcat 5.0.3测试通过了。
+      在本章的介绍中，将以由Sun发布的Standard-1.1 Taglib标签库为主，而apache jakarta组织发布的开源标签库，可以从<a href="http://jakarta.apache.org/taglibs/找到所需要的帮助。Sun发布的标准JSTL1.1标签库有以下几个标签：" target="_blank">http://jakarta.apache.org/taglibs/找到所需要的帮助。Sun发布的标准JSTL1.1标签库有以下几个标签：</a>
+      核心标签库：包含Web应用的常见工作，比如：循环、表达式赋值、基本输入输出等。
+      国际化标签库：用来格式化显示数据的工作，比如：对不同区域的日期格式化等。
+      数据库标签库：可以做访问数据库的工作。
+      XML标签库：用来访问XML文件的工作，这是JSTL标签库的一个特点。
+      函数标签库：用来读取已经定义的某个函数。</p>
+<pre><code>  此外，JSTL还提供了EL表达式语言（Expression Language）来进行辅助的工作。
+  JSTL标签库由标签库和EL表达式语言两个部分组成。EL在JSTL 1.0规范中被引入，当时用来作为Java表达式来工作，而该表达式必须配合JSTL的标签库才能得到需要的结果。
+  说明：在JSTL 1.1规范中，JSP2.0容器已经能够独立的理解任何EL表达式。EL可以独立出现在JSP页面的任何角落。本文随后的内容将以JSTL 1.1规范作为介绍的重点。
+</code></pre><p> <strong>9.2.1 JSTL EL**</strong>表达式语言简介** <a href="http://www.javawind.net/document.html" target="_blank">JavaWind.net Document</a>
+      EL是从JavaScript脚本语言得到启发的一种表达式语言，它借鉴了JavaScript多类型转换无关性的特点。在使用EL从scope中得到参数时可以自动转换类型，因此对于类型的限制更加宽松。Web服务器对于request请求参数通常会以String类型来发送，在得到时使用的Java语言脚本就应该是request.getParameter(“XXX”)，这样的话，对于实际应用还必须进行强制类型转换。而EL就将用户从这种类型转换的繁琐工作脱离出来，允许用户直接使用EL表达式取得的值，而不用关心它是什么类型。
+      下面的示例就是一个EL表达式，见例9.1。
+      例9.1：简单EL表达式</p>
+<pre><code>  &lt;%@ page contentType=&quot;text/html; charset=UTF-8&quot;%&gt;
+  &lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.01 Transitional//EN&quot;&gt;
+  &lt;html&gt;
+   &lt;body&gt; ${sampleValue + 1} &lt;br&gt; &lt;/body&gt;
+  &lt;/html&gt;
+
+  这个示例将在JSP页面显示为“1”，EL表达式必须以“${XXX}”来表示，其中“XXX”部分就是具体表达式内容，“${}”将这个表达式内容包含在其中作为EL表达式的定义。本示例可以在满足JSP2.0规范的任何Web应用服务器中使用。
+</code></pre><p> <strong>9.2.2 EL**</strong>表达式的默认变量** <a href="http://www.javawind.net/document.html" target="_blank">JavaWind.net Document</a>
+      一个EL表达式包含变量和操作符两个内容。任何存在于JSP作用范围的JavaBean都可以被转化成EL表达式来使用，它所包含的默认变量如下：</p>
+<p><strong>1**</strong>．默认变量pageScope、requestScope、sessionScope、applicationScope**
+      这4个默认变量包含Scope作用范围的参数集合，相当于被保存在java.util.Map中的某个参数。下面看简单的示例9.2：</p>
+<p>例9.2：使用sessionScope变量的EL表达式</p>
+<p>&lt;%request.getSession().setAttribute(&quot;sampleValue&quot;, new Integer(10));%&gt;
+${sessionScope.sampleValue}</p>
+<p>取得保存在Session中参数的sessionScope变量的EL表达式，“.”是property访问操作符，在这里表示从Session中取得“键”为“sampleValue”的参数，并显示出来。显示结果为“10”。</p>
+<p><strong>2**</strong>．默认变量param、paramValues**
+      这两个默认变量包含请求参数的集合，param表明请求包含的参数为单一控件，paramValues表明请求包含的参数为控件数组。下面看一个简单示例9.3：</p>
+<p>例9.3：提交请求的页面和接受的页面</p>
+<p>&lt;%@ page contentType=&quot;text/html; charset=UTF-8&quot;%&gt;
+&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.01 Transitional//EN&quot;&gt;</p>
+<html>
+ <body>
+     <form action="SampleJsp.jsp">
+    <input type="text" name="sampleValue" value="10">
+    <input type="text" name="sampleValue" value="11">
+    <input type="text" name="sampleValue" value="12">
+    <input type="text" name="sampleSingleValue" value="SingleValue">
+    <input type="submit" value="Submit">
+    </form>
+ </body>
+</html>
+
+<pre><code>  在这个页面中定义了两组控件，控件名为“sampleValue”的是一套控件数组，控件名为“sampleSingleValue”的是单一控件，通过递交将请求参数传送到SampleJsp.jsp。
+</code></pre><p>&lt;%@ page contentType=&quot;text/html; charset=UTF-8&quot;%&gt;
+&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.01 Transitional//EN&quot;&gt;</p>
+<html>
+ <body>
+    ${paramValues.sampleValue[2]} <br>
+    ${param.sampleSingleValue} <br>
+ </body>
+</html>
+
+<pre><code>  这是请求转发到的页面，通过EL表达式的paramValues变量得到控件数组中最后一个控件的递交参数，通过EL表达式的param变量得到单一控件的递交参数。控件数组参数的EL表达式使用“[]”来指定数组下标。本示例将显示控件数组中最后一个控件的值“12”和单一控件的值“SingleValue”。
+</code></pre><p><strong>3**</strong>．默认变量header、headerValues**
+      这两个默认变量包含请求参数头部信息的集合，header变量表示单一头部信息，headerValues则表示数组型的头部信息。</p>
+<p><strong>4**</strong>．默认变量cookie**
+      包含所有请求的cookie集合，集合中的每个对象对应javax.servlet.http.Cookie。</p>
+<p><strong>5**</strong>．默认变量initParam**
+      包含所有应用程序初始化参数的集合。</p>
+<p><strong>6**</strong>．默认变量pageContext**
+      等价于page环境类javax.servlet.jsp.PageContext的实例，用来提供访问不同的请求参数。
+11个默认变量几乎包含了Web应用的所有基本操作，若一个表达式不使用这些变量而直接使用参数名，那么就采用就近原则。该表达式将使用最近取得的参数值。</p>
+<p><strong> **</strong>标签库介绍** <a href="http://www.javawind.net/document.html" target="_blank">JavaWind.net Document</a></p>
+<p><strong>表达式的操作符</strong>
+      EL表达式中还有许多操作符可以帮助完成各种所需的操作，之前的示例中“.”、“[]”就是其中的两个，下面将用表9.1来展示所有操作符及它们各自的功能。</p>
+<p>表9.1 EL表达式的操作符
+操作符</p>
+<p>功能和作用 .</p>
+<p>访问一个bean属性或者Map entry []</p>
+<p>访问一个数组或者链表元素 ()</p>
+<p>对子表达式分组，用来改变赋值顺序 ? :</p>
+<p>条件语句，比如：条件?ifTrue:ifFalse</p>
+<p>如果条件为真，表达式值为前者，反之为后者 +</p>
+<p>数学运算符，加操作 -</p>
+<p>数学运算符，减操作或者对一个值取反 /*</p>
+<p>数学运算符，乘操作 / 或div</p>
+<p>数学运算符，除操作 % 或mod</p>
+<p>数学运算符，模操作(取余) == 或eq</p>
+<p>逻辑运算符，判断符号左右两端是否相等，如果相等返回true，否则返回false != 或ne</p>
+<p>逻辑运算符，判断符号左右两端是否不相等，如果不相等返回true，否则返回false &lt; 或lt</p>
+<p>逻辑运算符，判断符号左边是否小于右边，如果小于返回true，否则返回false &gt; 或gt</p>
+<p>逻辑运算符，判断符号左边是否大于右边，如果大于返回true，否则返回false &lt;= 或le</p>
+<p>逻辑运算符，判断符号左边是否小于或者等于右边，如果小于或者等于返回true，否则返回false &gt;= 或ge</p>
+<p>逻辑运算符，判断符号左边是否大于或者等于右边，如果大于或者等于返回true，否则返回false &amp;&amp; 或and</p>
+<p>逻辑运算符，与操作赋。如果左右两边同为true返回true，否则返回false || 或or</p>
+<p>逻辑运算符，或操作赋。如果左右两边有任何一边为true返回true，否则返回false ! 或not</p>
+<p>逻辑运算符，非操作赋。如果对true取运算返回false，否则返回true empty</p>
+<p>用来对一个空变量值进行判断: null、一个空String、空数组、空Map、没有条目的Collection集合 func(args)</p>
+<p>调用方法, func是方法名，args是参数，可以没有，或者有一个、多个参数.参数间用逗号隔开</p>
+<p>这些操作符都是极其有用的，下面通过几个示例来演示它们的使用方法：</p>
+<p>例9.4：几组操作符的示例</p>
+<p>${pageScope.sampleValue + 12} <br>           //显示12
+${(pageScope.sampleValue + 12)/3} <br>     //显示4.0
+${(pageScope.sampleValue + 12) /3==4} <br>         //显示true
+${(pageScope.sampleValue + 12) /3&gt;=5} <br>         //显示false</p>
+<p><input type="text" name="sample1" value="${pageScope.sampleValue + 10}"> //显示值为10的Text控件</p>
+<p>可以看到，对于这些示例，程序设计者完全无需管理它们的类型转换，在表达式内部都已经处理了。有了EL表达式，在JSP页面的编程变得更灵活，也更容易。</p>
+<p><strong> **</strong>标签库介绍**
+      在JSTL1.1中有以下这些标签库是被支持的：Core标签库、XML processing标签库、I18N formatting标签库、Database access标签库、Functions标签库。
+      对应的标识符见表9.2所示：</p>
+<p>表9.2 标签库的标识符
+标签库</p>
+<p>URI</p>
+<p>前缀 Core</p>
+<p><a href="http://java.sun.com/jsp/jstl/core" target="_blank">http://java.sun.com/jsp/jstl/core</a></p>
+<p>c XML processing</p>
+<p><a href="http://java.sun.com/jsp/jstl/xml" target="_blank">http://java.sun.com/jsp/jstl/xml</a></p>
+<p>x I18N formatting</p>
+<p><a href="http://java.sun.com/jsp/jstl/fmt" target="_blank">http://java.sun.com/jsp/jstl/fmt</a></p>
+<p>fmt Database access</p>
+<p><a href="http://java.sun.com/jsp/jstl/sql" target="_blank">http://java.sun.com/jsp/jstl/sql</a></p>
+<p>sql Functions</p>
+<p><a href="http://java.sun.com/jsp/jstl/functions" target="_blank">http://java.sun.com/jsp/jstl/functions</a></p>
+<p>fn</p>
+<p>下面看例9.5，简单使用标签库的示例。</p>
+<p>例9.5：简单JSTL标签库示例</p>
+<p>&lt;%@ page contentType=&quot;text/html; charset=UTF-8&quot;%&gt;
+&lt;%@ taglib prefix=&quot;c&quot; uri=&quot;<a href="http://java.sun.com/jsp/jstl/core" target="_blank">http://java.sun.com/jsp/jstl/core</a>&quot; %&gt;
+&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.01 Transitional//EN&quot;&gt;</p>
+<html>
+ <body>
+    <c:forEach var="i" begin="1" end="10" step="1"> ${i} <br /></c:forEach>
+ </body>
+</html>
+
+<p>   在该示例的JSP页面中声明了将使用Core标签库，它的URI为“<a href="http://java.sun.com/jsp/jstl/core”，前缀为“c”。之后，页面中" target="_blank">http://java.sun.com/jsp/jstl/core”，前缀为“c”。之后，页面中</a><c:forEach>标签就是使用了JSTL的标签进行了工作。对于该标签的功能，这里暂时不作具体讲解，只是让读者能够有个简单的概念，了解怎样定义和使用标签库。
+<strong>标签库</strong>
+      Core标签库，又被称为核心标签库，该标签库的工作是对于JSP页面一般处理的封装。在该标签库中的标签一共有14个，被分为了四类，分别是：</p>
+<pre><code>     多用途核心标签：&lt;c:out&gt;、&lt;c:set&gt;、&lt;c:remove&gt;、&lt;c:catch&gt;。
+     条件控制标签：&lt;c:if&gt;、&lt;c:choose&gt;、&lt;c:when&gt;、&lt;c:otherwise&gt;。
+     循环控制标签：&lt;c:forEach&gt;、&lt;c:forTokens&gt;。
+     URL相关标签：&lt;c:import&gt;、&lt;c:url&gt;、&lt;c:redirect&gt;、&lt;c:param&gt;。
+</code></pre><p>以下是各个标签的用途和属性以及简单示例。</p>
+<p><strong>用于显示的**</strong><c:out><strong>**标签 <a href="http://www.javawind.net/document.html" target="_blank">JavaWind.net Document</a> </strong>
+      <c:out>标签是一个最常用的标签，用于在JSP中显示数据。它的属性和描述如表9.3所示：</p>
+<p>表9.3　<c:out>标签属性和说明
+属性</p>
+<p>描述 value</p>
+<p>输出到页面的数据，可以是EL表达式或常量（必须） default</p>
+<p>当value为null时显示的数据（可选） escapeXml</p>
+<p>当设置为true时会主动更换特殊字符，比如“&lt;,&gt;,&amp;”（可选，默认为true）</p>
+<p>在JSTL1.0的时候，在页面显示数据必须使用<c:out>来进行。然而，在JSTL1.1中，由于JSP2.0规范已经默认支持了EL表达式，因此可以直接在JSP页面使用表达式。下面看一个示例。</p>
+<c:out value="${sessionScope.anyValue}" default="no value" escapeXml="false"/>
+
+<p>该示例将从Session查找名为“anyValue”的参数，并显示在页面，若没有找到则显示“no value”。</p>
+<p> <c: > 标签 <a href="http://www.javawind.net/document.html" target="_blank">JavaWind.net Document</a></p>
+<p><strong>用于赋值的<c:set>标签</strong>
+      <c:set>标签用于为变量或JavaBean中的变量属性赋值的工作。它的属性和描述如表9.4所示：</p>
+<p>表9.4　<c:set>标签属性和说明
+属性</p>
+<p>描述 value</p>
+<p>值的信息，可以是EL表达式或常量 target</p>
+<p>被赋值的JavaBean实例的名称，若存在该属性则必须
+存在property属性（可选） property</p>
+<p>JavaBean实例的变量属性名称（可选） var</p>
+<p>被赋值的变量名（可选） scope</p>
+<p>变量的作用范围，若没有指定，默认为page（可选）</p>
+<p> 当不存在value的属性时，将以包含在标签内的实体数据作为赋值的内容。下面看一个示例：</p>
+<p><c:set value="this is andy" var="oneString"/>
+${oneString} <br></p>
+<p>该示例将为名为“oneString”的变量赋值为“this is andy”，其作用范围为page。</p>
+<p> <strong>9.3.3 **</strong>用于删除的 <c:remove> 标签 **
+      <c:remove>标签用于删除存在于scope中的变量。它的属性和描述如表9.5所示：</p>
+<p>表9.5　<c:remove>标签属性和说明
+属性</p>
+<p>描述 var</p>
+<p>需要被删除的变量名 scope</p>
+<p>变量的作用范围，若没有指定，默认为全部查找（可选）</p>
+<p>下面看一个示例：</p>
+<p><c:remove var="sampleValue" scope="session"/>
+${sessionScope.sampleValue} <br></p>
+<p>该示例将存在于Session中名为“sampleValue”的变量删除。下一句EL表达式显示该变量时，该变量已经不存在了。</p>
+<p> <strong>9.3.4 **</strong>用于异常捕获的 <c:catch> 标签 **
+      <c:catch>标签允许在JSP页面中捕捉异常。它包含一个var属性，是一个描述异常的变量，改变量可选。若没有var属性的定义，那么仅仅捕捉异常而不做任何事情，若定义了var属性，则可以利用var所定义的异常变量进行判断转发到其他页面或提示报错信息。看一个示例。</p>
+<p><c:catch var="err"> ${param.sampleSingleValue[9] == 3}</c:catch>
+${err}</p>
+<p>当“${param.sampleSingleValue[9] == 3}”表达式有异常时，可以从var属性“err”得到异常的内容，通常判断“err”是否为null来决定错误信息的提示。</p>
+<p> <strong>9.3.5 **</strong>用于判断的 <c:if> 标签 **
+      <c:if>标签用于简单的条件语句。它的属性和描述如表9.6所示：</p>
+<p>表9.6　<c:if>标签属性和说明
+属性</p>
+<p>描述 test</p>
+<p>需要判断的条件 var</p>
+<p>保存判断结果true或false的变量名，该变量可供之后的工作使用（可选） scope</p>
+<p>变量的作用范围，若没有指定，默认为保存于page范围中的变量（可选）</p>
+<p>下面看一个示例：</p>
+<p><c:if test="${paramValues.sampleValue[2] == 12}" var="visits">It is 12</c:if><br>
+${visits} <br></p>
+<p>该示例将判断request请求提交的传入控件数组参数中，下标为“2”的控件内容是否为“12”，若为12则显示“It is 12”。判断结果被保存在page范围中的“visits”变量中。</p>
+<p> <strong>9.3.6 **</strong>用于复杂判断的 <c:choose> 、 <c:when> 、 <c:otherwise> 标签 **
+     这三个标签用于实现复杂条件判断语句，类似“if,elseif”的条件语句。</p>
+<pre><code>     &lt;c:choose&gt;标签没有属性，可以被认为是父标签，&lt;c:when&gt;、&lt;c:otherwise&gt;将作为其子标签来使用。
+     &lt;c:when&gt;标签等价于“if”语句，它包含一个test属性，该属性表示需要判断的条件。
+     &lt;c:otherwise&gt;标签没有属性，它等价于“else”语句。
+</code></pre><p>下面看一个复杂条件语句的示例。</p>
+<p><c:choose>
+         <c:when test="${paramValues.sampleValue[2] == 11}">
+                   not 12 not 13,it is 11
+         </c:when>
+         <c:when test="${paramValues.sampleValue[2] == 12}">
+                   not 11 not 13,it is 12
+         </c:when>
+         <c:when test="${paramValues.sampleValue[2] == 13}">
+                   not 11 not 12,it is 13
+         </c:when>
+         <c:otherwise>
+                   not 11 、12、13
+         </c:otherwise>
+</c:choose></p>
+<p>该示例将判断request请求提交的传入控件数组参数中，下标为“2”控件内容是否为“11”或“12”或“13”，并根据判断结果显示各自的语句，若都不是则显示“not 11 、12、13”。</p>
+<p> <strong>9.3.7 **</strong>用于循环的 <c:forEach> 标签**
+     <c:forEach>为循环控制标签。它的属性和描述如表9.7所示：</p>
+<p>表9.7　<c:forEach>标签属性和说明
+属性</p>
+<p>描述 items</p>
+<p>进行循环的集合（可选） begin</p>
+<p>开始条件（可选） end</p>
+<p>结束条件（可选） step</p>
+<p>循环的步长，默认为1（可选） var</p>
+<p>做循环的对象变量名，若存在items属性，则表示循环集合中对象的变量名（可选） varStatus</p>
+<p>显示循环状态的变量（可选）</p>
+<p>下面看一个集合循环的示例。</p>
+<p>&lt;%ArrayList arrayList = new ArrayList();
+                   arrayList.add(&quot;aa&quot;);
+                   arrayList.add(&quot;bb&quot;);
+                   arrayList.add(&quot;cc&quot;);
+%&gt;
+&lt;%request.getSession().setAttribute(&quot;arrayList&quot;, arrayList);%&gt;</p>
+<p><c:forEach items="${sessionScope.arrayList}" var="arrayListI">
+         ${arrayListI}
+</c:forEach></p>
+<p>该示例将保存在Session中的名为“arrayList”的ArrayList类型集合参数中的对象依次读取出来，items属性指向了ArrayList类型集合参数，var属性定义了一个新的变量来接收集合中的对象。最后直接通过EL表达式显示在页面上。下面看一个简单循环的示例。</p>
+<p><c:forEach var="i" begin="1" end="10" step="1">
+      ${i}<br />
+</c:forEach></p>
+<p>该示例从“1”循环到“10”，并将循环中变量“i”显示在页面上。</p>
+<p> <strong>9.3.8 **</strong>用于分隔字符的 <c:forTokens> 标签 **
+     <c:forTokens>标签可以根据某个分隔符分隔指定字符串，相当于java.util.StringTokenizer类。它的属性和描述如表9.8所示：</p>
+<p>表9.8　<c:forTokens>标签属性和说明
+属性</p>
+<p>描述 items</p>
+<p>进行分隔的EL表达式或常量 delims</p>
+<p>分隔符 begin</p>
+<p>开始条件（可选） end</p>
+<p>结束条件（可选） step</p>
+<p>循环的步长，默认为1（可选） var</p>
+<p>做循环的对象变量名（可选） varStatus</p>
+<p>显示循环状态的变量（可选）</p>
+<p>下面看一个示例。</p>
+<p><c:forTokens items="aa,bb,cc,dd" begin="0" end="2" step="2" delims="," var="aValue">
+         ${aValue}
+</c:forTokens></p>
+<p>需要分隔的字符串为“aa,bb,cc,dd”，分隔符为“,”。begin属性指定从第一个“,”开始分隔，end属性指定分隔到第三个“,”，并将做循环的变量名指定为“aValue”。由于步长为“2”，使用EL表达式${aValue}只能显示“aa</p>
+<p> <x: > 标签</p>
+<p><strong>9.3.9 **</strong>用于包含页面的<c:import> **
+     <c:import>标签允许包含另一个JSP页面到本页面来。它的属性和描述如表9.9所示：</p>
+<p>表9.9　<c:import>标签属性和说明
+属性</p>
+<p>描述 rl</p>
+<p>需要导入页面的URL context</p>
+<p>Web Context该属性用于在不同的Context下导入页面，当出现context属性时，必须以“/”开头，此时也需要url属性以“/”开头（可选） charEncoding</p>
+<p>导入页面的字符集（可选） var</p>
+<p>可以定义导入文本的变量名（可选） scope</p>
+<p>导入文本的变量名作用范围（可选） varReader</p>
+<p>接受文本的java.io.Reader类变量名（可选）</p>
+<p> 下面看一个示例。</p>
+<p><c:import url="/MyHtml.html" var="thisPage" /></p>
+<p><c:import url="/MyHtml.html" context=”/sample2” var="thisPage"/></p>
+<c:import url="www.sample.com/MyHtml.html" var="thisPage"/>
+
+<p>该示例演示了三种不同的导入方法，第一种是在同一 Context 下的导入，第二种是在不同的 Context 下导入，第三种是导入任意一个 URL 。</p>
+<p> <strong>9.3.10 **</strong>用于得到URL地址的<c:url>标签**
+     <c:url> 标签用于得到一个 URL 地址。它的属性和描述如表 9.10 所示：</p>
+<p>表9.10 <c:url>标签属性和说明
+属性</p>
+<p>描述 value</p>
+<p>页面的URL地址 context</p>
+<p>Web Context该属性用于得到不同Context下的URL地址，当出现context属性时，必须以“/”开头，此时也需要url属性以“/”开头（可选） charEncoding</p>
+<p>URL的字符集（可选） var</p>
+<p>存储URL的变量名（可选） scope</p>
+<p>变量名作用范围（可选）</p>
+<p>下面看一个示例：</p>
+<p><c:url value="/MyHtml.html" var="urlPage" />
+<a href="${urlPage}">link</a></p>
+<p>得到了一个 URL 后，以 EL 表达式放入 <a> 标签的 href 属性，达到链接的目的。</p>
+<p><strong>9.3.11 **</strong>用于页面重定向的<c:redirect>标签**
+     <c:redirect> 用于页面的重定向，该标签的作用相当于 response.setRedirect 方法的工作。它包含 url 和 context 两个属性，属性含义和 <C:url> 标签相同。下面看一个示例。</p>
+<c:redirect url="/MyHtml.html"/>
+
+<p>该示例若出现在 JSP 中，则将重定向到当前 Web Context 下的“ MyHtml.html ”页面，一般会与 <c:if> 等标签一起使用。</p>
+<p> <strong>9.3.12 **</strong>用于包含传递参数的<c:param>标签**
+     <c:param> 用来为包含或重定向的页面传递参数。它的属性和描述如表 9.11 所示：</p>
+<p>表9.11　<c:param>标签属性和说明
+属性</p>
+<p>描述 name</p>
+<p>传递的参数名 value</p>
+<p>传递的参数值（可选）</p>
+<p>下面是一个示例：</p>
+<p><c:redirect url="/MyHtml.jsp"></p>
+<p><c:param name="userName" value=”RW” />
+</c:redirect></p>
+<p>该示例将为重定向的“ MyHtml.jsp ”传递指定参数“ userName=’RW’ ”。</p>
+<p> <strong>9.4 JSTL XML processing**</strong>标签库** <a href="http://www.javawind.net/document.html" target="_blank">JavaWind.net Document</a>
+     在企业级应用越来越依赖 XML 的今天， XML 格式的数据被作为信息交换的优先选择。 XML processing 标签库为程序设计者提供了基本的对 XML 格式文件的操作。在该标签库中的标签一共有 10 个，被分为了三类，分别是：</p>
+<pre><code>     XML核心标签：&lt;x:parse&gt;、&lt;x:out&gt;、&lt;x:set&gt;。
+     XML流控制标签：&lt;x:if&gt;、&lt;x:choose&gt;、&lt;x:when&gt;、&lt;x:otherwise&gt;、&lt;x:forEach&gt;。
+     XML转换标签：&lt;x:transform&gt;、&lt;x:param&gt;。
+</code></pre><p>由于该组标签库专注于对某一特定领域的实现，因此本书将只选择其中常见的一些标签和属性进行介绍。</p>
+<p><strong>9.4.1 **</strong>用于解析XML文件的<x:parse>标签**
+     <x:parse> 标签是该组标签库的核心，从其标签名就可以知道，它是作为解析 XML 文件而存在的。它的属性和描述如表 9.12 所示：</p>
+<p>表9.12　<x:parse>标签属性和说明
+属性</p>
+<p>描述 doc</p>
+<p>源XML的内容，该属性的内容应该为String类型或者java.io.Reader的实例，可以用xml属性来替代，但是不被推荐 var</p>
+<p>将解析后的XML保存在该属性所指定的变量中，之后XML processing标签库中的其他标签若要取XML中的内容就可以从该变量中得到（可选） scope</p>
+<p>变量的作用范围（可选） varDom</p>
+<p>指定保存的变量为org.w3c.dom.Document接口类型（可选） scopeDom</p>
+<p>org.w3c.dom.Document的接口类型变量作用范围（可选） systemId</p>
+<p>定义一个URI，该URI将被使用到XML文件中以接入其他资源文件（可选） filter</p>
+<p>该属性必须为org.xml.sax.XMLFilter类的一个实例，可以使用EL表达式传入，将对XML文件做过滤得到自身需要的部分（可选）</p>
+<p>其中， var 、 scope 和 varDom 、 scopeDom 不应该同时出现，而应该被视为两个版本来使用，二者的变量都可以被 XML processing 标签库的其他标签来使用。</p>
+<p><x:parse> 标签单独使用的情况很少，一般会结合 XML processing 标签库中的其他标签来一起工作。下面看一个示例。</p>
+<p>首先给出一个简单的 XML 文件，将对该 XML 文件做解析，该 XML 文件名为 SampleXml.xml 。</p>
+<p>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;</p>
+<p><xml-body>
+         <name>RW</name>
+         <passWord>123456</passWord>
+         <age>28</age>
+         <books>
+                   <book>book1</book>
+                   <book>book2</book>
+                   <book>book3</book>
+         </books>
+</xml-body></p>
+<p>标签库的工作：</p>
+<p><c:import var="xmlFile" url="http://localhost:8080/booksamplejstl/SampleXml.xml"/></p>
+<x:parse var="xmlFileValue" doc="${xmlFile}"/>
+
+<p> <fmt: > 标签 <a href="http://www.javawind.net/document.html" target="_blank">JavaWind.net Document</a></p>
+<p>看到I18N就应该想到知识“国际化”，I18N formatting标签库就是用于在JSP页面中做国际化的动作。在该标签库中的标签一共有12个，被分为了两类，分别是：
+国际化核心标签：<fmt:setLocale>、<fmt:bundle>、<fmt:setBundle>、<fmt:message>、<fmt:param>、<fmt:requestEncoding>。
+格式化标签：<fmt:timeZone>、<fmt:setTimeZone>、<fmt:formatNumber>、<fmt:parseNumber>、<fmt:formatDate>、<fmt:parseDate>。</p>
+<p>下面只选择其中常见的一些标签和属性进行介绍。</p>
+<p> <strong>9.5.1 **</strong>用于设置本地化环境的<fmt:setLocale>标签**
+    <fmt:setLocale>标签用于设置Locale环境。它的属性和描述如表9.17所示：</p>
+<p>表9.17　<fmt:setLocale>标签属性和说明
+属性</p>
+<p>描述 value</p>
+<p>Locale环境的指定，可以是java.util.Locale或String类型的实例 scope</p>
+<p>Locale环境变量的作用范围（可选）</p>
+<p>下面看一个示例：</p>
+<fmt:setLocale value="zh_TW"/>
+
+<p>表示设置本地环境为繁体中文。</p>
+<p><strong> **</strong>9.5.2 <strong>**用于资源文件绑定的<fmt:bundle>、<fmt:setBundle>标签</strong>
+       这两组标签用于资源配置文件的绑定，唯一不同的是<fmt:bundle>标签将资源配置文件绑定于它标签体中的显示，<fmt:setBundle>标签则允许将资源配置文件保存为一个变量，在之后的工作可以根据该变量来进行。</p>
+<pre><code>    根据Locale环境的不同将查找不同后缀的资源配置文件，这点在国际化的任何技术上都是一致的，通常来说，这两种标签单独使用是没有意义的，它们都会与I18N formatting标签库中的其他标签配合使用。它们的属性和描述如表9.18所示：
+</code></pre><p>表9.18　<fmt:bundle>、<fmt:setBundle>标签属性和说明
+属性</p>
+<p>描述 basename</p>
+<p>资源配置文件的指定，只需要指定文件名而无须扩展名，二组标签共有的属性 var</p>
+<p><fmt:setBundle>独有的属性，用于保存资源配置文件为一个变量 scope</p>
+<p>变量的作用范围</p>
+<p>下面看一个示例</p>
+<p><fmt:setLocale value="zh_CN"/></p>
+<fmt:setBundle basename="applicationMessage" var="applicationBundle"/>
+
+<p>该示例将会查找一个名为applicationMessage_zh_CN.properties的资源配置文件，来作为显示的Resource绑定。</p>
+<p><strong> **</strong>9.5.3 <strong>**用于显示资源配置文件信息的<fmt:message>标签</strong>
+       用于信息显示的标签，将显示资源配置文件中定义的信息。它的属性和描述如表9.19所示：</p>
+<p>表9.19　<fmt:message>标签属性和说明
+属性</p>
+<p>描述 key</p>
+<p>资源配置文件的“键”指定 bundle</p>
+<p>若使用<fmt:setBundle>保存了资源配置文件，该属性就可以从保存的资源配置文件中进行查找 var</p>
+<p>将显示信息保存为一个变量 scope</p>
+<p>变量的作用范围</p>
+<p>下面看一个示例：</p>
+<p><fmt:setBundle basename="applicationMessage" var="applicationBundle"/></p>
+<p><fmt:bundle basename="applicationAllMessage">
+         <fmt:message key="userName" />
+         <p>
+         <fmt:message key="passWord" bundle="${applicationBundle}" />
+</fmt:bundle></p>
+<pre><code>   该示例使用了两种资源配置文件的绑定的做法，“ applicationMessage ”资源配置文件利用&lt;fmt:setBundle&gt;标签被赋于了变量“ applicationBundle ”，而作为&lt;fmt:bundle&gt;标签定义的“ applicationAllMessage ”资源配置文件作用于其标签体内的显示。
+
+     第一个&lt;fmt:message&gt;标签将使用“ applicationAllMessage ”资源配置文件中“键”为“ userName ”的信息显示。
+     第二个&lt;fmt:message&gt;标签虽然被定义在&lt;fmt:bundle&gt;标签体内，但是它使用了bundle属性，因此将指定之前由&lt;fmt:setBundle&gt;标签保存的“ applicationMessage ”资源配置文件，该“键”为“ passWord ”的信息显示。
+</code></pre><p> <strong>9.5.4 **</strong>用于参数传递的<fmt:param>标签**</p>
+<p><fmt:param>标签应该位于<fmt:message>标签内，将为该消息标签提供参数值。它只有一个属性value。</p>
+<p><fmt:param>标签有两种使用版本，一种是直接将参数值写在value属性中，另一种是将参数值写在标签体内。</p>
+<p> <strong>9.5.6 **</strong>用于为请求设置字符编码的<fmt:requestEncoding>标签**</p>
+<p><fmt:requestEncoding>标签用于为请求设置字符编码。它只有一个属性value，在该属性中可以定义字符编码。</p>
+<p> <strong>9.5.7 **</strong>用于设定时区的<fmt:timeZone>、<fmt:setTimeZone>标签**
+       这两组标签都用于设定一个时区。唯一不同的是<fmt:timeZone>标签将使得在其标签体内的工作可以使用该时区设置，<fmt:setBundle>标签则允许将时区设置保存为一个变量，在之后的工作可以根据该变量来进行。它们的属性和描述如表9.20所示：</p>
+<p>表9.20　<fmt:timeZone>、<fmt:setTimeZone>标签属性和说明
+属性</p>
+<p>描述 value</p>
+<p>时区的设置 var</p>
+<p><fmt:setTimeZone>独有的属性，用于保存时区为一个变量 scope</p>
+<p>变量的作用范围</p>
+<p><strong> **</strong>9.5.8 <strong>**用于格式化数字的<fmt:formatNumber>标签</strong></p>
+<p><fmt: formatNumber > 标签用于格式化数字。它的属性和描述如表9.21所示：</p>
+<p>表9.21　<fmt:formatNumber>标签属性和说明
+属性</p>
+<p>描述 value</p>
+<p>格式化的数字，该数值可以是String类型或java.lang.Number类型的实例 type</p>
+<p>格式化的类型 pattern</p>
+<p>格式化模式 var</p>
+<p>结果保存变量 scope</p>
+<p>变量的作用范围 maxIntegerDigits</p>
+<p>指定格式化结果的最大值 minIntegerDigits</p>
+<p>指定格式化结果的最小值 maxFractionDigits</p>
+<p>指定格式化结果的最大值，带小数 minFractionDigits</p>
+<p>指定格式化结果的最小值，带小数</p>
+<p><fmt:formatNumber>标签实际是对应java.util.NumberFormat类，type属性的可能值包括currency（货币）、number（数字）和percent（百分比）。</p>
+<p>下面看一个示例。</p>
+<fmt:formatNumber value="1000.888" type="currency" var="money"/>
+
+<p>该结果将被保存在“ money ”变量中，将根据Locale环境显示当地的货币格式。</p>
+<p> <strong>9.5.9 **</strong>用于解析数字的<fmt:parseNumber>标签**
+       <fmt:parseNumber>标签用于解析一个数字，并将结果作为java.lang.Number类的实例返回。<fmt:parseNumber>标签看起来和<fmt:formatNumber>标签的作用正好相反。它的属性和描述如表9.22所示：</p>
+<p>表9.22　<fmt:parseNumber>标签属性和说明
+属性</p>
+<p>描述 value</p>
+<p>将被解析的字符串 type</p>
+<p>解析格式化的类型 pattern</p>
+<p>解析格式化模式 var</p>
+<p>结果保存变量，类型为java.lang.Number scope</p>
+<p>变量的作用范围 parseLocale</p>
+<p>以本地化的形式来解析字符串，该属性的内容应为String或java.util.Locale类型的实例</p>
+<p>下面看一个示例。</p>
+<fmt:parseNumber value="15%" type="percent" var="num"/>
+
+<p>解析之后的结果为“ 0.15 ”。</p>
+<p><strong>9.5.10 **</strong>用于格式化日期的<fmt:formatDate>标签**</p>
+<p><fmt:formatDate>标签用于格式化日期。它的属性和描述如表9.23所示：</p>
+<p>表9.23　<fmt:formatDate>标签属性和说明
+属性</p>
+<p>描述 value</p>
+<p>格式化的日期，该属性的内容应该是java.util.Date类型的实例 type</p>
+<p>格式化的类型 pattern</p>
+<p>格式化模式 var</p>
+<p>结果保存变量 scope</p>
+<p>变量的作用范围 timeZone</p>
+<p>指定格式化日期的时区</p>
+<p><fmt:formatDate>标签与<fmt:timeZone>、<fmt:setTimeZone>两组标签的关系密切。若没有指定 timeZone属性，也可以通过<fmt:timeZone>、<fmt:setTimeZone>两组标签设定的时区来格式化最后的结果。</p>
+<p> <strong>9.5.11 **</strong>用于解析日期的<fmt:parseDate>标签**
+       <fmt:parseDate>标签用于解析一个日期，并将结果作为java.lang.Date类型的实例返回。<fmt:parseDate>标签看起来和<fmt:formatDate>标签的作用正好相反。它的属性和描述如表9.24所示：</p>
+<p>表9.24　<fmt:parseDate>标签属性和说明
+属性</p>
+<p>描述 value</p>
+<p>将被解析的字符串 type</p>
+<p>解析格式化的类型 pattern</p>
+<p>解析格式化模式 var</p>
+<p>结果保存变量，类型为java.lang.Date scope</p>
+<p>变量的作用范围 parseLocale</p>
+<p>以本地化的形式来解析字符串，该属性的内容为String或java.util.Locale类型的实例 timeZone</p>
+<p>指定解析格式化日期的时区</p>
+<p><fmt:parseNumber>和<fmt:parseDate>两组标签都实现解析字符串为一个具体对象实例的工作，因此，这两组解析标签对var属性的字符串参数要求非常严格。就JSP页面的表示层前段来说，处理这种解析本不属于份内之事，因此<fmt:parseNumber>和<fmt:parseDate>两组标签应该尽量少用，替代工作的地方应该在服务器端表示层的后段，比如在Servlet中。</p>
+<p> <sql:> 标签 <a href="http://www.javawind.net/document.html" target="_blank">JavaWind.net Document</a></p>
+<p><strong>9.6  Database access**</strong>标签库**
+       Database access标签库中的标签用来提供在JSP页面中可以与数据库进行交互的功能，虽然它的存在对于早期纯JSP开发的应用以及小型的开发有着意义重大的贡献，但是对于MVC模型来说，它却是违反规范的。因为与数据库交互的工作本身就属于业务逻辑层的工作，所以不应该在JSP页面中出现，而是应该在模型层中进行。</p>
+<pre><code>   对于Database access标签库本书不作重点介绍，只给出几个简单示例让读者略微了解它们的功能。
+
+   Database access标签库有以下6组标签来进行工作：&lt;sql:setDataSource&gt;、&lt;sql:query&gt;、&lt;sql:update&gt;、&lt;sql:transaction&gt;、&lt;sql:setDataSource&gt;、&lt;sql:param&gt;、&lt;sql:dateParam&gt;。
+</code></pre><p><strong>9.6.1 **</strong>用于设置数据源的 <sql:setDataSource> 标签**
+       <sql:setDataSource>标签用于设置数据源，下面看一个示例：</p>
+<sql:setDataSource
+         var="dataSrc"
+         url="jdbc:postgresql://localhost:5432/myDB"
+         driver="org.postgresql.Driver"
+         user="admin"
+         password="1111"/>
+
+<p>该示例定义一个数据源并保存在“ dataSrc ”变量内。</p>
+<p><strong>9.6.2 **</strong>用于查询的 <sql:query> 标签**
+       <sql:query>标签用于查询数据库，它标签体内可以是一句查询SQL。下面看一个示例：</p>
+<p><sql:query var="queryResults" dataSource="${dataSrc}">
+      select /* from table1
+</sql:query></p>
+<p>该示例将返回查询的结果到变量“ queryResults ”中，保存的结果是javax.servlet.jsp.jstl.sql.Result类型的实例。要取得结果集中的数据可以使用<c:forEach>循环来进行。下面看一个示例。</p>
+<p><c:forEach var="row" items="${queryResults.rows}">
+      <tr>
+               <td>${row.userName}</td>
+                <td>${row.passWord}</td>
+      </tr>
+</c:forEach></p>
+<p>“ rows ”是javax.servlet.jsp.jstl.sql.Result实例的变量属性之一，用来表示数据库表中的“列”集合，循环时，通过“ ${row.XXX} ”表达式可以取得每一列的数据，“ XXX ”是表中的列名。</p>
+<p><strong>9.6.3 **</strong>用于更新的 <sql:update> 标签**</p>
+<p><sql:update>标签用于更新数据库，它的标签体内可以是一句更新的SQL语句。其使用和<sql:query>标签没有什么不同。</p>
+<p> <strong>9.6.4 用于事务处理的 <sql:transaction> 标签
+</strong>       <sql:transaction>标签用于数据库的事务处理，在该标签体内可以使用<sql:update>标签和<sql:query>标签，而<sql:transaction>标签的事务管理将作用于它们之上。
+       <sql:transaction>标签对于事务处理定义了read_committed、read_uncommitted、repeatable_read、serializable4个隔离级别。</p>
+<p> <strong>9.6.5 用于事务处理的 <sql:param> 、 <sql:dateParam> 标签
+</strong>       这两个标签用于向SQL语句提供参数，就好像程序中预处理SQL的“ ? ”一样。<sql:param>标签传递除java.util.Date类型以外的所有相融参数，<sql:dateParam>标签则指定必须传递java.util.Date类型的参数。</p>
+<p><fn:> 标签 <a href="http://www.javawind.net/document.html" target="_blank">JavaWind.net Document</a></p>
+<p><strong>9.7 Functions**</strong>标签库**
+       称呼Functions标签库为标签库，倒不如称呼其为函数库来得更容易理解些。因为Functions标签库并没有提供传统的标签来为JSP页面的工作服务，而是被用于EL表达式语句中。在JSP2.0规范下出现的Functions标签库为EL表达式语句提供了许多更为有用的功能。Functions标签库分为两大类，共16个函数。</p>
+<pre><code>   长度函数：fn:length
+   字符串处理函数：fn:contains、fn:containsIgnoreCase、fn:endsWith、fn:escapeXml、fn:indexOf、fn:join、fn:replace、fn:split、fn:startsWith、fn:substring、fn:substringAfter、fn:substringBefore、fn:toLowerCase、fn:toUpperCase、fn:trim
+</code></pre><p>以下是各个函数的用途和属性以及简单示例。</p>
+<p><strong>9.7.1 **</strong>长度函数 fn:length 函数**
+       长度函数fn:length的出现有重要的意义。在JSTL1.0中，有一个功能被忽略了，那就是对集合的长度取值。虽然java.util.Collection接口定义了size方法，但是该方法不是一个标准的JavaBean属性方法（没有get,set方法），因此，无法通过EL表达式“ ${collection.size} ”来轻松取得。</p>
+<p>fn:length函数正是为了解决这个问题而被设计出来的。它的参数为input，将计算通过该属性传入的对象长度。该对象应该为集合类型或String类型。其返回结果是一个int类型的值。下面看一个示例。</p>
+<p>&lt;%ArrayList arrayList1 = new ArrayList();
+                            arrayList1.add(&quot;aa&quot;);
+                            arrayList1.add(&quot;bb&quot;);
+                            arrayList1.add(&quot;cc&quot;);</p>
+<p>%&gt;
+&lt;%request.getSession().setAttribute(&quot;arrayList1&quot;, arrayList1);%&gt;
+${fn:length(sessionScope.arrayList1)}</p>
+<p>假设一个ArrayList类型的实例“ arrayList1 ”，并为其添加三个字符串对象，使用fn:length函数后就可以取得返回结果为“ 3 ”。</p>
+<p><strong>9.7.2 **</strong>判断函数 fn:contains 函数**
+       fn:contains函数用来判断源字符串是否包含子字符串。它包括string和substring两个参数，它们都是String类型，分布表示源字符串和子字符串。其返回结果为一个boolean类型的值。下面看一个示例。</p>
+<p>${fn:contains(&quot;ABC&quot;, &quot;a&quot;)}<br>
+${fn:contains(&quot;ABC&quot;, &quot;A&quot;)}<br></p>
+<p>前者返回“ false ”，后者返回“ true ”。</p>
+<p><strong>9.7.3 fn:containsIgnoreCase**</strong>函数** 
+      fn:containsIgnoreCase函数与fn:contains函数的功能差不多，唯一的区别是fn:containsIgnoreCase函数对于子字符串的包含比较将忽略大小写。它与fn:contains函数相同，包括string和substring两个参数，并返回一个boolean类型的值。下面看一个示例。</p>
+<p>${fn:containsIgnoreCase(&quot;ABC&quot;, &quot;a&quot;)}<br>
+${fn:containsIgnoreCase(&quot;ABC&quot;, &quot;A&quot;)}<br></p>
+<p>前者和后者都会返回“ true ”。</p>
+<p><strong>9.7.4 **</strong>词头判断函数 fn:startsWith 函数**
+       fn:startsWith函数用来判断源字符串是否符合一连串的特定词头。它除了包含一个string参数外，还包含一个subffx参数，表示词头字符串，同样是String类型。该函数返回一个boolean类型的值。下面看一个示例。</p>
+<p>${fn:startsWith (&quot;ABC&quot;, &quot;ab&quot;)}<br>
+${fn:startsWith (&quot;ABC&quot;, &quot;AB&quot;)}<br></p>
+<p>前者返回“ false ”，后者返回“ true ”。</p>
+<p><strong>9.7.5 **</strong>词尾判断函数 fn:endsWith 函数**
+       fn:endsWith函数用来判断源字符串是否符合一连串的特定词尾。它与fn:startsWith函数相同，包括string和subffx两个参数，并返回一个boolean类型的值。下面看一个示例。</p>
+<p>${fn:endsWith(&quot;ABC&quot;, &quot;bc&quot;)}<br>
+${fn:endsWith(&quot;ABC&quot;, &quot;BC&quot;)}<br></p>
+<p>前者返回“ false ”，后者返回“ true ”。</p>
+<p><strong>9.7.6 **</strong>字符实体转换函数 fn:escapeXml 函数**
+fn:escapeXml函数用于将所有特殊字符转化为字符实体码。它只包含一个string参数，返回一个String类型的值。</p>
+<p><strong>9.7.8 **</strong>字符匹配函数 fn:indexOf 函数**
+       fn:indexOf函数用于取得子字符串与源字符串匹配的开始位置，若子字符串与源字符串中的内容没有匹配成功将返回“ -1 ”。它包括string和substring两个参数，返回结果为int类型。下面看一个示例。</p>
+<p>${fn:indexOf(&quot;ABCD&quot;,&quot;aBC&quot;)}<br>
+${fn:indexOf(&quot;ABCD&quot;,&quot;BC&quot;)}<br></p>
+<p>前者由于没有匹配成功，所以返回-1，后者匹配成功将返回位置的下标，为1。</p>
+<p><strong>9.7.9 **</strong>分隔符函数 fn:join 函数**
+       fn:join函数允许为一个字符串数组中的每一个字符串加上分隔符，并连接起来。它的参数、返回结果和描述如表9.25所示：</p>
+<p>表9.25　fn:join函数
+参数</p>
+<p>描述 array</p>
+<p>字符串数组。其类型必须为String[]类型 separator</p>
+<p>分隔符。其类型必须为String类型 返回结果</p>
+<p>返回一个String类型的值</p>
+<p>下面看一个示例。</p>
+<p>&lt;% String[] stringArray = {&quot;a&quot;,&quot;b&quot;,&quot;c&quot;}; %&gt;
+&lt;%request.getSession().setAttribute(&quot;stringArray&quot;, stringArray);%&gt;
+${fn:join(sessionScope.stringArray,&quot;;&quot;)}<br></p>
+<p>定义数组并放置到Session中，然后通过Session得到该字符串数组，使用fn:join函数并传入分隔符“ ; ”，得到的结果为“ a;b;c ”。</p>
+<p><strong>9.7.10 **</strong>替换函数 fn:replace 函数**
+       fn:replace函数允许为源字符串做替换的工作。它的参数、返回结果和描述如表9.26所示：</p>
+<p>表9.26　fn:replace函数
+参数</p>
+<p>描述 inputString</p>
+<p>源字符串。其类型必须为String类型 beforeSubstring</p>
+<p>指定被替换字符串。其类型必须为String类型 afterSubstring</p>
+<p>指定替换字符串。其类型必须为String类型 返回结果</p>
+<p>返回一个String类型的值</p>
+<p>下面看一个示例。</p>
+<p>${fn:replace(&quot;ABC&quot;,&quot;A&quot;,&quot;B&quot;)}<br></p>
+<p>将“ ABC ”字符串替换为“ BBC ”，在“ ABC ”字符串中用“ B ”替换了“ A ”。</p>
+<p><strong>9.7.11 **</strong>分隔符转换数组函数 fn:split 函数**
+       fn:split函数用于将一组由分隔符分隔的字符串转换成字符串数组。它的参数、返回结果和描述如表9.27所示：</p>
+<p>表9.27　fn:split函数
+参数</p>
+<p>描述 string</p>
+<p>源字符串。其类型必须为String类型 delimiters</p>
+<p>指定分隔符。其类型必须为String类型 返回结果</p>
+<p>返回一个String[]类型的值</p>
+<p>下面看一个示例。</p>
+<p>${fn:split(&quot;A,B,C&quot;,&quot;,&quot;)}<br></p>
+<p>将“ A,B,C ”字符串转换为数组{A,B,C}。</p>
+<p><strong>9.7.12 **</strong>字符串截取函数 fn:substring 函数**
+       fn:substring函数用于截取字符串。它的参数、返回结果和描述如表9.28所示：</p>
+<p>表9.28　fn:substring函数
+参数</p>
+<p>描述 string</p>
+<p>源字符串。其类型必须为String类型 beginIndex</p>
+<p>指定起始下标（值从0开始）。其类型必须为int类型 endIndex</p>
+<p>指定结束下标（值从0开始）。其类型必须为int类型 返回结果</p>
+<p>返回一个String类型的值</p>
+<p>下面看一个示例。</p>
+<p>${fn:substring(&quot;ABC&quot;,&quot;1&quot;,&quot;2&quot;)}<br></p>
+<p>截取结果为“ B ”。</p>
+<p><strong>9.7.14 **</strong>起始到定位截取字符串函数 fn:substringBefore 函数**
+       fn:substringBefore函数允许截取源字符从开始到某个字符串。它的参数和fn:substringAfter函数相同，不同的是substring表示的是结束字符串。下面看一个示例。</p>
+<p>${fn:substringBefore(&quot;ABCD&quot;,&quot;BC&quot;)}<br></p>
+<p>截取的结果为“ A ”。</p>
+<p><strong>9.7.15 **</strong>小写转换函数 fn:toLowerCase 函数**
+       fn:toLowerCase函数允许将源字符串中的字符全部转换成小写字符。它只有一个表示源字符串的参数string，函数返回一个String类型的值。下面看一个示例。</p>
+<p>${fn:toLowerCase(&quot;ABCD&quot;)}<br></p>
+<p>转换的结果为“ abcd ”。</p>
+<p><strong>9.7.16**</strong>大写转换函数 fn:toUpperCase 函数**
+       fn:toUpperCase函数允许将源字符串中的字符全部转换成大写字符。它与fn:toLowerCase函数相同，也只有一个String参数，并返回一个String类型的值。下面看一个示例。</p>
+<p>${fn:toUpperCase(&quot;abcd&quot;)}<br></p>
+<p>转换的结果为“ ABCD ”。</p>
+<p><strong>9.7.17**</strong>空格删除函数 fn:trim 函数**
+       fn:trim函数将删除源字符串中结尾部分的“空格”以产生一个新的字符串。它与fn:toLowerCase函数相同，只有一个String参数，并返回一个String类型的值。下面看一个示例。</p>
+<p>${fn:trim(&quot;AB C &quot;)}D<br></p>
+<p>转换的结果为“ AB CD ”，注意，它将只删除词尾的空格而不是全部，因此“ B ”和“ C ”之间仍然留有一个空格。</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE--JSTLEL详解/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE--JSTLEL详解" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1420,7 +1239,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-23 21:54:38</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-25 18:15:42</em></span></div>
 </div>
 <div class="clearfix"></div>
 

@@ -110,1107 +110,65 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20/">优化技巧分享：把内存消耗降低至原来的1</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--UsingRestrictedGroups/">Using Restricted Groups</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--UsingRestrictedGroups/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-1-20">优化技巧分享：把内存消耗降低至原来的1/20</h1>
-<p><strong><a href="http://www.jobbole.com/" title="伯乐在线" target="_blank">伯乐</a>在线注：</strong>昨天在微博中推荐了英文原文，感谢@<a href="http://weibo.com/fwlx" title="NULL_文龙" target="_blank">NULL_文龙</a> 和@<a href="http://weibo.com/1077006667" title="战斗的那美克星人" target="_blank">战斗的那美克星人</a> 的热情。以下是译文。</p>
-<p>——————————–</p>
-<p>这是最近发生的又一起内存相关的事件了。这个案例是从一个最近的客户报告中提取出来，一个异常运行的应用在其产品中反复报告内存耗尽。</p>
-<p>这个症状是由我们的一个实验性功能发现，它主要用来监测某一类数据结构的使用情况。它提供了一个信号探针，结果会指向问题源代码的某一位置。为了保护客户的隐私，我们人为重建了该例子并保持它同原真实场景在技术层面的一致性。你可以免费在此处<a href="http://www.plumbr.eu/files/plumbr-optimization-sample.zip" target="_blank">下载到源码</a>。</p>
-<p>故事开始于一组从外界源加载进来的对象。同外部的信息交互是基于XML的接口，这本身并没什么大不了的，但事实上“基于XML的格式进行通讯”的实现细节被分散到了系统的每一个角落。 传入系统的文档是首先被转换成XMLBean实例，然后在整个系统范围内被使用，这中做法听起来有点傻。</p>
-<p>整个问题中最核心的部分是一个延迟加载的缓冲方案。缓存的对象是“Person”的实例：
-1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7 // Imports and methods removed to improve readability</p>
-<p>public</p>
-<p>class</p>
-<p>Person {</p>
-<p>private</p>
-<p>String id;</p>
-<p>private</p>
-<p>Date dateOfBirth;</p>
-<p>private</p>
-<p>String forename;</p>
-<p>private</p>
-<p>String surname;
-}</p>
-<p>你也许会说这才能消耗多少内存呢。但当我们揭开进一步的细节时，发现事情就变了味了。表面上根据设计，声称实现只用到的诸如上文提到的那样一些简单的类，但真实的情形是使用了基于模型生成的数据结构。使用的模型是诸如下面的这个简化的XSD片段。</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13</p>
-<p>14
- &lt;</p>
-<p>xs:schema</p>
-<p>targetNamespace</p>
-<p>=</p>
-<p>&quot;<a href="http://plumbr.eu" target="_blank">http://plumbr.eu</a>&quot;</p>
-<p>xmlns:xs</p>
-<p>=</p>
-<p>&quot;<a href="http://www.w3.org/2001/XMLSchema" target="_blank">http://www.w3.org/2001/XMLSchema</a>&quot;</p>
-<p>elementFormDefault</p>
-<p>=</p>
-<p>&quot;qualified&quot;</p>
-<p>&gt;</p>
-<p>&lt;</p>
-<p>xs:element</p>
-<p>name</p>
-<p>=</p>
-<p>&quot;person&quot;</p>
-<p>&gt;</p>
-<p>&lt;</p>
-<p>xs:complexType</p>
-<p>&gt;</p>
-<p>&lt;</p>
-<p>xs:sequence</p>
-<p>&gt;</p>
-<p>&lt;</p>
-<p>xs:element</p>
-<p>name</p>
-<p>=</p>
-<p>&quot;id&quot;</p>
-<p>type</p>
-<p>=</p>
-<p>&quot;xs:string&quot;</p>
-<p>/&gt;</p>
-<p>&lt;</p>
-<p>xs:element</p>
-<p>name</p>
-<p>=</p>
-<p>&quot;dateOfBirth&quot;</p>
-<p>type</p>
-<p>=</p>
-<p>&quot;xs:dateTime&quot;</p>
-<p>/&gt;</p>
-<p>&lt;</p>
-<p>xs:element</p>
-<p>name</p>
-<p>=</p>
-<p>&quot;forename&quot;</p>
-<p>type</p>
-<p>=</p>
-<p>&quot;xs:string&quot;</p>
-<p>/&gt;</p>
-<p>&lt;</p>
-<p>xs:element</p>
-<p>name</p>
-<p>=</p>
-<p>&quot;surname&quot;</p>
-<p>type</p>
-<p>=</p>
-<p>&quot;xs:string&quot;</p>
-<p>/&gt;</p>
-<p>&lt;/</p>
-<p>xs:sequence</p>
-<p>&gt;</p>
-<p>&lt;/</p>
-<p>xs:complexType</p>
-<p>&gt;</p>
-<p>&lt;/</p>
-<p>xs:element</p>
-<p>&gt;</p>
-<p>&lt;/</p>
-<p>xs:schema</p>
-<p>&gt;</p>
-<p>使用<a href="http://xmlbeans.apache.org/" target="_blank">XMLBeans</a>，开发者生成了该模型，并在真实的场景中使用。现在我们回到开始的这个缓存的方案上来，假设它设计初衷是为了支持最多1.3M Person类的实例，而我们实际却要塞进去同等数量的大家伙，这从根上就注定了失败。</p>
-<p>跑一组测试用例后，发现1.3M个基于XMLBean的生成的实例需要消耗大概1.5GB的堆空间。我们当时想这肯定可以做的更好。</p>
-<p>第一个改进是显而易见的，外部同系统内部集成的实现细节是不应该把影响传递给系统的每一个角落的。所以我们把缓存改成了使用简单的<a href="http://docs.oracle.com/javase/7/docs/api/java/util/HashMap.html" target="_blank"> java.util.HashMap<Long, Person></a>。ID是键，Person是值。我们发现内存的消耗立即降低到了214MB。但这还不能令我们满意。</p>
-<p>由于Map中的键是一个数，我们有十足的理由使用<a href="http://trove.starlight-systems.com/" target="_blank">Trove Collections</a>来进一步降低它的内存消耗。这在实现上的改动很快，我们只需把 <a href="http://docs.oracle.com/javase/7/docs/api/java/util/HashMap.html" target="_blank">HashMap </a>改成 <a href="http://trove4j.sourceforge.net/javadocs/gnu/trove/map/hash/TLongObjectHashMap.html" target="_blank">TLongObjectHashMap<Person></a> ，堆的消耗进一步降低到了143MB。</p>
-<p>活干到这个程度我们已经可以收工了，但是工程师的好奇心驱使我们要更进一步。不由自主的我们发现了系统的数据存在着大量的重复信息。例如Date Of Birth其实已经在ID中编码了，所以Date Of Birth可以直接从ID中得到，而不必使用额外的空间去它。</p>
-<p>经过改良，Person类现在变成了这个样子：
-1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
- // Imports and methods removed to improve readability</p>
-<p>public</p>
-<p>class</p>
-<p>Person {</p>
-<p>private</p>
-<p>String id;</p>
-<p>private</p>
-<p>String forename;</p>
-<p>private</p>
-<p>String surname;</p>
-<p>}</p>
-<p>重新跑一边测试证实我们的改进的确有效，堆消耗降低到了93MB。但是我们还未满足。</p>
-<p>该应用在64位的机器上使用老的JDK6。默认情况下，这么做不能<a href="https://wikis.oracle.com/display/HotSpotInternals/CompressedOops" target="_blank">压缩普通对象</a>的指针的。通过参数”<a href="https://wikis.oracle.com/display/HotSpotInternals/CompressedOops" target="_blank">-XX:UseCompressedOops</a>“切换到压缩模式使我们获得了额外的收获，现在我们的内存消耗降低到了73MB。</p>
-<p><a href="http://cdn2.jobbole.com/2013/06/comparing-heap-consumption.png" title="comparing-heap-consumption" target="_blank"><img src="&quot;comparing-heap-consumption&quot;" alt=""></a></p>
-<p>当然，我们还能走的更远。比如基于键值建立B-tree，但这已经开始影响到了代码的可读性，所以我们决定到此为止。降低21.5倍的堆内存应该已经是一个足够好的结果了。</p>
-<p><strong>让我们在重复一下学到了什么</strong></p>
+        <h1 id="using-restricted-groups">Using Restricted Groups</h1>
+<p>Using Restricted Groups</p>
+<p>If you are a medium or large sized organization, you might have thousands of clients and hundreds of servers that you need to manage. Manually trying to manage all of the local groups on all of these computers is difficult, and almost impossible. Have no fear, Group Policy Objects (GPOs) are here! GPOs provide a mechanism that allows you to control the membership in local groups, and even domain groups, on any computer in the Active Directory enterprise. The specific configuration that you use for this task is the Restricted Groups GPO setting.</p>
+<p>Do you have users of Windows 2000 and XP Professional computers removing the Domain Administrators group from the local Administrators group on their computer? Do you need to have a special user account placed in the Administrator group of every computer on the network for remote administrative functions?</p>
+<p>These are common problems that most network administrators face in a Windows environment. The main problem is that it is hard to control the membership in the local groups on clients and servers throughout the enterprise. If you are a medium or large sized organization, you might have thousands of clients and hundreds of servers that you need to manage. Manually trying to manage all of the local groups on all of these computers is difficult, and almost impossible.</p>
+<p>Have no fear, Group Policy Objects (GPOs) are here! GPOs provide a mechanism that allows you to control the membership in local groups, and even domain groups, on any computer in the Active Directory enterprise. The specific configuration that you use for this task is the Restricted Groups GPO setting.</p>
+<p><strong>Where do you find Restricted Groups?</strong></p>
+<p>Restricted Groups are a node within all GPOs. In this instance, I am only referring to GPOs that reside within Active Directory, not for the local GPO that exists on each computer. The Restricted Groups node exists under the Computer Configuration|Windows Settings|Security Settings node for any GPO in Active Directory. You can see this path and the Restricted Groups node in Figure 1.</p>
+<p><img src="" alt="http://www.windowsecurity.com/img/upl/image0021101382950147.jpg">
+<strong>Figure 1:</strong> Restricted Groups node within a common GPO in Active Directory</p>
+<p>Two things of value to notice about the graphic. First, the Restricted Groups policy affects the computer account, not the user accounts. Therefore, you will need to target the GPOs where you configure Restricted Groups to organizational units (OUs) that contain computer accounts.</p>
+<p>The other point that I want to make about Restricted Groups is that they are not configured by default. No new GPO has Restricted Groups configured initially. The two default GPOs, Default Domain Policy and Default Domain Controller Policy, don’t have any Restricted Groups configured by default either.</p>
+<p><strong>What can a Restricted Group provide?</strong></p>
+<p>The Restricted Group setting allows you to configure membership in groups within Active Directory or in the local security accounts manager (SAM) of clients and servers that have joined the domain. Since the Restricted Group setting is only available in a GPO linked to an Active Directory node, the setting is centralized for both administration and deployment.</p>
+<p>To create a Restricted Group, you only need to create a GPO, then access the Restricted Groups node as described above. Once at the Restricted Groups node, you will right-click on it and select Add Group. Enter the Group name, or browse for it in the Active Directory database. After you create the group, it will show up in the right hand pane under the Group Name column.</p>
+<p>There are two different ways to control the membership of groups using Restricted Groups. The first controls the membership of a specified group, while the other setting control which groups the specified group has membership within.</p>
 <ul>
-<li>别把同外部模块的整合影响到系统的每一个角落</li>
-<li>冗余的数据可能带来开销。在可能的情况下尽量消除它</li>
-<li>基本数据类型是你最经常打交道的朋友，务必知道些关于它们的工具，如果还没玩过<a href="http://trove.starlight-systems.com/" target="_blank">Trove</a>请立刻开始吧</li>
-<li>JVM自带的优化技术不可忽视</li>
+<li><strong>Members of this group</strong> – This setting allows you to control the members of the group that you specify for the policy. The members can include both user and group accounts. When you configure the members of a group, it will overwrite the existing membership of the group and replace the members with those specified within the GPO. If you were to configure this setting and leave the members blank, then the group would not have any members after the GPO applied to the computer.
+To configure the members of a Restricted Group, you will double-click the group name that you created under the Restricted Group node. This will open up the group Properties sheet. Then, you will click the Add button for the “Members of this group” section of the form, as shown in Figure 2.</li>
 </ul>
-<p>如果你对这个实验很好奇，请在此处<a href="http://www.plumbr.eu/files/plumbr-optimization-sample.zip" target="_blank">下载相关的代码</a>。使用到的的测量工具和其具体描述可以在这篇<a href="http://plumbr.eu/blog/how-much-memory-do-i-need-part-3-measure-dont-guess" target="_blank">博文</a>找到。</p>
-<p>原文链接： <a href="http://plumbr.eu/blog/reducing-memory-consumption-by-20x" target="_blank">Nikita Salnikov-Tarnovski</a> ，编译：感谢@<a href="http://weibo.com/fwlx" title="NULL_文龙" target="_blank">NULL_文龙</a> 的热心翻译</p>
-<p>译文链接：<a href="http://blog.jobbole.com/40666/" target="_blank"><a href="http://blog.jobbole.com/40666/">http://blog.jobbole.com/40666/</a></a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/优化/">优化</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/优化/" class="label label-success">优化</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--借助HotSpotSA来一窥PermGen上的对象/">借助HotSpot SA来一窥PermGen上的对象</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--借助HotSpotSA来一窥PermGen上的对象/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-hotspot-sa-permgen-">借助HotSpot SA来一窥PermGen上的对象</h1>
-<p><a href="http://www.javaeye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.javaeye.com/all" target="_blank">我的应用</a> <a href="http://www.javaeye.com/login" target="_blank">登录</a> <a href="http://www.javaeye.com/signup" target="_blank">注册</a></p>
-<p><a href="http://www.javaeye.com/" target="_blank"><img src="&quot;JavaEye-最棒的软件开发交流社区&quot;" alt="JavaEye-最棒的软件开发交流社区"></a></p>
-<p><a href="http://www.javaeye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.javaeye.com/forums/board/Java" target="_blank">Java编程和Java企业应用版</a> → <a href="http://www.javaeye.com/forums/tag/Java" target="_blank">Java综合</a> →</p>
-<h1 id="-hotspot-sa-permgen-">借助HotSpot SA来一窥PermGen上的对象</h1>
-<p><a href="http://www.javaeye.com/forums/board/Java" target="_blank">全部</a> <a href="http://www.javaeye.com/forums/tag/Hibernate" target="_blank">Hibernate</a> <a href="http://www.javaeye.com/forums/tag/Spring" target="_blank">Spring</a> <a href="http://www.javaeye.com/forums/tag/Struts" target="_blank">Struts</a> <a href="http://www.javaeye.com/forums/tag/iBATIS" target="_blank">iBATIS</a> <a href="http://www.javaeye.com/forums/tag/J2EE" target="_blank">企业应用</a> <a href="http://www.javaeye.com/forums/tag/Design-Pattern" target="_blank">设计模式</a> <a href="http://www.javaeye.com/forums/tag/DAO" target="_blank">DAO</a> <a href="http://www.javaeye.com/forums/tag/Object-Domain" target="_blank">领域模型</a> <a href="http://www.javaeye.com/forums/tag/OO" target="_blank">OO</a> <a href="http://www.javaeye.com/forums/tag/Tomcat" target="_blank">Tomcat</a> <a href="http://www.javaeye.com/forums/tag/SOA" target="_blank">SOA</a> <a href="http://www.javaeye.com/forums/tag/JBoss" target="_blank">JBoss</a> <a href="http://www.javaeye.com/forums/tag/Swing" target="_blank">Swing</a> <a href="http://www.javaeye.com/forums/tag/Java" target="_blank">Java综合</a>
-<a href="http://www.javaeye.com/forums/39/topics/730461/posts/new" title="发表回复"></a></p>
-<p><a href="http://www.javaeye.com/clicks/324" target="_blank">myApps快速开发平台，配置即开发、所见即所得，节约85%工作量</a></p>
-<p>« 上一页 1 <a href="http://www.javaeye.com/topic/730461?page=2" target="_blank">2</a> <a href="http://www.javaeye.com/topic/730461?page=2" target="_blank">下一页 »</a>
-浏览 2354 次
- <a href="http://www.javaeye.com/topic/730461" target="_blank">主题：借助HotSpot SA来一窥PermGen上的对象</a></p>
-<p><strong>该帖已经被评为精华帖</strong> 作者 正文 * RednaxelaFX</p>
+<p><img src="" alt="http://www.windowsecurity.com/img/upl/image0041101382950162.jpg">
+<strong>Figure 2:</strong> Configuration interface to add members to a Restricted Group.</p>
 <ul>
-<li>等级: <img src="&quot;一钻会员&quot;" alt="一钻会员"></li>
-<li><a href="http://rednaxelafx.javaeye.com/" target="_blank"><img src="&quot;RednaxelaFX的博客: Script Ahead, Code Behind&quot;" alt="RednaxelaFX的博客"></a></li>
-<li>文章: 385</li>
-<li>积分: 900</li>
-<li>来自: 杭州</li>
-<li><img src="" alt="">
-  发表时间：2010-08-05   最后修改：前天</li>
+<li><strong>This group is a member of</strong> – This setting allows you to control which other groups the specified group has membership in. All groups that you configure in this interface must meet the approved group nesting rules. Therefore, you can’t configure a local group to have membership in another group, since local groups can’t be placed in Active Directory groups, nor placed in other local groups. If the list of groups in this section is left blank, it will not remove the specified group from any existing groups, it will just not place it in additional groups.<br>To configure the membership in other groups of a Restricted Group, you will double-click the group name that you created under Restricted Group node. This will open up the group Properties sheet. Then, you will click the Add button for the “This group is a member of” section of the form, as shown in Figure 3.</li>
 </ul>
-<p><a href="http://www.javaeye.com/topic/730461#" target="_blank">&lt;</a> <a href="http://www.javaeye.com/topic/730461#" target="_blank">&gt;</a> 猎头职位:</p>
-<p>相关文章: <a href="http://www.javaeye.com/topic/730461#" title="关闭" target="_blank"> </a></p>
+<p><img src="" alt="http://www.windowsecurity.com/img/upl/image0061101382950162.jpg">
+<strong>Figure 3:</strong> Configuration interface to add groups to be a member of other groups within the Restricted Group policy.</p>
+<p><strong>Common uses for Restricted Groups</strong></p>
+<p>There are some common uses for Restricted Groups in companies of all sizes. Here are some ways that you can take full advantage of Restricted Groups for different situations on clients, servers, and domain controllers.</p>
 <ul>
-<li><a href="http://www.javaeye.com/topic/247391" title="问题的产生(解决)??" target="_blank">问题的产生(解决)??</a></li>
-<li><a href="http://www.javaeye.com/topic/80620" title="分析java.lang.OutOfMemoryError: PermGen space" target="_blank">分析java.lang.OutOfMemoryError: PermGen space</a></li>
-<li><a href="http://www.javaeye.com/topic/555998" title="IKVM 编程武林之.NET派的北冥神功" target="_blank">IKVM 编程武林之.NET派的北冥神功</a></li>
-<li><a href="http://www.javaeye.com/topic/212967" title="一次Java垃圾收集调优实战" target="_blank">一次Java垃圾收集调优实战</a>
-推荐圈子: <a href="http://hllvm.group.javaeye.com/" target="_blank">高级语言虚拟机</a>
-<a href="http://www.javaeye.com/wiki/topic/730461" target="_blank">更多相关推荐</a>
-（Disclaimer：如果需要转载请先与我联系；
-作者：RednaxelaFX -&gt; rednaxelafx.javaeye.com）
-接着<a href="http://rednaxelafx.javaeye.com/blog/727938" target="_blank">昨天的</a>与<a href="http://rednaxelafx.javaeye.com/blog/729214" target="_blank">前天的帖</a>，今天也来介绍一个<a href="http://openjdk.java.net/groups/hotspot/" target="_blank">HotSpot</a>的<a href="http://openjdk.java.net/groups/hotspot/docs/Serviceability.html" target="_blank">Serviceability Agent</a>（以下简称SA）的玩法例子。
-昨天用SA把x86机器码反汇编到汇编代码，或许对多数Java程序员来说并不怎么有趣。那么今天就来点更接近Java，但又经常被误解的话题——HotSpot的GC堆的permanent generation。
-要用SA里最底层的API来连接上一个Java进程并不困难，不过SA还提供了更方便的封装：只要继承 <em>sun.jvm.hotspot.tools.Tool</em> 并实现一个 <em>run()</em> 方法，在该方法内使用SA的API访问JVM即可。
-这次我们就把一个跑在HotSpot上的Java进程的perm gen里所有对象的信息打到标准输出流上看看吧。
-测试环境是32位Linux，x86，Sun JDK 6 update 2
-（手边可用的JDK版本很多，随便拿了一个来用，呵呵 &gt;_&lt;）
-代码如下：
-import sun.jvm.hotspot.gc_implementation.parallelScavenge.PSPermGen; import sun.jvm.hotspot.gc_implementation.parallelScavenge.ParallelScavengeHeap; import sun.jvm.hotspot.gc_implementation.shared.MutableSpace; import sun.jvm.hotspot.gc_interface.CollectedHeap; import sun.jvm.hotspot.memory.Universe; import sun.jvm.hotspot.oops.HeapPrinter; import sun.jvm.hotspot.oops.HeapVisitor; import sun.jvm.hotspot.oops.ObjectHeap; import sun.jvm.hotspot.runtime.VM; import sun.jvm.hotspot.tools.Tool; //<em>/</em> /<em> @author sajia /</em> /<em>/ public class TestPrintPSPermGen extends Tool { public static void main(String[] args) { TestPrintPSPermGen test = new TestPrintPSPermGen(); test.start(args); test.stop(); } @Override public void run() { VM vm = VM.getVM(); Universe universe = vm.getUniverse(); CollectedHeap heap = universe.heap(); puts(&quot;GC heap name: &quot; + heap.kind()); if (heap instanceof ParallelScavengeHeap) { ParallelScavengeHeap psHeap = (ParallelScavengeHeap) heap; PSPermGen perm = psHeap.permGen(); MutableSpace permObjSpace = perm.objectSpace(); puts(&quot;Perm gen: [&quot; + permObjSpace.bottom() + &quot;, &quot; + permObjSpace.end() + &quot;)&quot;); long permSize = 0; for (VM.Flag f : VM.getVM().getCommandLineFlags()) { if (&quot;PermSize&quot;.equals(f.getName())) { permSize = Long.parseLong(f.getValue()); break; } } puts(&quot;PermSize: &quot; + permSize); } puts(); ObjectHeap objHeap = vm.getObjectHeap(); HeapVisitor heapVisitor = new HeapPrinter(System.out); objHeap.iteratePerm(heapVisitor); } private static void puts() { System.out.println(); } private static void puts(String s) { System.out.println(s); } }
-很简单，假定目标Java进程用的是Parallel Scavenge（PS）算法的GC堆，输出GC堆的名字，当前perm gen的起始和结束地址，VM参数中设置的PermSize（perm gen的初始大小）；然后是perm gen中所有对象的信息，包括对象摘要、地址、每个成员域的名字、偏移量和值等。
-对HotSpot的VM参数不熟悉的同学可以留意一下几个参数在HotSpot源码中的定义：
-product(ccstrlist, OnOutOfMemoryError, &quot;&quot;, &quot;Run user-defined commands on first java.lang.OutOfMemoryError&quot;) product(bool, UseParallelGC, false, &quot;Use the Parallel Scavenge garbage collector&quot;) product_pd(uintx, PermSize, &quot;Initial size of permanent generation (in bytes)&quot;) product_pd(uintx, MaxPermSize, &quot;Maximum size of permanent generation (in bytes)&quot;)
-要让SA连接到一个正在运行的Java进程最重要是提供进程ID。获取pid的方法有很多，今天演示的是利用OnOutOfMemoryError参数指定让HotSpot在遇到内存不足而抛出OutOfMemoryError时执行一段用户指定的命令；在这个命令中可以使用%p占位符表示pid，HotSpot在执行命令时会把真实pid填充进去。
-然后来造一个引发OOM的导火索：
-public class Foo { public static void main(String[] args) { Long[] array = new Long[256/</em>1024/<em>1024]; } }
-对32位HotSpot来说，main()方法里的new Long[256/</em>1024/<em>1024]会试图创建一个大于1GB的数组对象，那么只要把-Xmx参数设到1GB或更小便足以引发OOM了。
-如何知道这个数组对象会占用超过1GB的呢？Long[]是一个引用类型的数组，只要知道HotSpot中采用的对象布局：
------------------------ （+0） | _mark | ----------------------- （+4） | _metadata | ----------------------- （+8） | 数组长度 length | ----------------------- （+12+4/</em>0） | 下标为0的元素 | ----------------------- （+12+4/<em>1） | 下标为1的元素 | ----------------------- | ... | ----------------------- （+12+4/</em>n） | 下标为n的元素 | ----------------------- | ... | -----------------------
-就知道一大半了～
-跑一下Foo程序。留意到依赖SA的代码要编译的话需要$JAVA_HOME/lib/sa-jdi.jar在classpath上，执行时同理。指定GC算法为Parallel Scavenge，并指定GC堆（不包括perm gen）的初始和最大值都为1GB：
-[sajia@sajia ~]$ java -server -version java version &quot;1.6.0_02&quot; Java(TM) SE Runtime Environment (build 1.6.0_02-b05) Java HotSpot(TM) Server VM (build 1.6.0_02-b05, mixed mode) [sajia@sajia ~]$ javac Foo.java [sajia@sajia ~]$ javac -classpath &quot;.:$JAVA_HOME/lib/sa-jdi.jar&quot; TestPrintPSPermGen.java [sajia@sajia ~]$ java -server -XX:+UseParallelGC -XX:OnOutOfMemoryError=&#39;java -cp $JAVA_HOME/lib/sa-jdi.jar:. TestPrintPSPermGen %p &gt; foo.txt&#39; -Xms1g -Xmx1g Foo /# /# java.lang.OutOfMemoryError: Java heap space /# -XX:OnOutOfMemoryError=&quot;java -cp $JAVA_HOME/lib/sa-jdi.jar:. TestPrintPSPermGen %p &gt; foo.txt&quot; /# Executing /bin/sh -c &quot;java -cp $JAVA_HOME/lib/sa-jdi.jar:. TestPrintPSPermGen 23373 &gt; foo.txt&quot;... Attaching to process ID 23373, please wait... Debugger attached successfully. Server compiler detected. JVM version is 1.6.0_02-b05 Exception in thread &quot;main&quot; java.lang.OutOfMemoryError: Java heap space at Foo.main(Foo.java:5) [sajia@sajia ~]$
-得到的foo.txt就是要演示的输出结果。把它压缩了放在附件里，有兴趣但懒得自己实验的同学也可以观摩一下～
-在foo.txt的开头可以看到：
-GC heap name: ParallelScavengeHeap Perm gen: [0x70e60000, 0x71e60000) PermSize: 16777216
-这里显示了GC堆确实是Parallel Scavenge的，其中perm gen当前的起始地址为0x70e60000，结束地址为0x71e60000，中间连续的虚拟内存空间都分配给perm gen使用。简单计算一下可知perm gen大小为16MB，与下面打出的PermSize参数的值完全吻合。
-通过阅读该日志文件，可以得知HotSpot在perm gen里存放的对象主要有：</li>
-</ul>
-<ul>
-<li>Klass系对象</li>
-<li>java.lang.Class对象</li>
-<li>字符串常量</li>
-<li>符号（Symbol/symbolOop）常量</li>
-<li>常量池对象</li>
-<li>方法对象
-等等，以及它们所直接依赖的一些对象。具体这些都是什么留待以后有空再写。
-接下来挑几个例子来简单讲解一下如何阅读这个日志文件里的对象描述。
-首先看一个String对象。先看看JDK里java.lang.String对象的声明是什么样的：
-package java.lang; // imports ... public final class String implements java.io.Serializable, Comparable<String>, CharSequence { //<em>/</em> The value is used for character storage. /<em>/ private final char value[]; //</em>/<em> The offset is the first index of the storage that is used. /</em>/ private final int offset; //<em>/</em> The count is the number of characters in the String. /<em>/ private final int count; //</em>/<em> Cache the hash code for the string /</em>/ private int hash; // Default to 0 //<em>/</em> use serialVersionUID from JDK 1.0.2 for interoperability /<em>/ private static final long serialVersionUID = -6849794470754667710L; private static final ObjectStreamField[] serialPersistentFields = new ObjectStreamField[0]; public static final Comparator<String> CASE_INSENSITIVE_ORDER = new CaseInsensitiveComparator(); private static class CaseInsensitiveComparator implements Comparator<String>, java.io.Serializable { // ... } }
-留意到String对象有4个成员域，分别是：
-<strong>名字</strong> <strong>类型</strong> <strong>引用类型还是值类型</strong> value char[] 引用类型 offset int 值类型 count int 值类型 hash int 值类型
-String类自身有三个静态变量，分别是：
-<strong>名字</strong> <strong>类型</strong> <strong>引用类型还是值类型</strong> <strong>备注</strong> serialVersionUID long 值类型 常量 serialPersistentFields java.io.ObjectStreamField[] 引用类型 只读变量 CASE_INSENSITIVE_ORDER java.lang.String.CaseInsensitiveComparator 引用类型 只读变量
-回到我们的foo.txt日志文件来看一个String的对象实例：
-&quot;main&quot; @ 0x7100b140 (object size = 24) - _mark: {0} :1 - _klass: {4} :InstanceKlass for java/lang/String @ 0x70e6c6a0 - value: {8} :[C @ 0x7100b158 - offset: {12} :0 - count: {16} :4 - hash: {20} :0
-这是在HotSpot的字符串池里的一个字符串常量对象，&quot;main&quot;。
-日志中的“&quot;main&quot;”是对象的摘要，String对象有特别处理显示为它的内容，其它多数类型的对象都是显示类型名之类的。
-在@符号之后的就是对象的起始地址，十六进制表示。
-紧接着后面是对象占用GC堆的大小。很明显这个String对象自身占用了24字节。这里强调是“占用”的大小是因为对象除了存储必要的数据需要空间外，为了满足数据对齐的要求可能会有一部分空间作为填充数据而空占着。
-String在内存中的布局是：
------------------------ （+0） | _mark | ----------------------- （+4） | _metadata | ----------------------- （+8） | value | ----------------------- （+12）| offset | ----------------------- （+16）| count | ----------------------- （+20）| hash | -----------------------
-32位HotSpot上要求64位/8字节对齐，String占用的24字节正好全部都是有效数据，不需要填充空数据。
-上面的String实例在内存中的实际数据如下：
-<strong>偏移量（字节）</strong> <strong>数值（二进制表示）</strong> <strong>数值（十六进制表示）</strong> <strong>宽度（位/字节）</strong>   +0 00000000000000000000000000000001 00000001 32位/4字节   +4 01110000111001101100011010100000 70e6c6a0 32位/4字节   +8 01110001000000001011000101011000 7100b158 32位/4字节 +12 00000000000000000000000000000000 00000000 32位/4字节 +16 00000000000000000000000000000100 00000004 32位/4字节 +20 00000000000000000000000000000000 00000000 32位/4字节
-OK，那我们来每个成员域都过一遍，看看有何玄机。
-第一个是_mark。在HotSpot的C++代码里它的类型是markOop，在SA里以sun.jvm.hotspot.oops.Mark来表现。
-它属于对象头（object header）的一部分，是个多用途标记，可用于记录GC的标记（mark）状态、锁状态、偏向锁（bias-locking）状态、身份哈希值（identity hash）缓存等等。它的可能组合包括：
-<strong>比特域（名字或常量值:位数）</strong> <strong>标识（tag）</strong>  <em>*状态</em></em> 身份哈希值:25, 年龄:4, 0:1 01  未锁 锁记录地址:30 00  被轻量级锁住 monitor对象地址:30 10  被重量级锁住 转向地址:30 11  被GC标记 线程ID:23, 纪元:2, 年龄:4, 1:1 01  被偏向锁住/可被偏向锁
-例子中的&quot;main&quot;字符串的_mark值为1，也就是说它：</li>
-<li>没有被锁住；</li>
-<li>现在未被GC标记；</li>
-<li>年龄为0（尚未经历过GC）；</li>
-<li>身份哈希值尚未被计算。
-HotSpot的GC堆中许多创建没多久的对象的<em>mark值都会是1，属于正常现象。
-接下来看SA输出的日志中写为_klass而在我的图示上写为_metadata的这个域。
-在HotSpot的C++代码里，oopDesc是所有放在GC堆上的对象的顶层类，它的成员就构成了对象头。HotSpot在C++代码中用instanceOopDesc类来表示Java对象，而该类继承oopDesc，所以HotSpot中的Java对象也自然拥有oopDesc所声明的头部。
-hotspot/src/share/vm/oops/oop.hpp：
-class oopDesc { private: volatile markOop _mark; union _metadata { wideKlassOop _klass; narrowOop _compressed_klass; } _metadata; };
-_metadata与前面提过的_mark一同构成了对象头。
-_metadata是个union，为了能兼容32位、64位与开了压缩指针（CompressedOops）等几种情况。无论是这个union中的_klass还是_compressed_klass域，它们都是用于指向一个描述该对象的klass对象的指针。SA的API屏蔽了普通指针与压缩指针之间的差异，所以就直接把_metadata._klass称为了_klass。
-对象头的格式是固定的，而对象自身内容的布局则由HotSpot根据一定规则来决定。Java类在被HotSpot加载时，其对象实例的布局与类自身的布局都会被计算出来。这个计算规则有机会以后再详细写。
-现在来看看&quot;main&quot;这个String对象实例自身的域都是些什么。
-value：指向真正保存字符串内容的对象的引用。留意Java里String并不把真正的字符内容直接存在自己里面，而是引用一个char[]对象来承载真正的存储。
-从Java一侧看value域的类型是char[]，而从HotSpot的C++代码来看它就是个普通的指针而已。它当前值是0x7100b158，指向一个char[]对象的起始位置。
-offset：字符串的内容从value指向的char[]中的第几个字符开始算（0-based）。int型，32位带符号整数，这从Java和C++来看都差不多。当前值为0。
-count：该字符串的长度，或者说包含的UTF-16字符的个数。类型同上。当前值为4，说明该字符串有4个UTF-16字符。
-hash：缓存该String对象的哈希值的成员域。类型同上。当前值为0，说明该实例的String.hashCode()方法尚未被调用过，因而尚未缓存住该字符串的哈希值。
-String对象的成员域都走过一遍了，来看看value所指向的对象状况。
-[C @ 0x7100b158 (object size = 24) - _mark: {0} :1 - _klass: {4} :TypeArrayKlass for [C @ 0x70e60440 - _length: {8} :4 - 0: {12} :m - 1: {14} :a - 2: {16} :i - 3: {18} :n
-这就是&quot;main&quot;字符串的value所引用的char[]的日志。
-[C 是char[]在JVM中的内部名称。
-在@符号之后的0x7100b158是该对象的起始地址。
-该对象占用GC堆的大小是24字节。留意了哦。
-看看它的成员域。
-_mark与_klass构成的对象头就不重复介绍了。可以留意的是元素类型为原始类型（boolean、char、short、int、long、float、double）的数组在HotSpot的C++代码里是用typeArrayOopDesc来表示的；这里的char[]也不例外。描述typeArrayOopDesc的klass对象是typeArrayKlass类型的，所以可以看到日志里_klass的值写着TypeArrayKlass for [C。
-接下来是_length域。HotSpot中，数组对象比普通对象的头要多一个域，正是这个描述数组元素个数的_length。Java语言中数组的.length属性、JVM字节码中的arraylength要取的也正是这个值。
-日志中的这个数组对象有4个字符，所以_length值为4。
-再后面就是数组的内容了。于是该char[]在内存中的布局是：
------------------------ （+0） | _mark | ----------------------- （+4） | _metadata | ----------------------- （+8） | 数组长度 length | ----------------------- （+12） | char[0] | char[1] | ----------------------- （+16） | char[2] | char[3] | ----------------------- （+20） | 填充0 | -----------------------
-Java的char是UTF-16字符，宽度是16位/2字节；4个字符需要8字节，加上对象头的4/<em>3=12字节，总共需要20字节。但该char[]却占用了GC堆上的24字节，正是因为前面提到的数据对齐要求——HotSpot要求GC堆上的对象是8字节对齐的，20向上找最近的8的倍数就是24了。用于对齐的这部分会被填充为0。
-&quot;main&quot;对象的value指向的char[]也介绍过了，回过头来看看它的_metadata._klass所指向的klass对象又是什么状况。
-从HotSpot的角度来看，klass就是用于描述GC堆上的对象的对象；如果一个对象的大小、域的个数与类型等信息不固定的话，它就需要特定的klass对象来描述。
-instanceOopDesc用于表示Java对象，instanceKlass用于描述它，但自身却又有些不固定的信息需要被描述，因而又有instanceKlassKlass；如此下去会没完没了，所以有个klassKlass作为这个描述链上的终结符。
-klass的关系图：
-<img src="" alt="">
-<a href="http://openjdk.java.net/groups/hotspot/docs/FOSDEM-2007-HotSpot.pdf" target="_blank">（图片来源）</a>
-回到foo.txt日志文件上来，找到&quot;main&quot;对象的_klass域所引用的instanceKlass对象：
-InstanceKlass for java/lang/String @ 0x70e6c6a0 (object size = 384) - _mark: {0} :1 - _klass: {4} :InstanceKlassKlass @ 0x70e60168 - _java_mirror: {60} :Oop for java/lang/Class @ 0x70e77760 - _super: {64} :InstanceKlass for java/lang/Object @ 0x70e65af8 - _size_helper: {12} :6 - _name: {68} :/#java/lang/String @ 0x70e613e8 - _access_flags: {84} :134217777 - _subklass: {72} :null - _next_sibling: {76} :InstanceKlass for java/lang/CharSequence @ 0x70e680e8 - _alloc_count: {88} :0 - _array_klasses: {112} :ObjArrayKlass for InstanceKlass for java/lang/String @ 0x70ef6298 - _methods: {116} :ObjArray @ 0x70e682a0 - _method_ordering: {120} :[I @ 0x70e61330 - _local_interfaces: {124} :ObjArray @ 0x70e67998 - _transitive_interfaces: {128} :ObjArray @ 0x70e67998 - _nof_implementors: {268} :0 - _implementors[0]: {164} :null - _implementors[0]: {168} :null - _fields: {132} :[S @ 0x70e68230 - _constants: {136} :ConstantPool for java/lang/String @ 0x70e65c38 - _class_loader: {140} :null - _protection_domain: {144} :null - _signers: {148} :null - _source_file_name: {152} :/#String.java @ 0x70e67980 - _inner_classes: {160} :[S @ 0x70e6c820 - _nonstatic_field_size: {196} :4 - _static_field_size: {200} :4 - _static_oop_field_size: {204} :2 - _nonstatic_oop_map_size: {208} :1 - _is_marked_dependent: {212} :0 - _init_state: {220} :5 - _vtable_len: {228} :5 - _itable_len: {232} :9 - serialVersionUID: {368} :-6849794470754667710 - serialPersistentFields: {360} :ObjArray @ 0x74e882c8 - CASE_INSENSITIVE_ORDER: {364} :Oop for java/lang/String$CaseInsensitiveComparator @ 0x74e882c0
-还记得上文提到过的String类的3个静态变量么？有没有觉得有什么眼熟的地方？
-没错，在HotSpot中，Java类的静态变量就是作为该类对应的instanceKlass的实例变量出现的。上面的日志里最后三行描述了String的静态变量所在。
-这是件非常自然的事：类用于描述对象，类自身也是对象，有用于描述自身的类；某个类的所谓“静态变量”就是该类对象的实例变量。很多对象系统都是这么设计的。HotSpot的这套oop体系（指“普通对象指针”，不是指“面向对象编程”）继承自<a href="http://www.strongtalk.org/" target="_blank">Strongtalk</a>，实际上反而比暴露给Java的对象模型显得更加面向对象一些。
-HotSpot并不把instanceKlass暴露给Java，而会另外创建对应的java.lang.Class对象，并将后者称为前者的“Java镜像”，两者之间互相持有引用。日志中的_java_mirror便是该instanceKlass对Class对象的引用。
-镜像机制被认为是良好的面向对象的反射与元编程设计的重要机制。Gilad Bracha与David Ungar还专门写了篇论文来阐述此观点，参考<a href="http://bracha.org/mirrors.pdf" target="_blank">Mirrors: Design Principles for Meta-level Facilities of Object-Oriented Programming Languages</a>。
-顺带把&quot;main&quot;对象的_klass链上余下的两个对象的日志也贴出来：
-InstanceKlassKlass @ 0x70e60168 (object size = 120) - _mark: {0} :1 - _klass: {4} :KlassKlass @ 0x70e60000 - _java_mirror: {60} :Oop for java/lang/Class @ 0x70e76f20 - _super: {64} :null - _size_helper: {12} :0 - _name: {68} :null - _access_flags: {84} :0 - _subklass: {72} :null - _next_sibling: {76} :null - _alloc_count: {88} :0
-所有instanceKlass对象都是被这个instanceKlassKlass对象所描述的。
-KlassKlass @ 0x70e60000 (object size = 120) - _mark: {0} :1 - _klass: {4} :KlassKlass @ 0x70e60000 - _java_mirror: {60} :Oop for java/lang/Class @ 0x70e76e00 - _super: {64} :null - _size_helper: {12} :0 - _name: {68} :null - _access_flags: {84} :0 - _subklass: {72} :null - _next_sibling: {76} :null - _alloc_count: {88} :0
-而所有/</em>KlassKlass对象都是被这个klassKlass对象所描述的。
-klass对象的更详细的介绍也留待以后再写吧～至少得找时间写写instanceKlass与vtable、itable的故事。
-嘛，今天的废话到此结束 ^</em>^
-希望这帖能解答先前<a href="http://hllvm.group.javaeye.com/group/topic/20168" target="_blank">关于java里面的全局变量的内存分配</a>一帖中的疑问。也希望大家能多多支持<a href="http://hllvm.group.javaeye.com/" target="_blank">高级语言虚拟机</a>圈子，有什么HLL VM相关的话题想讨论的欢迎来转转～</li>
-</ul>
-<ul>
-<li><a href="http://dl.javaeye.com/topics/download/4e07be37-e608-3954-9a5f-7015fdb0a687" target="_blank">foo.zip</a> (1.7 MB)</li>
-<li>描述: 文中例子的输出</li>
-<li><p>下载次数: 0</p>
+<li><p>Control the membership of the local Administrators group on all client computers to include the following accounts:</p>
 </li>
-<li><p><a href=""><img src="&quot;点击查看原始大小图片&quot;" alt=""></a></p>
+<li><p>Administrator (local SAM account)</p>
 </li>
-<li><p>大小: 36.1 KB</p>
-</li>
-<li><p><a href="http://www.javaeye.com/topic/730461#" target="_blank">查看图片附件</a></p>
-</li>
+<li>Domain Admins</li>
+<li>SMS or other remote admin domain account</li>
 </ul>
-<p>声明：JavaEye文章版权属于作者，受法律保护。没有作者书面许可不得转载。
-推荐链接</p>
+<p>Another indirect benefit of using the Restricted Group setting is that it will automatically remove any local user accounts that should not be added to the Administrators group. This typically includes local user accounts that have been created by the user of the computer, to bypass domain security.</p>
 <ul>
-<li><a href="http://www.javaeye.com/clicks/373" target="_blank"><img src="&quot;adobe&quot;" alt="adobe"></a> <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://rednaxelafx.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://rednaxelafx.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=RednaxelaFX" title="发送站内短信" target="_blank"> </a> <a href="http://rednaxelafx.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=RednaxelaFX" title="关注作者" target="_blank"> </a>  * melin</li>
-<li>等级: <img src="&quot;三星会员&quot;" alt="三星会员"></li>
-<li><a href="http://melin.javaeye.com/" target="_blank"><img src="&quot;melin的博客: melin&quot;" alt="melin的博客"></a></li>
-<li>文章: 327</li>
-<li>积分: 383</li>
-<li>来自: 合肥</li>
-<li><img src="" alt="">
-  发表时间：前天  </li>
+<li>Control the membership of the Enterprise Admins and Schema Admins groups. These groups should not be used that often, unless a large and important change is going to occur to a portion of Active Directory. By using the Restricted Group setting, you can manage and control the membership better and ensure that an incorrect account is not added to these groups incorrectly.</li>
+<li>Control the membership of local groups on file servers. File servers typically have many local groups. These local groups typically nest global groups from Active Directory. You can use the Restricted Groups to keep the membership of these groups consistent and persistent from a central location of Active Directory.</li>
 </ul>
-<p>兄弟有点入魔了。。。 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://melin.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://melin.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=melin" title="发送站内短信" target="_blank"> </a> <a href="http://melin.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=melin" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613583" title="melin回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * kimmking</p>
+<p><strong>Tips for Restricted Groups</strong></p>
+<p>Here are some general tips to ensure that your implementation of Restricted Groups goes smoothly.</p>
 <ul>
-<li>等级: <img src="&quot;二钻会员&quot;" alt="二钻会员"></li>
-<li><a href="http://setting.javaeye.com/" target="_blank"><img src="&quot;kimmking的博客: 程序人生&quot;" alt="kimmking的博客"></a></li>
-<li>文章: 2091</li>
-<li>积分: 1160</li>
-<li>来自: 中华大丈夫学院</li>
-<li><img src="" alt="">
-  发表时间：前天  </li>
+<li>Make sure that the GPOs are linked to OUs that contain computer accounts</li>
+<li>Make sure you don’t try to configure invalid group nesting rules</li>
+<li>When adding members to a group, you will need to add all members through the GPO</li>
+<li>Use the Restricted Groups to control membership of key administrative groups within Active Directory</li>
+<li>Test the implementation thoroughly before you deploy, to ensure you don’t prohibit a users capabilities or lock yourself out of a computer</li>
 </ul>
-<p>RednaxelaFX 的帖子，太深奥了。
-我找本编译原理补补先。 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://setting.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://setting.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=kimmking" title="发送站内短信" target="_blank"> </a> <a href="http://setting.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=kimmking" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613655" title="kimmking回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * youjianbo_han_87</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://youjianbo-han-87.javaeye.com/" target="_blank"><img src="&quot;youjianbo_han_87的博客: &quot;" alt="youjianbo_han_87的博客"></a></li>
-<li>文章: 62</li>
-<li>积分: 0</li>
-<li>来自: 上海</li>
-<li><img src="" alt="">
-  发表时间：前天  </li>
-</ul>
-<p>确实不错，基础基础。 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://youjianbo-han-87.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://youjianbo-han-87.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=youjianbo_han_87" title="发送站内短信" target="_blank"> </a> <a href="http://youjianbo-han-87.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=youjianbo_han_87" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613721" title="youjianbo_han_87回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * reilost</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://reilost.javaeye.com/" target="_blank"><img src="&quot;reilost的博客: Reilost&quot;" alt="reilost的博客"></a></li>
-<li>文章: 74</li>
-<li>积分: 20</li>
-<li>来自: 北京</li>
-<li><a href="http://www.javaeye.com/topic/731832" title="我正在看《终于忍不住诱惑，脱身出来做Contractor了。》" target="_blank"><img src="" alt=""></a>
-  发表时间：前天  </li>
-</ul>
-<p>-。-fx同学威武。。每次看你的帖子都想回去再看一遍编译原理 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://reilost.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://reilost.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=reilost" title="发送站内短信" target="_blank"> </a> <a href="http://reilost.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=reilost" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613784" title="reilost回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * kaka2008</p>
-<ul>
-<li>等级: <img src="&quot;二星会员&quot;" alt="二星会员"></li>
-<li><a href="http://kaka2008.javaeye.com/" target="_blank"><img src="&quot;kaka2008的博客: 真的勇士，敢于直面这扯淡的人生&quot;" alt="kaka2008的博客"></a></li>
-<li>文章: 241</li>
-<li>积分: 200</li>
-<li>来自: 北京</li>
-<li><img src="" alt="">
-  发表时间：前天  </li>
-</ul>
-<p>fx同学出手即精华
-而且帖子太深奥。。。 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://kaka2008.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://kaka2008.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=kaka2008" title="发送站内短信" target="_blank"> </a> <a href="http://kaka2008.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=kaka2008" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613802" title="kaka2008回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * liujun999999</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://liujun999999.javaeye.com/" target="_blank"><img src="&quot;liujun999999的博客: liujun999999&quot;" alt="liujun999999的博客"></a></li>
-<li>文章: 35</li>
-<li>积分: 30</li>
-<li>来自: 广州</li>
-<li><img src="" alt="">
-  发表时间：前天  </li>
-</ul>
-<p>晕，说实话，我没有看懂，看出差距来了，唉 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://liujun999999.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://liujun999999.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=liujun999999" title="发送站内短信" target="_blank"> </a> <a href="http://liujun999999.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=liujun999999" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613905" title="liujun999999回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * hymanyung</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://hymanyung.javaeye.com/" target="_blank"><img src="&quot;hymanyung的博客: &quot;" alt="hymanyung的博客"></a></li>
-<li>文章: 5</li>
-<li>积分: 30</li>
-<li>来自: 东莞</li>
-<li><img src="" alt="">
-  发表时间：前天  </li>
-</ul>
-<p>看得頭暈了. <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://hymanyung.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://hymanyung.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=hymanyung" title="发送站内短信" target="_blank"> </a> <a href="http://hymanyung.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=hymanyung" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613949" title="hymanyung回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * seraphim871211</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://seraphim871211.javaeye.com/" target="_blank"><img src="&quot;seraphim871211的博客: &quot;" alt="seraphim871211的博客"></a></li>
-<li>文章: 58</li>
-<li>积分: 50</li>
-<li>来自: 杭州</li>
-<li><img src="" alt="">
-  发表时间：前天  </li>
-</ul>
-<p>“大叔”，你最近的帖子都看不下去了。。。<img src="" alt=""> <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://seraphim871211.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://seraphim871211.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=seraphim871211" title="发送站内短信" target="_blank"> </a> <a href="http://seraphim871211.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=seraphim871211" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613969" title="seraphim871211回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * AlwenS</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://alwens.javaeye.com/" target="_blank"><img src="&quot;AlwenS的博客: &quot;" alt="AlwenS的博客"></a></li>
-<li>文章: 20</li>
-<li>积分: 30</li>
-<li>来自: 深圳</li>
-<li><img src="" alt="">
-  发表时间：前天   最后修改：前天</li>
-</ul>
-<p>看完鸟,楼主的动手能力真强。<img src="" alt="">
-我也喜欢探究这些东西，只是功力还不如楼主深。
-其实这东东和编译原理倒没多大关系了，主要看的是具体OO语言的Runtime Env模型。
-比如c++就是没有penmgen的，所以他的动态能力和RTTI都非常弱。 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://alwens.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://alwens.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=AlwenS" title="发送站内短信" target="_blank"> </a> <a href="http://alwens.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=AlwenS" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1614028" title="AlwenS回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票</p>
-<p><a href="http://www.javaeye.com/forums/39/topics/730461/posts/new" title="发表回复"></a></p>
-<p>« 上一页 1 <a href="http://www.javaeye.com/topic/730461?page=2" target="_blank">2</a> <a href="http://www.javaeye.com/topic/730461?page=2" target="_blank">下一页 »</a>
-<a href="http://www.javaeye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.javaeye.com/forums/board/Java" target="_blank">Java编程和Java企业应用版</a> → <a href="http://www.javaeye.com/forums/tag/Java" target="_blank">Java综合</a>
-跳转论坛:Java编程和Java企业应用 Web前端技术 移动编程和手机应用开发 C/C++编程 Ruby编程 Python编程 PHP编程 Flash编程和RIA Microsoft .Net 综合技术 软件开发和项目管理 行业应用 入门讨论 招聘求职 海阔天空</p>
-<ul>
-<li><a href="http://www.javaeye.com/jobs/712" title="北京:JavaEye猎头诚聘Java搜索工程师" target="_blank">北京: JavaEye猎头诚聘Java搜索工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/779" title="浙江:VMKID诚聘Java开发工程师(J2SE)（Client端方向）" target="_blank">浙江: VMKID诚聘Java开发工程师(J2SE)（Client端方</a></li>
-<li><a href="http://www.javaeye.com/jobs/794" title="广东:穆迪moody&#39;s诚聘Java Developer" target="_blank">广东: 穆迪moody&#39;s诚聘Java Developer</a></li>
-<li><a href="http://www.javaeye.com/jobs/523" title="北京:去哪儿旅游搜索引擎诚聘java开发工程师" target="_blank">北京: 去哪儿旅游搜索引擎诚聘java开发工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/838" title="上海:BShare诚聘资深Java Web开发工程师" target="_blank">上海: BShare诚聘资深Java Web开发工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/728" title="北京:chinacache诚聘Java应用架构师" target="_blank">北京: chinacache诚聘Java应用架构师</a></li>
-<li><a href="http://www.javaeye.com/jobs/839" title="北京:glodon诚聘Eclipse插件开发工程师" target="_blank">北京: glodon诚聘Eclipse插件开发工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/769" title="北京:掌中魔力诚聘java资深工程师" target="_blank">北京: 掌中魔力诚聘java资深工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/726" title="北京:chinacache诚聘高级Java开发工程师（后台应用）" target="_blank">北京: chinacache诚聘高级Java开发工程师（后台应用</a></li>
-<li><a href="http://www.javaeye.com/jobs/825" title="上海:上海汉得诚聘高级基础架构研发工程师——IDE方向" target="_blank">上海: 上海汉得诚聘高级基础架构研发工程师——IDE</a></li>
-<li><a href="http://www.javaeye.com/jobs/806" title="北京:上海幽幽诚聘手机网游服务器端开发工程师" target="_blank">北京: 上海幽幽诚聘手机网游服务器端开发工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/800" title="北京:网易（NETEASE）诚聘高级Java开发工程师" target="_blank">北京: 网易（NETEASE）诚聘高级Java开发工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/817" title="北京:Laszlo Systems 诚聘高级Java程序员" target="_blank">北京: Laszlo Systems 诚聘高级Java程序员</a></li>
-<li><a href="http://www.javaeye.com/jobs/682" title="上海:恺英网络诚聘JS工程师" target="_blank">上海: 恺英网络诚聘JS工程师</a></li>
-<li><p><a href="http://www.javaeye.com/jobs/804" title="福建:福州几维网络诚聘游戏服务端程序员(Java)" target="_blank">福建: 福州几维网络诚聘游戏服务端程序员(Java)</a></p>
-</li>
-<li><p><a href="http://www.javaeye.com/" target="_blank">首页</a></p>
-</li>
-<li><a href="http://www.javaeye.com/news" target="_blank">新闻</a></li>
-<li><a href="http://www.javaeye.com/forums" target="_blank">论坛</a></li>
-<li><a href="http://www.javaeye.com/ask" target="_blank">问答</a></li>
-<li><a href="http://www.javaeye.com/wiki" target="_blank">专栏</a></li>
-<li><a href="http://www.javaeye.com/blogs" target="_blank">博客</a></li>
-<li><a href="http://www.javaeye.com/groups" target="_blank">圈子</a></li>
-<li><a href="http://www.javaeye.com/job" target="_blank">招聘</a></li>
-<li><a href="http://www.javaeye.com/index/service" target="_blank">服务</a></li>
-<li><a href="http://www.javaeye.com/search" target="_blank">搜索</a></li>
-<li><a href="http://java.javaeye.com/" target="_blank">Java</a></li>
-<li><a href="http://webapp.javaeye.com/" target="_blank">Web</a></li>
-<li><a href="http://ruby.javaeye.com/" target="_blank">Ruby</a></li>
-<li><a href="http://python.javaeye.com/" target="_blank">Python</a></li>
-<li><a href="http://agile.javaeye.com/" target="_blank">敏捷</a></li>
-<li><a href="http://mysql.javaeye.com/" target="_blank">MySQL</a></li>
-<li><a href="http://runqian.javaeye.com/" target="_blank">润亁报表</a></li>
-<li><a href="http://book.javaeye.com/" target="_blank">图书</a></li>
-<li><a href="http://www.javaeye.com/index/service" target="_blank">广告服务</a></li>
-<li><a href="http://webmaster.javaeye.com/" target="_blank">JavaEye黑板报</a></li>
-<li><a href="http://www.javaeye.com/index/aboutus" target="_blank">关于我们</a></li>
-<li><a href="http://www.javaeye.com/index/contactus" target="_blank">联系我们</a></li>
-<li><a href="http://www.javaeye.com/index/friend_links" target="_blank">友情链接</a></li>
-</ul>
-<p>© 2003-2010 JavaEye.com. 上海炯耐计算机软件有限公司版权所有 [ <a href="http://www.miibeian.gov.cn/" target="_blank">沪ICP备05023328号</a> ]</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/优化/">优化</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/优化/" class="label label-success">优化</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--借助HotSpotSA来一窥PermGen上的对象/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-优化--借助HotSpotSA来一窥PermGen上的对象" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--代码难道不是这么写的？讨论第18页-Java综合-Java-JavaEye论坛/">代码难道不是这么写的？讨论第18页 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--代码难道不是这么写的？讨论第18页-Java综合-Java-JavaEye论坛/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-18-java-java-javaeye-">代码难道不是这么写的？讨论第18页 - Java综合 - Java - JavaEye论坛</h1>
-<p><a href="http://www.javaeye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.javaeye.com/all" target="_blank">我的应用</a> <a href="http://www.javaeye.com/login" target="_blank">登录</a> <a href="http://www.javaeye.com/signup" target="_blank">注册</a></p>
-<p><a href="http://www.javaeye.com/" target="_blank"><img src="&quot;JavaEye-最棒的软件开发交流社区&quot;" alt="JavaEye-最棒的软件开发交流社区"></a></p>
-<p><a href="http://www.javaeye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.javaeye.com/forums/board/Java" target="_blank">Java编程和Java企业应用版</a> → <a href="http://www.javaeye.com/forums/tag/Java" target="_blank">Java综合</a> →</p>
-<h1 id="-">代码难道不是这么写的？</h1>
-<p><a href="http://www.javaeye.com/forums/board/Java" target="_blank">全部</a> <a href="http://www.javaeye.com/forums/tag/Hibernate" target="_blank">Hibernate</a> <a href="http://www.javaeye.com/forums/tag/Spring" target="_blank">Spring</a> <a href="http://www.javaeye.com/forums/tag/Struts" target="_blank">Struts</a> <a href="http://www.javaeye.com/forums/tag/iBATIS" target="_blank">iBATIS</a> <a href="http://www.javaeye.com/forums/tag/J2EE" target="_blank">企业应用</a> <a href="http://www.javaeye.com/forums/tag/Design-Pattern" target="_blank">设计模式</a> <a href="http://www.javaeye.com/forums/tag/DAO" target="_blank">DAO</a> <a href="http://www.javaeye.com/forums/tag/Object-Domain" target="_blank">领域模型</a> <a href="http://www.javaeye.com/forums/tag/OO" target="_blank">OO</a> <a href="http://www.javaeye.com/forums/tag/Tomcat" target="_blank">Tomcat</a> <a href="http://www.javaeye.com/forums/tag/SOA" target="_blank">SOA</a> <a href="http://www.javaeye.com/forums/tag/JBoss" target="_blank">JBoss</a> <a href="http://www.javaeye.com/forums/tag/Swing" target="_blank">Swing</a> <a href="http://www.javaeye.com/forums/tag/Java" target="_blank">Java综合</a>
-<a href="http://www.javaeye.com/forums/39/topics/722599/posts/new" title="发表回复"></a></p>
-<p><a href="http://www.javaeye.com/clicks/324" target="_blank">myApps快速开发平台，配置即开发、所见即所得，节约85%工作量</a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=17" target="_blank">« 上一页</a> <a href="http://www.javaeye.com/topic/722599?page=1" target="_blank">1</a> <a href="http://www.javaeye.com/topic/722599?page=2" target="_blank">2</a> … <a href="http://www.javaeye.com/topic/722599?page=17" target="_blank">17</a> 18 <a href="http://www.javaeye.com/topic/722599?page=19" target="_blank">19</a> <a href="http://www.javaeye.com/topic/722599?page=20" target="_blank">20</a> <a href="http://www.javaeye.com/topic/722599?page=19" target="_blank">下一页 »</a>
-浏览 21808 次
- <a href="http://www.javaeye.com/topic/722599" target="_blank">主题：代码难道不是这么写的？</a></p>
-<p><strong>该帖已经被评为良好帖</strong> 作者 正文 * moonranger</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://moonranger.javaeye.com/" target="_blank"><img src="&quot;moonranger的博客: moonranger&quot;" alt="moonranger的博客"></a></li>
-<li>文章: 44</li>
-<li>积分: 40</li>
-<li>来自: 天津</li>
-<li><img src="" alt="">
-  发表时间：2010-07-30  </li>
-</ul>
-<p><a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">&lt;</a> <a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">&gt;</a> 猎头职位:</p>
-<p>qiushily2030 写道
-fengfeng925 写道</p>
-<p>qiushily2030 写道</p>
-<p>A a;
-申明在内部，每次遍历都申明一个a的变量.<br>申明在外面 只申明一次 一直复用.  申明也是要资源的..
-一个变量就相当于一个指针,循环1亿次,LZ你说呢.
-评审官说的还是有理的,不过这个得看需求.  JVM回收是在内存不足的时候.
-  还是不要想当然了,我就那么干过一回. 程序是最真实的答案...
-简直是TMD胡扯。
-JVM回收是在内存不足的时候.这个已经修正. 不是内存不足才调用。。
-你说我胡扯？ 那for里定义的局部变量放哪里？不要也和上面一个的观点一样：只申明一次,后调用索引.
-这个我不可理解。。
-方法的参数连同方法里的变量所占用的空间，在编译时就已经确定了，它决定了运行时一个方法被调用的时侯要分配多大的栈帧。一个变量放在循环外还是循环里，只是在编译期限定了其作用域而已，到了运行时是没有区别的（也许只是在栈帧的local variables区里的位置不同）。
-看一下方法的字节码，一切都非常明了：
-private final int[] numbers = {1, 2, 3, 4, 5}; public void varOutsideLoop() { int n; for (int i = 0; i &lt; numbers.length; i++) { n = numbers[i]; System.out.println(n); } } public void varInsideLoop() { for (int i = 0; i &lt; numbers.length; i++) { int n = numbers[i]; System.out.println(n); } }
-对应的字节码：
-public void varOutsideLoop(); Signature: ()V Code: Stack=2, Locals=3, Args_size=1 0: iconst_0 1: istore_2 2: goto 22 5: aload_0 6: getfield /#12; //Field numbers:[I 9: iload_2 10: iaload 11: istore_1 12: getstatic /#19; //Field java/lang/System.out:Ljava/io/PrintStream; 15: iload_1 16: invokevirtual /#25; //Method java/io/PrintStream.println:(I)V 19: iinc 2, 1 22: iload_2 23: aload_0 24: getfield /#12; //Field numbers:[I 27: arraylength 28: if_icmplt 5 31: return LineNumberTable: line 43: 0 line 44: 5 line 45: 12 line 43: 19 line 47: 31 LocalVariableTable: Start Length Slot Name Signature 0 32 0 this Lcom/jstudio/learnjvm/classloader/VarInLoop; 12 10 1 n I 2 29 2 i I public void varInsideLoop(); Signature: ()V Code: Stack=2, Locals=3, Args_size=1 0: iconst_0 1: istore_1 2: goto 22 5: aload_0 6: getfield /#12; //Field numbers:[I 9: iload_1 10: iaload 11: istore_2 12: getstatic /#19; //Field java/lang/System.out:Ljava/io/PrintStream; 15: iload_2 16: invokevirtual /#25; //Method java/io/PrintStream.println:(I)V 19: iinc 1, 1 22: iload_1 23: aload_0 24: getfield /#12; //Field numbers:[I 27: arraylength 28: if_icmplt 5 31: return LineNumberTable: line 50: 0 line 51: 5 line 52: 12 line 50: 19 line 54: 31 LocalVariableTable: Start Length Slot Name Signature 0 32 0 this Lcom/jstudio/learnjvm/classloader/VarInLoop; 2 29 1 i I 12 7 2 n I
-仔细看字节码就能发现，除了n和循环变量i在local variable table中的位置不同，其他的所有的都没有区别。
-varOutsideLoop那个方法里我故意没有初始化n，如果加上初始化，就会多一条iconst和一条istore指令。
-至于位置不一样的原因，个人猜测与变量出现的位置有关，n在循环外的版本，它出现在前，所以占据了第一个slot（第0个slot是对象本身，即this）；n在循环里的版本，循环变量i出现在前，所以i占据了第一个slot，而n占用的是第二个slot。
-除此之外，两个方法没有任何的区别。
-mercyblitz 写道</p>
-<p>主要你误解了a变量在遍历中，有入栈和出栈的操作。并没有重复开辟局部变量，再说JVM优化之后，不会重复创建。
-个人认为这种说法也不太对，在一个方法内部不会有所谓的“入栈”和“出栈”操作。方法里，一个变量占用一个local variable table的slot，一个萝卜一个坑。所有这些变量都是在方法结束，堆栈帧被销毁的时侯才真正被“回收”，即使方法结束的时侯它早以超出了自己的作用域……
-实践中，变量的作用域当然是尽可能小才好，即有利于垃圾收集、也消除了一些潜在的导致bug的隐患。
-楼主别理那个“代码评审官”就好……话说如果我遇到这种人这种事，我八成不愿继续干下去…… <a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">返回顶楼</a> <a href="http://moonranger.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://moonranger.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=moonranger" title="发送站内短信" target="_blank"> </a> <a href="http://moonranger.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=moonranger" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/722599?page=18#1603622" title="moonranger回帖:代码难道不是这么写的？" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=18#" title="好" target="_blank">5</a> <a href="http://www.javaeye.com/topic/722599?page=18#" title="差" target="_blank">0</a> 请登录后投票  * mercyblitz</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://mercyblitz.javaeye.com/" target="_blank"><img src="&quot;mercyblitz的博客: mErcy blog&quot;" alt="mercyblitz的博客"></a></li>
-<li>文章: 465</li>
-<li>积分: 30</li>
-<li>来自: 长沙市</li>
-<li><img src="" alt="">
-  发表时间：2010-07-30  </li>
-</ul>
-<p>moonranger 写道</p>
-<p>qiushily2030 写道</p>
-<p>fengfeng925 写道</p>
-<p>qiushily2030 写道</p>
-<p>A a;
-申明在内部，每次遍历都申明一个a的变量.<br>申明在外面 只申明一次 一直复用.  申明也是要资源的..
-一个变量就相当于一个指针,循环1亿次,LZ你说呢.
-评审官说的还是有理的,不过这个得看需求.  JVM回收是在内存不足的时候.
-  还是不要想当然了,我就那么干过一回. 程序是最真实的答案...
-简直是TMD胡扯。
-JVM回收是在内存不足的时候.这个已经修正. 不是内存不足才调用。。
-你说我胡扯？ 那for里定义的局部变量放哪里？不要也和上面一个的观点一样：只申明一次,后调用索引.
-这个我不可理解。。
-方法的参数连同方法里的变量所占用的空间，在编译时就已经确定了，它决定了运行时一个方法被调用的时侯要分配多大的栈帧。一个变量放在循环外还是循环里，只是在编译期限定了其作用域而已，到了运行时是没有区别的（也许只是在栈帧的local variables区里的位置不同）。
-看一下方法的字节码，一切都非常明了：
-private final int[] numbers = {1, 2, 3, 4, 5}; public void varOutsideLoop() { int n; for (int i = 0; i &lt; numbers.length; i++) { n = numbers[i]; System.out.println(n); } } public void varInsideLoop() { for (int i = 0; i &lt; numbers.length; i++) { int n = numbers[i]; System.out.println(n); } }
-对应的字节码：
-public void varOutsideLoop(); Signature: ()V Code: Stack=2, Locals=3, Args_size=1 0: iconst_0 1: istore_2 2: goto 22 5: aload_0 6: getfield /#12; //Field numbers:[I 9: iload_2 10: iaload 11: istore_1 12: getstatic /#19; //Field java/lang/System.out:Ljava/io/PrintStream; 15: iload_1 16: invokevirtual /#25; //Method java/io/PrintStream.println:(I)V 19: iinc 2, 1 22: iload_2 23: aload_0 24: getfield /#12; //Field numbers:[I 27: arraylength 28: if_icmplt 5 31: return LineNumberTable: line 43: 0 line 44: 5 line 45: 12 line 43: 19 line 47: 31 LocalVariableTable: Start Length Slot Name Signature 0 32 0 this Lcom/jstudio/learnjvm/classloader/VarInLoop; 12 10 1 n I 2 29 2 i I public void varInsideLoop(); Signature: ()V Code: Stack=2, Locals=3, Args_size=1 0: iconst_0 1: istore_1 2: goto 22 5: aload_0 6: getfield /#12; //Field numbers:[I 9: iload_1 10: iaload 11: istore_2 12: getstatic /#19; //Field java/lang/System.out:Ljava/io/PrintStream; 15: iload_2 16: invokevirtual /#25; //Method java/io/PrintStream.println:(I)V 19: iinc 1, 1 22: iload_1 23: aload_0 24: getfield /#12; //Field numbers:[I 27: arraylength 28: if_icmplt 5 31: return LineNumberTable: line 50: 0 line 51: 5 line 52: 12 line 50: 19 line 54: 31 LocalVariableTable: Start Length Slot Name Signature 0 32 0 this Lcom/jstudio/learnjvm/classloader/VarInLoop; 2 29 1 i I 12 7 2 n I
-仔细看字节码就能发现，除了n和循环变量i在local variable table中的位置不同，其他的所有的都没有区别。
-varOutsideLoop那个方法里我故意没有初始化n，如果加上初始化，就会多一条iconst和一条istore指令。
-至于位置不一样的原因，个人猜测与变量出现的位置有关，n在循环外的版本，它出现在前，所以占据了第一个slot（第0个slot是对象本身，即this）；n在循环里的版本，循环变量i出现在前，所以i占据了第一个slot，而n占用的是第二个slot。
-除此之外，两个方法没有任何的区别。
-mercyblitz 写道</p>
-<p>主要你误解了a变量在遍历中，有入栈和出栈的操作。并没有重复开辟局部变量，再说JVM优化之后，不会重复创建。
-个人认为这种说法也不太对，在一个方法内部不会有所谓的“入栈”和“出栈”操作。方法里，一个变量占用一个local variable table的slot，一个萝卜一个坑。所有这些变量都是在方法结束，堆栈帧被销毁的时侯才真正被“回收”，即使方法结束的时侯它早以超出了自己的作用域……
-实践中，变量的作用域当然是尽可能小才好，即有利于垃圾收集、也消除了一些潜在的导致bug的隐患。
-楼主别理那个“代码评审官”就好……话说如果我遇到这种人这种事，我八成不愿继续干下去……
-恩，谢谢指正，我也仔细想了一下。在楼主的例子中，字节码说明两个局部变量指向不同的地方。不会重复开辟。要想开辟更多，哪么需要不同名称的变量申明。 <a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">返回顶楼</a> <a href="http://mercyblitz.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://mercyblitz.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=mercyblitz" title="发送站内短信" target="_blank"> </a> <a href="http://mercyblitz.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=mercyblitz" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/722599?page=18#1603661" title="mercyblitz回帖:代码难道不是这么写的？" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=18#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/722599?page=18#" title="差" target="_blank">0</a> 请登录后投票  * cisumer</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://cisumer.javaeye.com/" target="_blank"><img src="&quot;cisumer的博客: &quot;" alt="cisumer的博客"></a></li>
-<li>文章: 4</li>
-<li>积分: 30</li>
-<li>来自: 上海</li>
-<li><a href="http://www.javaeye.com/blog/479667" title="我正在读《Java 位运算》" target="_blank"><img src="" alt=""></a>
-  发表时间：2010-07-30  </li>
-</ul>
-<p>ei0 写道</p>
-<p>我只对s感兴趣！！！ <a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">返回顶楼</a> <a href="http://cisumer.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://cisumer.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=cisumer" title="发送站内短信" target="_blank"> </a> <a href="http://cisumer.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=cisumer" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/722599?page=18#1603762" title="cisumer回帖:代码难道不是这么写的？" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=18#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/722599?page=18#" title="差" target="_blank">2</a> 请登录后投票  * beneo</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://beneo.javaeye.com/" target="_blank"><img src="&quot;beneo的博客: &quot;" alt="beneo的博客"></a></li>
-<li>文章: 115</li>
-<li>积分: 50</li>
-<li>来自: 希伯來</li>
-<li><img src="" alt="">
-  发表时间：2010-07-30  </li>
-</ul>
-<p>mercyblitz 写道</p>
-<p>moonranger 写道</p>
-<p>qiushily2030 写道</p>
-<p>fengfeng925 写道</p>
-<p>qiushily2030 写道</p>
-<p>A a;
-申明在内部，每次遍历都申明一个a的变量.<br>申明在外面 只申明一次 一直复用.  申明也是要资源的..
-一个变量就相当于一个指针,循环1亿次,LZ你说呢.
-评审官说的还是有理的,不过这个得看需求.  JVM回收是在内存不足的时候.
-  还是不要想当然了,我就那么干过一回. 程序是最真实的答案...
-简直是TMD胡扯。
-JVM回收是在内存不足的时候.这个已经修正. 不是内存不足才调用。。
-你说我胡扯？ 那for里定义的局部变量放哪里？不要也和上面一个的观点一样：只申明一次,后调用索引.
-这个我不可理解。。
-方法的参数连同方法里的变量所占用的空间，在编译时就已经确定了，它决定了运行时一个方法被调用的时侯要分配多大的栈帧。一个变量放在循环外还是循环里，只是在编译期限定了其作用域而已，到了运行时是没有区别的（也许只是在栈帧的local variables区里的位置不同）。
-看一下方法的字节码，一切都非常明了：
-private final int[] numbers = {1, 2, 3, 4, 5}; public void varOutsideLoop() { int n; for (int i = 0; i &lt; numbers.length; i++) { n = numbers[i]; System.out.println(n); } } public void varInsideLoop() { for (int i = 0; i &lt; numbers.length; i++) { int n = numbers[i]; System.out.println(n); } }
-对应的字节码：
-public void varOutsideLoop(); Signature: ()V Code: Stack=2, Locals=3, Args_size=1 0: iconst_0 1: istore_2 2: goto 22 5: aload_0 6: getfield /#12; //Field numbers:[I 9: iload_2 10: iaload 11: istore_1 12: getstatic /#19; //Field java/lang/System.out:Ljava/io/PrintStream; 15: iload_1 16: invokevirtual /#25; //Method java/io/PrintStream.println:(I)V 19: iinc 2, 1 22: iload_2 23: aload_0 24: getfield /#12; //Field numbers:[I 27: arraylength 28: if_icmplt 5 31: return LineNumberTable: line 43: 0 line 44: 5 line 45: 12 line 43: 19 line 47: 31 LocalVariableTable: Start Length Slot Name Signature 0 32 0 this Lcom/jstudio/learnjvm/classloader/VarInLoop; 12 10 1 n I 2 29 2 i I public void varInsideLoop(); Signature: ()V Code: Stack=2, Locals=3, Args_size=1 0: iconst_0 1: istore_1 2: goto 22 5: aload_0 6: getfield /#12; //Field numbers:[I 9: iload_1 10: iaload 11: istore_2 12: getstatic /#19; //Field java/lang/System.out:Ljava/io/PrintStream; 15: iload_2 16: invokevirtual /#25; //Method java/io/PrintStream.println:(I)V 19: iinc 1, 1 22: iload_1 23: aload_0 24: getfield /#12; //Field numbers:[I 27: arraylength 28: if_icmplt 5 31: return LineNumberTable: line 50: 0 line 51: 5 line 52: 12 line 50: 19 line 54: 31 LocalVariableTable: Start Length Slot Name Signature 0 32 0 this Lcom/jstudio/learnjvm/classloader/VarInLoop; 2 29 1 i I 12 7 2 n I
-仔细看字节码就能发现，除了n和循环变量i在local variable table中的位置不同，其他的所有的都没有区别。
-varOutsideLoop那个方法里我故意没有初始化n，如果加上初始化，就会多一条iconst和一条istore指令。
-至于位置不一样的原因，个人猜测与变量出现的位置有关，n在循环外的版本，它出现在前，所以占据了第一个slot（第0个slot是对象本身，即this）；n在循环里的版本，循环变量i出现在前，所以i占据了第一个slot，而n占用的是第二个slot。
-除此之外，两个方法没有任何的区别。
-mercyblitz 写道</p>
-<p>主要你误解了a变量在遍历中，有入栈和出栈的操作。并没有重复开辟局部变量，再说JVM优化之后，不会重复创建。
-个人认为这种说法也不太对，在一个方法内部不会有所谓的“入栈”和“出栈”操作。方法里，一个变量占用一个local variable table的slot，一个萝卜一个坑。所有这些变量都是在方法结束，堆栈帧被销毁的时侯才真正被“回收”，即使方法结束的时侯它早以超出了自己的作用域……
-实践中，变量的作用域当然是尽可能小才好，即有利于垃圾收集、也消除了一些潜在的导致bug的隐患。
-楼主别理那个“代码评审官”就好……话说如果我遇到这种人这种事，我八成不愿继续干下去……
-恩，谢谢指正，我也仔细想了一下。在楼主的例子中，字节码说明两个局部变量指向不同的地方。不会重复开辟。要想开辟更多，哪么需要不同名称的变量申明。
-第一个是frame append
-第二个是frame same
-所以还是有些许区别的吧 <a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">返回顶楼</a> <a href="http://beneo.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://beneo.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=beneo" title="发送站内短信" target="_blank"> </a> <a href="http://beneo.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=beneo" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/722599?page=18#1604053" title="beneo回帖:代码难道不是这么写的？" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=18#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/722599?page=18#" title="差" target="_blank">0</a> 请登录后投票  * RednaxelaFX</p>
-<ul>
-<li>等级: <img src="&quot;五星会员&quot;" alt="五星会员"></li>
-<li><a href="http://rednaxelafx.javaeye.com/" target="_blank"><img src="&quot;RednaxelaFX的博客: Script Ahead, Code Behind&quot;" alt="RednaxelaFX的博客"></a></li>
-<li>文章: 385</li>
-<li>积分: 790</li>
-<li>来自: 杭州</li>
-<li><img src="" alt="">
-  发表时间：2010-07-30   最后修改：2010-07-30</li>
-</ul>
-<p>moonranger 写道</p>
-<p>mercyblitz 写道</p>
-<p>主要你误解了a变量在遍历中，有入栈和出栈的操作。并没有重复开辟局部变量，再说JVM优化之后，不会重复创建。
-个人认为这种说法也不太对，在一个方法内部不会有所谓的“入栈”和“出栈”操作。方法里，一个变量占用一个local variable table的slot，一个萝卜一个坑。所有这些变量都是在方法结束，堆栈帧被销毁的时侯才真正被“回收”，即使方法结束的时侯它早以超出了自己的作用域……
-<a href="http://www.ecma-international.org/publications/standards/Ecma-335.htm" target="_blank">ECMA-335 CLI</a>是规定方法中每个局部变量占用局部变量区的一个坑，不在方法中复用局部变量区。但它在设计之初就是倾向于使用JIT编译器来实现执行引擎的；虽然中间代码（CIL）中局部变量不复用局部变量区的坑，但实际JIT编译后的代码不关心这个，局部变量的存储分配（栈/寄存器）还是有复用。可以参考.NET CLR的实现。
-（以下说明针对概念中的Java虚拟机）
-Java虚拟机在设计之初就同时考虑到要能方便的用解释器或JIT编译器来实现。解释器一般做的优化较少，执行过程与字节码中指定的方式基本是直接对应的，所以字节码上就已经需要考虑到实际执行的情况了。Java虚拟机的局部变量区是可复用的，在同一方法里作用域不交叠的局部变量可以分配在同一个局部变量区的slot上。有兴趣的话可以自己做实验验证，也可以参考<a href="http://rednaxelafx.javaeye.com/blog/656951" target="_blank">之前我做的分享的演示稿</a>，20100621的版本。
-例子的话，可以看这么一段代码：
-public class LocalsDemo { // locals = 5 public static void main(String[] args) { // args in slot 0 int a = 1; // a in slot 1 int b = 2; // b in slot 2 { long c = 3; // c in slot 3 (to slot 4) } { int d = 4; // d in slot 3 int e = 5; // e in slot 4 } for (int i = 0; i &lt; 3; i++) { // i in slot 3 int j = i + 1; // j in slot 4 } } }
-main()方法编译后对应的字节码和元信息是：
-public static void main(java.lang.String[]); Code: Stack=2, Locals=5, Args_size=1 0: iconst_1 1: istore_1 2: iconst_2 3: istore_2 4: ldc2_w /#2; //long 3l 7: lstore_3 8: iconst_4 9: istore_3 10: iconst_5 11: istore 4 13: iconst_0 14: istore_3 15: iload_3 16: iconst_3 17: if_icmpge 31 20: iload_3 21: iconst_1 22: iadd 23: istore 4 25: iinc 3, 1 28: goto 15 31: return LineNumberTable: line 4: 0 line 5: 2 line 7: 4 line 10: 8 line 11: 10 line 13: 13 line 14: 20 line 13: 25 line 16: 31 LocalVariableTable: Start Length Slot Name Signature 8 0 3 c J 10 3 3 d I 13 0 4 e I 25 0 4 j I 15 16 3 i I 0 32 0 args [Ljava/lang/String; 2 30 1 a I 4 28 2 b I
-要在Class文件里看到LocalVariableTable属性表的话，编译Java源码时请加上-g参数。
-Java虚拟机中，
-方法调用涉及的栈帧push/pop是对Java栈（Java stack），或者有些文档里叫“Java控制栈”（<a href="http://wikis.sun.com/display/HotSpotInternals/JavaControlStack" target="_blank">Java control stack</a>），或者叫“Java方法调用栈”；
-在方法中局部变量的写/读操作涉及的push/pop则是对操作数栈（operand stack），或者有些文档叫“表达式栈”（<a href="http://gbenson.net/?p=122" target="_blank">expression stack</a>），或者叫求值栈（evaluation stack）。
-两个栈的区别可以参考<a href="http://java.sun.com/docs/books/jvms/second_edition/html/Overview.doc.html#6654" target="_blank">Java虚拟机规范第二版3.5.2</a>、<a href="http://java.sun.com/docs/books/jvms/second_edition/html/Overview.doc.html#28851" target="_blank">3.6.2</a>两个小节，我之前的<a href="http://rednaxelafx.javaeye.com/blog/492667" target="_blank">介绍基于栈/寄存器的虚拟机的帖</a>里也有提到，也可以参考前面说的JVM分享的演示稿。
-最后上一老图……逃
-<img src="" alt=""> <a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">返回顶楼</a> <a href="http://rednaxelafx.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://rednaxelafx.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=RednaxelaFX" title="发送站内短信" target="_blank"> </a> <a href="http://rednaxelafx.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=RednaxelaFX" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/722599?page=18#1604262" title="RednaxelaFX回帖:代码难道不是这么写的？" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=18#" title="好" target="_blank">7</a> <a href="http://www.javaeye.com/topic/722599?page=18#" title="差" target="_blank">0</a> 请登录后投票  * moonranger</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://moonranger.javaeye.com/" target="_blank"><img src="&quot;moonranger的博客: moonranger&quot;" alt="moonranger的博客"></a></li>
-<li>文章: 44</li>
-<li>积分: 40</li>
-<li>来自: 天津</li>
-<li><img src="" alt="">
-  发表时间：2010-07-30  </li>
-</ul>
-<p>RednaxelaFX 写道</p>
-<p>moonranger 写道</p>
-<p>mercyblitz 写道</p>
-<p>主要你误解了a变量在遍历中，有入栈和出栈的操作。并没有重复开辟局部变量，再说JVM优化之后，不会重复创建。
-个人认为这种说法也不太对，在一个方法内部不会有所谓的“入栈”和“出栈”操作。方法里，一个变量占用一个local variable table的slot，一个萝卜一个坑。所有这些变量都是在方法结束，堆栈帧被销毁的时侯才真正被“回收”，即使方法结束的时侯它早以超出了自己的作用域……
-<a href="http://www.ecma-international.org/publications/standards/Ecma-335.htm" target="_blank">ECMA-335 CLI</a>是规定方法中每个局部变量占用局部变量区的一个坑，不在方法中复用局部变量区。但它在设计之初就是倾向于使用JIT编译器来实现执行引擎的；虽然中间代码（CIL）中局部变量不复用局部变量区的坑，但实际JIT编译后的代码不关心这个，局部变量的存储分配（栈/寄存器）还是有复用。可以参考.NET CLR的实现。
-（以下说明针对概念中的Java虚拟机）
-Java虚拟机在设计之初就同时考虑到要能方便的用解释器或JIT编译器来实现。解释器一般做的优化较少，执行过程与字节码中指定的方式基本是直接对应的，所以字节码上就已经需要考虑到实际执行的情况了。Java虚拟机的局部变量区是可复用的，在同一方法里作用域不交叠的局部变量可以分配在同一个局部变量区的slot上。有兴趣的话可以自己做实验验证，也可以参考<a href="http://rednaxelafx.javaeye.com/blog/656951" target="_blank">之前我做的分享的演示稿</a>，20100621的版本。
-例子的话，可以看这么一段代码：
-public class LocalsDemo { // locals = 5 public static void main(String[] args) { // args in slot 0 int a = 1; // a in slot 1 int b = 2; // b in slot 2 { long c = 3; // c in slot 3 (to slot 4) } { int d = 4; // d in slot 3 int e = 5; // e in slot 4 } for (int i = 0; i &lt; 3; i++) { // i in slot 3 int j = i + 1; // j in slot 4 } } }
-main()方法编译后对应的字节码和元信息是：
-public static void main(java.lang.String[]); Code: Stack=2, Locals=5, Args_size=1 0: iconst_1 1: istore_1 2: iconst_2 3: istore_2 4: ldc2_w /#2; //long 3l 7: lstore_3 8: iconst_4 9: istore_3 10: iconst_5 11: istore 4 13: iconst_0 14: istore_3 15: iload_3 16: iconst_3 17: if_icmpge 31 20: iload_3 21: iconst_1 22: iadd 23: istore 4 25: iinc 3, 1 28: goto 15 31: return LineNumberTable: line 4: 0 line 5: 2 line 7: 4 line 10: 8 line 11: 10 line 13: 13 line 14: 20 line 13: 25 line 16: 31 LocalVariableTable: Start Length Slot Name Signature 8 0 3 c J 10 3 3 d I 13 0 4 e I 25 0 4 j I 15 16 3 i I 0 32 0 args [Ljava/lang/String; 2 30 1 a I 4 28 2 b I
-要在Class文件里看到LocalVariableTable属性表的话，编译Java源码时请加上-g参数。
-Java虚拟机中，
-方法调用涉及的栈帧push/pop是对Java栈（Java stack），或者有些文档里叫“Java控制栈”（<a href="http://wikis.sun.com/display/HotSpotInternals/JavaControlStack" target="_blank">Java control stack</a>），或者叫“Java方法调用栈”；
-在方法中局部变量的读/写操作涉及的push/pop则是对操作数栈（operand stack），或者有些文档叫“表达式栈”（<a href="http://gbenson.net/?p=122" target="_blank">expression stack</a>），或者叫求值栈（evaluation stack）。
-两个栈的区别可以参考<a href="http://java.sun.com/docs/books/jvms/second_edition/html/Overview.doc.html#6654" target="_blank">Java虚拟机规范第二版3.5.2</a>、<a href="http://java.sun.com/docs/books/jvms/second_edition/html/Overview.doc.html#28851" target="_blank">3.6.2</a>两个小节，我之前的<a href="http://rednaxelafx.javaeye.com/blog/492667" target="_blank">介绍基于栈/寄存器的虚拟机的帖</a>里也有提到，也可以参考前面说的JVM分享的演示稿。
-最后上一老图……逃
-<img src="" alt="">
-还真没有研究到这种程度。学习了！ <a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">返回顶楼</a> <a href="http://moonranger.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://moonranger.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=moonranger" title="发送站内短信" target="_blank"> </a> <a href="http://moonranger.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=moonranger" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/722599?page=18#1604445" title="moonranger回帖:代码难道不是这么写的？" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=18#" title="好" target="_blank">2</a> <a href="http://www.javaeye.com/topic/722599?page=18#" title="差" target="_blank">0</a> 请登录后投票  * linliangyi2007</p>
-<ul>
-<li>等级: <img src="&quot;一钻会员&quot;" alt="一钻会员"></li>
-<li><a href="http://linliangyi2007.javaeye.com/" target="_blank"><img src="&quot;linliangyi2007的博客: Java、咖啡与茶&quot;" alt="linliangyi2007的博客"></a></li>
-<li>文章: 803</li>
-<li>积分: 996</li>
-<li>来自: 福州</li>
-<li><img src="" alt="">
-  发表时间：2010-07-30  </li>
-</ul>
-<p>高人出现了，哈哈哈！！
-哪些只懂得代码文本面上搞所谓性能优化的家伙，可以羞愧的匿了~~~ <a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">返回顶楼</a> <a href="http://linliangyi2007.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://linliangyi2007.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=linliangyi2007" title="发送站内短信" target="_blank"> </a> <a href="http://linliangyi2007.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=linliangyi2007" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/722599?page=18#1604541" title="linliangyi2007回帖:代码难道不是这么写的？" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=18#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/722599?page=18#" title="差" target="_blank">0</a> 请登录后投票  * murainwood</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://murainwood.javaeye.com/" target="_blank"><img src="&quot;murainwood的博客: murainwood&quot;" alt="murainwood的博客"></a></li>
-<li>文章: 1077</li>
-<li>积分: 30</li>
-<li>来自: ...</li>
-<li><img src="" alt="">
-  发表时间：2010-07-30  </li>
-</ul>
-<p>精彩，秒杀！ <a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">返回顶楼</a> <a href="http://murainwood.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://murainwood.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=murainwood" title="发送站内短信" target="_blank"> </a> <a href="http://murainwood.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=murainwood" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/722599?page=18#1604574" title="murainwood回帖:代码难道不是这么写的？" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=18#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/722599?page=18#" title="差" target="_blank">0</a> 请登录后投票  * 分离的北极熊</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://clear2012-gmail-com.javaeye.com/" target="_blank"><img src="&quot;分离的北极熊的博客: &quot;" alt="分离的北极熊的博客"></a></li>
-<li>文章: 19</li>
-<li>积分: 30</li>
-<li>来自: 北京</li>
-<li><img src="" alt="">
-  发表时间：2010-07-30  </li>
-</ul>
-<p>太狠了……………… <a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">返回顶楼</a> <a href="http://clear2012-gmail-com.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://clear2012-gmail-com.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=%E5%88%86%E7%A6%BB%E7%9A%84%E5%8C%97%E6%9E%81%E7%86%8A" title="发送站内短信" target="_blank"> </a> <a href="http://clear2012-gmail-com.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=%E5%88%86%E7%A6%BB%E7%9A%84%E5%8C%97%E6%9E%81%E7%86%8A" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/722599?page=18#1604606" title="分离的北极熊回帖:代码难道不是这么写的？" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=18#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/722599?page=18#" title="差" target="_blank">0</a> 请登录后投票  * lijihuai</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://lijihuai.javaeye.com/" target="_blank"><img src="&quot;lijihuai的博客: lijihuai&quot;" alt="lijihuai的博客"></a></li>
-<li>文章: 8</li>
-<li>积分: 30</li>
-<li><img src="" alt="">
-  发表时间：2010-07-30  </li>
-</ul>
-<p>没事，实际上，编译以后的字节码是一样的 <a href="http://www.javaeye.com/topic/722599?page=18#" target="_blank">返回顶楼</a> <a href="http://lijihuai.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://lijihuai.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=lijihuai" title="发送站内短信" target="_blank"> </a> <a href="http://lijihuai.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=lijihuai" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/722599?page=18#1604696" title="lijihuai回帖:代码难道不是这么写的？" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=18#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/722599?page=18#" title="差" target="_blank">0</a> 请登录后投票</p>
-<p><a href="http://www.javaeye.com/forums/39/topics/722599/posts/new" title="发表回复"></a></p>
-<p><a href="http://www.javaeye.com/topic/722599?page=17" target="_blank">« 上一页</a> <a href="http://www.javaeye.com/topic/722599?page=1" target="_blank">1</a> <a href="http://www.javaeye.com/topic/722599?page=2" target="_blank">2</a> … <a href="http://www.javaeye.com/topic/722599?page=17" target="_blank">17</a> 18 <a href="http://www.javaeye.com/topic/722599?page=19" target="_blank">19</a> <a href="http://www.javaeye.com/topic/722599?page=20" target="_blank">20</a> <a href="http://www.javaeye.com/topic/722599?page=19" target="_blank">下一页 »</a>
-<a href="http://www.javaeye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.javaeye.com/forums/board/Java" target="_blank">Java编程和Java企业应用版</a> → <a href="http://www.javaeye.com/forums/tag/Java" target="_blank">Java综合</a>
-跳转论坛:Java编程和Java企业应用 Web前端技术 移动编程和手机应用开发 C/C++编程 Ruby编程 Python编程 PHP编程 Flash编程和RIA Microsoft .Net 综合技术 软件开发和项目管理 行业应用 入门讨论 招聘求职 海阔天空</p>
-<ul>
-<li><a href="http://www.javaeye.com/jobs/794" title="广东:穆迪moody&#39;s诚聘Java Developer" target="_blank">广东: 穆迪moody&#39;s诚聘Java Developer</a></li>
-<li><a href="http://www.javaeye.com/jobs/769" title="北京:掌中魔力诚聘java资深工程师" target="_blank">北京: 掌中魔力诚聘java资深工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/712" title="北京:JavaEye猎头诚聘Java搜索工程师" target="_blank">北京: JavaEye猎头诚聘Java搜索工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/823" title="浙江:网易（NETEASE）诚聘java开发工程师" target="_blank">浙江: 网易（NETEASE）诚聘java开发工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/838" title="上海:BShare诚聘资深Java Web开发工程师" target="_blank">上海: BShare诚聘资深Java Web开发工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/839" title="北京:glodon诚聘Eclipse插件开发工程师" target="_blank">北京: glodon诚聘Eclipse插件开发工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/817" title="北京:Laszlo Systems 诚聘高级Java程序员" target="_blank">北京: Laszlo Systems 诚聘高级Java程序员</a></li>
-<li><a href="http://www.javaeye.com/jobs/523" title="北京:去哪儿旅游搜索引擎诚聘java开发工程师" target="_blank">北京: 去哪儿旅游搜索引擎诚聘java开发工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/825" title="上海:上海汉得诚聘高级基础架构研发工程师——IDE方向" target="_blank">上海: 上海汉得诚聘高级基础架构研发工程师——IDE</a></li>
-<li><a href="http://www.javaeye.com/jobs/726" title="北京:chinacache诚聘高级Java开发工程师（后台应用）" target="_blank">北京: chinacache诚聘高级Java开发工程师（后台应用</a></li>
-<li><a href="http://www.javaeye.com/jobs/728" title="北京:chinacache诚聘Java应用架构师" target="_blank">北京: chinacache诚聘Java应用架构师</a></li>
-<li><a href="http://www.javaeye.com/jobs/800" title="北京:网易（NETEASE）诚聘高级Java开发工程师" target="_blank">北京: 网易（NETEASE）诚聘高级Java开发工程师</a></li>
-<li><a href="http://www.javaeye.com/jobs/804" title="福建:福州几维网络诚聘游戏服务端程序员(Java)" target="_blank">福建: 福州几维网络诚聘游戏服务端程序员(Java)</a></li>
-<li><a href="http://www.javaeye.com/jobs/779" title="浙江:VMKID诚聘Java开发工程师(J2SE)（Client端方向）" target="_blank">浙江: VMKID诚聘Java开发工程师(J2SE)（Client端方</a></li>
-<li><a href="http://www.javaeye.com/jobs/682" title="上海:恺英网络诚聘JS工程师" target="_blank">上海: 恺英网络诚聘JS工程师</a></li>
-<li><p><a href="http://www.javaeye.com/jobs/806" title="北京:上海幽幽诚聘手机网游服务器端开发工程师" target="_blank">北京: 上海幽幽诚聘手机网游服务器端开发工程师</a></p>
-</li>
-<li><p><a href="http://www.javaeye.com/" target="_blank">首页</a></p>
-</li>
-<li><a href="http://www.javaeye.com/news" target="_blank">新闻</a></li>
-<li><a href="http://www.javaeye.com/forums" target="_blank">论坛</a></li>
-<li><a href="http://www.javaeye.com/ask" target="_blank">问答</a></li>
-<li><a href="http://www.javaeye.com/wiki" target="_blank">专栏</a></li>
-<li><a href="http://www.javaeye.com/blogs" target="_blank">博客</a></li>
-<li><a href="http://www.javaeye.com/groups" target="_blank">圈子</a></li>
-<li><a href="http://www.javaeye.com/job" target="_blank">招聘</a></li>
-<li><a href="http://www.javaeye.com/index/service" target="_blank">服务</a></li>
-<li><a href="http://www.javaeye.com/search" target="_blank">搜索</a></li>
-<li><a href="http://java.javaeye.com/" target="_blank">Java</a></li>
-<li><a href="http://webapp.javaeye.com/" target="_blank">Web</a></li>
-<li><a href="http://ruby.javaeye.com/" target="_blank">Ruby</a></li>
-<li><a href="http://python.javaeye.com/" target="_blank">Python</a></li>
-<li><a href="http://agile.javaeye.com/" target="_blank">敏捷</a></li>
-<li><a href="http://mysql.javaeye.com/" target="_blank">MySQL</a></li>
-<li><a href="http://runqian.javaeye.com/" target="_blank">润亁报表</a></li>
-<li><a href="http://book.javaeye.com/" target="_blank">图书</a></li>
-<li><a href="http://www.javaeye.com/index/service" target="_blank">广告服务</a></li>
-<li><a href="http://webmaster.javaeye.com/" target="_blank">JavaEye黑板报</a></li>
-<li><a href="http://www.javaeye.com/index/aboutus" target="_blank">关于我们</a></li>
-<li><a href="http://www.javaeye.com/index/contactus" target="_blank">联系我们</a></li>
-<li><a href="http://www.javaeye.com/index/friend_links" target="_blank">友情链接</a></li>
-</ul>
-<p>© 2003-2010 JavaEye.com. 上海炯耐计算机软件有限公司版权所有 [ <a href="http://www.miibeian.gov.cn/" target="_blank">沪ICP备05023328号</a> ]</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/优化/">优化</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/优化/" class="label label-success">优化</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--代码难道不是这么写的？讨论第18页-Java综合-Java-JavaEye论坛/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-优化--代码难道不是这么写的？讨论第18页-Java综合-Java-JavaEye论坛" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-性能--影响JavaEE性能的十大问题/">影响Java EE性能的十大问题</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-性能--影响JavaEE性能的十大问题/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-java-ee-">影响Java EE性能的十大问题</h1>
-<p>本文作者是一名有10多年经验的高级系统架构师，他的主要专业领域是Java                          EE、中间件和JVM技术。他在性能优化和提升方面也有很深刻的见解，下面他将和大家分享一下常见的10个影响Java                          EE性能问题。</p>
-<p>1.缺乏正确的容量规划</p>
-<p>容量规划是一个全面的和发展的过程标准，预测当前和未来的IT环境容量需求。制定合理的容量规划不仅会确保和跟踪当前IT生产能力和稳定性，同时也会确保新项目以最小的风险部署到现有的生产环境中。硬件、中间件、JVM、调整等在项目部署之前就应该准备好。</p>
-<p>2.Java EE中间件环境规范不足</p>
-<p>“没有规矩，不成方圆”。第二个比较普遍的原因是Java EE中间件或者基础架构不规范。在项目初始，新平台上面没有制定合理的规范，导致系统稳定性差。这会增加客户成本，所以花时间去制定合理的Java                          EE中间件环境规范是必须的。这项工作应与初始容量规划迭代相结合。</p>
-<p><img src="http://www.uml.org.cn/j2ee/images/2014021051.png" alt=""></p>
-<p>3.Java虚拟机垃圾回收过度</p>
-<p>各位对“java.lang.OutOfMemoryError”这个错误信息是不是很熟悉呢？由于JVM的内存空间过度消耗（Java堆、本机堆等）而抛出的异常。</p>
-<p><img src="http://www.uml.org.cn/j2ee/images/2014021052.png" alt=""></p>
-<p>垃圾收集问题并不一定会表现为一个OOM条件，过度的垃圾收集可以理解成是JVM                          GC线程在短时间里进行轻微或超量收集集合数据而导致的JVM暂停时间很长和性能下降。可能有以下几个原因：</p>
-<p>1、与JVM的负载量和应用程序内存占用量相比，Java堆可能选择的太小。</p>
-<p>2、JVM GC策略使用不合理。</p>
-<p>3、应用程序静态或动态内存占用量太大，不适合在32位JVM上使用。</p>
-<p>4、JVM OldGen随着时间推移，泄漏越来越严重，而GC在几个小时或者几天后才发现。</p>
-<p>5、JVM PermGen空间(只有HotSpot VM）或本机堆随着时间推移会泄露是一个非常普遍的问题；OOM的错误往往是观察一段时间后，应用程序进行动态调动。</p>
-<p>6、YoungGen和OldGen的比例空间与你的应用程序不匹配。</p>
-<p>7、Java堆在32位的VM上太大，导致本机堆溢出，具体可以表现为OOM试着去链接一个新的Java                          EE应用程序、创建一个新的Java线程或者需要计算本地内存分配任务。</p>
-<p>建议：</p>
-<p>1、观察和深入理解JVM垃圾回收。启动GC，根据健康合理的评估来提供所有的数据。</p>
-<p>2、记住，GC方面的相关问题不会在开发中或者功能测试时发现，它需要在多用户高负载的测试环境下发现。</p>
-<p>4.与外部系统集成过多或过少</p>
-<p>导致Java EE性能差的第四个原因是高分布式系统，典型案例是电信IT环境。在这个环境中，一个中间件领域（例如，服务总线）很少会做所有的工作，而仅仅是把一些业务“委托”给其他部分，例如产品质量，客户资料和订单管理，到其他Java                          EE中间件平台或遗留系统中，如支持各种不同的负载类型和通信协议的大型机。</p>
-<p><img src="http://www.uml.org.cn/j2ee/images/2014021053.png" alt=""></p>
-<p>这样的外部系统调用意味着客户端的Java EE应用程序触发创建或重用套接字链接从外部系统中读写数据。根据业务流程的实施和实现可以配置成同步调用或异步调用。需要注意的是，响应时间会根据外部系统的稳定状况进行改变，所以通过适当的使用超时来保护Java                          EE应用程序和中间件也是非常重要的。</p>
-<p><img src="http://www.uml.org.cn/j2ee/images/2014021054.png" alt=""></p>
-<p>下面这3种情况是经常出现问题和性能降低的地方：</p>
-<p>1、同步和相继调用太多的外部系统。</p>
-<p>2、在Java EE客户端应用程序和外部系统之间链接超时，使数据丢失或者值太高导致客户端线程被卡住，从而导致多米拉效应。</p>
-<p>3、超时，但程序仍正常执行，可是中间件不处理这种奇怪的路径。</p>
-<p>最后，建议多进行负面测试，这意味着需要“人为”创造产生这些问题的条件，用来测试应用程序和中间件之间是如何处理外部系统错误。</p>
-<p>5.缺乏适当的数据库SQL调优和容量规划</p>
-<p>大家可能会对这一个感到惊奇：数据库问题。大多数Java EE企业系统是依赖关系型数据库处理复杂的业务流程。一个基础扎实稳固的数据库环境可以确保IT环境有规模的增长，来支持日益不断扩大的业务。</p>
-<p><img src="http://www.uml.org.cn/j2ee/images/2014021055.png" alt=""></p>
-<p>在实际中，与数据库相关的性能问题是很常见的。由于多数数据库事务处理都是由JDBC数据源执行的（包括关系持久化API，例如Hibernate）。而性能问题最初都会表现为线程阻塞。</p>
-<p>以下是我在10年的工作中，经常出现的关于数据库方面的问题（以Oracle数据库为例）：</p>
-<p>1、孤立的，长时间运行的SQL。主要表现为线程阻塞、SQL没有进行优化、缺少索引、非最佳的执行计划、返回大量数据集等等。</p>
-<p>2、表或行级数据锁定。当提交一个双阶段事务模型时（例如，臭名昭著的Oracle可疑事务）。Java                          EE容器可能会留下一些未处理的事务等待最后的提交或回滚，留下的数据锁能触发性能问题，直到最后的锁被移除。例如中间件断电或者服务器崩溃都可能引起这些情况发生。</p>
-<p>3、缺乏合理规范的数据库管理工具。例如Oracle里面的REDO logs，数据库数据文件等。磁盘空间不足，日志文件不旋转等都会触发较大的性能问题和断电情况。</p>
-<p>建议：</p>
-<p>1、合理的容量规划，包括负载和性能测试都是必不可少的，优化数据环境和及时发现问题。</p>
-<p>2、如果是使用Oracle数据库，确保DBA团队定期审查AWR报告，尤其是在上下关联的事件和根源分析过程中。</p>
-<p>3、使用JVM线程存储和AWR报告查明SQL运行缓慢的原因或者使用监控工具来做。</p>
-<p>4、加强“操作”方面的数据库环境（磁盘空间、数据文件、重做日志、表空间等）以适当的监视和报警。如果不这么做，会让客户端IT环境出现较多的断电情况和花许多时间进行故障调修。</p>
-<p>6.特定应用程序性能问题</p>
-<p>下面关注的是比较严重的Java EE应用程序问题。关于特定应用程序性能问题，总结了以下几个点：</p>
-<p>1、线程安全的代码问题</p>
-<p>2、通信API缺少超时设置</p>
-<p>3、I/O、JDBC或者关系型API资源管理问题</p>
-<p>4、缺乏适当的数据缓存</p>
-<p>5、数据缓存过度</p>
-<p>6、过多的日志记录</p>
-<p>7.Java EE中间件调优问题</p>
-<p>一般Java EE中间件都已经够用了，只是缺少必要的优化。大多数Java                          EE容器都能有多种方案供你的应用程序和业务进程选择。</p>
-<p>如果没有进行适当的调整和实践，那么Java EE容器可能会处于一种消极的状态。</p>
-<p>下图是视图和检查列表示例：</p>
-<p><img src="http://www.uml.org.cn/j2ee/images/2014021056.png" alt=""></p>
-<p>8.主动监控不足</p>
-<p>缺乏监控，并不会带来实际性能问题，但它会影响你对Java EE平台性能和健康状况的了解。最终，这个环境可以达到一个破发点，这可能会暴露出一些缺陷和问题(JVM的内存泄漏，等等)。</p>
-<p>以我的经验来看，如果一开始不进行监控，而是运行几个月或者几年后再进行，平台稳定性将大打折扣。</p>
-<p>也就是说，改善现有的环境永远都不会晚。下面是一些建议：</p>
-<p>1、复查现有Java EE环境监测能力和找到需改进的地方。</p>
-<p>2、监测方案应该尽可能的覆盖整个环境。</p>
-<p>3、监控方案应该符合容量规划进程。</p>
-<p>9.公共基础设施硬件饱和</p>
-<p>这个问题经常在有太多的Java EE中间件环境随着JVM进程被部署到现有硬件上面时看到。太多的JVM进程对有限的物理CPU核心来说是一个真正的程序性能杀手。另外，随着客户端业务的增长，硬件方面也需要再次考虑。</p>
-<p><img src="http://www.uml.org.cn/j2ee/images/2014021057.png" alt=""></p>
-<p>10.网络延迟</p>
-<p>最后一个影响性能问题的是网络，网络问题时不时的都会发生，如路由器、交换机和DNS服务器失败。更常见的是在一个高度分散的IT环境中定期或间歇性延迟。下面图片中的例子是一个位于同一区域的Weblogic集群通信与Oracle数据库服务器之间的延迟。</p>
-<p><img src="http://www.uml.org.cn/j2ee/images/2014021058.png" alt=""></p>
-<p>间歇或定期的延迟会触发一些重要的性能问题，以不同的方式影响Java EE应用程序。</p>
-<p>1、因为大量的fetch迭代（网络传入和传出），涉及大数据集的数据查询问题的应用会非常受网络延迟的影响</p>
-<p>2、应用程序在处理外部系统大数据负载（例如XML数据）时也会很受网络延迟的影响，会在发送和接收响应时产生巨大的响应间隔。</p>
-<p>3、Java EE容器复制过程（集群）也会受到影响，并且会让故障转移功能（如多播或单播数据包损失）处于风险中。</p>
-<p>JDBC行数据“预取”、XML数据压缩和数据缓存可以减少网络延迟。在设计一个新的网络拓扑时，应该仔细检查这种网络延迟问题。</p>
-<p>希望本文能够帮助您理解一些常见的性能问题和压力点，每个IT环境都是独一无二的，所以文中提到的问题不一定会是您遇到的，您可以把您遇到的问题拿出来和大家一起分享一下！</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/性能/">性能</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/性能/" class="label label-success">性能</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-性能--影响JavaEE性能的十大问题/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-性能--影响JavaEE性能的十大问题" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--将计算机加入域-菜鸟小飞-51CTO技术博客/">将计算机加入域 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--将计算机加入域-菜鸟小飞-51CTO技术博客/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-51cto-">将计算机加入域 - 菜鸟小飞 - 51CTO技术博客</h1>
-<p><strong>博客登录</strong><a href="http://cnxfei.blog.51cto.com/" target="_blank"><img src="" alt=""></a></p>
-<p>用户名：
-密　码：  <a href="http://blog.51cto.com/" title="IT BLOG" target="_blank"><img src="" alt="网络技术博客"></a> <a href="http://ucenter.51cto.com/reg_01.php" target="_blank">注册</a> | <a href="http://blog.51cto.com/login.php" target="_blank">登录</a> <a href="http://ucenter.51cto.com/getpass.php" target="_blank">忘记密码？</a> <a href="http://www.51cto.com/" target="_blank">51cto首页</a> | <a href="http://blog.51cto.com/" target="_blank">博客</a> | <a href="http://bbs.51cto.com/" target="_blank">论坛</a> | <a href="http://job.51cto.com/" target="_blank">招聘</a> <strong>热点文章</strong> <a href="http://wangchunhai.blog.51cto.com/225186/200122" title="ISA Server、IIS多方并举保护网站的安全" target="_blank">ISA Server、IIS多方并..</a> <a href=""></a> <a href="http://51ctoblog.blog.51cto.com/all/26414/4">帮助</a></p>
-<p><a href="http://cnxfei.blog.51cto.com/166422/c" title="察看zr000所有转载文章" target="_blank">转载</a>:6  </p>
-<p><a href="http://cnxfei.blog.51cto.com/166422/t" title="察看zr000所有翻译文章" target="_blank">翻译</a>:1
-<a href="http://cnxfei.blog.51cto.com/166422/o" title="察看zr000所有原创文章" target="_blank">原创</a>:20</p>
-<h1 id="-http-blog-51cto-com-blogcommend-http-cnxfei-blog-51cto-com-http-cnxfei-blog-51cto-com-rss-php-uid-166422-"><a href="http://blog.51cto.com/blogcommend" target="_blank"><img src="" alt="推荐博客"></a> <a href="http://cnxfei.blog.51cto.com/" target="_blank">菜鸟小飞</a>  <a href="http://cnxfei.blog.51cto.com/rss.php?uid=166422" target="_blank"><img src="" alt=""></a></h1>
-<p><a href="http://cnxfei.blog.51cto.com/" target="_blank"><a href="http://cnxfei.blog.51cto.com/">http://cnxfei.blog.51cto.com/</a></a> &gt; <a href="http://cnxfei.blog.51cto.com/" target="_blank">复制链接</a> <a href="http://g.51cto.com/addgroup.php?uid=166422" target="_blank">邀请加入技术圈</a>
-<a href="http://cnxfei.blog.51cto.com/" target="_blank">加友情链接</a></p>
-<p><a href="">发短消息</a>
-<a href="http://cnxfei.blog.51cto.com/pic" target="_blank">相册</a></p>
-<p><a href="http://cnxfei.blog.51cto.com/mygroup.php" target="_blank">技术圈</a>
-<a href="http://cnxfei.blog.51cto.com/" target="_blank">博客</a></p>
-<p><a href="http://www.51cto.com/" target="_blank">51CTO首页</a> | <a href="http://bbs.51cto.com/" target="_blank">技术论坛</a> | <a href="">短消息</a></p>
-<p><img src="" alt=""></p>
-<p><a href="http://blog.51cto.com/" target="_blank">博 客</a></p>
-<ul>
-<li><a href="http://.blog.51cto.com/" target="_blank">我的博客</a></li>
-<li><a href="http://.blog.51cto.com/addblog.php" target="_blank">发表文章</a></li>
-<li><a href="http://blog.51cto.com/user_index.php" target="_blank">管理博客</a></li>
-</ul>
-<p><a href="http://g.51cto.com/" target="_blank">技术圈</a></p>
-<ul>
-<li><a href="http://blog.51cto.com/user_index.php?action=creategroup" target="_blank">创建圈子</a></li>
-<li><a href="http://.blog.51cto.com/mygroup.php" target="_blank">我的圈子</a></li>
-<li><p><a href="http://g.51cto.com/grouptag.php" target="_blank">寻找圈子</a>
-<a href="http://.blog.51cto.com/pic" target="_blank">相 册</a></p>
-</li>
-<li><p><a href="http://.blog.51cto.com/pic" target="_blank">我的相册</a></p>
-</li>
-<li><a href="http://.blog.51cto.com/pic/uploadphoto.php" target="_blank">上传图片</a></li>
-<li><a href="http://.blog.51cto.com/pic/manage_album.php?uid=166422" target="_blank">管理相册</a>
-<a href="http://cnxfei.blog.51cto.com/" target="_blank">首页</a> | <a href="http://cnxfei.blog.51cto.com/166422/d-1" target="_blank">Windows</a> | <a href="http://cnxfei.blog.51cto.com/166422/d-2" target="_blank">Switch &amp; Router</a> | <a href="http://cnxfei.blog.51cto.com/166422/d-3" target="_blank">Linux</a> | <a href="http://cnxfei.blog.51cto.com/166422/d-4" target="_blank">其他</a></li>
-</ul>
-<p><a href="http://blog.51cto.com/active/no1/ing.html" target="_blank">金秋九月，博客No.1的荣誉属于你我</a>  <a href="http://bbs.51cto.com/thread-587776-1.html" target="_blank">51CTO博客急招兼职</a> <a href="http://cnxfei.blog.51cto.com/all/166422" target="_blank">博主的更多文章&gt;&gt;</a></p>
-<h1 id="-"><strong><img src="" alt=""> 将计算机加入域</strong></h1>
-<p>2007-07-15 12:35:40</p>
-<p>标签：<a href="http://blog.51cto.com/tagindex.php?keyword=%BC%D3%C8%EB%D3%F2" target="_blank">加入域</a>　　　[<a href="http://cnxfei.blog.51cto.com/#" target="_blank">推送到技术圈</a>]</p>
-<p><strong>版权声明：</strong>原创作品，如需转载，请与作者联系。否则将追究法律责任。 现在正好也没什么事，把计算机加入域的实验过程写上来</p>
-<p>一般情况下，在从客户计算机上加入域时，会在域中自动创建计算机帐号。不过，用户必须在本地客户计算机上拥有管理权限才能将其加入域中。</p>
-<p>加入域之前，检查客户机的网络配置：</p>
-<p>1。确保网络物理层上连通
-2。设置IP地址</p>
-<p>3。检查客户机到服务器是否连通
-4。配置客户机的首选DNS服务器（通常为第一台DC的IP）</p>
-<p>过程很简单，来看实验过程</p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p>O了。</p>
-<p>本文出自 “<a href="http://cnxfei.blog.51cto.com/" target="_blank">菜鸟小飞</a>” 博客，转载请与作者联系！
-<a href="http://cnxfei.blog.51cto.com/166422/34175" target="_blank">本文出自 51CTO.COM技术博客</a>
-上一篇 <a href="http://cnxfei.blog.51cto.com/166422/34172" title="Windows域的创建" target="_blank">Windows域的创建</a>　　下一篇 <a href="http://cnxfei.blog.51cto.com/166422/34470" title="Windows 开始-运行 命令集锦(个人搜集整理)" target="_blank">Windows 开始-运行 命令集锦(个人搜集整理)</a></p>
-<p><a href="http://cnxfei.blog.51cto.com/166422/d-1" target="_blank">类别：Windows</a> ┆ <a href="http://cnxfei.blog.51cto.com/#" target="_blank">技术圈(  )</a> ┆ 阅读(  ) ┆ 评论(  ) ┆<a href="http://cnxfei.blog.51cto.com/#" target="_blank">推送到技术圈</a> ┆<a href="http://cnxfei.blog.51cto.com/" target="_blank">返回首页</a>  </p>
-<pre><code>**相关文章**
-</code></pre><p><a href="http://bblxlit.blog.51cto.com/151710/24738" title="&quot;加入域,找不到网络路径&quot;的解决办法" target="_blank">&quot;加入域,找不到网络路径&quot;的解决办法</a></p>
-<p><a href="http://will5527.blog.51cto.com/197007/37422" title="新安装系统主机加入域后如何减少第一次登录到域时的等待时间" target="_blank">新安装系统主机加入域后如何减少第一次登录..</a>
-<a href="http://gnaw0725.blog.51cto.com/156601/30589" title="电脑加入域如何直接进入某个OU" target="_blank">电脑加入域如何直接进入某个OU</a></p>
-<p><a href="http://lingping.blog.51cto.com/121716/18738" title="Site to Site VPN的远程客户端加入域有问题" target="_blank">Site to Site VPN的远程客户端加入域有问题</a>
-<a href="http://fbsh.blog.51cto.com/20647/13853" title="让2000/2003/XP实现自动登陆(加入域/未加入域)" target="_blank">让2000/2003/XP实现自动登陆(加入域/未加入域)</a></p>
-<p><a href="http://wukai.blog.51cto.com/170296/27723" title="&quot;加入域,找不到网络路径&quot;的解决办法" target="_blank">&quot;加入域,找不到网络路径&quot;的解决办法</a>
-    <strong>文章评论</strong></p>
-<p>[1楼]    <img src="" alt="">  [匿名]51CTO游客</p>
-<p>2007-07-15 22:06:07
-已加。
-哈哈不错。</p>
-<p>短消息通知评论者
-[2楼]    <img src="" alt="">  [匿名]冲</p>
-<p>2009-01-07 13:55:13
-加了之后可是用域登录说密码说错误的
-怎么回事呢?</p>
-<p>短消息通知评论者
- <a href="http://cnxfei.blog.51cto.com/"></a></p>
-<p><a href=""></a>    <strong>发表评论</strong></p>
-<p><a href=""></a>
-昵   称：验证码：   <img src="" alt="">　点击图片可刷新验证码　　<a href="http://51ctoblog.blog.51cto.com/26414/5591" target="_blank">博客过2级，无需填写验证码</a> 内   容：</p>
-<p><img src="" alt=""> <strong>zr000</strong></p>
-<p><img src="" alt=""> <strong>博客统计信息</strong></p>
-<p><a href="http://blog.51cto.com/blogcommend" target="_blank"><strong>51cto推荐博客</strong></a>
-用户名：zr000
-文章数：27
-评论数：95
-访问量：26363
-无忧币：1021
-<a href="http://51ctoblog.blog.51cto.com/26414/5591" target="_blank">博客积分</a>：618
-博客等级：4
-注册日期：2007-05-17
-<a href="http://blog.51cto.com/active/no1/ing.html" target="_blank">距离博客争夺赛结束还有11 天</a>
-<img src="" alt=""> <strong>热门文章</strong></p>
-<ul>
-<li><a href="http://cnxfei.blog.51cto.com/166422/36269" target="_blank">硬盘重装xp</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/34129" target="_blank">Windows XP中忘记本地用..</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/28729" target="_blank">整理综合布线系统中材料..</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/34175" target="_blank">将计算机加入域</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/34172" target="_blank">Windows域的创建</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/40701" target="_blank">RHEL4的安装</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/44149" target="_blank">15秒恢复root用户密码</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/31189" target="_blank">单臂路由实现不同vlan之..</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/30733" target="_blank">冲突 冲突域 广播 广播域..</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/39632" target="_blank">应该掌握的几个HTML标记..</a></li>
-</ul>
-<p><img src="" alt=""> <strong>搜索本博客内文章</strong>
-<img src="" alt=""> <strong>最新评论</strong></p>
-<p><strong>[</strong>zengchuixin2008<strong>](<a href="http://543925535.blog.51cto.com/)：" target="_blank">http://543925535.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/130716" target="_blank">哈哈，一看就知道是青鸟的啦</a></p>
-<p><strong>[</strong>yuzeying1<strong>](<a href="http://yuzeying.blog.51cto.com/)：" target="_blank">http://yuzeying.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/67853" target="_blank">看来51cto的游客对博主要求很高呀</a>
-<strong>[匿名]www.bearpc.org：</strong><a href="http://cnxfei.blog.51cto.com/166422/34172" target="_blank">2楼那不是人讲的话,是畜生来的! 猪..</a></p>
-<p><strong>[</strong>chendezhi<strong>](<a href="http://chendezhi.blog.51cto.com/)：" target="_blank">http://chendezhi.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/32019" target="_blank">ripv1 在同一主网络中也能发布子网..</a>
-<strong>[匿名]冲：</strong><a href="http://cnxfei.blog.51cto.com/166422/34175" target="_blank">加了之后可是用域登录说密码说错误..</a></p>
-<p><strong>[匿名]小小：</strong><a href="http://cnxfei.blog.51cto.com/166422/28729" target="_blank">有学到实用东西了,谢谢! 请问还..</a>
-<strong>[</strong>51days<strong>](<a href="http://3842211.blog.51cto.com/)：" target="_blank">http://3842211.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/31189" target="_blank">我也是用模拟器做的</a></p>
-<p><strong>[</strong>51days<strong>](<a href="http://3842211.blog.51cto.com/)：" target="_blank">http://3842211.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/31189" target="_blank">怎么会通不了呢?</a>
-<strong>[</strong>低沉者<strong>](<a href="http://397409.blog.51cto.com/)：" target="_blank">http://397409.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/28729" target="_blank">不错，实用，谢谢了</a></p>
-<p><strong>[</strong>server_why<strong>](<a href="http://ciscolj.blog.51cto.com/)：" target="_blank">http://ciscolj.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/71744" target="_blank">好的!不错啊!学习了</a></p>
-<p><img src="" alt=""> <a href="http://blog.51cto.com/artcommend" target="_blank"><strong>51CTO推荐博文</strong></a></p>
-<ul>
-<li><a href="http://wangchunhai.blog.51cto.com/225186/200122" title="ISA Server、IIS多方并举保护网站的安全" target="_blank">ISA Server、IIS多方并..</a></li>
-<li><a href="http://angerfire.blog.51cto.com/198455/200130" title="DC的网络连接端口与防火墙设置" target="_blank">DC的网络连接端口与防..</a></li>
-<li><a href="http://didda.blog.51cto.com/812410/199529" title="使用 Exchange 2007 SP2 新增的备份功能" target="_blank">使用 Exchange 2007 SP..</a></li>
-<li><a href="http://newthink.blog.51cto.com/872263/199653" title="ISA+花生壳发布WEB＋Mail+FTP服务器到Internet(单网卡部署WEB＋Mail+FTP+ISA服务之终结）" target="_blank">ISA+花生壳发布WEB＋Ma..</a></li>
-<li><a href="http://maixueshangwang.blog.51cto.com/904841/199793" title="采用预共享密钥的点对点ipsec VPN.docx" target="_blank">采用预共享密钥的点对..</a></li>
-<li><a href="http://yuelei.blog.51cto.com/202879/199170" title="LiveMigration系列之部署Hyper-V角色" target="_blank">LiveMigration系列之部..</a></li>
-<li><a href="http://huqilong.blog.51cto.com/53638/198570" title="ubuntu下使用脚本自动登录远程服务器" target="_blank">ubuntu下使用脚本自动..</a></li>
-<li><a href="http://angerfire.blog.51cto.com/198455/198843" title="强化管理远程分支机构利器之coreRODC[为企业部署Windows Server 2008系列九]" target="_blank">强化管理远程分支机构..</a></li>
-<li><a href="http://9916376.blog.51cto.com/468239/198939" title="【分享】我与网络技术的那些故事" target="_blank">【分享】我与网络技术..</a></li>
-<li><a href="http://liuyuanljy.blog.51cto.com/607434/199073" title="制定移动存储设备的使用策略" target="_blank">制定移动存储设备的使..</a></li>
-<li><p><a href="http://5ydycm.blog.51cto.com/115934/199083" title="网站防御CC攻击的办法" target="_blank">网站防御CC攻击的办法</a>
-<img src="" alt=""> <strong>友情链接</strong></p>
-<p><a href="http://www.8txian.com/" target="_blank">8条线网络技术站</a></p>
-</li>
-</ul>
-<p>Copyright By 51CTO.COM 版权所有
-<a href="http://www.51cto.com/" target="_blank"><img src="" alt=""></a></p>
 
       
     </div>
@@ -1221,7 +179,727 @@ Java虚拟机中，
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/域/">域</a></li></span></span> | <span class="tags">Tagged <a href="/tags/域/" class="label label-primary">域</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-域--将计算机加入域-菜鸟小飞-51CTO技术博客/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--将计算机加入域-菜鸟小飞-51CTO技术博客" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-域--UsingRestrictedGroups/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--UsingRestrictedGroups" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--批量地向AD域中添加用户帐户/">批量地向AD域中添加用户帐户</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--批量地向AD域中添加用户帐户/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-ad-">批量地向AD域中添加用户帐户</h1>
+<p>批量地向AD域中添加用户帐户(上)</p>
+<p>作为网管，有时我们需要批量地向AD域中添加用户帐户，这些用户帐户既有一些相同的属性，又有一些不同属性。如果逐个添加、设置的话，十分地麻烦。一般来说，如果不超 过10个，我们可利用AD用户帐户复制来实现。如果再多的话，我们就应该考虑使用csvde.exe或ldifde.exe来减轻我们的工作量了。　　
+一、 AD用户帐户复制
+1、在“AD域和计算机”中建一个作为样板的用户，如S1。
+2、设置相关需要的选项，如所属的用户组、登录时间、用户下次登录时需更改密码等。
+3、在S1上/右键/复制，输入名字和口令。
+说明：
+1、 只有AD域用户帐户才可以复制，对于本地用户帐户无此功能。
+2、 帐户复制可将在样板用户帐户设置的大多数属性带过来。具体如下：
+选项卡 复制到新用户帐号的属性
+常规 无。
+地址 除了“街道”之外所有
+帐户 除了“用户登录名”之外所有
+配置文件
+除“配置文件路径”和“主文件夹”。欲复制它们，应该使用
+%username%变量，如：<a href="">file://server/share/%username</a>
+电话 无
+单位 除了“职务”之外所有。
+隶属于 全部
+拨入 无，将默认值应用于新帐户。
+环境 无，将默认值应用于新帐户。
+会话 无，将默认值应用于新帐户。
+远程控制 无，将默认值应用于新帐户。
+终端服务配置文件
+无，将默认值应用于新帐户。
+二、比较csvde与ldifde <br>csvde逗号分隔符目录交换
+ldifde轻型目录访问协议
+互换格式目录交换
+功能
+只能用来添加对象，不能用于删除/修改
+可用于添加/删除/修改对象
+格式
+字段名1,字段名2,字段名3,……
+记录1此值,记录1此值,记录1此值,……
+字段名1: 记录1此值
+字段名2: 记录1此值
+字段名3: 记录1此值
+……
+举例
+Dn,objectclass,samaccountname,
+userprincipalname,useraccountcontrol
+“cn=s1,ou=test,dc=mcse,dc=com”
+,user,s1,s1@mcse.com,512
+Dn: cn=s1,ou=test,dc=mcse,dc=com
+Objectclass:user
+Samaccountname:s1
+Userprincipalname:s1@mcse.com
+useraccountcontrol:512
+共同点
+用于导入的文本文件必须包含：
+/<em> 用户帐号的OU，对象的类型以及用户登录名的路径，用户主名
+/</em> 默认（即不指定时）：用户帐户为禁用。启用：512，禁用：514
+/<em> 可包含个人信息，但不可包含密码，只能用默认的空口令。
+/</em> 或通过设pwdLastSet字段值为0，使“用户下次登录时须更改密码”
+（不设这个字段，默认也是如此）。
+/* 通过设userAccountControl字段值为66048，可使“密码永不过期”。
+三、以csvde.exe为例说明：域用户帐户的导出/导入
+操作步骤如下：
+1、 在“AD域和计算机”中建一个用户，如S1。
+2、 设置相关需要的选项，如所属的用户组、登录时间、用户下次登录时需更改密码等。
+3、 在DC上，开始/运行：cmd
+4、 键入：csvde –f demo.csv
+说明：（1）不要试图将这个文件导回，来验证是否好使。因为这个文件中的好多字段在导入时是不允许用的，如：ObjectGUID、objectSID、pwdLastSet 和 samAccountType 等属性。我们导出这个文件目的只是为了查看相应的字段名是什么，其值应该怎么写，出错信息如下：
+objectGUID:写
+UNPRINTABLEBINARY(16)
+&quot;由于安全原因不允许修改。&quot;
+objectSid:写
+UNPRINTABLEBINARY(28)
+&quot;由于该属性处于“安全帐户管理器”
+(SAM)，不允许访问该属性。&quot;
+（2）可通过-d –r参数指定导出范围和对象类型。例如：
+-d “ou=test,dc=mcse,dc=com” 或 -d “cn=users,dc=mcse,dc=com”
+-r “&lt; Objectclass=user&gt;”
+5、 以上面的文件为参考基础，创建自己的my.csv，并利用复制、粘贴、修改得到多条记录。例如：
+dn,objectClass,sAMAccountName,userAccountControl,userPrincipalName
+&quot;CN=s1,OU=test,DC=mcse,DC=com&quot;,user,S1,512,S1@mcse.com
+&quot;CN=s2,OU=test,DC=mcse,DC=com&quot;,user,S2,512,S2@mcse.com
+………………
+其它可用字段，我试了一下，见下表（不全）：
+用户帐户属性　
+字符名“常规”标签
+说明
+姓 Sn
+名 Givename
+英文缩写 Initials
+显示名称 displayName
+描述 Description
+办公室 physicalDeliveryOfficeName
+电话号码 telephoneNumber
+电话号码：其它 otherTelephone 多个以英文分号分隔
+电子邮件 Mail
+网页 wWWHomePage
+网页：其它 url 多个以英文分号分隔
+“地址”标签
+国家/地区 C 如：中国CN，英国GB
+省/自治区 St
+市/县 L
+街道 streetAddress
+邮政信箱 postOfficeBox
+邮政编码 postalCode
+“帐户”标签
+用户登录名 userPrincipalName 形如：<a href="mailto:S1@mcse.com">S1@mcse.com</a>
+用户登录名（以前版本） sAMAccountName 形如：S1
+登录时间 logonHours
+登录到 userWorkstations 多个以英文逗号分隔
+用户帐户控制 userAccountControl (启用：512，禁用：514， 密码永不过期：66048)
+帐户过期 accountExpires
+“配置文件”标签
+配置文件路径 profilePath
+登录脚本 scriptPath
+主文件夹：本地路径 homeDirectory
+连接 homeDrive
+到 homeDirectory
+“电话”标签
+家庭电话 homePhone (若是其它，在前面加other。)
+寻呼机 Pager 如：otherhomePhone。
+移动电话 mobile 若多个以英文分号分隔。
+传真 FacsimileTelephoneNumber
+IP电话 ipPhone
+注释 Info</p>
+<p>“单位”标签
+职务 Title
+部门 Department
+公司 Company</p>
+<p>“隶属于”标签
+隶属于　 memberOf　 用户组的DN不需使用引号， 多个用分号分隔　
+“拨入”标签 远程访问权限（拨入或VPN） msNPAllowDialin
+允许访问 值：TRUE
+拒绝访问 值：FALSE
+回拨选项 msRADIUSServiceType
+由呼叫方设置或回拨到 值：4
+总是回拨到 msRADIUSCallbackNumber　
+“环境”、“会话”、“远程控制”、“终端服务配置文件”、“COM+”标签
+说明：这些标签，平常极少用到，我也没试。如果需要可以自己导出来看一下，像一些复杂的字段，如：userParameters，还是用粘贴吧
+6、导入到AD，键入 csvde –i –f my.csv –j c:\
+说明：-j用于设置日志文件位置，默认为当前路径。此选项可帮助用户在导入不成功时排错。
+有一点大家必须明确的是：我们在这里做AD域用户帐户复制、做AD域用户帐户的导出/导入，并不能代替“AD备份和恢复”。我们只是在批量创建用户帐号，帐号的SID都是重新生成的，权利权限都得重新设才行。（当然我们可以把导入的用户，通过memberof字段设到一些用户组中去，使它有权利权限。但这与利用“AD备份和恢复”到原状，完全是两回事）。 作为网管，有时我们需要批量地向AD域中添加用户帐户，这些用户帐户既有一些相同的属性，又有一些不同属性。如果逐个添加、设置的话，十分地麻烦。一般来说，如果不超 过10个，我们可利用AD用户帐户复制来实现。如果再多的话，我们就应该考虑使用csvde.exe或ldifde.exe来减轻我们的工作量了。</p>
+<p>一、 AD用户帐户复制
+1、在“AD域和计算机”中建一个作为样板的用户，如S1。
+2、设置相关需要的选项，如所属的用户组、登录时间、用户下次登录时需更改密码等。
+3、在S1上/右键/复制，输入名字和口令。
+说明：
+1、 只有AD域用户帐户才可以复制，对于本地用户帐户无此功能。
+2、 帐户复制可将在样板用户帐户设置的大多数属性带过来。具体如下：
+选项卡
+复制到新用户帐号的属性
+常规 无。
+地址 除了“街道”之外所有
+帐户 除了“用户登录名”之外所有 配置文件
+除“配置文件路径”和“主文件夹”。欲复制它们，应该使用
+%username%变量，如：<a href="">file://server/share/%username</a>
+电话 无
+单位 除了“职务”之外所有。
+隶属于 全部
+拨入 无，将默认值应用于新帐户。
+环境 无，将默认值应用于新帐户。
+会话 无，将默认值应用于新帐户。
+远程控制 无，将默认值应用于新帐户。
+终端服务配置文件 无，将默认值应用于新帐户。
+二、比较csvde与ldifde
+csvde逗号分隔符目录交换
+三、以csvde.exe为例说明：域用户帐户的导出/导入
+操作步骤如下：
+1、 在“AD域和计算机”中建一个用户，如S1。
+2、 设置相关需要的选项，如所属的用户组、登录时间、用户下次登录时需更改密码等。
+3、 在DC上，开始/运行：cmd
+4、 键入：csvde –f demo.csv
+说明：（1）不要试图将这个文件导回，来验证是否好使。因为这个文件中的好多字段在导入时是不允许用的，如：ObjectGUID、objectSID、pwdLastSet 和 samAccountType 等属性。我们导出这个文件目的只是为了查看相应的字段名是什么，其值应该怎么写，出错信息如下：
+objectGUID:写
+UNPRINTABLEBINARY(16)
+&quot;由于安全原因不允许修改。&quot;
+objectSid:写
+UNPRINTABLEBINARY(28)
+&quot;由于该属性处于“安全帐户管理器”
+(SAM)，不允许访问该属性。&quot;
+（2）可通过-d –r参数指定导出范围和对象类型。例如：
+-d “ou=test,dc=mcse,dc=com” 或 -d “cn=users,dc=mcse,dc=com”
+-r “&lt; Objectclass=user&gt;”
+5、 以上面的文件为参考基础，创建自己的my.csv，并利用复制、粘贴、修改得到多条记录。例如：
+dn,objectClass,sAMAccountName,userAccountControl,userPrincipalName
+&quot;CN=s1,OU=test,DC=mcse,DC=com&quot;,user,S1,512,S1@mcse.com
+&quot;CN=s2,OU=test,DC=mcse,DC=com&quot;,user,S2,512,S2@mcse.com
+………………
+其它可用字段，我试了一下，见下表（不全）： 用户帐户属性
+字符名
+说明
+“常规”标签
+姓 Sn
+名 Givename
+英文缩写 Initials
+显示名称 displayName
+描述 Description
+办公室 physicalDeliveryOfficeName
+电话号码 telephoneNumber
+电话号码：其它 otherTelephone 多个以英文分号分隔
+电子邮件 Mail
+网页 wWWHomePage
+网页：其它 url 多个以英文分号分隔
+“地址”标签
+国家/地区 C 如：中国CN，英国GB
+省/自治区 St
+市/县 L 　
+街道 streetAddress
+邮政信箱 postOfficeBox
+邮政编码 postalCode
+“帐户”标签
+用户登录名 userPrincipalName 形如：<a href="mailto:S1@mcse.com">S1@mcse.com</a>
+用户登录名（以前版本） sAMAccountName 形如：S1
+登录时间 logonHours 　
+登录到 userWorkstations 多个以英文逗号分隔
+用户帐户控制 userAccountControl ( 启用：512，禁用：514，密码永不过期：66048 )
+帐户过期 accountExpires
+“配置文件”标签
+配置文件路径 profilePath 　　
+登录脚本 scriptPath
+主文件夹：本地路径 homeDirectory
+连接 homeDrive
+到 homeDirectory 　
+“电话”标签
+家庭电话 homePhone 若是其它，在前面加other。
+寻呼机 Pager 如：otherhomePhone。
+移动电话 mobile 若多个以英文分号分隔。
+传真 FacsimileTelephoneNumber
+IP电话 ipPhone
+注释 Info “单位”标签
+职务 Title
+部门 Department
+公司 Company “隶属于”标签
+隶属于　 memberOf　 (用户组的DN不需使用引号，多个用分号分隔　 )
+“拨入”标签
+远程访问权限（拨入或VPN） msNPAllowDialin
+允许访问 值：TRUE 　
+拒绝访问 值：FALSE
+回拨选项 msRADIUSServiceType
+由呼叫方设置或回拨到 值：4
+总是回拨到 msRADIUSCallbackNumber
+“环境”、“会话”、“远程控制”、“终端服务配置文件”、“COM+”标签
+说明：这些标签，平常极少用到，我也没试。如果需要可以自己导出来看一下，像一些复杂的字段，如：userParameters，还是用粘贴吧
+6、导入到AD，键入 csvde –i –f my.csv –j c:\
+说明：-j用于设置日志文件位置，默认为当前路径。此选项可帮助用户在导入不成功时排错。</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/域/">域</a></li></span></span> | <span class="tags">Tagged <a href="/tags/域/" class="label label-primary">域</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-域--批量地向AD域中添加用户帐户/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--批量地向AD域中添加用户帐户" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--组策略如何限制域用户的权限？-51CTO_COM/">组策略如何限制域用户的权限？ </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--组策略如何限制域用户的权限？-51CTO_COM/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-51cto_com">组策略如何限制域用户的权限？ - 51CTO_COM</h1>
+<p><a href="http://www.51cto.com/" target="_blank">首页</a><img src="" alt=""><a href="http://www.51cto.com/col/35/" target="_blank">技术频道<img src="" alt=""></a><img src="" alt=""><a href="http://www.51cto.com/" target="_blank">51CTO旗下网站<img src="" alt=""></a><img src="" alt=""><a href="http://www.51cto.com/about/map.htm" target="_blank">地图</a></p>
+<p><img src="" alt="">社区：<a href="http://bbs.51cto.com/" target="_blank">论坛</a><a href="http://blog.51cto.com/" target="_blank">博客</a><a href="http://down.51cto.com/" target="_blank">下载</a><a href="http://book.51cto.com/" target="_blank">读书</a><a href="">更多<img src="" alt=""></a></p>
+<ul>
+<li><a href="http://network.51cto.com/" target="_blank">组网</a></li>
+<li><a href="http://netsecurity.51cto.com/" target="_blank">安全</a></li>
+<li><a href="http://developer.51cto.com/" target="_blank">开发</a></li>
+<li><a href="http://database.51cto.com/" target="_blank">数据库</a></li>
+<li><a href="http://server.51cto.com/" target="_blank">服务器</a></li>
+<li><a href="http://os.51cto.com/" target="_blank">系统</a></li>
+<li><a href="http://virtual.51cto.com/" target="_blank">虚拟化</a></li>
+<li><a href="http://cloud.51cto.com/" target="_blank">云计算</a></li>
+<li><a href="http://developer.51cto.com/embed/" target="_blank">嵌入式</a></li>
+<li><a href="http://mobile.51cto.com/" target="_blank">移动开发</a></li>
+<li><a href="http://www.51cto.com/" title="中国领先的IT技术网站" target="_blank">51CTO.COM</a></li>
+<li><a href="http://www.cioage.com/" title="中国首个专门服务于CIO的专业网站" target="_blank">CIOage.com</a></li>
+<li><a href="http://www.watchstor.com/" title="领先的中文存储网络媒体" target="_blank">WatchStor.com</a></li>
+<li><a href="http://www.hc3i.cn/" title="中国首家专注于数字医疗及医疗信息化的专业网站" target="_blank">HC3i.cn</a></li>
+<li><a href="http://www.linkphone.cn/" title="移动互联网生活门户" target="_blank">灵客风LinkPhone</a></li>
+</ul>
+<p><em>
+</em>
+<em>
+</em>
+<a href="http://os.51cto.com/" target="_blank"><img src="" alt=""></a></p>
+<p><a href="http://os.51cto.com/col/543/" target="_blank">新闻</a> | <a href="http://os.51cto.com/linux/" target="_blank">Linux</a> | <a href="http://os.51cto.com/windows/" target="_blank">Windows</a> | <a href="http://os.51cto.com/col/975/" target="_blank">浏览器</a> | <a href="http://os.51cto.com/col/610/" target="_blank">开源</a> | <a href="http://os.51cto.com/col/545/" target="_blank">运维</a> | <a href="http://publish.51cto.com/list/519/" target="_blank">全部</a> | <a href="http://os.51cto.com/art/201106/266501.htm" target="_blank">投稿指南</a> | <a href="http://os.51cto.com/art/201109/292676.htm" target="_blank"><img src="" alt="RSS"> RSS订阅</a>
+<a href=""></a></p>
+<p>您所在的位置：<a href="http://os.51cto.com/" target="_blank">操作系统</a> &gt; <a href="http://os.51cto.com/col/520/" target="_blank">Windows</a> &gt; <a href="http://os.51cto.com/col/1362/" target="_blank">Windows Server配置与维护</a> &gt; <a href="http://os.51cto.com/col/38/" target="_blank">Windows组策略</a> &gt; <strong>组策略如何限制域用户的权限？</strong></p>
+<h1 id="-">组策略如何限制域用户的权限？</h1>
+<p>2011-07-28 16:27 佚名 中国电脑维修联盟 <a href="http://os.51cto.com/art/201107/279492.htm#commment" target="_blank">我要评论(0)</a> 字号：<a href="">T</a> | <a href="">T</a></p>
+<p><a href="&quot;一键收藏，随时查看，分享好友！&quot;"><img src="" alt="一键收藏，随时查看，分享好友！"></a></p>
+<p>本文介绍了组策略的一个小技巧：利用组策略限制域用户只允许登录到自己的电脑，保障了系统的网络安全。</p>
+<p>AD：</p>
+<p><strong>组策略</strong>对于系统管理员来说是至关重要的，下面就是组策略的一个小技巧。具体内容如下所述。</p>
+<p>微软默认的活动目录环境，是非常不安全的。很多网管在配置网络的时候，都会重新按照安全规则进行配置，要注意的是，任意一个<strong>域</strong>账户在都可以登录DC（<strong>域控制器</strong>）以外的任何成员的计算机的，这个无疑就会给我们的企业信息的安全带来极大的隐患。为了保证整个网络系统的安全，保证机密文件不外泄，我们必须使用组策略对域用户指定其允许登录的计算机，如何做呢？一下就是详细的方法：</p>
+<p><strong>设置方法：</strong></p>
+<p>假设我们只允许域用户登录自己的电脑，而不能登录其它电脑。当然这种做好并不是太灵活，但这种方法却是最有效的。</p>
+<p>在“开始运行”中输入dsa.msc打开ADUC（活动目录用户和计算机），选择要操作的目标用户，在用户属性窗口中，切换到“帐户”选项卡，并选择“登录到”。</p>
+<p>在“LogonWorkstaions”窗口中的“用户可以登录到”区域选择“下列所有计算机”，并将该域帐户所使用的计算机名加入到计算机列表里。如下图
+<img src="" alt="组策略如何限制域用户的权限？"></p>
+<p><strong>建议：</strong></p>
+<p>考虑到目前很多的企业办公平台如，OA、wiki等都支持ldap认证，所以很多IT管理人员为了节省管理开销，而设置使用域帐户来登录这些平台，如果是这种情形的话，强烈建议把DC（域控制器）的计算机名也添加到上图的计算机列表中，这样就可以避免无法登录其它办公平台的问题出现。</p>
+<p>当然可能有朋友会问，这样做是否降低了安全性？其实完全可以放心，因为在域控制器安全策略中，是拒绝普通域用户本地登录的，所以这些普通用户是无法本地登录DC（域控制器）的。</p>
+<p>利用组策略限制域用户只允许登录到自己的电脑，这无疑维护了系统的网络安全。希望本文能够对读者有所帮助。</p>
+<p>【编辑推荐】</p>
+<ol>
+<li><a href="http://os.51cto.com/art/201107/279431.htm" target="_blank">组策略无法进入怎么办？</a></li>
+<li><a href="http://os.51cto.com/art/201107/279433.htm" target="_blank">组策略及组策略编辑器基础知识</a></li>
+<li><a href="http://os.51cto.com/art/201107/279473.htm" target="_blank">组策略变成打开方式故障解决实例</a></li>
+<li><a href="http://os.51cto.com/art/201107/279464.htm" target="_blank">组策略与注册表之间的区别和联系</a></li>
+<li><a href="http://os.51cto.com/art/201107/279462.htm" target="_blank">组策略如何隐藏和禁用以及远程编辑？</a>
+【责任编辑：<a href="mailto:hanys@51cto.com">韩亚珊</a> TEL：（010）68476606】</li>
+</ol>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">给力</a>
+(0票)</p>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">动心</a>
+(0票)</p>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">废话</a>
+(0票)</p>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">专业</a>
+(0票)</p>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">标题党</a>
+(0票)</p>
+<ul>
+<li><a href=""><img src="" alt=""></a></li>
+</ul>
+<p><a href="">路过</a>
+(0票)</p>
+<p>原文：<a href="http://os.51cto.com/art/201107/279492.htm" target="_blank"><strong>组策略如何限制域用户的权限？</strong></a> <a href="http://os.51cto.com/" target="_blank">返回操作系统首页</a></p>
+<p>分享到： <img src="" alt=""> <a href="&quot;QQ微博&quot;">QQ微博</a><img src="" alt=""><a href="http://sns.qzone.qq.com/cgi-bin/qzshare/cgi_qzshare_onekey?url=http://os.51cto.com/art/201107/279492.htm" title="分享到QQ空间" target="_blank">QQ空间</a><img src="" alt=""><a href="http://www.kaixin001.com/repaste/share.php?rurl=http://os.51cto.com/art/201107/279492.htm&amp;rtitle=组策略如何限制域用户的权限？" target="_blank">开心</a><img src="" alt=""><a href="http://share.renren.com/share/buttonshare.do?link=http://os.51cto.com/art/201107/279492.htm&amp;title=组策略如何限制域用户的权限？" title="分享到人人网" target="_blank">人人网</a><img src="" alt=""> <a href="&quot;豆瓣&quot;">豆瓣</a> <img src="" alt=""><a href="http://v.t.sina.com.cn/share/share.php?appkey=2378297317&amp;url=http://os.51cto.com/art/201107/279492.htm&amp;title=组策略如何限制域用户的权限？" title="分享到新浪微博" target="_blank">新浪微博</a></p>
+<p><a href="">收藏</a>|<a href="">打印</a>|<a href="&quot;分享本资源给好友&quot;">复制</a></p>
+<p>关于<a href="http://www.51cto.com/php/search.php?keyword=%D3%F2%BF%D8%D6%C6%C6%F7" target="_blank">域控制器</a>  <a href="http://www.51cto.com/php/search.php?keyword=%D7%E9%B2%DF%C2%D4" target="_blank">组策略</a>  <a href="http://www.51cto.com/php/search.php?keyword=%D3%F2" target="_blank">域</a>的更多文章</p>
+<ul>
+<li><a href="http://os.51cto.com/art/201107/278964.htm" title="利用组策略如何修改活动目录域缓存登录次数？" target="_blank">利用组策略如何修改活动目录域缓存登录次数</a></li>
+<li><a href="http://os.51cto.com/art/201107/278840.htm" title="在RHEL4系统中如何搭建主域控制器？" target="_blank">在RHEL4系统中如何搭建主域控制器？</a></li>
+<li><a href="http://os.51cto.com/art/201107/277834.htm" title="利用域控制器中的组策略给客户打补丁的方法" target="_blank">利用域控制器中的组策略给客户打补丁的方法</a></li>
+<li><a href="http://os.51cto.com/art/201107/277574.htm" title="在Windows 2000域中介绍Win XP组策略" target="_blank">在Windows 2000域中介绍Win XP组策略</a></li>
+<li><a href="http://os.51cto.com/art/201107/277011.htm" title="Windows 2003系统域上的DNS需确保安全" target="_blank">Windows 2003系统域上的DNS需确保安全</a>
+<a href="http://mobile.51cto.com/mobile/phoneclub05/" title="51CTO移动开发线下技术沙龙 (第五期)" target="_blank"><strong>51CTO移动开发线下技术沙龙 (第五期)</strong></a><a href="http://mobile.51cto.com/mobile/phoneclub05/" title="51CTO移动开发线下技术沙龙 (第五期)" target="_blank"><img src="" alt="51CTO移动开发线下技术沙龙 (第五期)"></a></li>
+</ul>
+<p>第五期51CTO移动开发技术沙龙2011年7月16日在北京成功举办了。Ph<a href="http://mobile.51cto.com/mobile/phoneclub05/" title="51CTO移动开发线下技术沙龙 (第五期)" target="_blank">[详细]</a></p>
+<h3 id="-top5-">网友评论<em>TOP5</em></h3>
+<p><a href="http://www.51cto.com/php/feedbackt.php?id=279492" target="_blank">查看所有评论（）</a></p>
+<p><a href=""></a> 提交评论</p>
+<h3 id="-">栏目热门</h3>
+<p><a href="http://os.51cto.com/click/38" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li><a href="http://os.51cto.com/art/201107/274342.htm" title="Windows Server安全策略与组策略之间的关系" target="_blank">Windows Server安全策略与组策略之间的关系</a></li>
+<li><a href="http://os.51cto.com/art/201107/273515.htm" title="Windows XP组策略技巧之限制访问电脑磁盘" target="_blank">Windows XP组策略技巧之限制访问电脑磁盘</a></li>
+<li><a href="http://os.51cto.com/art/201107/275480.htm" title="域控制器中如何用组策略禁止USB" target="_blank">域控制器中如何用组策略禁止USB</a></li>
+<li><a href="http://os.51cto.com/art/201107/277610.htm" title="利用Windows组策略管理网络共享的技巧" target="_blank">利用Windows组策略管理网络共享的技巧</a></li>
+<li><a href="http://os.51cto.com/art/201107/277958.htm" title="网吧系统组策略简介" target="_blank">网吧系统组策略简介</a></li>
+</ul>
+<h3 id="-">同期最新</h3>
+<p><a href="http://os.51cto.com/col/38" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li><a href="http://os.51cto.com/art/201107/279473.htm" title="组策略变成打开方式故障解决实例" target="_blank">组策略变成打开方式故障解决实例</a></li>
+<li><a href="http://os.51cto.com/art/201107/279464.htm" title="组策略与注册表之间的区别和联系" target="_blank">组策略与注册表之间的区别和联系</a></li>
+<li><a href="http://os.51cto.com/art/201107/279462.htm" title="组策略如何隐藏和禁用以及远程编辑？" target="_blank">组策略如何隐藏和禁用以及远程编辑？</a></li>
+<li><a href="http://os.51cto.com/art/201107/279446.htm" title="组策略命令详解" target="_blank">组策略命令详解</a></li>
+<li><a href="http://os.51cto.com/art/201107/279441.htm" title="组策略如何进行设置？" target="_blank">组策略如何进行设置？</a></li>
+</ul>
+<h3 id="-http-os-51cto-com-"><a href="http://os.51cto.com/" target="_blank">操作系统</a></h3>
+<p>频道导航</p>
+<ul>
+<li>生产环境</li>
+</ul>
+<p><a href="http://os.51cto.com/linux/" target="_blank">Linux</a> |<a href="http://os.51cto.com/windows/" target="_blank">Windows</a> |<a href="http://os.51cto.com/col/522/" target="_blank">Unix</a> |<a href="http://os.51cto.com/col/545/" target="_blank">运维教程</a> |<a href="http://os.51cto.com/art/201011/233915.htm" target="_blank">Linux运维趋势</a></p>
+<ul>
+<li>OS前沿</li>
+</ul>
+<p><a href="http://os.51cto.com/col/975/" target="_blank">浏览器</a> |<a href="http://os.51cto.com/col/610/" target="_blank">开源技术</a> |<a href="http://os.51cto.com/windows7/" target="_blank">Windows 7</a> |<a href="http://os.51cto.com/windows2008/" target="_blank">Server 08</a> |<a href="http://os.51cto.com/col/1417/" target="_blank">移动OS</a></p>
+<h3 id="-">热点推荐</h3>
+<ul>
+<li><a href="http://mobile.51cto.com/mobile-182392.htm" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://mobile.51cto.com/mobile-182392.htm" target="_blank">Android开发应用详解</a></p>
+<ul>
+<li><a href="http://developer.51cto.com/art/201106/266369.htm" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://developer.51cto.com/art/201106/266369.htm" target="_blank">那些性感的让人尖叫的程序员</a></p>
+<ul>
+<li><a href="http://developer.51cto.com/art/200907/133407.htm" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://developer.51cto.com/art/200907/133407.htm" target="_blank">HTML5 下一代Web开发标准详解</a></p>
+<ul>
+<li><a href="http://developer.51cto.com/art/201104/257581.htm" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://developer.51cto.com/art/201104/257581.htm" target="_blank">高性能WEB开发应用指南</a></p>
+<ul>
+<li><a href="http://os.51cto.com/art/200706/49181.htm" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://os.51cto.com/art/200706/49181.htm" target="_blank">Ubuntu开源技术交流频道</a></p>
+<p><strong>热门标签：</strong> <a href="http://os.51cto.com/windows/" target="_blank">windows频道</a><a href="http://mobile.51cto.com/" target="_blank">移动开发</a><a href="http://cloud.51cto.com/" target="_blank">云计算</a><a href="http://mobile.51cto.com/android-227548.htm" target="_blank">eclipse android</a><a href="http://network.51cto.com/art/200909/151122.htm" target="_blank">tp-link路由器设置图解</a><a href="http://developer.51cto.com/art/200907/133407.htm" target="_blank">html5</a></p>
+<ul>
+<li><em>外电</em> <a href="http://os.51cto.com/art/201110/298945.htm" target="_blank">运维的咆哮:从Linux到Windows</a></li>
+<li><a href="http://os.51cto.com/art/201110/298945.htm" target="_blank"><img src="" alt=""></a> 一位咆哮的运维，他受够了Linux，最后他停止了咆哮重拾Windows。</li>
+</ul>
+<ol>
+<li><a href="http://os.51cto.com/art/201110/297139.htm" target="_blank">《Linux运维趋势》第13期发布</a></li>
+<li><a href="http://os.51cto.com/art/201110/295713.htm" target="_blank">生产服务器LNMP全自动安装脚本</a></li>
+</ol>
+<h3 id="-">文章排行</h3>
+<p><a href="">本月</a><a href="">本周</a><a href="">24小时</a></p>
+<ul>
+<li><a href="http://os.51cto.com/art/201110/299384.htm" title="回应咆哮：做一个有尊严的运维" target="_blank">回应咆哮：做一个有尊严的运维</a></li>
+<li><a href="http://os.51cto.com/art/201110/298945.htm" title="一个运维的咆哮：我受够了Linux服务器 重拾Windows" target="_blank">一个运维的咆哮：我受够了Linux服务器 重拾Windows</a></li>
+<li><a href="http://os.51cto.com/art/201110/299747.htm" title="Windows XP虽伟大,但十年是否太久了" target="_blank">Windows XP虽伟大,但十年是否太久了</a></li>
+<li><a href="http://os.51cto.com/art/201110/298199.htm" title="Ubuntu 11.10 系统设置指导" target="_blank">Ubuntu 11.10 系统设置指导</a></li>
+<li><a href="http://os.51cto.com/art/201110/295548.htm" title="Ubuntu 11.10 安装后要做的11件事" target="_blank">Ubuntu 11.10 安装后要做的11件事</a></li>
+<li><a href="http://os.51cto.com/art/201110/296916.htm" title="Ubuntu 11.10 安装后要做的12件事情" target="_blank">Ubuntu 11.10 安装后要做的12件事情</a></li>
+<li><a href="http://os.51cto.com/art/201110/299304.htm" title="后PC时代的一点点事实（图表）" target="_blank">后PC时代的一点点事实（图表）</a></li>
+<li><a href="http://os.51cto.com/art/201009/227620.htm" title="Windows 7+VirtualBox安装Mac OS X虚拟机全教程" target="_blank">Windows 7+VirtualBox安装Mac OS X虚拟机全教程</a></li>
+<li><a href="http://os.51cto.com/art/201110/298889.htm" title="Windows Server 8 AD功能预览" target="_blank">Windows Server 8 AD功能预览</a></li>
+<li><a href="http://os.51cto.com/art/201110/297139.htm" title="《Linux运维趋势》第13期：服务器优化" target="_blank">《Linux运维趋势》第13期：服务器优化</a></li>
+<li><a href="http://os.51cto.com/art/201110/298945.htm" title="一个运维的咆哮：我受够了Linux服务器 重拾Windows" target="_blank">一个运维的咆哮：我受够了Linux服务器 重拾Windows</a></li>
+<li><a href="http://os.51cto.com/art/201110/299384.htm" title="回应咆哮：做一个有尊严的运维" target="_blank">回应咆哮：做一个有尊严的运维</a></li>
+<li><a href="http://os.51cto.com/art/201110/299051.htm" title="想知道如何将你的Linux服务器清空空吗？" target="_blank">想知道如何将你的Linux服务器清空空吗？</a></li>
+<li><a href="http://os.51cto.com/art/201110/299072.htm" title="红帽的大数据：Gluster全方位解读" target="_blank">红帽的大数据：Gluster全方位解读</a></li>
+<li><a href="http://os.51cto.com/art/201110/299304.htm" title="后PC时代的一点点事实（图表）" target="_blank">后PC时代的一点点事实（图表）</a></li>
+<li><a href="http://os.51cto.com/art/201110/299235.htm" title="活动目录在云环境中扮演什么样的角色" target="_blank">活动目录在云环境中扮演什么样的角色</a></li>
+<li><a href="http://os.51cto.com/art/201110/299158.htm" title="Office 2007 SP3正式发布（附简体中文版下载）" target="_blank">Office 2007 SP3正式发布（附简体中文版下载）</a></li>
+<li><a href="http://os.51cto.com/art/201110/299065.htm" title="微软发布Windows管理员新工具" target="_blank">微软发布Windows管理员新工具</a></li>
+<li><a href="http://os.51cto.com/art/201110/299480.htm" title="金山将推 WPS for Linux" target="_blank">金山将推 WPS for Linux</a></li>
+<li><p><a href="http://os.51cto.com/art/201110/299481.htm" title="QQ 2011正式版(Q+)新版发布" target="_blank">QQ 2011正式版(Q+)新版发布</a></p>
+</li>
+<li><p><a href="http://os.51cto.com/art/201110/295548.htm" title="Ubuntu 11.10 安装后要做的11件事" target="_blank">Ubuntu 11.10 安装后要做的11件事</a></p>
+</li>
+<li><a href="http://os.51cto.com/art/201110/296916.htm" title="Ubuntu 11.10 安装后要做的12件事情" target="_blank">Ubuntu 11.10 安装后要做的12件事情</a></li>
+<li><a href="http://os.51cto.com/art/201110/297004.htm" title="Ubuntu 11.10正式发布(附下载)" target="_blank">Ubuntu 11.10正式发布(附下载)</a></li>
+<li><a href="http://os.51cto.com/art/201110/298945.htm" title="一个运维的咆哮：我受够了Linux服务器 重拾Windows" target="_blank">一个运维的咆哮：我受够了Linux服务器 重拾Windows</a></li>
+<li><a href="http://os.51cto.com/art/201110/296975.htm" title="Ubuntu 11.10发布，新特性面面观" target="_blank">Ubuntu 11.10发布，新特性面面观</a></li>
+<li><a href="http://os.51cto.com/art/201110/298199.htm" title="Ubuntu 11.10 系统设置指导" target="_blank">Ubuntu 11.10 系统设置指导</a></li>
+<li><a href="http://os.51cto.com/art/201110/297139.htm" title="《Linux运维趋势》第13期：服务器优化" target="_blank">《Linux运维趋势》第13期：服务器优化</a></li>
+<li><a href="http://os.51cto.com/art/201110/296219.htm" title="WebQQ变身Q+ Web入口争夺战升级" target="_blank">WebQQ变身Q+ Web入口争夺战升级</a></li>
+<li><a href="http://os.51cto.com/art/201110/298204.htm" title="大话IT第十七期：体验Ubuntu 11.10" target="_blank">大话IT第十七期：体验Ubuntu 11.10</a></li>
+<li><a href="http://os.51cto.com/art/201110/299384.htm" title="回应咆哮：做一个有尊严的运维" target="_blank">回应咆哮：做一个有尊严的运维</a></li>
+</ul>
+<h3 id="-">热点专题</h3>
+<p><a href="http://os.51cto.com/speclist/38" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li><a href="http://os.51cto.com/exp/ubuntu-fedora-2011-05/" title="2011第一波 Ubuntu vs Fedora桌面擂台赛" target="_blank"><img src="" alt="2011第一波 Ubuntu vs Fedora桌面擂台赛"></a></li>
+</ul>
+<h3 id="-2011-ubuntu-vs-http-os-51cto-com-exp-ubuntu-fedora-2011-05-2011-ubuntu-vs-fedora-"><a href="http://os.51cto.com/exp/ubuntu-fedora-2011-05/" title="2011第一波 Ubuntu vs Fedora桌面擂台赛" target="_blank">2011第一波 Ubuntu vs</a></h3>
+<p>Ubuntu是一个自由、开源、基于Debian的Linux发行版，</p>
+<ul>
+<li><a href="http://os.51cto.com/art/201106/266738.htm" title="Linux 3.0，你好！" target="_blank"><img src="" alt="Linux 3.0，你好！"></a></li>
+</ul>
+<h3 id="-linux-3-0-http-os-51cto-com-art-201106-266738-htm-linux-3-0-"><a href="http://os.51cto.com/art/201106/266738.htm" title="Linux 3.0，你好！" target="_blank">Linux 3.0，你好！</a></h3>
+<p>经过40次发布，Linux内核终于离开了2.6的命名，即将迎</p>
+<ul>
+<li><a href="http://os.51cto.com/art/201105/264870.htm" title="Ubuntu 11.10——白日梦的虎猫" target="_blank"><img src="" alt="Ubuntu 11.10——白日梦的虎猫"></a></li>
+</ul>
+<h3 id="-ubuntu-11-10-http-os-51cto-com-art-201105-264870-htm-ubuntu-11-10-"><a href="http://os.51cto.com/art/201105/264870.htm" title="Ubuntu 11.10——白日梦的虎猫" target="_blank">Ubuntu 11.10——白日</a></h3>
+<p>代号为 Oneiric Ocelot 的 Ubuntu 11.10 是 Ubuntu Li</p>
+<h3 id="-">热点标签</h3>
+<p><a href="http://os.51cto.com/art/201104/256478.htm" title="IIS服务" target="_blank">IIS服务</a> <a href="http://os.51cto.com/art/201104/256380.htm" title="Windows 8" target="_blank">Windows 8</a> <a href="http://os.51cto.com/art/201103/250662.htm" title="浏览器战报" target="_blank">浏览器战报</a> <a href="http://os.51cto.com/art/201101/244030.htm" title="Ubuntu 11.04" target="_blank">Ubuntu 11.04</a> <a href="http://os.51cto.com/art/201101/244021.htm" title="运维秘诀" target="_blank">运维秘诀</a> <a href="http://os.51cto.com/art/201012/236185.htm" title="活动目录" target="_blank">活动目录</a> <a href="http://os.51cto.com/art/201104/253193.htm" title="Linux管理员" target="_blank">Linux管理员</a> <a href="http://os.51cto.com/art/201103/246763.htm" title="Fedora 15" target="_blank">Fedora 15</a> <a href="http://os.51cto.com/art/201011/233915.htm" title="Linux运维趋势" target="_blank">Linux运维趋势</a> <a href="http://os.51cto.com/art/201010/230570.htm" title="开源社区" target="_blank">开源社区</a></p>
+<ul>
+<li><a href="http://news.51cto.com/col/1323/" target="_blank"><strong>点击这里查看样刊</strong></a></li>
+<li><p><a href="http://home.51cto.com/index.php?s=/Subscribe" target="_blank"><img src="" alt=""></a></p>
+<h3 id="-">全站热点</h3>
+</li>
+<li><p><a href="http://network.51cto.com/art/201107/274080.htm" title="小区宽带的N种骗局 独享成陷阱" target="_blank"><img src="" alt=""></a></p>
+</li>
+</ul>
+<p><a href="http://network.51cto.com/art/201107/274080.htm" title="小区宽带的N种骗局 独享成陷阱" target="_blank">小区宽带的N种骗局 独享成陷阱</a></p>
+<ul>
+<li><a href="http://netsecurity.51cto.com/art/201107/273312.htm" title="图解：VNC Server攻击实战案例" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://netsecurity.51cto.com/art/201107/273312.htm" title="图解：VNC Server攻击实战案例" target="_blank">图解：VNC Server攻击实战案例</a></p>
+<ul>
+<li><a href="http://os.51cto.com/art/201103/251768.htm" title="Linux系统中的日志管理" target="_blank">Linux系统中的日志管理</a></li>
+<li><a href="http://book.51cto.com/art/201103/251751.htm" title="会当凌绝顶：Java开发修行实录" target="_blank">会当凌绝顶：Java开发修行实录</a></li>
+<li><a href="http://book.51cto.com/art/201103/251720.htm" title="云计算解码：技术架构和产业运营" target="_blank">云计算解码：技术架构和产业运营</a></li>
+<li><a href="http://book.51cto.com/art/201103/251640.htm" title="B2B2C网上商城开发指南——基于SaaS和淘宝API开放平台" target="_blank">B2B2C网上商城开发指南——基于SaaS</a></li>
+<li><a href="http://mobile.51cto.com/hot-251637.htm" title="苹果WWDC将于6月6日开幕 可能发布iPhone5" target="_blank">苹果WWDC将于6月6日开幕 可能发布iPh</a></li>
+</ul>
+<h3 id="-">读书</h3>
+<p><a href="http://book.51cto.com/art/200801/63492.htm" title="精通正则表达式（第3版）" target="_blank"><img src="" alt=""></a></p>
+<h3 id="-3-http-book-51cto-com-art-200801-63492-htm-"><a href="http://book.51cto.com/art/200801/63492.htm" target="_blank">精通正则表达式（第3版）</a></h3>
+<p>随着互联网的迅速发展，几乎所有工具软件和程序语言都支持的正则表达式也变得越来越强大和易于使用。本书是讲解正则表达式的经典</p>
+<ul>
+<li><a href="http://book.51cto.com/art/200708/52623.htm" title="非常网管——网络应用" target="_blank">非常网管——网络应用</a></li>
+<li><a href="http://book.51cto.com/art/200708/52701.htm" title="非常网管——网络服务" target="_blank">非常网管——网络服务</a></li>
+<li><a href="http://book.51cto.com/art/200708/52957.htm" title="网络服务器配置与应用（第3版）" target="_blank">网络服务器配置与应用（第3版）</a></li>
+<li><a href="http://book.51cto.com/art/200708/53056.htm" title="精通Spring 2.x——企业应用开发详解" target="_blank">精通Spring 2.x——企业应用开发详解</a></li>
+</ul>
+<h3 id="-">博文推荐</h3>
+<p><a href="http://blog.51cto.com/" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li><a href="http://fjpnet.blog.51cto.com/930129/203776/" title="看《建国大业》星动还是心动？" target="_blank">看《建国大业》星动还是心动？</a></li>
+<li><a href="http://liuyuanljy.blog.51cto.com/607434/203733/" title="制定数据丢失防范策略的六个要点" target="_blank">制定数据丢失防范策略的六个要点</a></li>
+<li><a href="http://tonyxiaohome.blog.51cto.com/925273/203702/" title="关于女生的程序员之路" target="_blank">关于女生的程序员之路</a></li>
+<li><a href="http://yuelei.blog.51cto.com/202879/203680/" title="实战域树部署，Active Directory系列之十九" target="_blank">实战域树部署，Active Directory系列</a></li>
+</ul>
+<h3 id="-">最新热帖</h3>
+<p><a href="http://bbs.51cto.com/hotthreads.php" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li><a href="http://bbs.51cto.com/thread-838960-1.html" title="【我的软考之路】网工通过之后的感想" target="_blank">【我的软考之路】网工通过之后的感想</a></li>
+<li><a href="http://bbs.51cto.com/thread-838882-1.html" title="[每日一学]I&#39;m just always suspicious of new people.（2011-6-28）&lt;Repaste&gt;" target="_blank">[每日一学]I&#39;m just always suspicio</a></li>
+<li><a href="http://bbs.51cto.com/thread-838878-1.html" title="[每日一读]Little Jack（2011-6-28）&lt;Repaste&gt;" target="_blank">[每日一读]Little Jack（2011-6-28）</a></li>
+<li><a href="http://bbs.51cto.com/thread-838874-1.html" title="公司网络更换,交换机上设置了，上不了网，急！！" target="_blank">公司网络更换,交换机上设置了，上不</a></li>
+<li><a href="http://bbs.51cto.com/thread-838801-1.html" title="二层交换机之间可以通信，二层下面的PC机却不能通信？？" target="_blank">二层交换机之间可以通信，二层下面的</a><h3 id="51cto-">51CTO旗下网站</h3>
+</li>
+</ul>
+<p><a href="http://www.51cto.com/" target="_blank">领先的IT技术网站 51CTO</a> <a href="http://www.watchstor.com/" target="_blank">领先的中文存储媒体 WatchStor</a> <a href="http://www.cioage.com/" target="_blank">中国首个CIO网站 CIOage</a> <a href="http://www.hc3i.cn/" target="_blank">中国首家数字医疗网站 HC3i</a> <a href="http://www.linkphone.cn/" target="_blank">移动互联网生活门户 灵客风LinkPhone</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/域/">域</a></li></span></span> | <span class="tags">Tagged <a href="/tags/域/" class="label label-primary">域</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-域--组策略如何限制域用户的权限？-51CTO_COM/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--组策略如何限制域用户的权限？-51CTO_COM" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--用JAVA通过LDAP修改AD用户密码注意事项/">用JAVA通过LDAP修改AD用户密码注意事项</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--用JAVA通过LDAP修改AD用户密码注意事项/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-java-ldap-ad-">用JAVA通过LDAP修改AD用户密码注意事项</h1>
+<p><a href="http://woaidong.com/;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank"><img src="" alt=""></a><a href="http://woaidong.com/archiver/;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank">我爱动</a> » <a href="http://woaidong.com/archiver/method-blogs.shtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank">日志</a>
+特别提醒： 你现在看到的是帖子的纯文字版, <a href="http://woaidong.com/blog/method-detail-id-2278.shtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank">查看完整版本</a></p>
+<p>2009年1月14日 <strong>用JAVA通过LDAP修改AD用户密码注意事项</strong></p>
+<p>最近要用java来修改windows 2003的Active Directory(简称AD)上的用户，包括新增、修改、删除，普通的操作这里就不说了，网上有一大堆的资料，这里记述一下本人操作过程中遇到的问题及解决方法。
+通过ldap来修改AD的用户信息，除了修改密码外，其他的都可以使用非安全的连接进行操作，也就是可以不走SSL连接来操作，注意AD的普通端口是389，SSL端口是636。
+当使用SSL连接修改密码时，需要在连接端安装证书，怎么获取证书，本人使用网上其他人介绍的证书方法，全是无法成功，都是出现 unable to find valid certification path to requested target 错误，最终经一朋友提示，使用其他方法获取到正确的证书，具体如下：
+1、安装证书服务。最好不要在域控制器上安装证书服务，而是使用另外一台机器加入到域中，且在这台机器上使用域账户来安装证书服务。证书服务的安装没什么特别的注意，请参考其他人的文章。
+2、获取客户端证书。别人都是通过下载证书的方式来获取证书，但是我通过这种方式就是无法成功修改密码，也都是提示 unable to find valid certification path to requested target 这个错误。我的操作方法为，用IE通过SSL直接连接ldap服务器(也就是安装AD的那台机器)，使用636端口，类似于 <a href="https://192.168.0.111:636" target="_blank">https://192.168.0.111:636</a> ，连接的时候会提示安装证书，这时候把这个证书保存下来，即为需要的客户端证书。
+3、连接。得到证书后，我在连接的时候成功了，但在修改AD用户密码的时候还是报错，但这次的错误为 javax.naming.OperationNotSupportedException: [LDAP: error code 53 - 0000052D: SvcErr: DSID-031A0FC0, problem 5003 (WILL_NOT_PERFORM), data 0 ,操作不支持错误，在这个问题了转了好久都没解决，后来无意中看到一篇文章讲到AD中的密码策略问题，才想起来windows2003中AD中的默认密码策略有长度限制和复杂性要求，所以才导致出现OperationNotSupportedException异常，记得在域控制器上查看自己的域策略。
+后记：由于水平原因，就因为证书的问题搞了两天多才搞定，其实通过调整域策略可以使用修改密码不需要走SSL通道的，但这都是旁门左道，希望写下这篇文章对大家有所帮助。
+<a href="http://woaidong.com/include/about/links.jhtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" title="友情链接" target="_blank">友情链接</a><a href="http://woaidong.com/include/about/about_us.jhtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" title="关于我们" target="_blank">关于我爱动</a><a href="http://woaidong.com/include/about/join.jhtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" title="加入我们" target="_blank">加入我爱动</a><a href="http://woaidong.com/include/about/contact.jhtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" title="联系我们" target="_blank">联系我们</a><a href="http://woaidong.com/include/about/mz.jhtml;jsessionid=4C48D8C4E183EC8E371AB028066D4371" title="免责声明" target="_blank">免责条款</a>  <a href="http://www.miibeian.gov.cn/" target="_blank">浙ICP备08105846号</a>Copyright ©  <a href="http://woaidong.com/;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank">我爱动</a>,2008-2009. All Rights Reserved <a href="http://woaidong.com/archiver/;jsessionid=4C48D8C4E183EC8E371AB028066D4371" target="_blank">archiver</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/域/">域</a></li></span></span> | <span class="tags">Tagged <a href="/tags/域/" class="label label-primary">域</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-域--用JAVA通过LDAP修改AD用户密码注意事项/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--用JAVA通过LDAP修改AD用户密码注意事项" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--最新分享_分享_百度空间/">最新分享_分享_百度空间</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--最新分享_分享_百度空间/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-_-_-">最新分享<em>分享</em>百度空间</h1>
+<p><a href="http://hi.baidu.com/index.htm" target="_blank"><img src="" alt="logo"></a></p>
+<ul>
+<li><p><a href="http://apps.hi.baidu.com/" target="_blank">应用</a>
+<a href="http://hi.baidu.com/reg/new" target="_blank">注册</a> 用户名:   密码:</p>
+</li>
+<li><p><a href="http://apps.hi.baidu.com/hoho" target="_blank">HOHO</a></p>
+</li>
+<li><a href="http://apps.hi.baidu.com/photopk?ref=app" target="_blank">照片PK</a></li>
+<li><a href="http://apps.hi.baidu.com/share" target="_blank">分享</a></li>
+<li><a href="http://apps.hi.baidu.com/vote" target="_blank">投票</a></li>
+<li><a href="http://apps.hi.baidu.com/test" target="_blank">测试</a></li>
+<li><a href="http://apps.hi.baidu.com/gift" target="_blank">礼物</a></li>
+</ul>
+<p><a href="http://apps.hi.baidu.com/share/detail/7143096#" target="_blank">更多</a></p>
+<ul>
+<li><a href="http://youxi.baidu.com/prom.xhtml?code=G-%D7%8E%81%B2%29%FF%8AR%BC%8B%EE%85%1C%E5" target="_blank">网页游戏</a></li>
+</ul>
+<h2 id="-">分享</h2>
+<ul>
+<li><a href="http://apps.hi.baidu.com/share/" target="_blank">热门分享</a></li>
+<li><a href="http://apps.hi.baidu.com/share/latest/?type=video" target="_blank">最新分享</a></li>
+<li><a href="http://apps.hi.baidu.com/share/detail/7143096#" target="_blank">好友的分享</a></li>
+<li><a href="http://apps.hi.baidu.com/share/detail/7143096#" target="_blank">我的分享</a>
+<a href="http://apps.hi.baidu.com/share/detail/7143096#" target="_blank">如何分享?</a> <a href="http://tieba.baidu.com/f?kw=%B0%D9%B6%C8%BF%D5%BC%E4" target="_blank">问题反馈</a></li>
+</ul>
+<p><a href=""></a></p>
+<p><a href="http://hi.baidu.com/sys/checkuser/sxxhw/3" target="_blank"><img src="" alt=""></a></p>
+<p>   <a href="http://apps.hi.baidu.com/share/user/b89e73787868773601" target="_blank">sxxhw的分享</a></p>
+<p>分享
+2003 域 组策略 远程桌面</p>
+<p><strong>转自：</strong><a href="http://blog.163.com/hackergufeng/blog/static/37121905200981045123602/" target="_blank"><strong><a href="http://blog.163.com/hackergufeng/blog/static/37121905200981045123602/">http://blog.163.com/hackergufeng/blog/static/37121905200981045123602/</a></strong></a></p>
+<p><strong>已测试成功！</strong></p>
+<p>近日给一家上市企业提供IT基础架构优化的项目服务，在部署完活动目录后，客户提出为了减轻IT管理员的管理负担，希望能够通过组策略开启所有客户机的远程桌面，然后管理员可以在自己的工作站连接过去进行远程维护（补充一下，他们有三百多台客户机....）。</p>
+<pre><code>    我新建了一个测试用的OU，然后将一台测试用的虚拟机加入到域，并将这个计算机账号移动到这个OU里，然后再创建一个名字叫做“RDP”的组策略，链接到这个OU上。
+   接下来开始修改“RDP”组策略里的设置。先打开“管理工具”的“默认域策略”，依次展开“计算机配置”--&gt;“管理模板”--&gt; “Windows组件”--&gt;“终端服务”，找到“允许用户使用终端服务进行远程连接”项，选择“已启用”。由于这个策略属于计算机配置，因此至少要等待90分钟（正负30分钟）后才能够在所有客户机上应用。为了尽快体现设置效果，我在虚拟机上运行了“gpupdate /force”命令来立即刷新所有组策略设置。可以看到“系统属性”里的“远程”选项里“远程桌面”已经被选中，但我从其他计算机却无法使用“远程桌面连接”来连到这台测试用客户机，明明开启了“远程桌面”功能，为什么无法连过来，一定是有其他东东阻止对这台客户机的远程桌面连接。
+   由于这是一台测试用机器，既然在这台机器上会有这个现象，其他计算机也一定会有，这表明这是一个普遍现象。由于客户端都是XP+SP2，能阻止连接的只有是XP自带的防火墙，检查防火墙设置，发现都开启了防火墙功能，在“例外”里发现没有选中“远程桌面”，这就是问题所在。
+    但这又产生一个新问题，就是虽然知道是XP防火墙阻挡了连接，那如何批量修改几百台计算机的这个设置呢？还是想到了组策略这个工具。再次打开这个 “RDP”组策略，依次展开“计算机配置”--&gt;“管理模板”--&gt;“网络”--&gt;“网络连接”--&gt;“Windows防火墙” --&gt;“域配置文件”，找到“允许远程桌面例外”，选择“已启用”，同时在输入框里输入“/*”（星号，表明允许来自任何IP地址的连接）。
+</code></pre><p>设置完毕后再次在测试用虚拟机上运行“gpupdate /force”命令，再从别的计算机上尝试对这台测试客户机进行远程桌面连接，操作成功。
+       我发表这个案例的目的并不是想说这个案例里所用到的技术有多高深，而是希望通过这个案例让大家意识到组策略的强大功能，利用好组策略，将能够极大减轻IT Pro们的工作量...</p>
+<p>============================================================================</p>
+<p><strong>转自：</strong><a href="http://windows.chinaitlab.com/skill/771850.html" target="_blank"><strong><a href="http://windows.chinaitlab.com/skill/771850.html">http://windows.chinaitlab.com/skill/771850.html</a></strong></a></p>
+<p><strong>尚未测试！</strong></p>
+<p>如何通过组策略自动启用客户端远程桌面功能？</p>
+<pre><code>在企业里进行管理的时候，有时需要利用远程桌面来管理客户端计算机，在一般情况下，往往需要客户端启用此功能，有没有好的办法，让客户端自动启用呢？当然可以，我们可以通过组策略的形式来完成。
+
+具体操作：（域环境）
+1.在DC上创建一个OU，把相应的客户端计算机放到这个OU里。
+2.针对这个OU创建一个组策略，在这个组策略的计算机配置里，在启动脚本里添加一个脚本，内容如下：（命名为RDP.vbs)
+Const ENABLE_CONNECTIONS = 1
+strComputer = &quot;.&quot;
+Set objWMIService = GetObject(&quot;winmgmts:\\&quot; &amp; strComputer &amp; &quot;\root\cimv2&quot;)
+Set colItems = objWMIService.ExecQuery(&quot;Select /* from Win32_TerminalServiceSetting&quot;)
+For Each objItem in colItems
+errResult = objItem.SetAllowTSConnections(ENABLE_CONNECTIONS)
+Next
+set oShell = WScript.CreateObject(&quot;WScript.shell&quot;)
+oShell.run &quot;cmd.exe /c netsh firewall add portopening tcp 3389 RemoteDestop&quot;,0,true
+set oShell=nothing
+3.客户端计算机重新，即可生效。
+
+注：此脚本在所有的客户端是2003的情况下验证通过，并能自动“远程桌面”功能穿过防火墙。
+
+便于管理服务器！
+</code></pre><p>为了您的安全，请只打开来源可靠的网址</p>
+<p><a href="http://hi.baidu.com/scorpio1118/blog/item/716995037f46cf7d3812bbab.html" target="_blank">打开网站</a>    <a href="http://apps.hi.baidu.com/share/detail/7143096#" target="_blank">取消</a></p>
+<p>来自: <a href="http://hi.baidu.com/scorpio1118/blog/item/716995037f46cf7d3812bbab.html" target="_blank"><a href="http://hi.baidu.com/scorpio1118/blog/item/716995037f46cf7d3812bbab.html">http://hi.baidu.com/scorpio1118/blog/item/716995037f46cf7d3812bbab.html</a></a></p>
+<p><a href=""></a>
+来自: <a href="http://hi.baidu.com/sys/checkuser/sTevenQ/3" target="_blank"><img src="" alt=""></a><a href="http://hi.baidu.com/sys/checkuser/sTevenQ/3" target="_blank">sTevenQ</a> 第一分享: <a href="http://hi.baidu.com/sys/checkuser/sxxhw/3" target="_blank"><img src="" alt=""></a><a href="http://hi.baidu.com/sys/checkuser/sxxhw/3" target="_blank">sxxhw</a>  时间: 2010-06-08 11:45 评论: 0条 投票: 0次 本贴分享: 1 累计分享: 2</p>
+<h3 id="-0-">共有0人发表观点</h3>
+<p>...目前还没有互动观点，输入您的互动观点</p>
+<h3 id="-0-">评论(0)</h3>
+<p><a href="http://help.baidu.com/question?prod_en=space" target="_blank">帮助中心</a> | <a href="http://tieba.baidu.com/f?kw=%B0%D9%B6%C8%BF%D5%BC%E4&amp;fr=wwwt" target="_blank">空间客服</a> | <a href="http://tousu.baidu.com/hi/" target="_blank">投诉中心</a> | <a href="http://www.baidu.com/search/hi_contract.html" target="_blank">空间协议</a> | <a href="http://apps.hi.baidu.com/static/html/contact.html" target="_blank">联系我们</a></p>
+<p>2006-2011 © Baidu  </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/域/">域</a></li></span></span> | <span class="tags">Tagged <a href="/tags/域/" class="label label-primary">域</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-域--最新分享_分享_百度空间/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--最新分享_分享_百度空间" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1301,7 +979,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-23 21:54:38</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-25 18:15:42</em></span></div>
 </div>
 <div class="clearfix"></div>
 

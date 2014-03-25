@@ -110,300 +110,45 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/">记录帖：碰到的一些Java问题（更新于2013</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/">JVM调优总结（五）</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-java-2013-03-06-">记录帖：碰到的一些Java问题（更新于2013-03-06）</h1>
-<h1 id="-bluedavy-blog-https-blog-bluedavy-com-"><a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a></h1>
-<p>{互联网，OSGi，Java, High Scalability, High Performance,HA}</p>
-<ul>
-<li><a href="https://blog.bluedavy.com/" target="_blank">Home</a></li>
-<li><a href="https://blog.bluedavy.com/?page_id=2" target="_blank">About</a></li>
-<li><a href="https://blog.bluedavy.com/?page_id=81" target="_blank">Photos</a></li>
-</ul>
-<h2 id="-java-2013-03-06-https-blog-bluedavy-com-p-300-java-2013-03-06-"><a href="https://blog.bluedavy.com/?p=300" title="记录帖：碰到的一些Java问题（更新于2013-03-06）" target="_blank">记录帖：碰到的一些Java问题（更新于2013-03-06）</a></h2>
-<p>Aug 09</p>
-<p><a href="http://bluedavy.com/" title="Visit bluedavy’s website" target="_blank">bluedavy</a><a href="https://blog.bluedavy.com/?cat=63" title="View all posts in Java" target="_blank">Java</a>, <a href="https://blog.bluedavy.com/?cat=13" title="View all posts in jvm" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=btrace" target="_blank">btrace</a>, <a href="https://blog.bluedavy.com/?tag=java-cases" target="_blank">Java Cases</a>, <a href="https://blog.bluedavy.com/?tag=java-troubleshooting" target="_blank">Java Troubleshooting</a>, <a href="https://blog.bluedavy.com/?tag=java%e9%97%ae%e9%a2%98" target="_blank">Java问题</a> <a href="&quot;Comment on 记录帖：碰到的一些Java问题（更新于2013-03-06）&quot;">11 Comments</a>
-这个贴用于记录自己碰到过的一些Java问题，会根据经验不断增加，以便总结，:)</p>
-<p>case: 一次非常诡异的CMS GC频繁问题的排查
-详细见此贴：<a href="https://bluedavy.com/?p=424" target="_blank"><a href="https://bluedavy.com/?p=424">https://bluedavy.com/?p=424</a></a></p>
-<p>case: 某应用在压测一台物理机上的多台虚拟机时不能保持线性增长的案例
-现象描述：
-一台16 core（HT）的物理机上，创建了8个虚拟机，每个虚拟机独占两个core，每个虚拟机里部署的都是同样的应用，按道理来说，在应用没有瓶颈的情况下，每增加一台虚拟机，tps应该可以保持线性增长，不过在压测的时候发现，在增加到第四台的时候（每次4台挑选的都是不同的机器），有些时候能线性增长，有些时候不能。
-解决过程：
-1、经过手工调整其中某台虚拟机的cpu，发现在12/13 cpu加入时，整个tps就会下降，于是猜想莫非和这两个核还有关系；
-2、猜测是和中断处理有关系，发现core 12处理的中断确实比较其他的多一些，于是把irqbalance关了，调整了中断的绑定，还是一样的现象；
-3、看了下四台虚拟机绑定的cpu的分布状况，发现12/13刚好和其中一台虚拟机绑定的4/5是同样的两个core，4/12其实是同一个core HT的，5/13是另一个core HT的，而这个应用是很耗cpu的，单压某个虚拟机cpu us就可以到90%左右，所以如果压测的4台如果有CPU刚好是同一个Core HT的，性能自然是上不去的。
-总结：
-和各种文章中讲的一样，CPU HT只有在理论的某些场景能达到2个真实core的性能，但多数情况都达不到，貌似很多场景的经验值是2 core(HT) = 1.3 Core。</p>
-<p>case: 一个Java应用频繁抛异常导致cpu us诡异现象的案例
-详细见此贴：<a href="http://blog.bluedavy.com/?p=409" target="_blank"><a href="http://blog.bluedavy.com/?p=409">http://blog.bluedavy.com/?p=409</a></a></p>
-<p>case: 某应用在运行个一两天后就会把物理内存耗光
-解决过程：
-1、先按经验查了下有没有错误使用Inflater和Deflater，没有，于是继续；
-2、继续上perftools，看看到底什么原因造成的，结果在6u21版本上看到的很诡异，是JVM_handle_linux_signal占了最多，觉得不靠谱，于是先升级成了6u26；
-3、再分析，看到os::malloc占用了最多，但其他的就完全没头绪了；
-4、在@JosephWang_CN的帮助下，图形分析下了perftools的stack trace，才发现还是unsafe_allocate的地方，但这次现象和上个case不同，不同点在于这次是由于cms gc的bug造成的，bug id为7112034，这个bug会造成即使direct bytebuffer已经无引用了，但在cms gc时其并不会被清除掉，而要等到full gc才会清除，官方版本在6u32中修复此bug（这个很容易验证，如果没开启ExplicitGCInvokesConcurrent，用jmap -histo:live强制触发下）；
-5、在fix了这个bug的前提下，还需要限制-XX:MaxDirectMemorySize的大小才行，否则可能会出现还没到触发cms gc时，物理内存就用完了的现象。
-总结：
-根据多次排查Java Heap外内存泄露的问题，目前的经验为：
-1、先查查看有没有错误使用Inflater和Deflater，如有则基本就搞定了；
-2、多执行几次jmap -histo:live，看看内存会不会下降，如果会的话，多数和GC的bug有关；
-3、perftools，对调用次数的那列进行排序(pprof –text … | sort -n -r -k4)，如果看到是Unsafe_Allocate比较多，且为server端应用，则通常说明是哪个地方分配了Direct ByteBuffer，但来不及释放引用，然后嘛，就是用btrace跟踪下看看谁干的，分析原因。</p>
-<p>case: 某应用在压测一段时间后就会把物理内存耗光
-解决过程：
-1、从gc log以及jstat信息来看，java heap内的内存消耗并不多，但堆外消耗非常严重，导致了物理内存被耗光；
-2、于是装上google perftools，看看堆外到底是什么原因造成的消耗；
-3、分析了下google perftools的内存malloc消耗，主要是调用Unsafe.allocate造成的；
-4、通常调用Unsafe.allocateMemory来分配内存的，只有Direct ByteBuffer和AWT，这应用是没用AWT的，Direct ByteBuffer倒是用到了；
-5、网上google了一会，找到一个貌似和这个应用的场景很像的内存泄露的现象，具体信息请见：<a href="http://t.co/S9jvDt8O" title="SocketChannel.write Direct ByteBuffer memory leak" target="_blank"><a href="http://t.co/S9jvDt8O">http://t.co/S9jvDt8O</a></a>，号称是SocketChannel.write的时候，如果是Direct ByteBuffer会导致memory leak，而且Trustin Lee(Mina/Netty的作者)也这么说的：”it’s a known bug”;
-6、于是建议应用的同学将ByteBuffer的地方改成不用direct方式；
-7、改完后，重新压测，物理内存消耗是没那么严重了，但java heap用满了后回收不了了；
-8、于是dump内存，用mat分析后发现是由于这个应用本身处理上的一些缺失造成的，简单说下，这个应用是一个基于mina的应用，而应用没有对session上的发送请求做限流，而mina来不及发送，导致积压了很多WriteRequest，从而内存被耗光了；
-9、对这个问题的解决方法是：限流，当未发送的字节数到达某个比率后，就暂时先不发送了，或者报错等等，用netty能对这个现象有一定的缓解，但限流动作还是要做，否则可能会出现接收方处理慢，从而导致发送方内存用完的现象。</p>
-<p>case: 某应用在压测时很容易出现promotion failed的现象
-解决过程：
-1、从promotion failed时的gc日志来看，状况为新生代中有1.5g的对象存活，旧生代此时的空余空间为4g，足以放下新生代存活的这些对象，于是只能猜测可能是cms gc的情况下旧生代的碎片问题导致的，其实心里是不太相信的，因为这空间空闲了如此的多呀；
-2、首先增加-XX:+PrintPromotionFailure看看Promotion Failed的时候是不是有很大的对象要晋升到旧生代，结果打出来的日志显示在晋升的时候失败的竟然只是申请262146个block的空间而已，这是在开启了压缩指针的情况，因此每个block为4个字节；
-3、还是不能确定，于是增加-XX:+CMSDumpAtPromotionFailure，看看OLD Gen的碎片状况；
-4、打出来的信息显示old gen拥有最多free block的chunk也只有99977个而已，有53w+个chunk，里面大部分都只有999个free block，可见碎片相当严重；
-5、到这步只是确定了碎片很严重，暂时能想到的只有每天半夜的时候主动执行下jmap -histo:live，尽可能减少碎片吧，如果后续有什么改进的动作，再来记录。</p>
-<p>case: 某应用在发布的过程中突然crash了几台
-解决过程：
-1、应用crash后hs_err/*.log以及core.[pid]文件都没生成；
-2、先打开core dump;
-3、crash后gdb core dump看：
-<a href="">?</a>1</p>
-<p>2
-3</p>
-<p>4
-(gdb) bt</p>
-<p>/#0  0x00002ba466f82971 in ?? () from /opt/jdk-1.6.0_26/jre/lib/amd64/server/libjvm.so
-/#1  0x00002aab78a7e20d in Java_java_net_SocketOutputStream_socketWrite0 ()</p>
-<p>from /opt/jdk-1.6.0_26/jre/lib/amd64/libnet.so</p>
-<p>4、看到上面的core dump完全木有头绪，后来@rednaxelafx 介入处理，才知道原来jstack是可以跟core dump文件提取出当时java程序的状况的；
-5、jstack出来一看，发现程序里有个地方无限递归…so…
-总结：
-@rednaxelafx接着又进一步分析了为什么没有生成hs_err/<em>.log，是因为从jdk 5.0以后的版本，hs_err/</em>.log就是在crash的那个线程来生成，而这个案例中crash时的那个线程无限递归，而且正在native栈上，栈空间被消耗光了，所以hs_err/*.log文件就没生成出来。</p>
-<p>Case: 某应用偶尔会出现极为频繁的Promotion failed，导致cms gc切换为串行full gc，从而响应变得超级慢
-解决过程：
-1、从promotion failed的日志来看，应该是在那段时间内内存被消耗光了造成的，因此在promotion failed的时候dump了内存；
-2、可惜dump出来的那个内存文件打不开，几次都是如此；
-3、还好我们自己定制的jdk版本这个时候发挥了作用，这个版本中有个功能是如果代码中有地方分配了超级大的数组，会打印出堆栈；
-4、在某次出问题的时候，我们看到了这样的堆栈信息：
-<a href="">?</a>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13==WARNNING==  allocating large array: thread_id[0x00002aaac2d85800], thread_name[ajp-0.0.0.0-8009-48], array_size[782611408 bytes], array_length[195652847 el</p>
-<p>ememts]</p>
-<p>at java.util.Arrays.copyOf(Arrays.java:2734)</p>
-<p>at java.util.ArrayList.ensureCapacity(ArrayList.java:167)</p>
-<p>at java.util.ArrayList.add(ArrayList.java:351)</p>
-<p>at net.sf.json.JSONArray._fromJSONTokener(JSONArray.java:1154)</p>
-<p>at net.sf.json.JSONArray.fromObject(JSONArray.java:147)</p>
-<p>at net.sf.json.util.JSONTokener.nextValue(JSONTokener.java:358)</p>
-<p>at net.sf.json.JSONObject._fromJSONTokener(JSONObject.java:1128)</p>
-<p>at net.sf.json.JSONObject._fromString(JSONObject.java:1317)</p>
-<p>at net.sf.json.JSONObject.fromObject(JSONObject.java:185)</p>
-<p>at net.sf.json.JSONObject.fromObject(JSONObject.java:154)</p>
-<p>at 我们自己的代码...</p>
-<p>5、有这个堆栈后就可以知道是由于自己的代码这个地方触发了json创建了一个巨大的array；
-6、于是怀疑是我们传给了json一个很大的String，就先在应用层做了个保护，超过一定大小的String就直接抛错；
-7、加上了这个保护后还是出问题了；
-8、因此怀疑是json内部有bug，导致传了某种格式的String后就会出现死循环什么的；
-9、“神”看代码后，构造了一个这样的String s = “{tag:[0,1,”;然后调用JSONObject.fromObject(s)，就会OOM；
-10、于是修改了json的代码，修复此bug…</p>
-<p>Case: 某应用cms gc时concurrent-mark阶段应用竟然没有响应…
-解决过程：
-1、在cms gc进行的过程中用pstack采集目前java进程正在做什么；
-2、从日志分析来看貌似是在concurrent-mark时，很多的java线程在分配内存的时候被锁住了…
-3、将相关信息发给官方的gc dev maillist，只是得到了升级到6u28试试的建议…
-目前问题尚未解决，先在此mark下，和这个url提到的问题基本一致：<a href="http://t.co/EU92I8nN" target="_blank"><a href="http://t.co/EU92I8nN">http://t.co/EU92I8nN</a></a></p>
-<p>Case: 某应用cms gc非常频繁，并且很容易出现concurrent mode failure造成Full GC
-解决过程：
-1、从gc日志来看，cms gc每次在旧生代使用才到18%左右的时候就触发了，而设置的触发比率是80%，并且不允许JVM自行触发；
-2、每几次cms gc还会偶尔出现concurrent mode failure的现象，看了下，这时旧生代的空间是非常充足的；
-3、根据cms gc的触发机制，猜测是permGen的问题造成的，于是通过jstat -gcutil看了下permGen的占用比例，果然过一会就超过下92%（不过这里有个问题，就是permGen其实是还没达到MaxPermSize的，看来在cms gc的情况下，maxPermSize要采用不同策略）；
-4、于是适当的调大permGen，不过仍然没有解决，原因是permGen增长实在太快了；
-5、应用方发现有地方会不断的创建classLoader，加载class，因此导致了permGen的增长，修改后问题解决。
-总结：
-CMS GC的日志其实打的有些问题，应该把cms gc触发时的原因输出下；
-另外就是在大部分情况下，只要不是cms gc触发的比例设置的太有问题，如果cms gc频繁或full gc频繁都是应用本身的问题造成的。</p>
-<p>Case: 某应用出现启动后集群中部分node成功，部分node失败
-解决过程：
-1、失败的node抛出的是NoClassDefFoundError，这些node在环境上和应用包上是完全一致的，因此猜想是classloader装载class时出现了什么问题；
-2、在启动参数上增加了-XX:+TraceClassLoading，想看看成功的node和失败的node是不是从第一个地方加载的相应的类，悲催的是成功的node加上了这参数后启动超慢，于是只好放弃；
-3、由于不能用TraceClassLoading，只好从ClassLoader方面来跟踪这个类的加载，于是从应用层上做了相应的分析，找出了相应的classloader，然后用btrace相应的进行了跟踪，才终于发现成功的node和失败的node装载此类时不是从同一地方装载的，而其中有一个地方的这个类引用了一个不存在的类，于是就出现了NoClassDefFoundError。
-总结：
-在经过分析后，猜想是在这两个不同的node上classloader在list一个目录下的文件时，出现了顺序不同的现象，于是后来写了一个简单的程序在两个node上list那个目录的文件，发现返回的顺序果然不同，这个具体的原因为File.listFiles最后会调用到readdir函数，而这个函数返回的文件列表是按inode number排序的，因此在每台linux机器上确实有可能不同，当一个目录下有两个jar中有相同名字但不同内容的class时（话说这也是java应用中比较麻烦的问题，这个专门写篇blog来说下，java 8的模块化真的非常重要），就悲催了，一个保护做法是在实现classloader时，最好是先对listFiles排下序，避免集群中node出现表现不一致的问题。</p>
-<p>Case: 某应用GC频繁但不一直不抛OOM的问题
-解决过程：
-这个应用是期待在内存不够的情况下快速抛出OOM的，但在执行中却发现执行了4个多小时的Full GC，就是没有抛OOM，导致应用出现了问题，从GC代码来看，目前要比较快的触发OOM，只能是调整GCTimeLimit和GCHeapFreeLimit，不过都不好调，后来暂时是靠调整了GCHeapFreeLimit来帮助快速抛出OOM。</p>
-<p>Case: 某应用堆外内存泄露的bug
-具体解决过程可参考这篇blog：<a href="http://blog.bluedavy.com/?p=205" title="两个OOM Cases" target="_blank"><a href="http://blog.bluedavy.com/?p=205">http://blog.bluedavy.com/?p=205</a></a>和<a href="http://goo.gl/mYsV5" title="里面有关于google perftools安装的说明" target="_blank">这篇blog</a>。
-总结：
-堆外内存泄露基本就是靠google perf-tools来查找了，目前来看堆外内存泄露基本都是使用Deflater，却没有显式调用end造成的。</p>
-<p>Case: 某应用压测时压力上不去的问题
-解决过程：
-1、查看压测的目标服务器的cpu、网卡流量，发现都没到瓶颈；
-2、继续查看压测的目标Server的线程状况，发现Server的线程数也没到瓶颈，有个诡异的现象是随着客户端施加的压力上升，服务器端线程数也没上升，而且网卡流量也没上升；
-3、于是猜测是客户端本身的问题，客户端的CPU、网卡流量也没到瓶颈，但发现客户端的线程数随着施加的请求数增加，也没上升，因此猜想是客户端这个地方的线程数已经达到了最大值；
-4、由于代码是第三方的，于是用btrace写了个脚本，跟踪查找了该线程池的最大线程数，发现果然是这个最大线程数比较小，因此做了相应的修改，放大最大线程数，继续压测就OK了。
-ps: 这个Case还出现了一个状况，就是客户端的网卡流量随着施加的压力上升，却没发生变化，因此猜测是网络上有流量限制…
-总结：
-从查这次的问题来看，在压测时压力上不去时，需要查看从请求发起到响应返回的整个过程，资源的消耗状况，是否某个地方资源消耗到极限了，如果硬件资源未到极限，通常会是线程blocked或线程被消耗完了。</p>
-<p>Case: 某应用GC频繁的问题
-这个专门写了一篇blog来描述，具体请见：<a href="http://blog.bluedavy.com/?p=290" title="一个GC频繁的Case" target="_blank"><a href="http://blog.bluedavy.com/?p=290">http://blog.bluedavy.com/?p=290</a></a></p>
-<p>Case: 某应用一直没响应。
-解决过程：
-1、jstack多次后分析，很多的线程都在Blocked状态，等待一把锁，而持有这把锁的线程一直停在了Log4j的ConsoleLog的write上；
-2、于是问题就集中到为什么ConsoleLog write的时候竟然会停住，最早猜测的原因是console是不是也输出到了一个文件，而这个文件出问题了，但经过检查发现一切正常；
-3、通过ps auxf查看脚本看看console有没有输出到文件，发现这个脚本嵌套了好几层，但都输出到了外部的文件，而外部这个文件是没什么问题的；
-4、仔细查看发现这个Java进程是在代码里通过调用脚本启动的，猜想是不是没有正确处理标准输出流和错误流造成的，于是翻看代码，发现代码只处理了输出流，但没处理错误流，并且在处理输出流时只处理了10000行，超过10000的时候就没再去读了，对于这种未将console重定向到外部文件的场景，linux会将其写到一个缓冲区，缓冲区写满后就会导致应用程序阻塞住，这个在Java的API上也有说明：
-The parent process uses these streams(Process.getOutputStream(), Process.getInputStream(), Process.getErrorStream()) to feed input to and get output from the subprocess. Because some native platforms only provide limited buffer size for standard input and output streams, failure to promptly write the input stream or read the output stream of the subprocess may cause the subprocess to block, and even deadlock.
-5、到这步后就可以确认问题的原因了。
-解决方法：
-1、把输出到Console的Logger方式去掉了，这样自然就没问题了；
-2、程序上修改，不是读到1w行就不读了，而是一直读到没有输出流和错误流了才结束，通常来说比较正确的做法请见这篇贴：<a href="http://goo.gl/sllmv" target="_blank">http://goo.gl/sllmv</a>
-总结：
-在Java中启动外部程序时一定要注意正确处理输出流和错误流。</p>
-<p><a href="https://blog.bluedavy.com/?p=290" target="_blank">一个GC频繁的Case</a> <a href="https://blog.bluedavy.com/?p=309" target="_blank">HBase随机写以及随机读性能测试</a></p>
-<h3 id="11-comments-add-yours-">11 Comments <em>(<a href="">+add yours?</a>)</em></h3>
-<ol>
-<li><img src="https://secure.gravatar.com/avatar/dbaac4591255b0c52e86868bcabc6bd9?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> nova
-<strong>Aug 29, 2011</strong> @ 13:20:16
-你好，看了你的blog，觉得你在jvm方面研究很深。</li>
-</ol>
-<p>想问你一个jvm方面的问题，我目前在用一个hudson的服务器，跑在tomcat上，不知道为什么，总是jvm崩溃，然后生成一个 pidXXXX.log的文件，里面的内容不知所云。</p>
-<p>请问如何分析这种jvm crash产生的 pidXXX.log文件啊？</p>
-<ol>
-<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
-<strong>Aug 29, 2011</strong> @ 16:32:39
-只能看看这个日志里的内容是什么了，然后相应的解决。</li>
-<li><img src="https://secure.gravatar.com/avatar/17dce1595a6c2594969d8fb9ee332df8?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> blueswind
-<strong>Sep 16, 2011</strong> @ 11:36:40
-毕玄大牛好！
-请教一下，在一个应用中，我发现会偶尔出现Full GC，但是这个应用是不允许Full GC出现的，观察gc.log感觉很奇怪：
-553887.031: [GC 553887.031: [ParNew: 6448271K-&gt;69532K(7188480K), 0.0676760 secs] 10144883K-&gt;3766882K(12513280K), 0.0679280 secs] [Times: user=0.46 sys=0.01, real=0.07 secs]
-553891.774: [GC 553891.774: [ParNew: 6459292K-&gt;75749K(7188480K), 0.1285440 secs] 10156642K-&gt;3774046K(12513280K), 0.1288140 secs] [Times: user=0.92 sys=0.00, real=0.13 secs]
-553896.757: [GC 553896.757: [ParNew (promotion failed): 6465509K-&gt;6485588K(7188480K), 2.1091440 secs]553898.866: [CMS: 3699438K-&gt;1483627K(5324800K), 17.0428180 secs] 10163806K-&gt;1483627K(12513280K), [CMS Perm : 95598K-&gt;52896K(131072K)], 19.1523340 secs] [Times: user=19.27 sys=0.02, real=19.16 secs]
-553943.432: [GC 553943.432: [ParNew: 6389760K-&gt;113975K(7188480K), 0.0698770 secs] 7873387K-&gt;1597603K(12513280K), 0.0700800 secs] [Times: user=0.47 sys=0.00, real=0.07 secs]
-553948.178: [GC 553948.178: [ParNew: 6503735K-&gt;90637K(7188480K), 0.0667370 secs] 7987363K-&gt;1574265K(12513280K), 0.0669710 secs] [Times: user=0.42 sys=0.01, real=0.07 secs]</li>
-</ol>
-<p>导致promotion failed的那个时刻似乎并没有进行MinorGC，而OldGen又没有到达我设置的80%，我的jvm参数如下：
--Xmx13000m -Xms13000m -Xmn7800m -Xss256k -XX:PermSize=64m -XX:MaxPermSize=128m -XX:ParallelGCThreads=20 -XX:+UseConcMarkSweepGC -XX:+UseParNewGC -XX:SurvivorRatio=8 -XX:TargetSurvivorRatio=100 -XX:MaxTenuringThreshold=15 -XX:CMSInitiatingOccupancyFraction=80 -XX:SoftRefLRUPolicyMSPerMB=0 -XX:+UseCMSCompactAtFullCollection -XX:CMSMaxAbortablePrecleanTime=30000 -XX:CMSScheduleRemarkEdenPenetration=1 -server -XX:+PrintGCDetails -Xloggc:./log/gc.log</p>
-<p>由于这个Full GC出现的很少，所以很难重现，如果遇到这种问题，应该如何追查呢？请教毕玄大牛哈~~</p>
-<ol>
-<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
-<strong>Sep 16, 2011</strong> @ 17:33:47
-@blueswind
-promotion failed就是minor gc进行的时候出现的，so…
-至于这个时候为什么产生了full gc，原因就是因为promotion failed了…
-promotion failed的原因主要是旧生代装不下要晋升到old中的对象，建议调整下参数…把新生代放小点吧，或者把cms的触发比率降低点吧。</li>
-<li><img src="https://secure.gravatar.com/avatar/17dce1595a6c2594969d8fb9ee332df8?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> blueswind
-<strong>Sep 29, 2011</strong> @ 19:06:16
-毕玄你好~
-上次的那个promotion failed的问题仔细分析了一下，怀疑可能是由于CMSGC时的内存碎片导致的，以下是我的分析和解决过程，请拍砖！
-发生promotion failed时，OldGen还有1.6G的空间，同时使用gcLogViewer查看平均新生代晋升大小（AVG PTOS），只有几十K。所以怀疑是由于OldGen在距离上次CMSGC后，经过一段时间又产生了大量内存碎片，当某个时间点在OldGen中的连续空间没有一块足够58K的话，就会导致的promotion failed。
-这种情况下的解决方法难道只有调小CMS触发比率或缩小新生代吗？因为这样的话必然会导致系统吞吐量的下降，难道没有很好的解决内存碎片的方法吗？</li>
-<li><img src="https://secure.gravatar.com/avatar/0af46e7838cb5c6bed0d132b865d6ead?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> Edward Lee
-<strong>Oct 27, 2011</strong> @ 10:00:01
-毕玄，首先非常感谢你与我们分享工作中的经验，真得非常感谢！</li>
-</ol>
-<p>对于你的 Case 1 情况，你在文中说道“一个保护做法是在实现classloader时，最好是先对listFiles排下序”。我感觉用处不大。</p>
-<p>比如，App 中至少有 3 个 jar 包出现 3 个同样的 class 类型，而正确的那个类处于中间位置（不管你升序，还是降序），还是一样会抛出NoClassDefFoundError异常。</p>
-<p>我觉得合理的做法：在自定义classloader装载类时，若发生异常，则继续尝试加载下一个符合的class类型，直到装载成功为止。</p>
-<p>不知你是如何看待这个问题的？</p>
-<ol>
-<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
-<strong>Oct 27, 2011</strong> @ 10:56:34
-@Edward Lee
-排序的意思是为了避免集群中各node出现不一致的表现，至少保持一致，冲突的问题这个最好不要智能解决，因为很难说应用到底想加载哪个…</li>
-<li><img src="https://secure.gravatar.com/avatar/0af46e7838cb5c6bed0d132b865d6ead?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> Edward Lee
-<strong>Oct 27, 2011</strong> @ 15:17:06
-@bluedavy
-“冲突的问题这个最好不要智能解决，因为很难说应用到底想加载哪个…”
-呵呵，对，多谢提醒啊！</li>
-<li><img src="https://secure.gravatar.com/avatar/1ddf3edd708b8f29b60ccfa68d855fd3?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> 震子
-<strong>Dec 13, 2011</strong> @ 16:18:02
-对于permGen的问题造成的的full gc貌似gc日志里面可以指示出来的，从《java_performance》这本书里面看到
-在304页
-Concurrent Permanent Generation Garbage Collection
-Full garbage collections may also occur as a result of a full permanent generation
-space. Monitoring the garbage collection data looking for full garbage collections and
-then observing the occupancy of the permanent generation space identifies whether
-they occur as a result of permanent generation space filling up. Here is an example
-full garbage collection initiated by permanent generation space filling up:
-2010-12-16T17:14:32.533-0600: [Full GC
-[CMS: 95401K-&gt;287072K(1048576K), 0.5317934 secs]
-482111K-&gt;287072K(5190464K),
-[CMS Perm : 65534K-&gt;58281K(65536K)], 0.5319635</li>
-<li><img src="https://secure.gravatar.com/avatar/1ddf3edd708b8f29b60ccfa68d855fd3?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> 震子
-<strong>Dec 13, 2011</strong> @ 16:23:48
-Case: 某应用压测时压力上不去的问题
-对于这个case，我也分享一下，呵呵，如果用的loadrunner的话，一定要注意loadrunner的内存使用，如果内存使用一直涨，那么肯定loadrunner的压力上不去，典型的是：我这边在使用loadrunner的Parameter List的时候就出现了这种情况，loadrunner使用的内存一直在涨。</li>
-<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
-<strong>Dec 16, 2011</strong> @ 20:43:52
-@震子
-还是jstat比较容易判断。<h3 id="leave-a-reply">Leave a Reply</h3>
-</li>
-</ol>
-<p><a href="">Cancel</a></p>
-<p>Name (required)</p>
-<p>Mail (required)</p>
-<p>Website</p>
-<p><img src="https://blog.bluedavy.com/wp-content/plugins/si-captcha-for-wordpress/captcha/securimage_show.php?si_form_id=com&amp;prefix=K89yTXStz1vAkC0u" alt="CAPTCHA Image" title="CAPTCHA Image"></p>
-<p><a href="&quot;Refresh Image&quot;"><img src="" alt="Refresh Image"></a></p>
-<p>CAPTCHA Code /*</p>
-<p><style type='text/css'>/#submit {display:none;}</style><br /> <input name="submit" type="submit" id="submit-alt" tabindex="6" value="Submit Comment" /></p>
-<p>July 2013 M T W T F S S <a href="https://blog.bluedavy.com/?m=201303" title="View posts for March 2013" target="_blank">« Mar</a>     1234567 891011121314 15161718192021 22232425262728 293031  </p>
-<h3 id="categories">Categories</h3>
-<ul>
-<li><a href="https://blog.bluedavy.com/?cat=63" title="View all posts filed under Java" target="_blank">Java</a> (10)</li>
-<li><a href="https://blog.bluedavy.com/?cat=13" title="View all posts filed under jvm" target="_blank">jvm</a> (19)</li>
-<li><a href="https://blog.bluedavy.com/?cat=56" title="View all posts filed under NoSQL" target="_blank">NoSQL</a> (7)</li>
-<li><a href="https://blog.bluedavy.com/?cat=4" title="View all posts filed under SOA" target="_blank">SOA</a> (1)</li>
-<li><a href="https://blog.bluedavy.com/?cat=11" title="关于《分布式Java应用：基础与实践》书部分章节的公开、书内容的纠错以及补充完善。" target="_blank">书:分布式Java应用</a> (5)</li>
-<li><a href="https://blog.bluedavy.com/?cat=6" title="View all posts filed under 互联网" target="_blank">互联网</a> (5)</li>
-<li><a href="https://blog.bluedavy.com/?cat=46" title="View all posts filed under 产品总结" target="_blank">产品总结</a> (1)</li>
-<li><a href="https://blog.bluedavy.com/?cat=18" title="View all posts filed under 优化案例" target="_blank">优化案例</a> (1)</li>
-<li><a href="https://blog.bluedavy.com/?cat=12" title="View all posts filed under 圆桌交流" target="_blank">圆桌交流</a> (2)</li>
-<li><a href="https://blog.bluedavy.com/?cat=8" title="View all posts filed under 容量规划" target="_blank">容量规划</a> (2)</li>
-<li><a href="https://blog.bluedavy.com/?cat=97" title="View all posts filed under 迁户口" target="_blank">迁户口</a> (1)</li>
-<li><a href="https://blog.bluedavy.com/?cat=52" title="View all posts filed under 高可用" target="_blank">高可用</a> (1)</li>
-<li><a href="https://blog.bluedavy.com/?cat=3" title="View all posts filed under 高并发" target="_blank">高并发</a> (3)</li>
-<li><p><a href="https://blog.bluedavy.com/?cat=1" title="关于性能优化方面的一些东西。" target="_blank">高性能</a> (2)</p>
-<h3 id="recent-comments">Recent Comments</h3>
-</li>
-<li><p><a href="http://code1.riaos.com/?p=5030138" target="_blank">JVM调优 | code1（code1.riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16520" target="_blank">说说MaxTenuringThreshold这个参数</a></p>
-</li>
-<li><a href="http://architecture1.riaos.com/?p=3063358" target="_blank">JVM调优 | architecture（riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16519" target="_blank">说说MaxTenuringThreshold这个参数</a></li>
-<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16462" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
-<li>xiaobo on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16460" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
-<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16459" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
-</ul>
-<h3 id="tags">Tags</h3>
-<p><a href="https://blog.bluedavy.com/?tag=btrace" title="2 topics" target="_blank">btrace</a> <a href="https://blog.bluedavy.com/?tag=c1" title="1 topic" target="_blank">c1</a> <a href="https://blog.bluedavy.com/?tag=c2" title="1 topic" target="_blank">c2</a> <a href="https://blog.bluedavy.com/?tag=deflater" title="1 topic" target="_blank">Deflater</a> <a href="https://blog.bluedavy.com/?tag=facebook" title="2 topics" target="_blank">facebook</a> <a href="https://blog.bluedavy.com/?tag=gc" title="4 topics" target="_blank">gc</a> <a href="https://blog.bluedavy.com/?tag=gc-tuning" title="2 topics" target="_blank">gc tuning</a> <a href="https://blog.bluedavy.com/?tag=grizzly" title="2 topics" target="_blank">Grizzly</a> <a href="https://blog.bluedavy.com/?tag=hbase" title="6 topics" target="_blank">HBase</a> <a href="https://blog.bluedavy.com/?tag=hotspot" title="1 topic" target="_blank">hotspot</a> <a href="https://blog.bluedavy.com/?tag=inflater" title="1 topic" target="_blank">Inflater</a> <a href="https://blog.bluedavy.com/?tag=interpreter" title="1 topic" target="_blank">interpreter</a> <a href="https://blog.bluedavy.com/?tag=javac" title="1 topic" target="_blank">javac</a> <a href="https://blog.bluedavy.com/?tag=java-code-generation" title="1 topic" target="_blank">java code generation</a> <a href="https://blog.bluedavy.com/?tag=javaone" title="4 topics" target="_blank">JavaOne</a> <a href="https://blog.bluedavy.com/?tag=javaone-general-technical-session" title="1 topic" target="_blank">javaone general technical session</a> <a href="https://blog.bluedavy.com/?tag=java%e4%bb%a3%e7%a0%81%e6%89%a7%e8%a1%8c" title="1 topic" target="_blank">java代码执行</a> <a href="https://blog.bluedavy.com/?tag=java-%e5%b9%b6%e5%8f%91" title="1 topic" target="_blank">Java 并发</a> <a href="https://blog.bluedavy.com/?tag=jit" title="1 topic" target="_blank">jit</a> <a href="https://blog.bluedavy.com/?tag=jvm" title="12 topics" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=memory-management" title="1 topic" target="_blank">memory management</a> <a href="https://blog.bluedavy.com/?tag=native-memory-leak" title="1 topic" target="_blank">Native Memory Leak</a> <a href="https://blog.bluedavy.com/?tag=nosql" title="2 topics" target="_blank">NoSQL</a> <a href="https://blog.bluedavy.com/?tag=oom" title="1 topic" target="_blank">oom</a> <a href="https://blog.bluedavy.com/?tag=oracle-keynote" title="1 topic" target="_blank">oracle keynote</a> <a href="https://blog.bluedavy.com/?tag=pessimism-policy" title="1 topic" target="_blank">pessimism policy</a> <a href="https://blog.bluedavy.com/?tag=references" title="1 topic" target="_blank">references</a> <a href="https://blog.bluedavy.com/?tag=rpc" title="2 topics" target="_blank">RPC</a> <a href="https://blog.bluedavy.com/?tag=serial-gc" title="1 topic" target="_blank">serial gc</a> <a href="https://blog.bluedavy.com/?tag=soa" title="2 topics" target="_blank">SOA</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk" title="1 topic" target="_blank">sun jdk</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk-oom" title="1 topic" target="_blank">sun jdk oom</a> <a href="https://blog.bluedavy.com/?tag=web%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92%e7%9a%84%e8%89%ba%e6%9c%af" title="1 topic" target="_blank">Web容量规划的艺术</a> <a href="https://blog.bluedavy.com/?tag=yuanzhuo" title="1 topic" target="_blank">yuanzhuo</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6" title="1 topic" target="_blank">书:分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6%e8%af%84" title="1 topic" target="_blank">书评</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%92%e8%81%94%e7%bd%91%e6%8a%80%e6%9c%af" title="1 topic" target="_blank">互联网技术</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86" title="1 topic" target="_blank">内存管理</a> <a href="https://blog.bluedavy.com/?tag=%e5%88%86%e5%b8%83%e5%bc%8fjava%e5%ba%94%e7%94%a8" title="2 topics" target="_blank">分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e5%9c%86%e6%a1%8c%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">圆桌交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92" title="2 topics" target="_blank">容量规划</a> <a href="https://blog.bluedavy.com/?tag=%e6%82%b2%e8%a7%82%e7%ad%96%e7%95%a5" title="3 topics" target="_blank">悲观策略</a> <a href="https://blog.bluedavy.com/?tag=%e6%9c%8d%e5%8a%a1%e6%a1%86%e6%9e%b6" title="1 topic" target="_blank">服务框架</a> <a href="https://blog.bluedavy.com/?tag=%e7%a1%85%e8%b0%b7%e5%85%ac%e5%8f%b8" title="1 topic" target="_blank">硅谷公司</a></p>
-<h3 id="-">订阅</h3>
-<h3 id="-">推荐书籍</h3>
-<h3 id="my-book">My Book</h3>
-<p><a href="http://book.douban.com/subject/4848587/" title="分布式Java应用：基础与实践" target="_blank"><img src="" alt=""></a> <a href="http://book.douban.com/subject/3843896/" title="OSGi原理与最佳实践" target="_blank"><img src="" alt=""></a>
-© <a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a> 2013</p>
-<p><a href="http://icondock.com/" target="_blank">Icons</a> &amp; <a href="http://www.ndesign-studio.com/wp-themes" target="_blank">Wordpress Theme</a> by <a href="http://www.ndesign-studio.com/" target="_blank">N.Design</a></p>
+        <h1 id="jvm-1">JVM调优总结（五）-分代垃圾回收详述1</h1>
+<h2 id="-">为什么要分代</h2>
+<pre><code>分代的垃圾回收策略，是基于这样一个事实：**不同的对象的生命周期是不一样的**。因此，不同生命周期的对象可以采取不同的收集方式，以便提高回收效率。
+
+
+
+在Java程序运行的过程中，会产生大量的对象，其中有些对象是与业务信息相关，比如Http请求中的Session对象、线程、Socket连接，这类对象跟业务直接挂钩，因此生命周期比较长。但是还有一些对象，主要是程序运行过程中生成的临时变量，这些对象生命周期会比较短，比如：String对象，由于其不变类的特性，系统会产生大量的这些对象，有些对象甚至只用一次即可回收。
+
+
+
+试想，在不进行对象存活时间区分的情况下，每次垃圾回收都是对整个堆空间进行回收，花费时间相对会长，同时，因为每次回收都需要遍历所有存活对象，但实际上，对于生命周期长的对象而言，这种遍历是没有效果的，因为可能进行了很多次遍历，但是他们依旧存在。因此，分代垃圾回收采用分治的思想，进行代的划分，把不同生命周期的对象放在不同代上，不同代上采用最适合它的垃圾回收方式进行回收。
+</code></pre><h2 id="-">如何分代</h2>
+<p><img src="" alt=""></p>
+<p>如图所示：</p>
+<pre><code>虚拟机中的共划分为三个代：**年轻代（Young Generation）、年老点（Old Generation）和持久代（Permanent Generation）**。其中持久代主要存放的是Java类的类信息，与垃圾收集要收集的Java对象关系不大。年轻代和年老代的划分是对垃圾收集影响比较大的。
+</code></pre><p><strong>年轻代:</strong></p>
+<pre><code>所有新生成的对象首先都是放在年轻代的。年轻代的目标就是尽可能快速的收集掉那些生命周期短的对象。年轻代分三个区。一个Eden区，两个Survivor区(一般而言)。大部分对象在Eden区中生成。当Eden区满时，还存活的对象将被复制到Survivor区（两个中的一个），当这个Survivor区满时，此区的存活对象将被复制到另外一个Survivor区，当这个Survivor去也满了的时候，从第一个Survivor区复制过来的并且此时还存活的对象，将被复制“年老区(Tenured)”。需要注意，Survivor的两个区是对称的，没先后关系，所以同一个区中可能同时存在从Eden复制过来 对象，和从前一个Survivor复制过来的对象，而复制到年老区的只有从第一个Survivor去过来的对象。而且，Survivor区总有一个是空的。同时，根据程序需要，Survivor区是可以配置为多个的（多于两个），这样可以增加对象在年轻代中的存在时间，减少被放到年老代的可能。
+</code></pre><p><strong>年老代:</strong></p>
+<pre><code>在年轻代中经历了N次垃圾回收后仍然存活的对象，就会被放到年老代中。因此，可以认为年老代中存放的都是一些生命周期较长的对象。
+</code></pre><p><strong>持久代:</strong></p>
+<pre><code>用于存放静态文件，如今Java类、方法等。持久代对垃圾回收没有显著影响，但是有些应用可能动态生成或者调用一些class，例如Hibernate等，在这种时候需要设置一个比较大的持久代空间来存放这些运行过程中新增的类。持久代大小通过-XX:MaxPermSize=&lt;N&gt;进行设置。
+</code></pre><h2 id="-">什么情况下触发垃圾回收</h2>
+<pre><code>由于对象进行了分代处理，因此垃圾回收区域、时间也不一样。GC有两种类型：**Scavenge GC**和**Full GC**。
+</code></pre><p><strong>Scavenge GC</strong></p>
+<pre><code>一般情况下，当新对象生成，并且在Eden申请空间失败时，就会触发Scavenge GC，对Eden区域进行GC，清除非存活对象，并且把尚且存活的对象移动到Survivor区。然后整理Survivor的两个区。这种方式的GC是对年轻代的Eden区进行，不会影响到年老代。因为大部分对象都是从Eden区开始的，同时Eden区不会分配的很大，所以Eden区的GC会频繁进行。因而，一般在这里需要使用速度快、效率高的算法，使Eden去能尽快空闲出来。
+</code></pre><p><strong>Full GC</strong></p>
+<pre><code>对整个堆进行整理，包括Young、Tenured和Perm。Full GC因为需要对整个对进行回收，所以比Scavenge GC要慢，因此应该尽可能减少Full GC的次数。在对JVM调优的过程中，很大一部分工作就是对于FullGC的调节。有如下原因可能导致Full GC：
+</code></pre><p>· 年老代（Tenured）被写满</p>
+<p>· 持久代（Perm）被写满 </p>
+<p>· System.gc()被显示调用 </p>
+<p>·上一次GC之后Heap的各域分配策略动态变化</p>
 
       
     </div>
@@ -414,7 +159,7 @@ Case: 某应用压测时压力上不去的问题
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -429,54 +174,60 @@ Case: 某应用压测时压力上不去的问题
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/">豆列：从表到里学习JVM实现</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2/">JVM调优总结（六）</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-jvm-">豆列：从表到里学习JVM实现</h1>
-<p>刚写了个学习JVM用的豆列跟大家分享。
-豆列地址：<a href="http://book.douban.com/doulist/2545443/" target="_blank"><a href="http://book.douban.com/doulist/2545443/">http://book.douban.com/doulist/2545443/</a></a>
-下面把豆列的介绍贴过来。具体书单请到上面的豆列地址那边去看。
-在社会化分工、软件行业细分专业化的趋势下，会真的参与到底层系统实现的人肯定是越来越少（比例上说）。真的会参与到JVM实现的人肯定是少数。
-但如果您对JVM是如何实现的有兴趣、充满好奇，却苦于没有足够系统的知识去深入，那么这个豆列就是为您打好基础而准备的。
-如果只想用用Java用用JVM，对深入到实现细节无甚兴趣的话，这个豆列就请不必参考了，免得浪费钱浪费时间精力，呵呵 :-)
-本豆列的脉络是：</p>
-<ol>
-<li>JVM与Java语言规范
-要了解JVM是如何实现的，首先必须要知道JVM到底是什么、不是什么，表面上应该提供怎样的功能。为此，JVM规范必读，而且应该时常放在手边参考。
-而JVM的主要服务对象是Java编程语言。虽然JVM也可以支持众多其它语言，但JVM里的“J”仍然最重要，Java的语言特性影响了JVM的原始设计，所以Java语言规范也应该阅读。特别是，JVM关于线程和同步相关的规定都是交由Java语言规范的相关章节定义的。</li>
-<li>虚拟机概论
-这里选取《Virtual Machines: Versatile Platforms for Systems and Processes》，帮助您了解“虚拟机”一词到底指代什么，有什么不同类型，大概有哪些实现方法，等等。读完这本书有助获得一个清晰的大局观。</li>
-<li>为Java程序员从用户的角度介绍JVM的使用经验的几本书
-虽然这几本并没有深入到JVM实现的非常细节的角落，但对已经习惯用Java语言编程的程序员来说，有这么几本书带领自己从熟悉的领域进入不熟悉的领域总是件好事。
-这几本书中，最深入JVM内部的是《Oracle JRockit: The Definitive Guide》；有丰富调优建议的是《Java Performance》；结合实现大概介绍JVM的抽象概念的是周志明的《深入理解Java虚拟机》。</li>
-<li>虚拟机的入门级实现
-先通过《Language Implementation Patterns》了解编程语言的一些入门级实现方式，把高级语言编译器与虚拟机两个概念联系起来。
-然后通过《プログラミング言語を作る》了解非常简易的、用树遍历式以及字节码式解释器实现虚拟机大概是个怎么回事。虽然这本书没有实现JVM，但它介绍的Diksam与早期JVM的实现颇有相似之处，可参考。
-接下来《深入嵌入式Java虚拟机》介绍了一种实际的JVM——KVM的实现细节。KVM是CLDC的参考实现（RI）里的JVM，结构简单，资源消耗小，适合入门阅读。
-这部分最后是《The School of Niklaus Wirth》，里面有一章介绍了HotSpot Client Compiler (C1)的原始设计思路。这是个非常简单、但相对来说性能还不错的JIT编译器，可用于对JIT编译器的基本了解。这本书本身就很赞，不为学习虚拟机也可以一读。
-需要注意的是从“简易的JVM实现”到“高性能、复杂的JVM实现”跨度非常大；前者的许多部分的实现方式与后者相当不同。先从简易的实现开始入手主要是为了对JVM里大概都有些什么组件有所了解。但如果目标是了解高性能JVM的实现，那就必须在GC、编译原理方面打下更好的基础，重新洗一次脑。</li>
-<li>C++基础书
-下面要开始逐渐深入JVM的内部实现，如果没有良好的C或（与？）C++基础会比较吃力。虽然也有几乎完全用Java语言实现的高性能JVM，例如Maxine VM与Jikes RVM，但它们都是研究性质的；商用JVM实现仍然是C与C++的天下。
-这里我先推荐C++之父自己写的那本书来入门。虽然BS巨巨后来还出过本新书，而近来也渐渐开始有介绍C++11的入门书，但实际上现在多数JVM实现用的还是C99或非常古老的C++（连C++03都不一定用到了），所以用这本老书应该就够了。
-然后通过《深度探索C++对象模型》来学习C++对象模型的常见实现方式。这对后面理解Java对象模型的实现很有帮助。</li>
-<li>GC与编译原理的入门书
-GC书总共就那么几本，倒也没啥可挑的。《The Garbage Collection Handbook》是绝对必读。
-编译原理的书就稍微尴尬些。现有的编译原理书大都针对静态编译器、针对像C或C++那样的偏静态、偏native的语言。我还没读到过什么编译原理书是专门介绍JIT编译器或者说动态编译器的。静态与动态编译器会有些取舍上、实现策略上的差异，不过还好其核心的原理都是一样的，所以还是可以推荐几本书。龙书用来最初入门，鲸书用来补充一些优化相关的知识，EAC第二版用来学习编译器一种比较良好的逻辑组织方式，最后学一下针对现代机器的优化。</li>
-<li>介绍计算机体系结构的书
-实际JVM实现里，如果有JIT编译器或者动态编译器那它们的编译目标多半是底层机器的机器码。这就涉及到计算机体系结构了。
-如果您只对Java语言和抽象的JVM有一定了解，那可以用《计算机组成及汇编语言原理》来入门。这本书比较奇葩，用JVM的字节码指令集来当作真实机器介绍体系结构的概念。我并不太喜欢这本书，但感觉它对有Java背景的初学者来说应该有点用。要注意的是千万别只读这本书来入门，请结合下面要介绍的一本书来重新洗一次脑。
-如果对C或C++已经有所了解，那《深入理解计算机系统》（CSAPP）是计算机体系结构入门的最适合的书了。</li>
-<li>进一步阅读
-到此为止各种抽象概念应该都了解得差不多了。那么要在真实的机器上实现高性能JVM，就必须要对真实机器的指令集细节有所了解。x86/x86-64、SPARC、ARM、MIPS，要在哪个平台上做高性能实现就要学习哪个平台的指令集及指令级别优化技巧。这里就不具体推荐书了。
-操作系统层面的知识同样重要。像是说JVM要实现线程、内存分配啥的，都可能要跟系统调用或CRT对系统调用的包装打交道。这部分也需要另外找书来读。我回头再考虑下要不要加几本道这个豆列里来。
-另外，从80年代开始高级语言虚拟机的实现技术有了突飞猛进的发展，但却没有专门的书对这个领域做综述和导读。多数有用的资料其实还是在论文里。光靠读书是远远不够用的，论文这块也请关注。<h1 id="-http-rednaxelafx-iteye-com-blog-362738-http-rednaxelafx-iteye-com-blog-362738-">顺便广告一下：我的博客里关于虚拟机的文章也推荐给大家参考：<a href="http://rednaxelafx.iteye.com/blog/362738" target="_blank"><a href="http://rednaxelafx.iteye.com/blog/362738">http://rednaxelafx.iteye.com/blog/362738</a></a></h1>
-这个豆列没有漏掉 <a href="http://book.douban.com/subject/1788390/" target="_blank">《Inside the Java Virtual Machine, Second Edition》</a> ，中文版<a href="http://book.douban.com/subject/1138768/" target="_blank">《深入Java虚拟机(原书第2版)》</a>，只是我现在已经不再推荐它。这本书刚出版的时候确实引起了一番学习Java虚拟机的热潮，但其部分内容从现在的角度看已经过时，特别是涉及JVM实现的部分。像火车算法什么的现在已经没有JVM实现使用。不过话说回来，了解了解这些过时的信息也没什么不好，前提是能自己分辨清楚哪些信息是适用于现在的JVM的，而哪些已经成为了历史。</li>
-</ol>
+        <h1 id="jvm-2">JVM调优总结（六）-分代垃圾回收详述2</h1>
+<h2 id="-">分代垃圾回收流程示意</h2>
+<p><img src="" alt=""></p>
+<p><img src="" alt=""></p>
+<p><img src="" alt=""></p>
+<p><img src="" alt=""></p>
+<h2 id="-">选择合适的垃圾收集算法</h2>
+<p><strong>串行收集器</strong></p>
+<p><img src="" alt=""></p>
+<p>用单线程处理所有垃圾回收工作，因为无需多线程交互，所以效率比较高。但是，也无法使用多处理器的优势，所以此收集器适合单处理器机器。当然，此收集器也可以用在小数据量（100M左右）情况下的多处理器机器上。可以使用-XX:+UseSerialGC打开。</p>
+<p><strong>并行收集器</strong></p>
+<p><img src="" alt=""></p>
+<p>对年轻代进行并行垃圾回收，因此可以减少垃圾回收时间。一般在多线程多处理器机器上使用。使用-XX:+UseParallelGC.打开。并行收集器在J2SE5.0第六6更新上引入，在Java SE6.0中进行了增强--可以对年老代进行并行收集。如果年老代不使用并发收集的话，默认是使用单线程进行垃圾回收，因此会制约扩展能力。使用-XX:+UseParallelOldGC打开。</p>
+<p>使用-XX:ParallelGCThreads=<N>设置并行垃圾回收的线程数。此值可以设置与机器处理器数量相等。</p>
+<p>此收集器可以进行如下配置：
+<strong>最大垃圾回收暂停:</strong>指定垃圾回收时的最长暂停时间，通过-XX:MaxGCPauseMillis=<N>指定。<N>为毫秒.如果指定了此值的话，堆大小和垃圾回收相关参数会进行调整以达到指定值。设定此值可能会减少应用的吞吐量。</p>
+<p><strong>吞吐量:</strong>吞吐量为垃圾回收时间与非垃圾回收时间的比值，通过-XX:GCTimeRatio=<N>来设定，公式为1/（1+N）。例如，-XX:GCTimeRatio=19时，表示5%的时间用于垃圾回收。默认情况为99，即1%的时间用于垃圾回收。</p>
+<p><strong>并发收集器</strong></p>
+<p>可以保证大部分工作都并发进行（应用不停止），垃圾回收只暂停很少的时间，此收集器适合对响应时间要求比较高的中、大规模应用。使用-XX:+UseConcMarkSweepGC打开。</p>
+<p><img src="" alt=""></p>
+<pre><code>并发收集器主要减少年老代的暂停时间，他在应用不停止的情况下使用独立的垃圾回收线程，跟踪可达对象。在每个年老代垃圾回收周期中，在收集初期并发收集器 会对整个应用进行简短的暂停，在收集中还会再暂停一次。第二次暂停会比第一次稍长，在此过程中多个线程同时进行垃圾回收工作。
+
+并发收集器使用处理器换来短暂的停顿时间。在一个N个处理器的系统上，并发收集部分使用K/N个可用处理器进行回收，一般情况下1&lt;=K&lt;=N/4。
+
+在只有一个处理器的主机上使用并发收集器，设置为incremental mode模式也可获得较短的停顿时间。
+
+
+
+**浮动垃圾：**由于在应用运行的同时进行垃圾回收，所以有些垃圾可能在垃圾回收进行完成时产生，这样就造成了“Floating Garbage”，这些垃圾需要在下次垃圾回收周期时才能回收掉。所以，并发收集器一般需要20%的预留空间用于这些浮动垃圾。
+
+
+
+**Concurrent Mode Failure：**并发收集器在应用运行时进行收集，所以需要保证堆在垃圾回收的这段时间有足够的空间供程序使用，否则，垃圾回收还未完成，堆空间先满了。这种情况下将会发生“并发模式失败”，此时整个应用将会暂停，进行垃圾回收。
+
+
+
+**启动并发收集器：**因为并发收集在应用运行时进行收集，所以必须保证收集完成之前有足够的内存空间供程序使用，否则会出现“Concurrent Mode Failure”。通过设置-XX:CMSInitiatingOccupancyFraction=&lt;N&gt;指定还有多少剩余堆时开始执行并发收集
+</code></pre><h2 id="-">小结</h2>
+<p><strong>串行处理器：</strong></p>
+<p>--适用情况：数据量比较小（100M左右）；单处理器下并且对响应时间无要求的应用。
+--缺点：只能用于小型应用</p>
+<p><strong>并行处理器：</strong></p>
+<p>--适用情况：“对吞吐量有高要求”，多CPU、对应用响应时间无要求的中、大型应用。举例：后台处理、科学计算。
+--缺点：垃圾收集过程中应用响应时间可能加长</p>
+<p><strong>并发处理器：</strong></p>
+<p>--适用情况：“对响应时间有高要求”，多CPU、对应用响应时间有较高要求的中、大型应用。举例：Web服务器/应用服务器、电信交换、集成开发环境。</p>
 
       
     </div>
@@ -487,7 +238,7 @@ GC书总共就那么几本，倒也没啥可挑的。《The Garbage Collection H
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -502,684 +253,104 @@ GC书总共就那么几本，倒也没啥可挑的。《The Garbage Collection H
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--请别再拿“StringsnewString-xyz-创建了多少个String实例”来/">请别再拿“String s = new String(</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十）-调优方法/">JVM调优总结（十）</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--请别再拿“StringsnewString-xyz-创建了多少个String实例”来/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十）-调优方法/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-string-s-new-string-xyz-string-">请别再拿“String s = new String(&quot;xyz&quot;);创建了多少个String实例”来面试了吧</h1>
-<p>这帖是用来回复<a href="http://hllvm.group.iteye.com/" target="_blank">高级语言虚拟机</a>圈子里的一个问题，<a href="http://hllvm.group.iteye.com/group/topic/21761" target="_blank">一道Java笔试题</a>的。
-本来因为见得太多已经吐槽无力，但这次实在忍不住了就又爆发了一把。写得太长干脆单独开了一帖。
-顺带广告：对JVM感兴趣的同学们同志们请多多支持<a href="http://hllvm.group.iteye.com/" target="_blank">高级语言虚拟机</a>圈子 <img src="" alt=""></p>
-<h1 id="-">以下是回复内容。文中的“楼主”是针对原问题帖而言。</h1>
-<p>楼主是看各种宝典了么……以后我面试人的时候就要专找宝典答案是错的来问，方便筛人orz
-楼主要注意了：这题或类似的题虽然经常见，但使用这个描述方式实际上没有任何意义：
-引用</p>
-<p>问题：</p>
-<p>Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>String s = new String(&quot;xyz&quot;);<br>String s = new String(&quot;xyz&quot;);创建了几个String Object？
-这个问题自身就没有合理的答案，楼主所引用的“标准答案”自然也就不准确了：
-引用</li>
-</ol>
-<p>答案：两个(一个是“xyz”,一个是指向“xyz”的引用对象s)
-（好吧这个答案的吐槽点很多……大家慢慢来）
-这问题的毛病是什么呢？它并没有定义“创建了”的意义。
-什么叫“创建了”？什么时候创建了什么？
-而且这段Java代码片段实际运行的时候真的会“创建两个String实例”么？
-如果这道是面试题，那么可以当面让面试官澄清“创建了”的定义，然后再对应的回答。这种时候面试官多半会让被面试者自己解释，那就好办了，好好晒给面试官看。</p>
-<h1 id="-">如果是笔试题就没有提问要求澄清的机会了。不过会出这种题目的地方水平多半也不怎么样。说不定出题的人就是从各种宝典上把题抄来的，那就按照宝典把那不大对劲的答案写上去就能混过去了<img src="" alt=""></h1>
-<p>先换成另一个问题来问：
-引用</p>
-<p>问题：</p>
-<p>Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>String s = new String(&quot;xyz&quot;);<br>String s = new String(&quot;xyz&quot;);在运行时涉及几个String实例？
-一种合理的解答是：
-引用</li>
-</ol>
-<p>答案：两个，一个是字符串字面量&quot;xyz&quot;所对应的、驻留（intern）在一个全局共享的字符串常量池中的实例，另一个是通过new String(String)创建并初始化的、内容与&quot;xyz&quot;相同的实例
-这是根据Java语言规范相关规定可以给出的合理答案。考虑到Java语言规范中明确指出了：
-The Java Language Specification, Third Edition 写道</p>
-<p>The Java programming language is normally compiled to the bytecoded instruction set and binary format defined in <em>The Java Virtual Machine Specification, Second Edition</em> (Addison-Wesley, 1999).
-也就是规定了Java语言一般是编译为Java虚拟机规范所定义的Class文件，但并没有规定“一定”（must），留有不使用JVM来实现Java语言的余地。
-考虑上Java虚拟机规范，确实在这段代码里涉及的常量种类为<a href="http://java.sun.com/docs/books/jvms/second_edition/html/ClassFile.doc.html#29297" target="_blank">CONSTANT_String_info</a>的字符串常量也只有&quot;xyz&quot;一个。CONSTANT_String_info是用来表示Java语言中String类型的常量表达式的值（包括字符串字面量）用的常量种类，只在这个层面上考虑的话，这个解答也没问题。
-所以这种解答可以认为是合理的。
-值得注意的是问题中“在运行时”既包括类加载阶段，也包括这个代码片段自身执行的时候。下文会再讨论这个细节与楼主原本给出的问题的关系。
-碰到这种问题首先应该想到去查阅相关的规范，这里具体是<a href="http://java.sun.com/docs/books/jls/" target="_blank">Java语言规范</a>与<a href="http://java.sun.com/docs/books/jvms/" target="_blank">Java虚拟机规范</a>，以及一些相关API的JavaDoc。很多人喜欢把“按道理说”当作口头禅，规范就是用来定义各种“道理”的——“为什么XXX是YYY的意思？”“因为规范里是这样定义的！”——无敌了。
-在Java虚拟机规范中相关的定义有下面一些：
-The Java Virtual Machine Specification, Second Edition 写道</p>
-<p><strong>2.3 Literals</strong>
-A literal is the source code representation of a value of a primitive type <a href="http://java.sun.com/docs/books/jvms/second_edition/html/Concepts.doc.html#19511" target="_blank">(§2.4.1)</a>, the String type <a href="http://java.sun.com/docs/books/jvms/second_edition/html/Concepts.doc.html#25486" target="_blank">(§2.4.8)</a>, or the null type <a href="http://java.sun.com/docs/books/jvms/second_edition/html/Concepts.doc.html#22930" target="_blank">(§2.4)</a>. String literals and, more generally, strings that are the values of constant expressions are &quot;interned&quot; so as to share unique instances, using the method String.intern.
-The null type has one value, the null reference, denoted by the literal null. The boolean type has two values, denoted by the literals true and false.
-<strong>2.4.8 The Class String</strong>
-Instances of class String represent sequences of Unicode characters <a href="http://java.sun.com/docs/books/jvms/second_edition/html/Concepts.doc.html#25310" target="_blank">(§2.1)</a>. A String object has a constant, unchanging value. String literals <a href="http://java.sun.com/docs/books/jvms/second_edition/html/Concepts.doc.html#20359" target="_blank">(§2.3)</a> are references to instances of class String.
-<strong>2.17.6 Creation of New Class Instances</strong>
-A new class instance is explicitly created when one of the following situations occurs:</p>
-<ul>
-<li>Evaluation of a class instance creation expression creates a new instance of the class whose name appears in the expression.</li>
-<li><p>Invocation of the newInstance method of class Class creates a new instance of the class represented by the Class object for which the method was invoked.
-A new class instance may be implicitly created in the following situations:</p>
-</li>
-<li><p>Loading of a class or interface that contains a String literal may create a new String object <a href="http://java.sun.com/docs/books/jvms/second_edition/html/Concepts.doc.html#25486" target="_blank">(§2.4.8)</a> to represent that literal. This may not occur if the a String object has already been created to represent a previous occurrence of that literal, or if the String.intern method has been invoked on a String object representing the same string as the literal.</p>
-</li>
-<li>Execution of a string concatenation operator that is not part of a constant expression sometimes creates a new String object to represent the result. String concatenation operators may also create temporary wrapper objects for a value of a primitive type <a href="http://java.sun.com/docs/books/jvms/second_edition/html/Concepts.doc.html#19511" target="_blank">(§2.4.1)</a>.
-Each of these situations identifies a particular constructor to be called with specified arguments (possibly none) as part of the class instance creation process.
-<strong>5.1 The Runtime Constant Pool</strong>
-...
-● A string literal <a href="http://java.sun.com/docs/books/jvms/second_edition/html/Concepts.doc.html#20359" target="_blank">(§2.3)</a> is derived from a CONSTANT_String_info structure <a href="http://java.sun.com/docs/books/jvms/second_edition/html/ClassFile.doc.html#29297" target="_blank">(§4.4.3)</a> in the binary representation of a class or interface. The CONSTANT_String_info structure gives the sequence of Unicode characters constituting the string literal.
-● The Java programming language requires that identical string literals (that is, literals that contain the same sequence of characters) must refer to the same instance of class String. In addition, if the method String.intern is called on any string, the result is a reference to the same class instance that would be returned if that string appeared as a literal. Thus,
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></li>
-</ul>
-<ol>
-<li>(&quot;a&quot; + &quot;b&quot; + &quot;c&quot;).intern() == &quot;abc&quot;  </li>
-</ol>
-<p>(&quot;a&quot; + &quot;b&quot; + &quot;c&quot;).intern() == &quot;abc&quot;
-must have the value true.
-● To derive a string literal, the Java virtual machine examines the sequence of characters given by the CONSTANT_String_info structure.
-  ○ If the method String.intern has previously been called on an instance of class String containing a sequence of Unicode characters identical to that given by the CONSTANT_String_info structure, then the result of string literal derivation is a reference to that same instance of class String.
-  ○ Otherwise, a new instance of class String is created containing the sequence of Unicode characters given by the CONSTANT_String_info structure; that class instance is the result of string literal derivation. Finally, the intern method of the new String instance is invoked.
-...
-The remaining structures in the constant_pool table of the binary representation of a class or interface, the CONSTANT_NameAndType_info <a href="http://java.sun.com/docs/books/jvms/second_edition/html/ClassFile.doc.html#1327" target="_blank">(§4.4.6)</a> and CONSTANT_Utf8_info <a href="http://java.sun.com/docs/books/jvms/second_edition/html/ClassFile.doc.html#7963" target="_blank">(§4.4.7)</a> structures are only used indirectly when deriving symbolic references to classes, interfaces, methods, and fields, and when deriving string literals.
-把Sun的JDK看作参考实现（reference implementation, RI），其中<a href="http://download.oracle.com/javase/6/docs/api/java/lang/String.html#intern(" target="_blank">String.intern()的JavaDoc</a>)为：
-JavaDoc 写道</p>
-<p>public String intern()
-    Returns a canonical representation for the string object.
-    A pool of strings, initially empty, is maintained privately by the class String.
-    When the intern method is invoked, if the pool already contains a string equal to this String object as determined by the equals(Object) method, then the string from the pool is returned. Otherwise, this String object is added to the pool and a reference to this String object is returned.
-    It follows that for any two strings s and t, s.intern() == t.intern() is true if and only if s.equals(t) is true.
-    All literal strings and string-valued constant expressions are interned. String literals are defined in §3.10.5 of the Java Language Specification
-    <strong>Returns:</strong></p>
-<pre><code>    a string that has the same contents as this string, but is guaranteed to be from a pool of unique strings.
-</code></pre><p>===============================================================
-再换一个问题来问：
-引用</p>
-<p>问题：</p>
-<p>Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>String s = new String(&quot;xyz&quot;);<br>String s = new String(&quot;xyz&quot;); 涉及用户声明的几个String类型的变量？
-答案也很简单：
-引用</li>
-</ol>
-<p>答案：一个，就是String s。
-把问题换成下面这个版本，答案也一样：
-引用</p>
-<p>问题：</p>
-<p>Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li><p>String s = null;<br>String s = null; 涉及用户声明的几个String类型的变量？
-Java里变量就是变量，引用类型的变量只是对某个对象实例或者null的引用，不是实例本身。声明变量的个数跟创建实例的个数没有必然关系，像是说：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>String s1 = &quot;a&quot;;  </p>
-</li>
-<li>String s2 = s1.concat(&quot;&quot;);  </li>
-<li>String s3 = null;  </li>
-<li>new String(s1);  </li>
-</ol>
-<p>String s1 = &quot;a&quot;;</p>
-<p>String s2 = s1.concat(&quot;&quot;);
-String s3 = null;</p>
-<p>new String(s1);
-这段代码会涉及3个String类型的变量，
-1、s1，指向下面String实例的1
-2、s2，指向与s1相同
-3、s3，值为null，不指向任何实例
-以及3个String实例，
-1、&quot;a&quot;字面量对应的驻留的字符串常量的String实例
-2、&quot;&quot;字面量对应的驻留的字符串常量的String实例
-（<a href="http://download.oracle.com/javase/6/docs/api/java/lang/String.html#concat(java.lang.String" target="_blank">String.concat()</a>)是个有趣的方法，当发现传入的参数是空字符串时会返回this，所以这里不会额外创建新的String实例）</p>
-<h1 id="3-new-string-string-string-">3、通过new String(String)创建的新String实例；没有任何变量指向它。</h1>
-<p>回到楼主开头引用的问题与“标准答案”
-引用</p>
-<p>问题：</p>
-<p>Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li><p>String s = new String(&quot;xyz&quot;);<br>String s = new String(&quot;xyz&quot;);创建了几个String Object？
-答案：两个(一个是“xyz”,一个是指向“xyz”的引用对象s)
-用归谬法论证。假定问题问的是“在执行这段代码片段时创建了几个String实例”。如果“标准答案”是正确的，那么下面的代码片段在执行时就应该创建4个String实例了：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>String s1 = new String(&quot;xyz&quot;);  </p>
-</li>
-<li>String s2 = new String(&quot;xyz&quot;);  </li>
-</ol>
-<p>String s1 = new String(&quot;xyz&quot;);</p>
-<p>String s2 = new String(&quot;xyz&quot;);
-马上就会有人跳出来说上下两个&quot;xyz&quot;字面量都是引用了同一个String对象，所以不应该是创建了4个对象。
-那么应该是多少个？
-运行时的类加载过程与实际执行某个代码片段，两者必须分开讨论才有那么点意义。
-为了执行问题中的代码片段，其所在的类必然要先被加载，而且同一个类最多只会被加载一次（要注意对JVM来说“同一个类”并不是类的全限定名相同就足够了，而是&lt;类全限定名, 定义类加载器&gt;一对都相同才行）。
-根据上文引用的规范的内容，符合规范的JVM实现应该在类加载的过程中创建并驻留一个String实例作为常量来对应&quot;xyz&quot;字面量；具体是在类加载的resolve阶段进行的。这个常量是全局共享的，只在先前尚未有内容相同的字符串驻留过的前提下才需要创建新的String实例。
-等到真正执行原问题中的代码片段时，JVM需要执行的字节码类似这样：
-Java bytecode代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>0: new  /#2; //class java/lang/String  </li>
-<li>3: dup  </li>
-<li>4: ldc  /#3; //String xyz  </li>
-<li>6: invokespecial    /#4; //Method java/lang/String.&quot;<init>&quot;:(Ljava/lang/String;)V  </li>
-<li>9: astore_1  </li>
-</ol>
-<p>0: new    /#2; //class java/lang/String</p>
-<p>3: dup
-4: ldc    /#3; //String xyz</p>
-<p>6: invokespecial    /#4; //Method java/lang/String.&quot;<init>&quot;:(Ljava/lang/String;)V
-9: astore_1
-这之中出现过多少次new java/lang/String就是创建了多少个String对象。也就是说原问题中的代码在每执行一次只会新创建一个String实例。
-这里，ldc指令只是把先前在类加载过程中已经创建好的一个String对象（&quot;xyz&quot;）的一个引用压到操作数栈顶而已，并不新创建String对象。
-所以刚才用于归谬的代码片段：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>String s1 = new String(&quot;xyz&quot;);  </li>
-<li>String s2 = new String(&quot;xyz&quot;);  </li>
-</ol>
-<p>String s1 = new String(&quot;xyz&quot;);</p>
-<p>String s2 = new String(&quot;xyz&quot;);</p>
-<h2 id="-2-string-">每执行一次只会新创建2个String实例。</h2>
-<p>为了避免一些同学犯糊涂，再强调一次：
-在Java语言里，“new”表达式是负责创建实例的，其中会调用构造器去对实例做初始化；构造器自身的返回值类型是void，并不是“构造器返回了新创建的对象的引用”，而是new表达式的值是新创建的对象的引用。
-对应的，在JVM里，“new”字节码指令只负责把实例创建出来（包括分配空间、设定类型、所有字段设置默认值等工作），并且把指向新创建对象的引用压到操作数栈顶。此时该引用还不能直接使用，处于未初始化状态（uninitialized）；如果某方法a含有代码试图通过未初始化状态的引用来调用任何实例方法，那么方法a会通不过JVM的字节码校验，从而被JVM拒绝执行。
-能对未初始化状态的引用做的唯一一种事情就是通过它调用实例构造器，在Class文件层面表现为特殊初始化方法“<init>”。实际调用的指令是invokespecial，而在实际调用前要把需要的参数按顺序压到操作数栈上。在上面的字节码例子中，压参数的指令包括dup和ldc两条，分别把隐藏参数（新创建的实例的引用，对于实例构造器来说就是“this”）与显式声明的第一个实际参数（&quot;xyz&quot;常量的引用）压到操作数栈上。
-在构造器返回之后，新创建的实例的引用就可以正常使用了。</p>
-<h1 id="-http-rednaxelafx-iteye-com-blog-652719-">关于构造器的讨论，可以参考我之前的一帖，<a href="http://rednaxelafx.iteye.com/blog/652719" target="_blank">实例构造器是不是静态方法？</a></h1>
-<p>以上讨论都只是针对规范所定义的Java语言与Java虚拟机而言。概念上是如此，但实际的JVM实现可以做得更优化，原问题中的代码片段有可能在实际执行的时候一个String实例也不会完整创建（没有分配空间）。
-例如说，在x86、Windows Vista SP2、Sun JDK 6 update 14的fastdebug版上跑下面的测试代码：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public class C2EscapeAnalysisDemo {  </li>
-<li>private static void warmUp() {  </li>
-<li>IFoo[] array = new IFoo[] {  </li>
-<li>new FooA(), new FooB(), new FooC(), new FooD()  </li>
-<li>};  </li>
-<li>for (int i = 0; i &lt; 1000000; i++) {  </li>
-<li>array[i % array.length].foo(); // megamorphic callsite to prevent inlining  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>public static void main(String[] args) {  </li>
-<li>while (true) {  </li>
-<li>warmUp();  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>interface IFoo {  </li>
-<li>void foo();  </li>
-<li>}  </li>
-<li></li>
-<li>class FooA implements IFoo {  </li>
-<li>public void foo() {  </li>
-<li>String s1 = new String(&quot;xyz&quot;);  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>class FooB implements IFoo {  </li>
-<li>public void foo() {  </li>
-<li>String s1 = new String(&quot;xyz&quot;);  </li>
-<li>String s2 = new String(&quot;xyz&quot;);  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>class FooC implements IFoo {  </li>
-<li>public void foo() {  </li>
-<li>String s1 = new String(&quot;xyz&quot;);  </li>
-<li>String s2 = new String(&quot;xyz&quot;);  </li>
-<li>String s3 = new String(&quot;xyz&quot;);  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>class FooD implements IFoo {  </li>
-<li>public void foo() {  </li>
-<li>String s1 = new String(&quot;xyz&quot;);  </li>
-<li>String s2 = new String(&quot;xyz&quot;);  </li>
-<li>String s3 = new String(&quot;xyz&quot;);  </li>
-<li>String s4 = new String(&quot;xyz&quot;);  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>public class C2EscapeAnalysisDemo {</p>
-<p>  private static void warmUp() {
-    IFoo[] array = new IFoo[] {</p>
-<pre><code>  new FooA(), new FooB(), new FooC(), new FooD()
-};
+        <h1 id="jvm-">JVM调优总结（十）-调优方法</h1>
+<h2 id="jvm-">JVM调优工具</h2>
+<p><strong>Jconsole，jProfile，VisualVM</strong></p>
+<hr>
+<p><strong>Jconsole :</strong> jdk自带，功能简单，但是可以在系统有一定负荷的情况下使用。对垃圾回收算法有很详细的跟踪。详细说明参考<a href="http://pengjiaheng.spaces.live.com/blog/cns!2DAA368B386E6AEA!687.entry" target="_blank">这里</a></p>
+<p><strong>JProfiler</strong>：商业软件，需要付费。功能强大。详细说明参考<a href="http://pengjiaheng.spaces.live.com/blog/cns!2DAA368B386E6AEA!685.entry" target="_blank">这里</a></p>
+<p><strong>VisualVM</strong>：JDK自带，功能强大，与JProfiler类似。推荐。</p>
+<h2 id="-">如何调优</h2>
+<p>观察内存释放情况、集合类检查、对象树</p>
+<p>上面这些调优工具都提供了强大的功能，但是总的来说一般分为以下几类功能</p>
+<p><strong>堆信息查看</strong></p>
+<p><a href=""></a></p>
+<p><img src="" alt=""> 
+可查看堆空间大小分配（年轻代、年老代、持久代分配）</p>
+<p>提供即时的垃圾回收功能</p>
+<p>垃圾监控（长时间监控回收情况）</p>
+<p><a href=""></a></p>
+<p><img src="" alt=""> 
+查看堆内类、对象信息查看：数量、类型等</p>
+<p><a href=""></a></p>
+<p><img src="" alt=""> 
+对象引用情况查看</p>
+<p>有了堆信息查看方面的功能，我们一般可以顺利解决以下问题：</p>
+<p>  --年老代年轻代大小划分是否合理</p>
+<p>  --内存泄漏</p>
+<p>  --垃圾回收算法设置是否合理</p>
+<h2 id="-">线程监控</h2>
+<p><a href=""></a></p>
+<p><img src="" alt=""> 
+线程信息监控：系统线程数量。</p>
+<p>线程状态监控：各个线程都处在什么样的状态下</p>
+<p><a href=""></a></p>
+<p><img src="" alt=""> 
+Dump线程详细信息：查看线程内部运行情况</p>
+<p>死锁检查</p>
+<p><strong>热点分析</strong></p>
+<p><a href=""></a></p>
+<p><img src="" alt=""> </p>
+<p><strong>    CPU热点</strong>：检查系统哪些方法占用的大量CPU时间</p>
+<p><strong>    内存热点</strong>：检查哪些对象在系统中数量最大（一定时间内存活对象和销毁对象一起统计）</p>
+<pre><code>这两个东西对于系统优化很有帮助。我们可以根据找到的热点，有针对性的进行系统的瓶颈查找和进行系统优化，而不是漫无目的的进行所有代码的优化。
+</code></pre><p><strong>快照</strong></p>
+<pre><code>快照是系统运行到某一时刻的一个定格。在我们进行调优的时候，不可能用眼睛去跟踪所有系统变化，依赖快照功能，我们就可以进行系统两个不同运行时刻，对象（或类、线程等）的不同，以便快速找到问题
 
-for (int i = 0; i &lt; 1000000; i++) {
-  array[i % array.length].foo(); // megamorphic callsite to prevent inlining
+举例说，我要检查系统进行垃圾回收以后，是否还有该收回的对象被遗漏下来的了。那么，我可以在进行垃圾回收前后，分别进行一次堆情况的快照，然后对比两次快照的对象情况。
+</code></pre><h2 id="-">内存泄漏检查</h2>
+<pre><code>内存泄漏是比较常见的问题，而且解决方法也比较通用，这里可以重点说一下，而线程、热点方面的问题则是具体问题具体分析了。
 
-}
-</code></pre><p>  }</p>
-<p>  public static void main(String[] args) {</p>
-<pre><code>while (true) {
-  warmUp();
+内存泄漏一般可以理解为系统资源（各方面的资源，堆、栈、线程等）在错误使用的情况下，导致使用完毕的资源无法回收（或没有回收），从而导致新的资源分配请求无法完成，引起系统错误。
 
-}
-</code></pre><p>  }</p>
-<p>}</p>
-<p>interface IFoo {
-  void foo();</p>
-<p>}</p>
-<p>class FooA implements IFoo {
-  public void foo() {</p>
-<pre><code>String s1 = new String(&quot;xyz&quot;);
-</code></pre><p>  }</p>
-<p>}</p>
-<p>class FooB implements IFoo {
-  public void foo() {</p>
-<pre><code>String s1 = new String(&quot;xyz&quot;);
-String s2 = new String(&quot;xyz&quot;);
-</code></pre><p>  }
-}</p>
-<p>class FooC implements IFoo {</p>
-<p>  public void foo() {
-    String s1 = new String(&quot;xyz&quot;);</p>
-<pre><code>String s2 = new String(&quot;xyz&quot;);
-String s3 = new String(&quot;xyz&quot;);
-</code></pre><p>  }
-}</p>
-<p>class FooD implements IFoo {</p>
-<p>  public void foo() {
-    String s1 = new String(&quot;xyz&quot;);</p>
-<pre><code>String s2 = new String(&quot;xyz&quot;);
-String s3 = new String(&quot;xyz&quot;);
+内存泄漏对系统危害比较大，因为他可以直接导致系统的崩溃。
 
-String s4 = new String(&quot;xyz&quot;);
-</code></pre><p>  }</p>
-<p>}
-照常用javac用默认参数编译，然后先用server模式的默认配置来跑，顺带打出GC和JIT编译日志来看
-Command prompt代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>java -server -verbose:gc -XX:+PrintCompilation C2EscapeAnalysisDemo  </li>
-</ol>
-<p>java -server -verbose:gc -XX:+PrintCompilation C2EscapeAnalysisDemo
-看到的日志的开头一段如下：
-Hotspot log代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>1       java.lang.String::charAt (33 bytes)  </li>
-<li>2       java.lang.Object::<init> (1 bytes)  </li>
-<li>3       java.lang.String::<init> (61 bytes)  </li>
-<li>1%      C2EscapeAnalysisDemo::warmUp @ 47 (71 bytes)  </li>
-<li>4       FooA::foo (11 bytes)  </li>
-<li>5       FooB::foo (21 bytes)  </li>
-<li>6       FooC::foo (31 bytes)  </li>
-<li>7       FooD::foo (42 bytes)  </li>
-<li>[GC 3072K-&gt;168K(32768K), 0.0058325 secs]  </li>
-<li>[GC 3240K-&gt;160K(32768K), 0.0104623 secs]  </li>
-<li>[GC 3232K-&gt;160K(32768K), 0.0027323 secs]  </li>
-<li>[GC 3232K-&gt;160K(35840K), 0.0026220 secs]  </li>
-<li>[GC 6304K-&gt;160K(35840K), 0.0173733 secs]  </li>
-<li>[GC 6304K-&gt;144K(41664K), 0.0059720 secs]  </li>
-<li>[GC 12432K-&gt;144K(41664K), 0.0353320 secs]  </li>
-<li>[GC 12432K-&gt;144K(54016K), 0.0139333 secs]  </li>
-<li>8       C2EscapeAnalysisDemo::warmUp (71 bytes)  </li>
-<li>[GC 24720K-&gt;160K(54016K), 0.0697970 secs]  </li>
-<li>[GC 24736K-&gt;160K(68800K), 0.0261921 secs]  </li>
-<li>[GC 39520K-&gt;160K(68800K), 0.0958433 secs]  </li>
-<li>[GC 39520K-&gt;160K(87168K), 0.0433377 secs]  </li>
-<li>[GC 57888K-&gt;160K(87168K), 0.0542482 secs]  </li>
-<li>[GC 57888K-&gt;148K(87168K), 0.0533140 secs]  </li>
-<li>[GC 57876K-&gt;164K(84288K), 0.0533537 secs]  </li>
-<li>[GC 55204K-&gt;164K(81728K), 0.0596820 secs]  </li>
-<li>[GC 52644K-&gt;164K(79488K), 0.0515090 secs]  </li>
-<li>[GC 50212K-&gt;164K(76992K), 0.0491227 secs]  </li>
-<li>[GC 47908K-&gt;164K(74944K), 0.0450666 secs]  </li>
-<li>[GC 45668K-&gt;164K(72640K), 0.0467671 secs]  </li>
-<li>[GC 43556K-&gt;152K(70784K), 0.0420757 secs]  </li>
-<li>[GC 41560K-&gt;168K(68736K), 0.0391296 secs]  </li>
-<li>[GC 39656K-&gt;168K(67072K), 0.0397539 secs]  </li>
-<li><p>[GC 37864K-&gt;188K(65216K), 0.0360861 secs]  </p>
-<p>1       java.lang.String::charAt (33 bytes)</p>
-<p>2       java.lang.Object::<init> (1 bytes)
-3       java.lang.String::<init> (61 bytes)</p>
-<p>1%      C2EscapeAnalysisDemo::warmUp @ 47 (71 bytes)
-4       FooA::foo (11 bytes)</p>
-<p>5       FooB::foo (21 bytes)
-6       FooC::foo (31 bytes)</p>
-<p>7       FooD::foo (42 bytes)
-[GC 3072K-&gt;168K(32768K), 0.0058325 secs]</p>
-</li>
-</ol>
-<p>[GC 3240K-&gt;160K(32768K), 0.0104623 secs]
-[GC 3232K-&gt;160K(32768K), 0.0027323 secs]</p>
-<p>[GC 3232K-&gt;160K(35840K), 0.0026220 secs]
-[GC 6304K-&gt;160K(35840K), 0.0173733 secs]</p>
-<p>[GC 6304K-&gt;144K(41664K), 0.0059720 secs]
-[GC 12432K-&gt;144K(41664K), 0.0353320 secs]</p>
-<p>[GC 12432K-&gt;144K(54016K), 0.0139333 secs]
-  8       C2EscapeAnalysisDemo::warmUp (71 bytes)</p>
-<p>[GC 24720K-&gt;160K(54016K), 0.0697970 secs]
-[GC 24736K-&gt;160K(68800K), 0.0261921 secs]</p>
-<p>[GC 39520K-&gt;160K(68800K), 0.0958433 secs]
-[GC 39520K-&gt;160K(87168K), 0.0433377 secs]</p>
-<p>[GC 57888K-&gt;160K(87168K), 0.0542482 secs]
-[GC 57888K-&gt;148K(87168K), 0.0533140 secs]</p>
-<p>[GC 57876K-&gt;164K(84288K), 0.0533537 secs]
-[GC 55204K-&gt;164K(81728K), 0.0596820 secs]</p>
-<p>[GC 52644K-&gt;164K(79488K), 0.0515090 secs]
-[GC 50212K-&gt;164K(76992K), 0.0491227 secs]</p>
-<p>[GC 47908K-&gt;164K(74944K), 0.0450666 secs]
-[GC 45668K-&gt;164K(72640K), 0.0467671 secs]</p>
-<p>[GC 43556K-&gt;152K(70784K), 0.0420757 secs]
-[GC 41560K-&gt;168K(68736K), 0.0391296 secs]</p>
-<p>[GC 39656K-&gt;168K(67072K), 0.0397539 secs]
-[GC 37864K-&gt;188K(65216K), 0.0360861 secs]
-上面的日志中，后面的方法名的行是JIT编译的日志，而以<a href="&quot;复制代码&quot;">GC开头的是minor GC的日志。
-程序一直跑，GC的日志还会不断的打出来。这是理所当然的对吧？HotSpot的堆就那么大，而测试代码在不断新创建String对象，肯定得不断触发GC的。
-用不同的VM启动参数来跑的话，
-Command prompt代码 [<img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>java -server -verbose:gc -XX:+PrintCompilation -XX:+DoEscapeAnalysis -XX:+EliminateAllocations C2EscapeAnalysisDemo  </li>
-</ol>
-<p>java -server -verbose:gc -XX:+PrintCompilation -XX:+DoEscapeAnalysis -XX:+EliminateAllocations C2EscapeAnalysisDemo
-还是同样的Java测试程序，同样的Sun JDK 6 update 14，但打开了逃逸分析和空间分配消除功能，再运行，看到的全部日志如下：
-Hotspot log代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>1       java.lang.String::charAt (33 bytes)  </li>
-<li>2       java.lang.Object::<init> (1 bytes)  </li>
-<li>3       java.lang.String::<init> (61 bytes)  </li>
-<li>1%      C2EscapeAnalysisDemo::warmUp @ 47 (71 bytes)  </li>
-<li>5       FooB::foo (21 bytes)  </li>
-<li>4       FooA::foo (11 bytes)  </li>
-<li>6       FooC::foo (31 bytes)  </li>
-<li>7       FooD::foo (42 bytes)  </li>
-<li>[GC 3072K-&gt;176K(32768K), 0.0056527 secs]  </li>
-<li><p>8       C2EscapeAnalysisDemo::warmUp (71 bytes)  </p>
-<p>1       java.lang.String::charAt (33 bytes)</p>
-<p>2       java.lang.Object::<init> (1 bytes)
-3       java.lang.String::<init> (61 bytes)</p>
-<p>1%      C2EscapeAnalysisDemo::warmUp @ 47 (71 bytes)
-5       FooB::foo (21 bytes)</p>
-<p>4       FooA::foo (11 bytes)
-6       FooC::foo (31 bytes)</p>
-<p>7       FooD::foo (42 bytes)
-[GC 3072K-&gt;176K(32768K), 0.0056527 secs]</p>
-<p>8       C2EscapeAnalysisDemo::warmUp (71 bytes)
-继续跑下去也没有再打出GC日志了。难道新创建String对象都不吃内存了么？
-实际情况是：经过HotSpot的server模式编译器的优化后，FooA、FooB、FooC、FooD四个版本的foo()实现都不新创建String实例了。这样自然不吃内存，也就不再触发GC了。
-经过的分析和优化笼统说有方法内联（method inlining）、逃逸分析（escape analysis）、标量替换（scalar replacement）、无用代码削除（dead-code elimination）之类。
-FooA.foo()最短，就以它举例来大致演示一下优化的过程。
-它其实就是创建并初始化了一个String对象而已。调用的构造器的源码是：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>public String(String original) {  </p>
-</li>
-<li>int size = original.count;  </li>
-<li>char[] originalValue = original.value;  </li>
-<li>char[] v;  </li>
-<li>if (originalValue.length &gt; size) {  </li>
-<li>// The array representing the String is bigger than the new  </li>
-<li>// String itself.  Perhaps this constructor is being called  </li>
-<li>// in order to trim the baggage, so make a copy of the array.  </li>
-<li>int off = original.offset;  </li>
-<li>v = Arrays.copyOfRange(originalValue, off, off+size);  </li>
-<li>} else {  </li>
-<li>// The array representing the String is the same  </li>
-<li>// size as the String, so no point in making a copy.  </li>
-<li>v = originalValue;  </li>
-<li>}  </li>
-<li>this.offset = 0;  </li>
-<li>this.count = size;  </li>
-<li>this.value = v;  </li>
-<li>}  </li>
-</ol>
-<p>public String(String original) {</p>
-<pre><code>int size = original.count;
-char[] originalValue = original.value;
+需要区别一下，内存泄漏和系统超负荷两者是有区别的，虽然可能导致的最终结果是一样的。内存泄漏是用完的资源没有回收引起错误，而系统超负荷则是系统确实没有那么多资源可以分配了（其他的资源都在使用）。
+</code></pre><p><strong>年老代堆空间被占满</strong></p>
+<p><strong>异常：</strong> java.lang.OutOfMemoryError: Java heap space</p>
+<p><strong>说明：</strong></p>
+<p><a href=""></a></p>
+<p><img src="" alt=""></p>
+<pre><code>这是最典型的内存泄漏方式，简单说就是所有堆空间都被无法回收的垃圾对象占满，虚拟机无法再在分配新空间。
 
-char[] v;
-if (originalValue.length &gt; size) {
+如上图所示，这是非常典型的内存泄漏的垃圾回收情况图。所有峰值部分都是一次垃圾回收点，所有谷底部分表示是一次垃圾回收后剩余的内存。连接所有谷底的点，可以发现一条由底到高的线，这说明，随时间的推移，系统的堆空间被不断占满，最终会占满整个堆空间。因此可以初步认为系统内部可能有内存泄漏。（上面的图仅供示例，在实际情况下收集数据的时间需要更长，比如几个小时或者几天）
+</code></pre><p><strong>解决：</strong></p>
+<pre><code>这种方式解决起来也比较容易，一般就是根据垃圾回收前后情况对比，同时根据对象引用情况（常见的集合对象引用）分析，基本都可以找到泄漏点。
+</code></pre><p><strong>持久代被占满</strong></p>
+<p><strong>异常：</strong>java.lang.OutOfMemoryError: PermGen space</p>
+<p><strong>说明：</strong></p>
+<pre><code>Perm空间被占满。无法为新的class分配存储空间而引发的异常。这个异常以前是没有的，但是在Java反射大量使用的今天这个异常比较常见了。主要原因就是大量动态反射生成的类不断被加载，最终导致Perm区被占满。
 
-   // The array representing the String is bigger than the new
-   // String itself.  Perhaps this constructor is being called
+更可怕的是，不同的classLoader即便使用了相同的类，但是都会对其进行加载，相当于同一个东西，如果有N个classLoader那么他将会被加载N次。因此，某些情况下，这个问题基本视为无解。当然，存在大量classLoader和大量反射类的情况其实也不多。
+</code></pre><p><strong>解决：</strong></p>
+<pre><code>1. -XX:MaxPermSize=16m
 
-   // in order to trim the baggage, so make a copy of the array.
-  int off = original.offset;
+2. 换用JDK。比如JRocket。
+</code></pre><p><strong>堆栈溢出</strong></p>
+<p><strong>异常：</strong>java.lang.StackOverflowError</p>
+<p><strong>说明：</strong>这个就不多说了，一般就是递归没返回，或者循环调用造成</p>
+<p><strong>线程堆栈满</strong></p>
+<p><strong>异常</strong>：Fatal: Stack size too small</p>
+<p><strong>说明</strong>：java中一个线程的空间大小是有限制的。JDK5.0以后这个值是1M。与这个线程相关的数据将会保存在其中。但是当线程空间满了以后，将会出现上面异常。</p>
+<p><strong>解决</strong>：增加线程栈大小。-Xss2m。但这个配置无法解决根本问题，还要看代码部分是否有造成泄漏的部分。</p>
+<p><strong>系统内存被占满</strong></p>
+<p><strong>异常</strong>：java.lang.OutOfMemoryError: unable to create new native thread</p>
+<p><strong>说明</strong>：</p>
+<pre><code>这个异常是由于操作系统没有足够的资源来产生这个线程造成的。系统创建线程时，除了要在Java堆中分配内存外，操作系统本身也需要分配资源来创建线程。因此，当线程数量大到一定程度以后，堆中或许还有空间，但是操作系统分配不出资源来了，就出现这个异常了。
+</code></pre><p>分配给Java虚拟机的内存愈多，系统剩余的资源就越少，因此，当系统内存固定时，分配给Java虚拟机的内存越多，那么，系统总共能够产生的线程也就越少，两者成反比的关系。同时，可以通过修改-Xss来减少分配给单个线程的空间，也可以增加系统总共内生产的线程数。</p>
+<p><strong>解决：</strong></p>
+<pre><code>1. 重新设计系统减少线程数量。
 
-  v = Arrays.copyOfRange(originalValue, off, off+size);
-} else {
-
-   // The array representing the String is the same
-   // size as the String, so no point in making a copy.
-
-  v = originalValue;
-}
-
-this.offset = 0;
-this.count = size;
-
-this.value = v;
-</code></pre><p>}
-因为参数是&quot;xyz&quot;，可以确定在我们的测试代码里不会走到构造器的if分支里，下面为了演示方便就省略掉那部分代码（实际代码还是存在的，只是没执行而已）
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public String(String original) {  </li>
-<li>int size = original.count;  </li>
-<li>char[] originalValue = original.value;  </li>
-<li>char[] v;  </li>
-<li>if (originalValue.length &gt; size) {  </li>
-<li>// 省略  </li>
-<li>} else {  </li>
-<li>v = originalValue;  </li>
-<li>}  </li>
-<li>this.offset = 0;  </li>
-<li>this.count = size;  </li>
-<li>this.value = v;  </li>
-<li>}  </li>
-</ol>
-<p>public String(String original) {</p>
-<pre><code>int size = original.count;
-char[] originalValue = original.value;
-
-char[] v;
-if (originalValue.length &gt; size) {
-
-   // 省略
-} else {
-
-  v = originalValue;
-}
-
-this.offset = 0;
-this.count = size;
-
-this.value = v;
-</code></pre><p>}
-那么把构造器内联到FooA.foo()里，
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public FooA implements IFoo {  </li>
-<li>public void foo() {  </li>
-<li>String s = AllocateString(); // 这里虚构一个只分配空间，不调用构造器的函数  </li>
-<li>String original = &quot;xyz&quot;;  </li>
-<li></li>
-<li>// 下面就是内联进来的构造器内容  </li>
-<li>int size = original.count;  </li>
-<li>char[] originalValue = original.value;  </li>
-<li>char[] v;  </li>
-<li>if (originalValue.length &gt; size) {  </li>
-<li>// 省略  </li>
-<li>} else {  </li>
-<li>v = originalValue;  </li>
-<li>}  </li>
-<li></li>
-<li>s.offset = 0;  </li>
-<li>s.count = size;  </li>
-<li>s.value = v;  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>public FooA implements IFoo {</p>
-<p>  public void foo() {
-    String s = AllocateString(); // 这里虚构一个只分配空间，不调用构造器的函数</p>
-<pre><code>String original = &quot;xyz&quot;;
-
-
-// 下面就是内联进来的构造器内容
-int size = original.count;
-
-char[] originalValue = original.value;
-char[] v;
-
-if (originalValue.length &gt; size) {
-   // 省略
-
-} else {
-  v = originalValue;
-
-}
-
-
-s.offset = 0;
-s.count = size;
-
-s.value = v;
-</code></pre><p>  }</p>
-<p>}
-然后经过逃逸分析与标量替换，
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public FooA implements IFoo {  </li>
-<li>public void foo() {  </li>
-<li>String original = &quot;xyz&quot;;  </li>
-<li></li>
-<li>// 下面就是内联进来的构造器内容  </li>
-<li>int size = original.count;  </li>
-<li>char[] originalValue = original.value;  </li>
-<li>char[] v;  </li>
-<li>if (originalValue.length &gt; size) {  </li>
-<li>// 省略  </li>
-<li>} else {  </li>
-<li>v = originalValue;  </li>
-<li>}  </li>
-<li></li>
-<li>// 原本s的实例变量被标量替换为foo()的局部变量  </li>
-<li>int sOffset = 0;  </li>
-<li>int sCount = size;  </li>
-<li>char[] sValue = v;  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>public FooA implements IFoo {</p>
-<p>  public void foo() {
-    String original = &quot;xyz&quot;;</p>
-<pre><code>// 下面就是内联进来的构造器内容
-
-int size = original.count;
-char[] originalValue = original.value;
-
-char[] v;
-if (originalValue.length &gt; size) {
-
-   // 省略
-} else {
-
-  v = originalValue;
-}
-
-
-// 原本s的实例变量被标量替换为foo()的局部变量
-
-int sOffset = 0;
-int sCount = size;
-
-char[] sValue = v;
-</code></pre><p>  }</p>
-<p>}
-注意，到这里就已经把新创建String在堆上分配空间的代码全部削除了，原本新建的String实例的字段变成了FooA.foo()的局部变量。
-最后再经过无用代码削除，把sOffset、sCount和sValue这三个没被读过的局部变量给削除掉，
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public FooA implements IFoo {  </li>
-<li>public void foo() {  </li>
-<li>String original = &quot;xyz&quot;;  </li>
-<li></li>
-<li>// 下面就是内联进来的构造器内容  </li>
-<li>int size = original.count;  </li>
-<li>char[] originalValue = original.value;  </li>
-<li>char[] v;  </li>
-<li>if (originalValue.length &gt; size) {  </li>
-<li>// 省略  </li>
-<li>} else {  </li>
-<li>v = originalValue;  </li>
-<li>}  </li>
-<li></li>
-<li>// 几个局部变量也干掉了  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>public FooA implements IFoo {</p>
-<p>  public void foo() {
-    String original = &quot;xyz&quot;;</p>
-<pre><code>// 下面就是内联进来的构造器内容
-
-int size = original.count;
-char[] originalValue = original.value;
-
-char[] v;
-if (originalValue.length &gt; size) {
-
-   // 省略
-} else {
-
-  v = originalValue;
-}
-
-
-// 几个局部变量也干掉了
-</code></pre><p>  }
-}
-这就跟FooA.foo()被优化编译后实际执行的代码基本一致了。
-实际执行的x86代码如下：
-X86 asm代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>0x0247aeec: mov    %eax,-0x4000(%esp) ; 检查栈是否溢出（stack bang），若溢出则这条指令会引发异常  </li>
-<li>0x0247aef3: push   %ebp               ; 保存老的栈帧指针  </li>
-<li>0x0247aef4: sub    $0x18,%esp         ; 为新栈帧分配空间  </li>
-<li>0x0247aefa: mov    $0x1027e9a8,%edi   ; String original //<em> EDI /</em>/ = &quot;xyz&quot;  </li>
-<li>0x0247aeff: mov    0x8(%edi),%ecx     ; char[] originalValue //<em> ECX /</em>/ = original.value;  </li>
-<li>0x0247af02: mov    0x8(%ecx),%ebx     ; EBX = originalValue.length  </li>
-<li>0x0247af05: mov    0x10(%edi),%ebp    ; int size //<em> EBP /</em>/ = original.count;  </li>
-<li>0x0247af08: cmp    %ebp,%ebx          ; 比较originalValue.length与size  </li>
-<li>0x0247af0a: jg     0x0247af17         ; 如果originalValue.length &gt; size则跳转到0x0247af17  </li>
-<li>;   实际不会发生跳转（就是不会执行if分支），所以后面代码省略  </li>
-<li>0x0247af0c: add    $0x18,%esp         ; 撤销栈帧分配的空间  </li>
-<li>0x0247af0f: pop    %ebp               ; 恢复老的栈帧指针  </li>
-<li>0x0247af10: test   %eax,0x310000      ; 方法返回前检查是否需要进入safepoint （{poll_return}）  </li>
-<li>0x0247af16: ret                       ; 方法返回  </li>
-<li>0x0247af17: ; 以下是if分支和异常处理器的代码，因为实际不会执行，省略  </li>
-</ol>
-<p>0x0247aeec: mov    %eax,-0x4000(%esp) ; 检查栈是否溢出（stack bang），若溢出则这条指令会引发异常</p>
-<p>0x0247aef3: push   %ebp               ; 保存老的栈帧指针
-0x0247aef4: sub    $0x18,%esp         ; 为新栈帧分配空间</p>
-<p>0x0247aefa: mov    $0x1027e9a8,%edi   ; String original //<em> EDI /</em>/ = &quot;xyz&quot;
-0x0247aeff: mov    0x8(%edi),%ecx     ; char[] originalValue //<em> ECX /</em>/ = original.value;</p>
-<p>0x0247af02: mov    0x8(%ecx),%ebx     ; EBX = originalValue.length
-0x0247af05: mov    0x10(%edi),%ebp    ; int size //<em> EBP /</em>/ = original.count;</p>
-<p>0x0247af08: cmp    %ebp,%ebx          ; 比较originalValue.length与size
-0x0247af0a: jg     0x0247af17         ; 如果originalValue.length &gt; size则跳转到0x0247af17</p>
-<pre><code>                                  ;   实际不会发生跳转（就是不会执行if分支），所以后面代码省略
-</code></pre><p>0x0247af0c: add    $0x18,%esp         ; 撤销栈帧分配的空间</p>
-<p>0x0247af0f: pop    %ebp               ; 恢复老的栈帧指针
-0x0247af10: test   %eax,0x310000      ; 方法返回前检查是否需要进入safepoint （{poll_return}）</p>
-<p>0x0247af16: ret                       ; 方法返回
-0x0247af17: ; 以下是if分支和异常处理器的代码，因为实际不会执行，省略
-看，确实没有新创建String对象了。
-另外三个版本的foo()实现也是类似，HotSpot成功的把无用的new String(&quot;xyz&quot;)全部干掉了。
-关于逃逸分析的例子，可以参考我以前一篇帖，<a href="http://rednaxelafx.iteye.com/blog/659108" target="_blank">HotSpot 17.0-b12的逃逸分析/标量替换的一个演示</a></p>
-<h1 id="-fooa-foo-string-">再回头看看楼主的原问题，问题中的代码片段执行的时候（对应到FooA.foo()被调用的时候）一个String对象也没有新建。于是那“标准答案”在现实中的指导意义又有多少呢？</h1>
-<p>另外，楼主还提到了PermGen：
-QM42977 写道</p>
-<p>&quot;xyz&quot;在perm gen应该还会生成一个对象，因为常量(&quot;xyz&quot;)都会保存在perm gen中
-这里也是需要强调一点：永生代（“Perm Gen”）只是Sun JDK的一个实现细节而已，Java语言规范和Java虚拟机规范都没有规定必须有“Permanent Generation”这么一块空间，甚至没规定要用什么GC算法——不用分代式GC算法哪儿来的“永生代”？
-HotSpot的PermGen是用来实现Java虚拟机规范中的“<strong>方法区</strong>”（method area）的。如果使用“方法区”这个术语，在讨论概念中的JVM时就安全得多——大家都必须实现出这个表象。
-当然如何实现又是另一回事了。Oracle JRockit没有PermGen，IBM J9也没有，事实上有这么一块空间特别管理的反而是少数吧orz
-事实上新版HotSpot VM也在计划去除PermGen，转而使用native memory来实现方法区存储元数据。在JDK8的HotSpot VM中已经实现了这点。</p>
-<h1 id="-http-rednaxelafx-iteye-com-blog-905273-http-rednaxelafx-iteye-com-blog-905273-">可以参考这帖：<a href="http://rednaxelafx.iteye.com/blog/905273" target="_blank"><a href="http://rednaxelafx.iteye.com/blog/905273">http://rednaxelafx.iteye.com/blog/905273</a></a></h1>
-<p>费那么多口舌，最后点题：请别再拿“String s = new String(&quot;xyz&quot;);创建了多少个String实例”来面试了吧，既没意义又不涨面子。
-困，睡觉去……<img src="" alt=""></p>
-
+2. 线程数量不能减少的情况下，通过-Xss减小单个线程大小。以便能生产更多的线程。
+</code></pre>
       
     </div>
     
@@ -1189,7 +360,7 @@ HotSpot的PermGen是用来实现Java虚拟机规范中的“<strong>方法区</s
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--请别再拿“StringsnewString-xyz-创建了多少个String实例”来/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--请别再拿“StringsnewString-xyz-创建了多少个String实例”来" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十）-调优方法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（十）-调优方法" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1204,388 +375,18 @@ HotSpot的PermGen是用来实现Java虚拟机规范中的“<strong>方法区</s
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩/">虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--软件设计文档二三事-善攻者动于九天之上-博客园/">软件设计文档二三事 </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--软件设计文档二三事-善攻者动于九天之上-博客园/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-">虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩</h1>
-<p>（Disclaimer：如果需要转载请先与我联系；文中图片请不要直接链接
-作者：<a href="http://weibo.com/rednaxelafx" target="_blank">@RednaxelaFX</a> -&gt; <a href="http://rednaxelafx.iteye.com/" target="_blank"><a href="http://rednaxelafx.iteye.com">http://rednaxelafx.iteye.com</a></a>）
-大前天收到一条PM：
-引用</p>
-<p>你好，很冒昧的向你发短消息，我现在在看JS引擎，能过看博客发现你对js engine很了解，我想请教一下你 基于栈的解析器与基于寄存器的解析器有什么同，javascriptcore是基于寄存器的，V8是基于栈的，能不能说一下这两者有什么一样吗？能推荐一点资料吗？谢谢。
-我刚收到的时候很兴奋，就开始写回复。写啊写发觉已经比我平时发的帖还要长了，想着干脆把回复直接发出来好了。于是下面就是回复：
-你好 ^ ^ 很抱歉拖了这么久才回复。码字和画图太耗时间了。
-别说冒昧了，我只是个普通的刚毕业的学生而已，担当不起啊 =<em>=||||
-而且我也不敢说“很”了解，只是有所接触而已。很高兴有人来一起讨论JavaScript引擎的设计与实现，总觉得身边对这个有兴趣的人不多，或者是很少冒出来讨论。如果你发个帖或者blog来讨论这方面的内容我也会很感兴趣的～
-想拿出几点来讨论一下。上面提出的问题我希望能够一一给予回答，不过首先得做些铺垫。
-另外先提一点：JavaScriptCore从SquirrelFish版开始是“基于寄存器”的，V8则不适合用“基于栈”或者“基于寄存器”的说法来描述。
-<strong>1、解析器与解释器</strong>
-解析器是parser，而解释器是interpreter。两者不是同一样东西，不应该混用。
-前者是编译器/解释器的重要组成部分，也可以用在IDE之类的地方；其主要作用是进行语法分析，提取出句子的结构。广义来说输入一般是程序的源码，输出一般是语法树（syntax tree，也叫parse tree等）或抽象语法树（abstract syntax tree，AST）。进一步剥开来，广义的解析器里一般会有扫描器（scanner，也叫tokenizer或者lexical analyzer，词法分析器），以及狭义的解析器（parser，也叫syntax analyzer，语法分析器）。扫描器的输入一般是文本，经过词法分析，输出是将文本切割为单词的流。狭义的解析器输入是单词的流，经过语法分析，输出是语法树或者精简过的AST。
-（在一些编译器/解释器中，解析也可能与后续的语义分析、代码生成或解释执行等步骤融合在一起，不一定真的会构造出完整的语法树。但概念上说解析器就是用来抽取句子结构用的，而语法树就是表示句子结构的方式。关于边解析边解释执行的例子，可以看看<a href="http://rednaxelafx.iteye.com/blog/472113" target="_blank">这帖</a>的计算器。）
-举例：将i = a + b /* c作为源代码输入到解析器里，则广义上的解析器的工作流程如下图：
-<img src="" alt="">
-其中词法分析由扫描器完成，语法分析由狭义的解析器完成。
-（嗯，说来其实“解析器”这词还是按狭义用法比较准确。把扫描器和解析器合起来叫解析器总觉得怪怪的，但不少人这么用，这里就将就下吧 =</em>=
-不过近来“<a href="http://en.wikipedia.org/wiki/Scannerless_parsing" target="_blank">scannerless parsing</a>”也挺流行的：不区分词法分析与语法分析，没有单独的扫描器，直接用解析器从源码生成语法树。这倒整个就是解析器了，没狭不狭义的问题）
-后者则是实现程序执行的一种实现方式，与编译器相对。它直接实现程序源码的语义，输入是程序源码，输出则是执行源码得到的计算结果；编译器的输入与解释器相同，而输出是用别的语言实现了输入源码的语义的程序。通常编译器的输入语言比输出语言高级，但不一定；也有输入输出是同种语言的情况，此时编译器很可能主要用于优化代码。
-举例：把同样的源码分别输入到编译器与解释器中，得到的输出不同：
-<img src="" alt="">
-值得留意的是，编译器生成出来的代码执行后的结果应该跟解释器输出的结果一样——它们都应该实现源码所指定的语义。
-在很多地方都看到解析器与解释器两个不同的东西被混为一谈，感到十分无奈。
-最近某本引起很多关注的书便在开篇给读者们当头一棒，介绍了“<a href="http://www.fecit.com.cn/%E7%AC%AC1%E7%AB%A0_%E4%B8%8E%E5%88%9D%E5%AD%A6%E8%80%85%E8%B0%88%E8%B0%88JavaScript%E5%AD%A6%E4%B9%A0.pdf" target="_blank">JavaScript解析机制</a>”。“编译”和“预处理”也顺带混为一谈了，还有“预编译” 0_0
-我一直以为“预编译”应该是<a href="http://en.wikipedia.org/wiki/AOT_compiler" target="_blank">ahead-of-time compilation</a>的翻译，是与“即时编译”（just-in-time compilation，JIT）相对的概念。另外就是PCH（precompile header）这种用法，把以前的编译结果缓存下来称为“预编译”。把AOT、PCH跟“预处理”（<a href="http://en.wikipedia.org/wiki/Preprocessor" target="_blank">preprocess</a>）混为一谈真是诡异。算了，我还是不要淌这浑水的好……打住。
-<strong>2、“解释器”到底是什么？“解释型语言”呢？</strong>
-很多资料会说，Python、Ruby、JavaScript都是“解释型语言”，是通过解释器来实现的。这么说其实很容易引起误解：语言一般只会定义其抽象语义，而不会强制性要求采用某种实现方式。
-例如说C一般被认为是“编译型语言”，但C的解释器也是存在的，例如<a href="http://www.softintegration.com/" target="_blank">Ch</a>。同样，C++也有解释器版本的实现，例如<a href="http://root.cern.ch/drupal/content/cint" target="_blank">Cint</a>。
-一般被称为“解释型语言”的是主流实现为解释器的语言，但并不是说它就无法编译。例如说经常被认为是“解释型语言”的<a href="http://schemers.org/" target="_blank">Scheme</a>就有好几种编译器实现，其中率先支持<a href="http://www.r6rs.org/" target="_blank">R6RS</a>规范的大部分内容的是<a href="http://ikarus-scheme.org/" target="_blank">Ikarus</a>，支持在x86上编译Scheme；它最终不是生成某种虚拟机的字节码，而是直接生成x86机器码。
-解释器就是个黑箱，输入是源码，输出就是输入程序的执行结果，对用户来说中间没有独立的“编译”步骤。这非常抽象，内部是怎么实现的都没关系，只要能实现语义就行。你可以写一个C语言的解释器，里面只是先用普通的C编译器把源码编译为in-memory image，然后直接调用那个image去得到运行结果；用户拿过去，发现直接输入源码可以得到源程序对应的运行结果就满足需求了，无需在意解释器这个“黑箱子”里到底是什么。
-实际上很多解释器内部是以“编译器+虚拟机”的方式来实现的，先通过编译器将源码转换为AST或者字节码，然后由虚拟机去完成实际的执行。所谓“解释型语言”并不是不用编译，而只是不需要用户显式去使用编译器得到可执行代码而已。
-那么虚拟机（<a href="http://en.wikipedia.org/wiki/Virtual_machine" target="_blank">virtual machine</a>，VM）又是什么？在许多不同的场合，VM有着不同的意义。如果上下文是Java、Python这类语言，那么一般指的是高级语言虚拟机（high-level language virtual machine，HLL VM），其意义是实现高级语言的语义。VM既然被称为“机器”，一般认为输入是满足某种指令集架构（<a href="http://en.wikipedia.org/wiki/Instruction_set" target="_blank">instruction set architecture</a>，ISA）的指令序列，中间转换为目标ISA的指令序列并加以执行，输出为程序的执行结果的，就是VM。源与目标ISA可以是同一种，这是所谓same-ISA VM。
-前面提到解释器中的编译器的输出可能是AST，也可能是字节码之类的指令序列；一般会把执行后者的程序称为VM，而执行前者的还是笼统称为解释器或者树遍历式解释器（tree-walking interpreter）。这只是种习惯而已，并没有多少确凿的依据。只不过线性（相对于树形）的指令序列看起来更像一般真正机器会执行的指令序列而已。
-其实我觉得把执行AST的也叫VM也没啥大问题。如果认同这个观点，那么把<a href="http://rednaxelafx.iteye.com/blog/241430" target="_blank">DLR</a>看作一种VM也就可以接受了——它的“指令集”就是树形的Expression Tree。
-VM并不是神奇的就能执行代码了，它也得采用某种方式去实现输入程序的语义，并且同样有几种选择：“编译”，例如微软的.NET中的CLR；“解释”，例如CPython、CRuby 1.9，许多老的JavaScript引擎等；也有介于两者之间的混合式，例如Sun的JVM，<a href="http://en.wikipedia.org/wiki/HotSpot" target="_blank">HotSpot</a>。如果采用编译方式，VM会把输入的指令先转换为某种能被底下的系统直接执行的形式（一般就是native code），然后再执行之；如果采用解释方式，则VM会把输入的指令逐条直接执行。
-换个角度说，我觉得采用编译和解释方式实现虚拟机最大的区别就在于是否存下目标代码：编译的话会把输入的源程序以某种单位（例如<a href="http://en.wikipedia.org/wiki/Basic_block" target="_blank">基本块</a>/函数/方法/trace等）翻译生成为目标代码，并存下来（无论是存在内存中还是磁盘上，无所谓），后续执行可以复用之；解释的话则是把源程序中的指令逐条解释，不生成也不存下目标代码，后续执行没有多少可复用的信息。有些稍微先进一点的解释器可能会优化输入的源程序，把满足某些模式的指令序列合并为“超级指令”；这么做就是朝着编译的方向推进。后面讲到解释器的演化时再讨论超级指令吧。
-如果一种语言的主流实现是解释器，其内部是编译器+虚拟机，而虚拟机又是采用解释方式实现的，或者内部实现是编译器+树遍历解释器，那它就是名副其实的“解释型语言”。如果内部用的虚拟机是用编译方式实现的，其实跟普遍印象中的“解释器”还是挺不同的……
-可以举这样一个例子：ActionScript 3，一般都被认为是“解释型语言”对吧？但这种观点到底是把FlashPlayer整体看成一个解释器，因而AS3是“解释型语言”呢？还是认为FlashPlayer中的虚拟机采用解释执行方案，因而AS3是“解释型语言”呢？
-其实Flash或Flex等从AS3生成出来的SWF文件里就包含有AS字节码（ActionScript Byte Code，ABC）。等到FlashPlayer去执行SWF文件，或者说等到AVM2（ActionScript Virtual Machine 2）去执行ABC时，又有解释器和JIT编译器两种实现。这种需要让用户显式进行编译步骤的语言，到底是不是“解释型语言”呢？呵呵。所以我一直觉得“编译型语言”跟“解释型语言”的说法太模糊，不太好。
-有兴趣想体验一下从命令行编译“裸”的AS3文件得到ABC文件，再从命令行调用AVM2去执行ABC文件的同学，可以从<a href="http://rednaxelafx.iteye.com/blog/196278" target="_blank">这帖</a>下载我之前从源码编译出来的AVM2，自己玩玩看。例如说要编译一个名为test.as的文件，用下列命令：
-Command prompt代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>java -jar asc.jar -import builtin.abc -import toplevel.abc test.as  </li>
-</ol>
-<p>java -jar asc.jar -import builtin.abc -import toplevel.abc test.as
-就是用ASC将test.as编译，得到test.abc。接着用：
-Command prompt代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>avmplus test.abc  </li>
-</ol>
-<p>avmplus test.abc
-就是用AVM2去执行程序了。很生动的体现出“编译器+虚拟机”的实现方式。
-这个“裸”的AVM2没有带Flash或Flex的类库，能用的函数和类都有限。不过AS3语言实现是完整的。可以用print()函数来向标准输出流写东西。
-Well……其实写Java程序不也是这样么？现在也确实还有很多人把Java称为“解释型语言”，完全无视Java代码通常是经过显式编译步骤才得到.class文件，而有些JVM是采用纯JIT编译方式实现的，内部没解释器，例如JRockit、<a href="https://wikis.oracle.com/display/MaxineVM/Home" target="_blank">Maxine VM</a>和<a href="http://jikesrvm.org/" target="_blank">Jikes RVM</a>。我愈发感到“解释型语言”是个应该避开的用语 =_=
-关于虚拟机，有本很好的书绝对值得一读，《虚拟机——系统与进程的通用平台》（Virtual Machines: Versatile Platforms for Systems and Processes）。国内有影印版也有中文版，我是读了影印版，不太清楚中文版的翻译质量如何。据说翻译得还行，我无法印证。
-<strong>3、基于栈与基于寄存器的指令集架构</strong>
-用C的语法来写这么一个语句：
-C代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>a = b + c;  </li>
-</ol>
-<p>a = b + c;
-如果把它变成这种形式：
-add a, b, c
-那看起来就更像机器指令了，对吧？这种就是所谓“三地址指令”（3-address instruction），一般形式为：
-op dest, src1, src2
-许多操作都是二元运算+赋值。三地址指令正好可以指定两个源和一个目标，能非常灵活的支持二元操作与赋值的组合。ARM处理器的主要指令集就是三地址形式的。
-C里要是这样写的话：
-C代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>a += b;  </li>
-</ol>
-<p>a += b;
-变成:
-add a, b
-这就是所谓“二地址指令”，一般形式为：
-op dest, src
-它要支持二元操作，就只能把其中一个源同时也作为目标。上面的add a, b在执行过后，就会破坏a原有的值，而b的值保持不变。x86系列的处理器就是二地址形式的。
-上面提到的三地址与二地址形式的指令集，一般就是通过“基于寄存器的架构”来实现的。例如典型的RISC架构会要求除load和store以外，其它用于运算的指令的源与目标都要是寄存器。
-显然，指令集可以是任意“n地址”的，n属于自然数。那么一地址形式的指令集是怎样的呢？
-想像一下这样一组指令序列：
-add 5
-sub 3
-这只指定了操作的源，那目标是什么？一般来说，这种运算的目标是被称为“累加器”（accumulator）的专用寄存器，所有运算都靠更新累加器的状态来完成。那么上面两条指令用C来写就类似：
-C代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>acc += 5;  </li>
-<li>acc -= 3;  </li>
-</ol>
-<p>acc += 5;</p>
-<p>acc -= 3;
-只不过acc是“隐藏”的目标。基于累加器的架构近来比较少见了，在很老的机器上繁荣过一段时间。
-那“n地址”的n如果是0的话呢？
-看这样一段Java字节码：
-Java bytecode代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>iconst_1  </li>
-<li>iconst_2  </li>
-<li>iadd  </li>
-<li>istore_0  </li>
-</ol>
-<p>iconst_1</p>
-<p>iconst_2
-iadd</p>
-<p>istore_0
-注意那个iadd（表示整型加法）指令并没有任何参数。连源都无法指定了，零地址指令有什么用？？
-零地址意味着源与目标都是隐含参数，其实现依赖于一种常见的数据结构——没错，就是栈。上面的iconst_1、iconst_2两条指令，分别向一个叫做“求值栈”（evaluation stack，也叫做operand stack“操作数栈”或者expression stack“表达式栈”）的地方压入整型常量1、2。iadd指令则从求值栈顶弹出2个值，将值相加，然后把结果压回到栈顶。istore_0指令从求值栈顶弹出一个值，并将值保存到局部变量区的第一个位置（slot 0）。
-零地址形式的指令集一般就是通过“基于栈的架构”来实现的。请一定要注意，这个栈是指“求值栈”，而不是与系统调用栈（system call stack，或者就叫system stack）。千万别弄混了。有些虚拟机把求值栈实现在系统调用栈上，但两者概念上不是一个东西。
-由于指令的源与目标都是隐含的，零地址指令的“密度”可以非常高——可以用更少空间放下更多条指令。因此在空间紧缺的环境中，零地址指令是种可取的设计。但零地址指令要完成一件事情，一般会比二地址或者三地址指令许多更多条指令。上面Java字节码做的加法，如果用x86指令两条就能完成了：
-X86 asm代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>mov  eax, 1  </li>
-<li>add  eax, 2  </li>
-</ol>
-<p>mov  eax, 1</p>
-<p>add  eax, 2
-（好吧我犯规了，istore<em>0对应的保存我没写。但假如局部变量比较少的话也不必把EAX的值保存（“溢出”，register spilling）到调用栈上，就这样吧 =</em>=
-其实就算把结果保存到栈上也就是多一条指令而已……）
-一些比较老的解释器，例如<a href="http://www.ruby-lang.org/" target="_blank">CRuby</a>在1.9引入<a href="http://www.atdot.net/yarv/" target="_blank">YARV</a>作为新的VM之前的解释器，还有SquirrleFish之前的老JavaScriptCore以及它的前身KJS，它们内部是树遍历式解释器；解释器递归遍历树，树的每个节点的操作依赖于解释其各个子节点返回的值。这种解释器里没有所谓的求值栈，也没有所谓的虚拟寄存器，所以不适合以“基于栈”或“基于寄存器”去描述。
-而像V8那样直接编译JavaScript生成机器码，而不通过中间的字节码的中间表示的JavaScript引擎，它内部有虚拟寄存器的概念，但那只是普通native编译器的正常组成部分。我觉得也不应该用“基于栈”或“基于寄存器”去描述它。
-V8在内部也用了“求值栈”（在V8里具体叫“表达式栈”）的概念来简化生成代码的过程，在编译过程中进行“抽象解释”，使用所谓“虚拟栈帧”来记录局部变量与求值栈的状态；但在真正生成代码的时候会做窥孔优化，消除冗余的push/pop，将许多对求值栈的操作转变为对寄存器的操作，以此提高代码质量。于是最终生成出来的代码看起来就不像是基于栈的代码了。
-关于JavaScript引擎的实现方式，下文会再提到。
-<strong>4、基于栈与基于寄存器架构的VM，用哪个好？</strong>
-如果是要模拟现有的处理器，那没什么可选的，原本处理器采用了什么架构就只能以它为源。但HLL VM的架构通常可以自由构造，有很大的选择余地。为什么许多主流HLL VM，诸如JVM、CLI、CPython、CRuby 1.9等，都采用了基于栈的架构呢？我觉得这有三个主要原因：
-·实现简单
-由于指令中不必显式指定源与目标，VM可以设计得很简单，不必考虑为临时变量分配空间的问题，求值过程中的临时数据存储都让求值栈包办就行。
-更新：回帖中cscript指出了这句不太准确，应该是针对基于栈架构的指令集生成代码的编译器更容易实现，而不是VM更容易实现。
-·该VM是为某类资源非常匮乏的硬件而设计的
-这类硬件的存储器可能很小，每一字节的资源都要节省。零地址指令比其它形式的指令更紧凑，所以是个自然的选择。
-·考虑到可移植性
-处理器的特性各个不同：典型的CISC处理器的通用寄存器数量很少，例如32位的<a href="http://en.wikipedia.org/wiki/X86" target="_blank">x86</a>就只有8个32位通用寄存器（如果不算EBP和ESP那就是6个，现在一般都算上）；典型的RISC处理器的各种寄存器数量多一些，例如<a href="http://en.wikipedia.org/wiki/ARM_architecture" target="_blank">ARM</a>有16个32位通用寄存器，Sun的<a href="http://en.wikipedia.org/wiki/SPARC" target="_blank">SPARC</a>在一个寄存器窗口里则有24个通用寄存器（8 in，8 local，8 out）。
-假如一个VM采用基于寄存器的架构（它接受的指令集大概就是二地址或者三地址形式的），为了高效执行，一般会希望能把源架构中的寄存器映射到实际机器上寄存器上。但是VM里有些很重要的辅助数据会经常被访问，例如一些VM会保存源指令序列的程序计数器（program counter，PC），为了效率，这些数据也得放在实际机器的寄存器里。如果源架构中寄存器的数量跟实际机器的一样，或者前者比后者更多，那源架构的寄存器就没办法都映射到实际机器的寄存器上；这样VM实现起来比较麻烦，与能够全部映射相比效率也会大打折扣。像Dalvik VM的解释器实现，就是把虚拟寄存器全部映射到栈帧（内存）里的，这跟把局部变量区与操作数栈都映射到内存里的JVM解释器实现相比实际区别不太大。
-如果一个VM采用基于栈的架构，则无论在怎样的实际机器上，都很好实现——它的源架构里没有任何通用寄存器，所以实现VM时可以比较自由的分配实际机器的寄存器。于是这样的VM可移植性就比较高。作为优化，基于栈的VM可以用编译方式实现，“求值栈”实际上也可以由编译器映射到寄存器上，减轻数据移动的开销。
-回到主题，基于栈与基于寄存器的架构，谁更快？看看现在的实际处理器，大多都是基于寄存器的架构，从侧面反映出它比基于栈的架构更优秀。
-而对于VM来说，源架构的求值栈或者寄存器都可能是用实际机器的内存来模拟的，所以性能特性与实际硬件又有点不同。一般认为基于寄存器的架构对VM来说也是更快的，原因是：虽然零地址指令更紧凑，但完成操作需要更多的load/store指令，也意味着更多的指令分派（instruction dispatch）次数与内存访问次数；访问内存是执行速度的一个重要瓶颈，二地址或三地址指令虽然每条指令占的空间较多，但总体来说可以用更少的指令完成操作，指令分派与内存访问次数都较少。
-这方面有篇被引用得很多的论文讲得比较清楚，<a href="http://www.usenix.org/events/vee05/full_papers/p153-yunhe.pdf" target="_blank">Virtual Machine Showdown: Stack Versus Registers</a>，是在VEE 2005发表的。VEE是Virtual Execution Environment的缩写，是ACM下SIGPLAN组织的一个会议，专门研讨虚拟机的设计与实现的。可以去找找这个会议往年的论文，很多都值得读。
-<strong>5、树遍历解释器图解</strong>
-在演示基于栈与基于寄存器的VM的例子前，先回头看看更原始的解释器形式。
-前面提到解析器的时候用了i = a + b /<em> c的例子，现在让我们来看看由解析器生成的AST要是交给一个树遍历解释器，会如何被解释执行呢？
-用文字说不够形象，还是看图吧：
-<img src="" alt="">
-这是对AST的后序遍历：假设有一个eval(Node n)函数，用于解释AST上的每个节点；在解释一个节点时如果依赖于子树的操作，则对子节点递归调用eval(Node n)，从这些递归调用的返回值获取需要的值（或副作用）——也就是说子节点都eval好了之后，父节点才能进行自己的eval——典型的后序遍历。
-（话说，上图中节点左下角有蓝色标记的说明那是节点的“内在属性”。从<a href="http://en.wikipedia.org/wiki/Attribute_grammar" target="_blank">属性语法</a>的角度看，如果一个节点的某个属性的值只依赖于自身或子节点，则该属性被称为“综合属性”（synthesized attribute）；如果一个节点的某个属性只依赖于自身、父节点和兄弟节点，则该属性被称为“继承属性”（inherited attribute）。上图中节点右下角的红色标记都只依赖子节点来计算，显然是综合属性。）
-SquirrelFish之前的JavaScriptCore、CRuby 1.9之前的CRuby就都是采用这种方式来解释执行的。
-可能需要说明的：
-·左值与右值
-在源代码i = a + b /</em> c中，赋值符号左侧的i是一个标识符，表示一个变量，取的是变量的“左值”（也就是与变量i绑定的存储单元）；右侧的a、b、c虽然也是变量，但取的是它们的右值（也就是与变量绑定的存储单元内的值）。在许多编程语言中，左值与右值在语法上没有区别，它们实质的差异容易被忽视。一般来说左值可以作为右值使用，反之则不一定。例如数字1，它自身有值就是1，可以作为右值使用；但它没有与可赋值的存储单元相绑定，所以无法作为左值使用。
-左值不一定只是简单的变量，还可以是数组元素或者结构体的域之类，可能由复杂的表达式所描述。因此左值也是需要计算的。
-·优先级、结合性与求值顺序
-这三个是不同的概念，却经常被混淆。通过AST来看就很容易理解：（假设源码是从左到右输入的）
-所谓<strong>优先级</strong>，就是不同操作相邻出现时，AST节点与根的距离的关系。优先级高的操作会更远离根，优先级低的操作会更接近根。为什么？因为整棵AST是以后序遍历求值的，显然节点离根越远就越早被求值。
-所谓<strong>结合性</strong>，就是当同类操作相邻出现时，操作的先后顺序同AST节点与根的距离的关系。如果是左结合，则先出现的操作对应的AST节点比后出现的操作的节点离根更远；换句话说，先出现的节点会是后出现节点的子节点。
-所谓<strong>求值顺序</strong>，就是在遍历子节点时的顺序。对二元运算对应的节点来说，先遍历左子节点再遍历右子节点就是左结合，反之则是右结合。
-这三个概念与运算的联系都很紧密，但实际描述的是不同的关系。前两者是解析器根据语法生成AST时就已经决定好的，后者则是解释执行或者生成代码而去遍历AST时决定的。
-在没有副作用的环境中，给定优先级与结合性，则无论求值顺序是怎样的都能得到同样的结果；而在有副作用的环境中，求值顺序会影响结果。
-赋值运算虽然是右结合的，但仍然可以用从左到右的求值顺序；事实上Java、C/#等许多语言都在规范里写明表达式的求值顺序是从左到右的。上面的例子中就先遍历的=的左侧，求得i的左值；再遍历=的右侧，得到表达式的值23；最后执行=自身，完成对i的赋值。
-所以如果你要问：赋值在类似C的语言里明明是右结合的运算，为什么你先遍历左子树再遍历右子树？上面的说明应该能让你发现你把结合性与求值顺序混为一谈了。
-看看Java从左到右求值顺序的例子：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public class EvalOrderDemo {  </li>
-<li>public static void main(String[] args) {  </li>
-<li>int[] arr = new int[1];  </li>
-<li>int a = 1;  </li>
-<li>int b = 2;  </li>
-<li>arr[0] = a + b;  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>public class EvalOrderDemo {</p>
-<pre><code>public static void main(String[] args) {
-    int[] arr = new int[1];
-
-    int a = 1;
-    int b = 2;
-
-    arr[0] = a + b;
-}
-</code></pre><p>}
-由javac编译，得到arr[0] = a + b对应的字节码是：
-Java bytecode代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>// 左子树：数组下标  </li>
-<li>// a[0]  </li>
-<li>aload_1  </li>
-<li>iconst_0  </li>
-<li></li>
-<li>// 右子树：加法  </li>
-<li>// a  </li>
-<li>iload_2  </li>
-<li>// b  </li>
-<li>iload_3  </li>
-<li>// +  </li>
-<li>iadd  </li>
-<li></li>
-<li>// 根节点：赋值  </li>
-<li>iastore  </li>
-</ol>
-<p>// 左子树：数组下标</p>
-<p>// a[0]
-aload_1</p>
-<p>iconst_0</p>
-<p>// 右子树：加法
-// a</p>
-<p>iload_2
-// b</p>
-<p>iload_3
-// +</p>
-<p>iadd</p>
-<p>// 根节点：赋值
-iastore
-<strong>6、从树遍历解释器进化为基于栈的字节码解释器的前端</strong>
-如果你看到树形结构与后序遍历，并且知道后缀记法（或者逆波兰记法，<a href="http://en.wikipedia.org/wiki/Reverse_Polish_notation" target="_blank">reverse Polish notation</a>）的话，那敏锐的你或许已经察觉了：要解释执行AST，可以先通过后序遍历AST生成对应的后缀记法的操作序列，然后再解释执行该操作序列。这样就把树形结构压扁，成为了线性结构。
-树遍历解释器对AST的求值其实隐式依赖于调用栈：eval(Node n)的递归调用关系是靠调用栈来维护的。后缀表达式的求值则通常显式依赖于一个栈，在遇到操作数时将其压入栈中，遇到运算时将合适数量的值从栈顶弹出进行运算，再将结果压回到栈上。这种描述看起来眼熟么？没错，后缀记法的求值中的核心数据结构就是前文提到过的“求值栈”（或者叫操作数栈，现在应该更好理解了）。后缀记法也就与基于栈的架构联系了起来：后者可以很方便的执行前者。同理，零地址指令也与树形结构联系了起来：可以通过一个栈方便的把零地址指令序列再转换回到树的形式。
-Java字节码与Java源码联系紧密，前者可以看成后者的后缀记法。如果想在JVM上开发一种语义能直接映射到Java上的语言，那么编译器很好写：秘诀就是后序遍历AST。
-那么让我们再来看看，同样是i = a + b /<em> c这段源码对应的AST，生成Java字节码的例子：
-<img src="" alt="">
-（假设a、b、c、i分别被分配到局部变量区的slot 0到slot 3）
-能看出Java字节码与源码间的对应关系了么？
-一个Java编译器的输入是Java源代码，输出是含有Java字节码的.class文件。它里面主要包含扫描器与解析器，语义分析器（包括类型检查器/类型推导器等），代码生成器等几大部分。上图所展示的就是代码生成器的工作。对Java编译器来说，代码生成就到字节码的层次就结束了；而对native编译器来说，这里刚到生成中间表示的部分，接下去是优化与最终的代码生成。
-如果你对<a href="http://rednaxelafx.iteye.com/blog/382412" target="_blank">Python</a>、<a href="http://lifegoo.pluskid.org/upload/doc/yarv/yarv_iset.html" target="_blank">CRuby 1.9</a>之类有所了解，会发现它们的字节码跟Java字节码在“基于栈”的这一特征上非常相似。其实它们都是由“编译器+VM”构成的，概念上就像是Java编译器与JVM融为一体一般。
-从这点看，Java与Python和Ruby可以说是一条船上的。虽说内部具体实现的显著差异使得先进的JVM比简单的JVM快很多，而JVM又普遍比Python和Ruby快很多。
-当解释器中用于解释执行的中间代码是树形时，其中能被称为“编译器”的部分基本上就是解析器；中间代码是线性形式（如字节码）时，其中能被称为编译器的部分就包括上述的代码生成器部分，更接近于所谓“完整的编译器”；如果虚拟机是基于寄存器架构的，那么编译器里至少还得有虚拟寄存器分配器，又更接近“完整的编译器”了。
-<em>*7、基于栈与基于寄存器架构的VM的一组图解</em></em>
-要是拿两个分别实现了基于栈与基于寄存器架构、但没有直接联系的VM来对比，效果或许不会太好。现在恰巧有两者有紧密联系的例子——JVM与Dalvik VM。JVM的字节码主要是零地址形式的，概念上说JVM是基于栈的架构。Google Android平台上的应用程序的主要开发语言是Java，通过其中的<a href="http://en.wikipedia.org/wiki/Dalvik_virtual_machine" target="_blank">Dalvik VM</a>来运行Java程序。为了能正确实现语义，Dalvik VM的许多设计都考虑到与JVM的兼容性；但它却采用了基于寄存器的架构，其字节码主要是二地址/三地址混合形式的，乍一看可能让人纳闷。考虑到Android有明确的目标：面向移动设备，特别是最初要对ARM提供良好的支持。ARM9有16个32位通用寄存器，Dalvik VM的架构也常用16个虚拟寄存器（一样多……没办法把虚拟寄存器全部直接映射到硬件寄存器上了）；这样Dalvik VM就不用太顾虑可移植性的问题，优先考虑在ARM9上以高效的方式实现，发挥基于寄存器架构的优势。
-Dalvik VM的主要设计者<a href="http://www.milk.com/home/danfuzz/" target="_blank">Dan Bornstein</a>在Google I/O 2008上做过一个<a href="http://sites.google.com/site/io/dalvik-vm-internals" target="_blank">关于Dalvik内部实现</a>的演讲；同一演讲也在Google Developer Day 2008 China和Japan等会议上重复过。这个演讲中Dan特别提到了Dalvik VM与JVM在字节码设计上的区别，指出Dalvik VM的字节码可以用更少指令条数、更少内存访问次数来完成操作。（看不到YouTube的请自行想办法）
-眼见为实。要自己动手感受一下该例子，请先确保已经正确安装JDK 6，并从<a href="http://developer.android.com/sdk/" target="_blank">官网</a>获取Android SDK 1.6R1。连不上官网的也请自己想办法。
-创建Demo.java文件，内容为：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public class Demo {  </li>
-<li>public static void foo() {  </li>
-<li>int a = 1;  </li>
-<li>int b = 2;  </li>
-<li>int c = (a + b) /* 5;  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>public class Demo {</p>
-<pre><code>public static void foo() {
-    int a = 1;
-
-    int b = 2;
-    int c = (a + b) /* 5;
-
-}
-</code></pre><p>}
-通过javac编译，得到Demo.class。通过javap可以看到foo()方法的字节码是：
-Java bytecode代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>0:  iconst_1  </li>
-<li>1:  istore_0  </li>
-<li>2:  iconst_2  </li>
-<li>3:  istore_1  </li>
-<li>4:  iload_0  </li>
-<li>5:  iload_1  </li>
-<li>6:  iadd  </li>
-<li>7:  iconst_5  </li>
-<li>8:  imul  </li>
-<li>9:  istore_2  </li>
-<li>10: return  </li>
-</ol>
-<p>0:  iconst_1</p>
-<p>1:  istore_0
-2:  iconst_2</p>
-<p>3:  istore_1
-4:  iload_0</p>
-<p>5:  iload_1
-6:  iadd</p>
-<p>7:  iconst_5
-8:  imul</p>
-<p>9:  istore_2
-10: return
-接着用Android SDK里platforms\android-1.6\tools目录中的dx工具将Demo.class转换为dex格式。转换时可以直接以文本形式dump出dex文件的内容。使用下面的命令：
-Command prompt代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>dx --dex --verbose --dump-to=Demo.dex.txt --dump-method=Demo.foo --verbose-dump Demo.class  </li>
-</ol>
-<p>dx --dex --verbose --dump-to=Demo.dex.txt --dump-method=Demo.foo --verbose-dump Demo.class
-可以看到foo()方法的字节码是：
-Dalvik bytecode代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>0000: const/4       v0, /#int 1 // /#1  </li>
-<li>0001: const/4       v1, /#int 2 // /#2  </li>
-<li>0002: add-int/2addr v0, v1  </li>
-<li>0003: mul-int/lit8  v0, v0, /#int 5 // /#05  </li>
-<li>0005: return-void  </li>
-</ol>
-<p>0000: const/4       v0, /#int 1 // /#1</p>
-<p>0001: const/4       v1, /#int 2 // /#2
-0002: add-int/2addr v0, v1</p>
-<p>0003: mul-int/lit8  v0, v0, /#int 5 // /#05
-0005: return-void
-（原本的输出里还有些code-address、local-snapshot等，那些不是字节码的部分，可以忽略。）
-让我们看看两个版本在概念上是如何工作的。
-JVM：
-<img src="" alt="">
-（图中数字均以十六进制表示。其中字节码的一列表示的是字节码指令的实际数值，后面跟着的助记符则是其对应的文字形式。标记为红色的值是相对上一条指令的执行状态有所更新的值。下同）
-说明：Java字节码以1字节为单元。上面代码中有11条指令，每条都只占1单元，共11单元==11字节。
-程序计数器是用于记录程序当前执行的位置用的。对Java程序来说，每个线程都有自己的PC。PC以字节为单位记录当前运行位置里方法开头的偏移量。
-每个线程都有一个Java栈，用于记录Java方法调用的“活动记录”（activation record）。Java栈以帧（frame）为单位线程的运行状态，每调用一个方法就会分配一个新的栈帧压入Java栈上，每从一个方法返回则弹出并撤销相应的栈帧。
-每个栈帧包括局部变量区、求值栈（JVM规范中将其称为“操作数栈”）和其它一些信息。局部变量区用于存储方法的参数与局部变量，其中参数按源码中从左到右顺序保存在局部变量区开头的几个slot。求值栈用于保存求值的中间结果和调用别的方法的参数等。两者都以字长（32位的字）为单位，每个slot可以保存byte、short、char、int、float、reference和returnAddress等长度小于或等于32位的类型的数据；相邻两项可用于保存long和double类型的数据。每个方法所需要的局部变量区与求值栈大小都能够在编译时确定，并且记录在.class文件里。
-在上面的例子中，Demo.foo()方法所需要的局部变量区大小为3个slot，需要的求值栈大小为2个slot。Java源码的a、b、c分别被分配到局部变量区的slot 0、slot 1和slot 2。可以观察到Java字节码是如何指示JVM将数据压入或弹出栈，以及数据是如何在栈与局部变量区之前流动的；可以看到数据移动的次数特别多。动画里可能不太明显，iadd和imul指令都是要从求值栈弹出两个值运算，再把结果压回到栈上的；光这样一条指令就有3次概念上的数据移动了。
-对了，想提醒一下：Java的局部变量区并不需要把某个局部变量固定分配在某个slot里；不仅如此，在一个方法内某个slot甚至可能保存不同类型的数据。如何分配slot是编译器的自由。从类型安全的角度看，只要对某个slot的一次load的类型与最近一次对它的store的类型匹配，JVM的字节码校验器就不会抱怨。以后再找时间写写这方面。
-Dalvik VM：
-<img src="" alt="">
-说明：Dalvik字节码以16位为单元（或许叫“双字节码”更准确 =_=|||）。上面代码中有5条指令，其中mul-int/lit8指令占2单元，其余每条都只占1单元，共6单元==12字节。
-与JVM相似，在Dalvik VM中每个线程都有自己的PC和调用栈，方法调用的活动记录以帧为单位保存在调用栈上。PC记录的是以16位为单位的偏移量而不是以字节为单位的。
-与JVM不同的是，Dalvik VM的栈帧中没有局部变量区与求值栈，取而代之的是一组虚拟寄存器。每个方法被调用时都会得到自己的一组虚拟寄存器。常用v0-v15这16个，也有少数指令可以访问v0-v255范围内的256个虚拟寄存器。与JVM相同的是，每个方法所需要的虚拟寄存器个数都能够在编译时确定，并且记录在.dex文件里；每个寄存器都是字长（32位），相邻的一对寄存器可用于保存64位数据。方法的参数按源码中从左到右的顺序保存在末尾的几个虚拟寄存器里。
-与JVM版相比，可以发现Dalvik版程序的指令数明显减少了，数据移动次数也明显减少了，用于保存临时结果的存储单元也减少了。
-你可能会抱怨：上面两个版本的代码明明不对应：JVM版到return前完好持有a、b、c三个变量的值；而Dalvik版到return-void前只持有b与c的值（分别位于v0与v1），a的值被刷掉了。
-但注意到a与b的特征：它们都只在声明时接受过一次赋值，赋值的源是常量。这样就可以对它们应用<a href="http://en.wikipedia.org/wiki/Constant_folding" target="_blank">常量传播</a>，将
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>int c = (a + b) /* 5;  </li>
-</ol>
-<p>int c = (a + b) /* 5;
-替换为
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>int c = (1 + 2) /* 5;  </li>
-</ol>
-<p>int c = (1 + 2) /* 5;
-然后可以再对c的初始化表达式应用常量折叠，进一步替换为：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>int c = 15;  </li>
-</ol>
-<p>int c = 15;
-把变量的每次状态更新（包括初始赋值在内）称为变量的一次“定义”（definition），把每次访问变量（从变量读取值）称为变量的一次“使用”（use），则可以把代码整理为“使用-定义链”（简称UD链，<a href="http://en.wikipedia.org/wiki/Use-define_chain" target="_blank">use-define chain</a>）。显然，一个变量的某次定义要被使用过才有意义。上面的例子经过常量传播与折叠后，我们可以分析得知变量a、b、c都只被定义而没有被使用。于是它们的定义就成为了无用代码（dead code），可以安全的被消除。
-上面一段的分析用一句话描述就是：由于foo()里没有产生外部可见的副作用，所以foo()的整个方法体都可以被优化为空。经过dx工具处理后，Dalvik版程序相对JVM版确实是稍微优化了一些，不过没有影响程序的语义，程序的正确性是没问题的。这是其一。
-其二是Dalvik版代码只要多分配一个虚拟寄存器就能在return-void前同时持有a、b、c三个变量的值，指令几乎没有变化：
-Dalvik bytecode代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>0000: const/4      v0, /#int 1 // /#1  </li>
-<li>0001: const/4      v1, /#int 2 // /#2  </li>
-<li>0002: add-int      v2, v0, v1  </li>
-<li>0004: mul-int/lit8 v2, v2, /#int 5 // /#05  </li>
-<li>0006: return-void  </li>
-</ol>
-<p>0000: const/4      v0, /#int 1 // /#1</p>
-<p>0001: const/4      v1, /#int 2 // /#2
-0002: add-int      v2, v0, v1</p>
-<p>0004: mul-int/lit8 v2, v2, /#int 5 // /#05
-0006: return-void
-这样比原先的版本多使用了一个虚拟寄存器，指令方面也多用了一个单元（add-int指令占2单元）；但指令的条数没变，仍然是5条，数据移动的次数也没变。
-题外话1：Dalvik VM是基于寄存器的，x86也是基于寄存器的，但两者的“寄存器”却相当不同：前者的寄存器是每个方法被调用时都有自己一组私有的，后者的寄存器则是全局的。也就是说，概念上Dalvik VM字节码中不用担心保护寄存器的问题，某个方法在调用了别的方法返回过来后自己的寄存器的值肯定跟调用前一样。而x86程序在调用函数时要考虑清楚<a href="http://en.wikipedia.org/wiki/Calling_convention" target="_blank">calling convention</a>，调用方在调用前要不要保护某些寄存器的当前状态，还是说被调用方会处理好这些问题，麻烦事不少。Dalvik VM这种虚拟寄存器让人想起一些实际处理器的“寄存器窗口”，例如SPARC的<a href="http://www.usenix.org/events/sec01/full_papers/frantzen/frantzen_html/node5.html" target="_blank">Register Windows</a>也是保证每个函数都觉得自己有“私有的一组寄存器”，减轻了在代码里处理寄存器保护的麻烦——扔给硬件和操作系统解决了。<a href="http://en.wikipedia.org/wiki/Itanium" target="_blank">IA-64</a>也有寄存器窗口的概念。
-（当然，Dalvik VM与x86的“寄存器”一个是虚拟寄存器一个是真实硬件的ISA提供的寄存器，本来也不在一个级别上…上面这段只是讨论寄存器的语义。）
-题外话2：Dalvik的.dex文件在未压缩状态下的体积通常比同等内容的.jar文件在deflate压缩后还要小。但光从字节码看，Java字节码几乎总是比Dalvik的小，那.dex文件的体积是从哪里来减出来的呢？这主要得益与.dex文件对常量池的压缩，一个.dex文件中所有类都共享常量池，使得相同的字符串、相同的数字常量等都只出现一次，自然能大大减小体积。相比之下，.jar文件中每个类都持有自己的常量池，诸如&quot;Ljava/lang/Object;&quot;这种常见的字符串会被重复多次。Sun自己也有进一步压缩JAR的工具，Pack200，对应的标准是<a href="http://jcp.org/en/jsr/detail?id=200" target="_blank">JSR 200</a>。它的主要应用场景是作为JAR的网络传输格式，以更高的压缩比来减少文件传输时间。在<a href="http://java.sun.com/j2se/1.5.0/docs/guide/deployment/deployment-guide/pack200.html" target="_blank">官方文档</a>提到了Pack200所用到的压缩技巧，
-JDK 5.0 Documentation 写道</p>
-<p>Pack200 works most efficiently on Java class files. It uses several techniques to efficiently reduce the size of JAR files:</p>
-<ul>
-<li>It merges and sorts the constant-pool data in the class files and co-locates them in the archive.</li>
-<li>It removes redundant class attributes.</li>
-<li>It stores internal data structures.</li>
-<li>It use delta and variable length encoding.</li>
-<li>It chooses optimum coding types for secondary compression.
-可见.dex文件与Pack200采用了一些相似的减小体积的方法。很可惜目前还没有正式发布的JVM支持直接加载Pack200格式的归档，毕竟网络传输才是Pack200最初构想的应用场景。<h1 id="-jvm-dalvik-vm-vm-vm-">再次提醒注意，<strong>上面的描述是针对概念上的JVM与Dalvik VM，而不是针对它们的具体实现</strong>。实现VM时可以采用许多优化技巧去减少性能损失，使得实际的运行方式与概念中的不完全相符，只要最终的运行结果满足原本概念上的VM所实现的语义就行。</h1>
-上面“简单”的提了些讨论点，不过还没具体到JavaScript引擎，抱歉。弄得太长了，只好在这里先拆分一次……有些东西想写的，洗个澡又忘记了。等想起来再补充 orz
-“简单”是相对于实际应该掌握的信息量而言。上面写的都还没挠上痒痒，心虚。
-Anyway。根据拆分的现状，下一篇应该是讨论动态语言与编译的问题，然后再下一篇会看看解释器的演化方法，再接着会看看JavaScript引擎的状况（主要针对V8和Nitro，也会谈谈Tamarin。就不讨论JScript了）。
-关于推荐资料，在<a href="http://rednaxelafx.iteye.com/link?tag=virtual+machine" target="_blank">“我的收藏”的virtual machine标签</a>里就有不少值得一读的资料。如果只是对JavaScript引擎相关感兴趣的话也可以选着读些。我的收藏里还有v8和tamarin等标签的，资料有的是 ^ ^
-能有耐心读到结尾的同学们，欢迎提出意见和建议，以及指出文中的错漏 ^<em>^
-不像抓到虫就给美分的大师，我没那种信心……错漏难免，我也需要进一步学习。拜托大家了～
-P.S. 画图真的很辛苦，加上JavaEye的带宽也不是无限的……所以拜托不要直接链接这帖里的图 &lt;(</em> _)&gt;
-有需要原始图片的可以跟我联系。我是画成多帧PNG然后转换为GIF发出来的。上面的PNG图片都还保留有原始的图层信息，要拿去再编辑也很方便 ^ ^
-更新1：
-原本在树遍历解释器图解的小节中，我用的是这幅图：
-<img src="" alt="">
-其实上图画得不准确，a、b、c的右值不应该画在节点上的；节点应该只保存了它们的左值才对，要获取对应的右值就要查询变量表。我修改了图更新到正文了。原本的图里对i的赋值看起来很奇怪，就像是遍历过程经过了两次i节点一般，而事实不是那样的。</li>
-</ul>
+        <h1 id="-">软件设计文档二三事 - 善攻者动于九天之上 - 博客园</h1>
+<p><img src="" alt=""> Saving Data...
+正在保存数据...
+正在儲存資料...</p>
 
       
     </div>
@@ -1595,8 +396,8 @@ P.S. 画图真的很辛苦，加上JavaEye的带宽也不是无限的……所�
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_设计类/">Java_设计类</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_设计类/" class="label label-success">Java_设计类</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--软件设计文档二三事-善攻者动于九天之上-博客园/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_设计类--软件设计文档二三事-善攻者动于九天之上-博客园" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1611,210 +412,39 @@ P.S. 画图真的很辛苦，加上JavaEye的带宽也不是无限的……所�
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--深入理解JVM/">深入理解JVM</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--浅谈Java开发中的设计模式/">浅谈Java开发中的设计模式</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--深入理解JVM/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--浅谈Java开发中的设计模式/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-jvm">深入理解JVM</h1>
-<p><strong>1 Java技术与Java虚拟机</strong></p>
-<p>说起Java，人们首先想到的是Java编程语言，然而事实上，Java是一种技术，它由四方面组成: Java编程语言、Java类文件格式、Java虚拟机和Java应用程序接口(Java API)。它们的关系如下图所示：</p>
-<p><img src="" alt=""></p>
-<p>图1 Java四个方面的关系</p>
-<p>运行期环境代表着Java平台，开发人员编写Java代码(.java文件)，然后将之编译成字节码(.class文件)。最后字节码被装入内存，一旦字节码进入虚拟机，它就会被解释器解释执行，或者是被即时代码发生器有选择的转换成机器码执行。从上图也可以看出Java平台由Java虚拟机和 Java应用程序接口搭建，Java语言则是进入这个平台的通道，用Java语言编写并编译的程序可以运行在这个平台上。这个平台的结构如下图所示：</p>
-<p><img src="" alt=""></p>
-<p>在Java平台的结构中, 可以看出，Java虚拟机(JVM) 处在核心的位置，是程序与底层操作系统和硬件无关的关键。它的下方是移植接口，移植接口由两部分组成：适配器和Java操作系统, 其中依赖于平台的部分称为适配器；JVM 通过移植接口在具体的平台和操作系统上实现；在JVM 的上方是Java的基本类库和扩展类库以及它们的API， 利用Java API编写的应用程序(application) 和小程序(Java applet) 可以在任何Java平台上运行而无需考虑底层平台, 就是因为有Java虚拟机(JVM)实现了程序与操作系统的分离，从而实现了Java 的平台无关性。</p>
-<p>那么到底什么是Java虚拟机(JVM)呢？通常我们谈论JVM时，我们的意思可能是：</p>
-<ol>
-<li><p>对JVM规范的的比较抽象的说明；</p>
-</li>
-<li><p>对JVM的具体实现；</p>
-</li>
-<li><p>在程序运行期间所生成的一个JVM实例。</p>
-</li>
-</ol>
-<p>对JVM规范的的抽象说明是一些概念的集合，它们已经在书《The Java Virtual Machine Specification》（《Java虚拟机规范》）中被详细地描述了；对JVM的具体实现要么是软件，要么是软件和硬件的组合，它已经被许多生产厂商所实现，并存在于多种平台之上；运行Java程序的任务由JVM的运行期实例单个承担。在本文中我们所讨论的Java虚拟机(JVM)主要针对第三种情况而言。它可以被看成一个想象中的机器，在实际的计算机上通过软件模拟来实现，有自己想象中的硬件，如处理器、堆栈、寄存器等，还有自己相应的指令系统。</p>
-<p>JVM在它的生存周期中有一个明确的任务，那就是运行Java程序，因此当Java程序启动的时候，就产生JVM的一个实例；当程序运行结束的时候，该实例也跟着消失了。下面我们从JVM的体系结构和它的运行过程这两个方面来对它进行比较深入的研究。</p>
-<p><strong>2 Java虚拟机的体系结构</strong></p>
-<p>刚才已经提到，JVM可以由不同的厂商来实现。由于厂商的不同必然导致JVM在实现上的一些不同，然而JVM还是可以实现跨平台的特性，这就要归功于设计JVM时的体系结构了。</p>
-<p>我们知道，一个JVM实例的行为不光是它自己的事，还涉及到它的子系统、存储区域、数据类型和指令这些部分，它们描述了JVM的一个抽象的内部体系结构，其目的不光规定实现JVM时它内部的体系结构，更重要的是提供了一种方式，用于严格定义实现时的外部行为。每个JVM都有两种机制，一个是装载具有合适名称的类(类或是接口)，叫做类装载子系统；另外的一个负责执行包含在已装载的类或接口中的指令，叫做运行引擎。每个JVM又包括方法区、堆、 Java栈、程序计数器和本地方法栈这五个部分，这几个部分和类装载机制与运行引擎机制一起组成的体系结构图为：</p>
-<p><img src="" alt=""></p>
-<p>图3 JVM的体系结构</p>
-<p>JVM的每个实例都有一个它自己的方法域和一个堆，运行于JVM内的所有的线程都共享这些区域；当虚拟机装载类文件的时候，它解析其中的二进制数据所包含的类信息，并把它们放到方法域中；当程序运行的时候，JVM把程序初始化的所有对象置于堆上；而每个线程创建的时候，都会拥有自己的程序计数器和 Java栈，其中程序计数器中的值指向下一条即将被执行的指令，线程的Java栈则存储为该线程调用Java方法的状态；本地方法调用的状态被存储在本地方法栈，该方法栈依赖于具体的实现。</p>
-<p>下面分别对这几个部分进行说明。</p>
-<p>执行引擎处于JVM的核心位置，在Java虚拟机规范中，它的行为是由指令集所决定的。尽管对于每条指令，规范很详细地说明了当JVM执行字节码遇到指令时，它的实现应该做什么，但对于怎么做却言之甚少。Java虚拟机支持大约248个字节码。每个字节码执行一种基本的CPU运算,例如,把一个整数加到寄存器,子程序转移等。Java指令集相当于Java程序的汇编语言。</p>
-<p>Java指令集中的指令包含一个单字节的操作符,用于指定要执行的操作,还有0个或多个操作数,提供操作所需的参数或数据。许多指令没有操作数,仅由一个单字节的操作符构成。</p>
-<p>虚拟机的内层循环的执行过程如下:</p>
-<p>do{</p>
-<p>取一个操作符字节;</p>
-<p>根据操作符的值执行一个动作;</p>
-<p>}while(程序未结束)</p>
-<p>由于指令系统的简单性,使得虚拟机执行的过程十分简单,从而有利于提高执行的效率。指令中操作数的数量和大小是由操作符决定的。如果操作数比一个字节大,那么它存储的顺序是高位字节优先。例如,一个16位的参数存放时占用两个字节,其值为:</p>
-<p>第一个字节/*256+第二个字节字节码。</p>
-<p>指令流一般只是字节对齐的。指令tableswitch和lookup是例外,在这两条指令内部要求强制的4字节边界对齐。</p>
-<p>对于本地方法接口，实现JVM并不要求一定要有它的支持，甚至可以完全没有。Sun公司实现Java本地接口(JNI)是出于可移植性的考虑，当然我们也可以设计出其它的本地接口来代替Sun公司的JNI。但是这些设计与实现是比较复杂的事情，需要确保垃圾回收器不会将那些正在被本地方法调用的对象释放掉。</p>
-<p>Java的堆是一个运行时数据区,类的实例(对象)从中分配空间，它的管理是由垃圾回收来负责的:不给程序员显式释放对象的能力。Java不规定具体使用的垃圾回收算法,可以根据系统的需求使用各种各样的算法。</p>
-<p>Java方法区与传统语言中的编译后代码或是Unix进程中的正文段类似。它保存方法代码(编译后的java代码)和符号表。在当前的Java实现中,方法代码不包括在垃圾回收堆中,但计划在将来的版本中实现。每个类文件包含了一个Java类或一个Java界面的编译后的代码。可以说类文件是 Java语言的执行代码文件。为了保证类文件的平台无关性,Java虚拟机规范中对类文件的格式也作了详细的说明。其具体细节请参考Sun公司的Java 虚拟机规范。</p>
-<p>Java虚拟机的寄存器用于保存机器的运行状态,与微处理器中的某些专用寄存器类似。Java虚拟机的寄存器有四种:</p>
-<ol>
-<li><p>pc: Java程序计数器；</p>
-</li>
-<li><p>optop: 指向操作数栈顶端的指针；</p>
-</li>
-<li><p>frame: 指向当前执行方法的执行环境的指针；</p>
-</li>
-<li><p>vars: 指向当前执行方法的局部变量区第一个变量的指针。</p>
-</li>
-</ol>
-<p>在上述体系结构图中，我们所说的是第一种，即程序计数器，每个线程一旦被创建就拥有了自己的程序计数器。当线程执行Java方法的时候，它包含该线程正在被执行的指令的地址。但是若线程执行的是一个本地的方法，那么程序计数器的值就不会被定义。</p>
-<p>Java虚拟机的栈有三个区域:局部变量区、运行环境区、操作数区。</p>
-<p><strong>局部变量区</strong></p>
-<p>每个Java方法使用一个固定大小的局部变量集。它们按照与vars寄存器的字偏移量来寻址。局部变量都是32位的。长整数和双精度浮点数占据了两个局部变量的空间,却按照第一个局部变量的索引来寻址。(例如,一个具有索引n的局部变量,如果是一个双精度浮点数,那么它实际占据了索引n和n+1所代表的存储空间)虚拟机规范并不要求在局部变量中的64位的值是64位对齐的。虚拟机提供了把局部变量中的值装载到操作数栈的指令,也提供了把操作数栈中的值写入局部变量的指令。</p>
-<p><strong>运行环境区</strong></p>
-<p>在运行环境中包含的信息用于动态链接,正常的方法返回以及异常捕捉。</p>
-<p><strong>动态链接</strong></p>
-<p>运行环境包括对指向当前类和当前方法的解释器符号表的指针,用于支持方法代码的动态链接。方法的class文件代码在引用要调用的方法和要访问的变量时使用符号。动态链接把符号形式的方法调用翻译成实际方法调用,装载必要的类以解释还没有定义的符号,并把变量访问翻译成与这些变量运行时的存储结构相应的偏移地址。动态链接方法和变量使得方法中使用的其它类的变化不会影响到本程序的代码。</p>
-<p><strong>正常的方法返回</strong></p>
-<p>如果当前方法正常地结束了,在执行了一条具有正确类型的返回指令时,调用的方法会得到一个返回值。执行环境在正常返回的情况下用于恢复调用者的寄存器,并把调用者的程序计数器增加一个恰当的数值,以跳过已执行过的方法调用指令,然后在调用者的执行环境中继续执行下去。</p>
-<p><strong>异常捕捉</strong></p>
-<p>异常情况在Java中被称作Error(错误)或Exception(异常),是Throwable类的子类,在程序中的原因是:①动态链接错,如无法找到所需的class文件。②运行时错,如对一个空指针的引用。程序使用了throw语句。</p>
-<p>当异常发生时,Java虚拟机采取如下措施:</p>
-<p>· 检查与当前方法相联系的catch子句表。每个catch子句包含其有效指令范围,能够处理的异常类型,以及处理异常的代码块地址。</p>
-<p>· 与异常相匹配的catch子句应该符合下面的条件:造成异常的指令在其指令范围之内,发生的异常类型是其能处理的异常类型的子类型。如果找到了匹配的catch子句,那么系统转移到指定的异常处理块处执行;如果没有找到异常处理块,重复寻找匹配的catch子句的过程,直到当前方法的所有嵌套的 catch子句都被检查过。</p>
-<p>· 由于虚拟机从第一个匹配的catch子句处继续执行,所以catch子句表中的顺序是很重要的。因为Java代码是结构化的,因此总可以把某个方法的所有的异常处理器都按序排列到一个表中,对任意可能的程序计数器的值,都可以用线性的顺序找到合适的异常处理块,以处理在该程序计数器值下发生的异常情况。</p>
-<p>· 如果找不到匹配的catch子句,那么当前方法得到一个&quot;未截获异常&quot;的结果并返回到当前方法的调用者,好像异常刚刚在其调用者中发生一样。如果在调用者中仍然没有找到相应的异常处理块,那么这种错误将被传播下去。如果错误被传播到最顶层,那么系统将调用一个缺省的异常处理块。</p>
-<p><strong>操作数栈区</strong></p>
-<p>机器指令只从操作数栈中取操作数,对它们进行操作,并把结果返回到栈中。选择栈结构的原因是:在只有少量寄存器或非通用寄存器的机器(如 Intel486)上,也能够高效地模拟虚拟机的行为。操作数栈是32位的。它用于给方法传递参数,并从方法接收结果,也用于支持操作的参数,并保存操作的结果。例如,iadd指令将两个整数相加。相加的两个整数应该是操作数栈顶的两个字。这两个字是由先前的指令压进堆栈的。这两个整数将从堆栈弹出、相加,并把结果压回到操作数栈中。</p>
-<p>每个原始数据类型都有专门的指令对它们进行必须的操作。每个操作数在栈中需要一个存储位置,除了long和double型,它们需要两个位置。操作数只能被适用于其类型的操作符所操作。例如,压入两个int类型的数,如果把它们当作是一个long类型的数则是非法的。在Sun的虚拟机实现中,这个限制由字节码验证器强制实行。但是,有少数操作(操作符dupe和swap),用于对运行时数据区进行操作时是不考虑类型的。</p>
-<p>本地方法栈，当一个线程调用本地方法时，它就不再受到虚拟机关于结构和安全限制方面的约束，它既可以访问虚拟机的运行期数据区，也可以使用本地处理器以及任何类型的栈。例如，本地栈是一个C语言的栈，那么当C程序调用C函数时，函数的参数以某种顺序被压入栈，结果则返回给调用函数。在实现Java虚拟机时，本地方法接口使用的是C语言的模型栈，那么它的本地方法栈的调度与使用则完全与C语言的栈相同。</p>
-<p><strong>3 Java虚拟机的运行过程</strong></p>
-<p>上面对虚拟机的各个部分进行了比较详细的说明，下面通过一个具体的例子来分析它的运行过程。</p>
-<p>虚拟机通过调用某个指定类的方法main启动，传递给main一个字符串数组参数，使指定的类被装载，同时链接该类所使用的其它的类型，并且初始化它们。例如对于程序：</p>
-<p>class HelloApp</p>
-<p>{</p>
-<p>public static void main(String[] args)</p>
-<p>{</p>
-<p>System.out.println(&quot;Hello World!&quot;);</p>
-<p>for (int i = 0; i &lt; args.length; i++ )</p>
-<p>{</p>
-<p>System.out.println(args[i]);</p>
-<p>}</p>
-<p>}</p>
-<p>}</p>
-<p>编译后在命令行模式下键入： java HelloApp run virtual machine</p>
-<p>将通过调用HelloApp的方法main来启动java虚拟机，传递给main一个包含三个字符串&quot;run&quot;、&quot;virtual&quot;、&quot;machine&quot;的数组。现在我们略述虚拟机在执行HelloApp时可能采取的步骤。</p>
-<p>开始试图执行类HelloApp的main方法，发现该类并没有被装载，也就是说虚拟机当前不包含该类的二进制代表，于是虚拟机使用 ClassLoader试图寻找这样的二进制代表。如果这个进程失败，则抛出一个异常。类被装载后同时在main方法被调用之前，必须对类 HelloApp与其它类型进行链接然后初始化。链接包含三个阶段：检验，准备和解析。检验检查被装载的主类的符号和语义，准备则创建类或接口的静态域以及把这些域初始化为标准的默认值，解析负责检查主类对其它类或接口的符号引用，在这一步它是可选的。类的初始化是对类中声明的静态初始化函数和静态域的初始化构造方法的执行。一个类在初始化之前它的父类必须被初始化。整个过程如下：
-<img src="" alt=""></p>
-<p>图4：虚拟机的运行过程</p>
-<p><strong>4 结束语</strong></p>
-<p>本文通过对JVM的体系结构的深入研究以及一个Java程序执行时虚拟机的运行过程的详细分析，意在剖析清楚Java虚拟机的机理。</p>
-<h1 id="-jvm-http-www-javaeye-com-wiki-jvm-2905-jvm-"><a href=""></a><a href="http://www.javaeye.com/wiki/jvm/2905-JVM">慢慢琢磨JVM</a></h1>
-<h2 id="-1-jvm-"><a href=""></a>1 JVM简介</h2>
-<p>JVM是我们Javaer的最基本功底了，刚开始学Java的时候，一般都是从“Hello World”开始的，然后会写个复杂点class，然后再找一些开源框架，比如Spring，Hibernate等等，再然后就开发企业级的应用，比如网站、企业内部应用、实时交易系统等等，直到某一天突然发现做的系统咋就这么慢呢，而且时不时还来个内存溢出什么的，今天是交易系统报了StackOverflowError，明天是网站系统报了个OutOfMemoryError，这种错误又很难重现，只有分析Javacore和dump文件，运气好点还能分析出个结果，运行遭的点，就直接去庙里烧香吧！每天接客户的电话都是战战兢兢的，生怕再出什么幺蛾子了。我想Java做的久一点的都有这样的经历，那这些问题的最终根结是在哪呢？—— JVM。</p>
-<p>JVM全称是Java VirtualMachine，Java虚拟机，也就是在计算机上再虚拟一个计算机，这和我们使用 VMWare不一样，那个虚拟的东西你是可以看到的，这个JVM你是看不到的，它存在内存中。我们知道计算机的基本构成是：运算器、控制器、存储器、输入和输出设备，那这个JVM也是有这成套的元素，运算器是当然是交给硬件CPU还处理了，只是为了适应“一次编译，随处运行”的情况，需要做一个翻译动作，于是就用了JVM自己的命令集，这与汇编的命令集有点类似，每一种汇编命令集针对一个系列的CPU，比如8086系列的汇编也是可以用在8088上的，但是就不能跑在8051上，而JVM的命令集则是可以到处运行的，因为JVM做了翻译，根据不同的CPU，翻译成不同的机器语言。</p>
-<p>JVM中我们最需要深入理解的就是它的存储部分，存储？硬盘？NO，NO，JVM是一个内存中的虚拟机，那它的存储就是内存了，我们写的所有类、常量、变量、方法都在内存中，这决定着我们程序运行的是否健壮、是否高效，接下来的部分就是重点介绍之。</p>
-<h2 id="-2-jvm-"><a href=""></a>2 JVM的组成部分</h2>
-<p>我们先把JVM这个虚拟机画出来，如下图所示：</p>
-<p><img src="" alt=""></p>
-<p>从这个图中可以看到，JVM是运行在操作系统之上的，它与硬件没有直接的交互。我们再来看下JVM有哪些组成部分，如下图所示：
-<img src="" alt=""></p>
-<p>该图参考了网上广为流传的JVM构成图，大家看这个图，整个JVM分为四部分：</p>
-<p><strong>Class Loader类加载器</strong></p>
-<p>类加载器的作用是加载类文件到内存，比如编写一个HelloWord.java程序，然后通过javac编译成class文件，那怎么才能加载到内存中被执行呢？Class Loader承担的就是这个责任，那不可能随便建立一个.class文件就能被加载的，Class Loader加载的class文件是有格式要求，在《JVM Specification》中式这样定义Class文件的结构：</p>
-<p>ClassFile{</p>
-<p>u4magic;</p>
-<p>u2minor_version;</p>
-<p>u2major_version;</p>
-<p>u2constant_pool_count;</p>
-<p>cp_infoconstant_pool[constant_pool_count-1];</p>
-<p>u2access_flags;</p>
-<p>u2this_class;</p>
-<p>u2super_class;</p>
-<p>u2interfaces_count;</p>
-<p>u2interfaces[interfaces_count];</p>
-<p>u2fields_count;</p>
-<p>field_infofields[fields_count];</p>
-<p>u2methods_count;</p>
-<p>method_infomethods[methods_count];</p>
-<p>u2attributes_count;</p>
-<p>attribute_infoattributes[attributes_count];</p>
-<p>}</p>
-<p>需要详细了解的话，可以仔细阅读《JVM Specification》的第四章“The class File Format”，这里不再详细说明。</p>
-<p>友情提示：Class Loader只管加载，只要符合文件结构就加载，至于说能不能运行，则不是它负责的，那是由Execution Engine负责的。</p>
-<p><strong>Execution Engine执行引擎</strong></p>
-<p>执行引擎也叫做解释器(Interpreter)，负责解释命令，提交操作系统执行。</p>
-<p><strong>Native Interface本地接口</strong></p>
-<p>本地接口的作用是融合不同的编程语言为Java所用，它的初衷是融合C/C++程序，Java诞生的时候是C/C++横行的时候，要想立足，必须有一个聪明的、睿智的调用C/C++程序，于是就在内存中专门开辟了一块区域处理标记为native的代码，它的具体做法是Native Method Stack中登记native方法，在Execution Engine执行时加载native libraies。目前该方法使用的是越来越少了，除非是与硬件有关的应用，比如通过Java程序驱动打印机，或者Java系统管理生产设备，在企业级应用中已经比较少见，因为现在的异构领域间的通信很发达，比如可以使用Socket通信，也可以使用Web Service等等，不多做介绍。</p>
-<p><strong>Runtime data area运行数据区</strong></p>
-<p>运行数据区是整个JVM的重点。我们所有写的程序都被加载到这里，之后才开始运行，Java生态系统如此的繁荣，得益于该区域的优良自治，下一章节详细介绍之。</p>
-<p>整个JVM框架由加载器加载文件，然后执行器在内存中处理数据，需要与异构系统交互是可以通过本地接口进行，瞧，一个完整的系统诞生了！</p>
-<h2 id="-2-jvm-"><a href=""></a>2 JVM的内存管理</h2>
-<p>所有的数据和程序都是在运行数据区存放，它包括以下几部分：</p>
-<p>q Stack 栈</p>
-<p>栈也叫栈内存，是Java程序的运行区，是在线程创建时创建，它的生命期是跟随线程的生命期，线程结束栈内存也就释放，对于栈来说不存在垃圾回收问题，只要线程一结束，该栈就Over。问题出来了：栈中存的是那些数据呢？又什么是格式呢？</p>
-<p>栈中的数据都是以栈帧（Stack Frame）的格式存在，栈帧是一个内存区块，是一个数据集，是一个有关方法(Method)和运行期数据的数据集，当一个方法A被调用时就产生了一个栈帧F1，并被压入到栈中，A方法又调用了B方法，于是产生栈帧F2也被压入栈，执行完毕后，先弹出F2栈帧，再弹出F1栈帧，遵循“先进后出”原则。</p>
-<p>那栈帧中到底存在着什么数据呢？栈帧中主要保存3类数据：本地变量（LocalVariables），包括输入参数和输出参数以及方法内的变量；栈操作（Operand Stack），记录出栈、入栈的操作；栈帧数据（FrameData），包括类文件、方法等等。光说比较枯燥，我们画个图来理解一下Java栈，如下图所示：
-<img src="" alt=""></p>
-<p>图示在一个栈中有两个栈帧，栈帧2是最先被调用的方法，先入栈，然后方法2又调用了方法1，栈帧1处于栈顶的位置，栈帧2处于栈底，执行完毕后，依次弹出栈帧1和栈帧2，线程结束，栈释放。</p>
-<p><strong>Heap堆内存</strong></p>
-<p>一个JVM实例只存在一个堆类存，堆内存的大小是可以调节的。类加载器读取了类文件后，需要把类、方法、常变量放到堆内存中，以方便执行器执行，堆内存分为三部分：</p>
-<p><strong>Permanent Space永久存储区</strong></p>
-<p>永久存储区是一个常驻内存区域，用于存放JDK自身所携带的Class,Interface的元数据，也就是说它存储的是运行环境必须的类信息，被装载进此区域的数据是不会被垃圾回收器回收掉的，关闭JVM才会释放此区域所占用的内存。</p>
-<p><strong>Young Generation Space 新生区</strong></p>
-<p>新生区是类的诞生、成长、消亡的区域，一个类在这里产生，应用，最后被垃圾回收器收集，结束生命。新生区又分为两部分：伊甸区（Eden space）和幸存者区（Survivor pace），所有的类都是在伊甸区被new出来的。幸存区有两个：0区（Survivor 0 space）和1区（Survivor 1 space）。当伊甸园的空间用完时，程序又需要创建对象，JVM的垃圾回收器将对伊甸园区进行垃圾回收，将伊甸园区中的不再被其他对象所引用的对象进行销毁。然后将伊甸园中的剩余对象移动到幸存0区。若幸存0区也满了，再对该区进行垃圾回收，然后移动到1区。那如果1区也满了呢？再移动到养老区。</p>
-<p><strong>Tenure generation space养老区</strong></p>
-<p>养老区用于保存从新生区筛选出来的JAVA对象，一般池对象都在这个区域活跃。三个区的示意图如下：
-<img src="" alt=""></p>
-<p><strong>Method Area 方法区</strong></p>
-<p>方法区是被所有线程共享，该区域保存所有字段和方法字节码，以及一些特殊方法如构造函数，接口代码也在此定义。</p>
-<p><strong>PC Register 程序计数器</strong></p>
-<p>每个线程都有一个程序计数器，就是一个指针，指向方法区中的方法字节码，由执行引擎读取下一条指令。</p>
-<p><strong>Native Method Stack 本地方法栈</strong></p>
-<h2 id="-3-jvm-"><a href=""></a>3 JVM相关问题</h2>
-<p><strong>问：堆和栈有什么区别</strong></p>
-<p>答：堆是存放对象的，但是对象内的临时变量是存在栈内存中，如例子中的methodVar是在运行期存放到栈中的。</p>
-<p>栈是跟随线程的，有线程就有栈，堆是跟随JVM的，有JVM就有堆内存。</p>
-<p><strong>问：堆内存中到底存在着什么东西？</strong></p>
-<p>答：对象，包括对象变量以及对象方法。</p>
-<p><strong>问：类变量和实例变量有什么区别？</strong></p>
-<p>答：静态变量是类变量，非静态变量是实例变量，直白的说，有static修饰的变量是静态变量，没有static修饰的变量是实例变量。静态变量存在方法区中，实例变量存在堆内存中。</p>
-<p><strong>问：我听说类变量是在JVM启动时就初始化好的，和你这说的不同呀！</strong></p>
-<p>答：那你是道听途说，信我的，没错。</p>
-<p><strong>问：Java的方法（函数）到底是传值还是传址？</strong></p>
-<p>答：都不是，是以传值的方式传递地址，具体的说原生数据类型传递的值，引用类型传递的地址。对于原始数据类型，JVM的处理方法是从Method Area或Heap中拷贝到Stack，然后运行frame中的方法，运行完毕后再把变量指拷贝回去。</p>
-<p><strong>问：为什么会产生OutOfMemory产生？</strong></p>
-<p>答：一句话：Heap内存中没有足够的可用内存了。这句话要好好理解，不是说Heap没有内存了，是说新申请内存的对象大于Heap空闲内存，比如现在Heap还空闲1M，但是新申请的内存需要1.1M，于是就会报OutOfMemory了，可能以后的对象申请的内存都只要0.9M，于是就只出现一次OutOfMemory，GC也正常了，看起来像偶发事件，就是这么回事。但如果此时GC没有回收就会产生挂起情况，系统不响应了。</p>
-<p><strong>问：我产生的对象不多呀，为什么还会产生OutOfMemory？</strong></p>
-<p>答：你继承层次忒多了，Heap中产生的对象是先产生父类，然后才产生子类，明白不？</p>
-<p><strong>问：OutOfMemory错误分几种？</strong></p>
-<p>答：分两种，分别是“OutOfMemoryError:java heap size”和”OutOfMemoryError: PermGen space”，两种都是内存溢出，heap size是说申请不到新的内存了，这个很常见，检查应用或调整堆内存大小。</p>
-<p>“PermGen space”是因为永久存储区满了，这个也很常见，一般在热发布的环境中出现，是因为每次发布应用系统都不重启，久而久之永久存储区中的死对象太多导致新对象无法申请内存，一般重新启动一下即可。</p>
-<p><strong>问：为什么会产生StackOverflowError？</strong></p>
-<p>答：因为一个线程把Stack内存全部耗尽了，一般是递归函数造成的。</p>
-<p><strong>问：一个机器上可以看多个JVM吗？JVM之间可以互访吗？</strong></p>
-<p>答：可以多个JVM，只要机器承受得了。JVM之间是不可以互访，你不能在A-JVM中访问B-JVM的Heap内存，这是不可能的。在以前老版本的JVM中，会出现A-JVM Crack后影响到B-JVM，现在版本非常少见。</p>
-<p><strong>问：为什么Java要采用垃圾回收机制，而不采用C/C++的显式内存管理？</strong></p>
-<p>答：为了简单，内存管理不是每个程序员都能折腾好的。</p>
-<p><strong>问：为什么你没有详细介绍垃圾回收机制？</strong></p>
-<p>答：垃圾回收机制每个JVM都不同，JVM Specification只是定义了要自动释放内存，也就是说它只定义了垃圾回收的抽象方法，具体怎么实现各个厂商都不同，算法各异，这东西实在没必要深入。</p>
-<p><strong>问：JVM中到底哪些区域是共享的？哪些是私有的？</strong></p>
-<p>答：Heap和Method Area是共享的，其他都是私有的，</p>
-<p><strong>问：什么是JIT，你怎么没说？</strong></p>
-<p>答：JIT是指Just In Time，有的文档把JIT作为JVM的一个部件来介绍，有的是作为执行引擎的一部分来介绍，这都能理解。Java刚诞生的时候是一个解释性语言，别嘘，即使编译成了字节码（byte code）也是针对JVM的，它需要再次翻译成原生代码(native code)才能被机器执行，于是效率的担忧就提出来了。Sun为了解决该问题提出了一套新的机制，好，你想编译成原生代码，没问题，我在JVM上提供一个工具，把字节码编译成原生码，下次你来访问的时候直接访问原生码就成了，于是JIT就诞生了，就这么回事。</p>
-<p><strong>问：JVM还有哪些部分是你没有提到的？</strong></p>
-<p>答：JVM是一个异常复杂的东西，写一本砖头书都不为过，还有几个要说明的：</p>
-<p>常量池（constant pool）：按照顺序存放程序中的常量，并且进行索引编号的区域。比如int i =100，这个100就放在常量池中。</p>
-<p>安全管理器（Security Manager）：提供Java运行期的安全控制，防止恶意攻击，比如指定读取文件，写入文件权限，网络访问，创建进程等等，Class Loader在Security Manager认证通过后才能加载class文件的。</p>
-<p>方法索引表（Methods table），记录的是每个method的地址信息，Stack和Heap中的地址指针其实是指向Methodstable地址。</p>
-<p><strong>问：为什么不建议在程序中显式的生命System.gc()？</strong></p>
-<p>答：因为显式声明是做堆内存全扫描，也就是Full GC，是需要停止所有的活动的（Stop The World Collection），你的应用能承受这个吗？</p>
-<p><strong>问：JVM有哪些调整参数？</strong></p>
-<p>答：非常多，自己去找，堆内存、栈内存的大小都可以定义，甚至是堆内存的三个部分、新生代的各个比例都能调整。</p>
-<p>转载自：<a href="http://wenku.baidu.com/view/70e45e8ba0116c175f0e4840.html" target="_blank"><a href="http://wenku.baidu.com/view/70e45e8ba0116c175f0e4840.html">http://wenku.baidu.com/view/70e45e8ba0116c175f0e4840.html</a></a></p>
-<p>来源： &lt;<a href="http://blog.csdn.net/chinajane163/article/details/7784521" target="_blank">深入理解JVM - ChinaJane163的专栏 - 博客频道 - CSDN.NET</a>&gt; </p>
+        <h1 id="-java-">浅谈Java开发中的设计模式</h1>
+<p>浅谈Java开发中的设计模式</p>
+<p>1、工厂模式：客户类和工厂类分开。消费者任何时候需要某种产品，只需向工厂请求即可。消费者无须修改就可以接纳新产品。缺点是当产品修改时，工厂类也要做相应的修改。如：如何创建及如何向客户端提供。</p>
+<p> 2、建造模式：将产品的内部表象和产品的生成过程分割开来，从而使一个建造过程生成具有不同的内部表象的产品对象。建造模式使得产品内部表象可以独立的变化，客户不必知道产品内部组成的细节。建造模式可以强制实行一种分步骤进行的建造过程。</p>
+<p> 3、工厂方法模式：核心工厂类不再负责所有产品的创建，而是将具体创建的工作交给子类去做，成为一个抽象工厂角色，仅负责给出具体工厂类必须实现的接口，而不接触哪一个产品类应当被实例化这种细节。</p>
+<p> 4、原始模型模式：通过给出一个原型对象来指明所要创建的对象的类型，然后用复制这个原型对象的方法创建出更多同类型的对象。原始模型模式允许动态的增加或减少产品类，产品类不需要非得有任何事先确定的等级结构，原始模型模式适用于任何的等级结构。缺点是每一个类都必须配备一个克隆方法。</p>
+<p> 5、单例模式：单例模式确保某一个类只有一个实例，而且自行实例化并向整个系统提供这个实例单例模式。单例模式只应在有真正的“单一实例”的需求时才可使用。</p>
+<p> 6、适配器(变压器)模式：把一个类的接口变换成客户端所期待的另一种接口，从而使原本因接口原因不匹配而无法一起工作的两个类能够一起工作。适配类可以根据参数返还一个合适的实例给客户端。</p>
+<p> 7、桥梁模式：将抽象化与实现化脱耦，使得二者可以独立的变化，也就是说将他们之间的强关联变成弱关联，也就是指在一个软件系统的抽象化和实现化之间使用组合/聚合关系而不是继承关系，从而使两者可以独立的变化。</p>
+<p> 8、合成模式：合成模式将对象组织到树结构中，可以用来描述整体与部分的关系。合成模式就是一个处理对象的树结构的模式。合成模式把部分与整体的关系用树结构表示出来。合成模式使得客户端把一个个单独的成分对象和由他们复合而成的合成对象同等看待。</p>
+<p> 9、装饰模式：装饰模式以对客户端透明的方式扩展对象的功能，是继承关系的一个替代方案，提供比继承更多的灵活性。动态给一个对象增加功能，这些功能可以再动态的撤消。增加由一些基本功能的排列组合而产生的非常大量的功能。</p>
+<p> 10、门面模式：外部与一个子系统的通信必须通过一个统一的门面对象进行。门面模式提供一个高层次的接口，使得子系统更易于使用。每一个子系统只有一个门面类，而且此门面类只有一个实例，也就是说它是一个单例模式。但整个系统可以有多个门面类。</p>
+<p> 11、享元模式：FLYWEIGHT在拳击比赛中指最轻量级。享元模式以共享的方式高效的支持大量的细粒度对象。享元模式能做到共享的关键是区分内蕴状态和外蕴状态。内蕴状态存储在享元内部，不会随环境的改变而有所不同。外蕴状态是随环境的改变而改变的。外蕴状态不能影响内蕴状态，它们是相互独立的。将可以共享的状态和不可以共享的状态从常规类中区分开来，将不可以共享的状态从类里剔除出去。客户端不可以直接创建被共享的对象，而应当使用一个工厂对象负责创建被共享的对象。享元模式大幅度的降低内存中对象的数量。</p>
+<p> 12、代理模式：代理模式给某一个对象提供一个代理对象，并由代理对象控制对源对象的引用。代理就是一个人或一个机构代表另一个人或者一个机构采取行动。某些情况下，客户不想或者不能够直接引用一个对象，代理对象可以在客户和目标对象直接起到中介的作用。客户端分辨不出代理主题对象与真实主题对象。代理模式可以并不知道真正的被代理对象，而仅仅持有一个被代理对象的接口，这时候代理对象不能够创建被代理对象，被代理对象必须有系统的其他角色代为创建并传入。</p>
+<p> 13、责任链模式：在责任链模式中，很多对象由每一个对象对其下家的引用而接起来形成一条链。请求在这个链上传递，直到链上的某一个对象决定处理此请求。客户并不知道链上的哪一个对象最终处理这个请求，系统可以在不影响客户端的情况下动态的重新组织链和分配责任。处理者有两个选择：承担责任或者把责任推给下家。一个请求可以最终不被任何接收端对象所接受。</p>
+<p>14、命令模式：命令模式把一个请求或者操作封装到一个对象中。命令模式把发出命令的责任和执行命令的责任分割开，委派给不同的对象。命令模式允许请求的一方和发送的一方独立开来，使得请求的一方不必知道接收请求的一方的接口，更不必知道请求是怎么被接收，以及操作是否执行，何时被执行以及是怎么被执行的。系统支持命令的撤消。</p>
+<p> 15、解释器模式：给定一个语言后，解释器模式可以定义出其文法的一种表示，并同时提供一个解释器。客户端可以使用这个解释器来解释这个语言中的句子。解释器模式将描述怎样在有了一个简单的文法后，使用模式设计解释这些语句。在解释器模式里面提到的语言是指任何解释器对象能够解释的任何组合。在解释器模式中需要定义一个代表文法的命令类的等级结构，也就是一系列的组合规则。每一个命令对象都有一个解释方法，代表对命令对象的解释。命令对象的等级结构中的对象的任何排列组合都是一个语言。</p>
+<p> 16、迭代子模式：迭代子模式可以顺序访问一个聚集中的元素而不必暴露聚集的内部表象。多个对象聚在一起形成的总体称之为聚集，聚集对象是能够包容一组对象的容器对象。迭代子模式将迭代逻辑封装到一个独立的子对象中，从而与聚集本身隔开。迭代子模式简化了聚集的界面。每一个聚集对象都可以有一个或一个以上的迭代子对象，每一个迭代子的迭代状态可以是彼此独立的。迭代算法可以独立于聚集角色变化。</p>
+<p> 17、调停者模式：调停者模式包装了一系列对象相互作用的方式，使得这些对象不必相互明显作用。从而使他们可以松散偶合。当某些对象之间的作用发生改变时，不会立即影响其他的一些对象之间的作用。保证这些作用可以彼此独立的变化。调停者模式将多对多的相互作用转化为一对多的相互作用。调停者模式将对象的行为和协作抽象化，把对象在小尺度的行为上与其他对象的相互作用分开处理。</p>
+<p> 18、备忘录模式：备忘录对象是一个用来存储另外一个对象内部状态的快照的对象。备忘录模式的用意是在不破坏封装的条件下，将一个对象的状态捉住，并外部化，存储起来，从而可以在将来合适的时候把这个对象还原到存储起来的状态。</p>
+<p> 19、观察者模式：观察者模式定义了一种一队多的依赖关系，让多个观察者对象同时监听某一个主题对象。这个主题对象在状态上发生变化时，会通知所有观察者对象，使他们能够自动更新自己。</p>
+<p> 20、状态模式：状态模式允许一个对象在其内部状态改变的时候改变行为。这个对象看上去象是改变了它的类一样。状态模式把所研究的对象的行为包装在不同的状态对象里，每一个状态对象都属于一个抽象状态类的一个子类。状态模式的意图是让一个对象在其内部状态改变的时候，其行为也随之改变。状态模式需要对每一个系统可能取得的状态创立一个状态类的子类。当系统的状态变化时，系统便改变所选的子类。</p>
+<p> 21、策略模式：策略模式针对一组算法，将每一个算法封装到具有共同接口的独立的类中，从而使得它们可以相互替换。策略模式使得算法可以在不影响到客户端的情况下发生变化。策略模式把行为和环境分开。环境类负责维持和查询行为类，各种算法在具体的策略类中提供。由于算法和环境独立开来，算法的增减，修改都不会影响到环境和客户端。</p>
+<p> 22、模板方法模式：模板方法模式准备一个抽象类，将部分逻辑以具体方法以及具体构造子的形式实现，然后声明一些抽象方法来迫使子类实现剩余的逻辑。不同的子类可以以不同的方式实现这些抽象方法，从而对剩余的逻辑有不同的实现。先制定一个顶级逻辑框架，而将逻辑的细节留给具体的子类去实现。</p>
+<p> 23、访问者模式：访问者模式的目的是封装一些施加于某种数据结构元素之上的操作。一旦这些操作需要修改的话，接受这个操作的数据结构可以保持不变。访问者模式适用于数据结构相对未定的系统，它把数据结构和作用于结构上的操作之间的耦合解脱开，使得操作集合可以相对自由的演化。访问者模式使得增加新的操作变的很容易，就是增加一个新的访问者类。访问者模式将有关的行为集中到一个访问者对象中，而不是分散到一个个的节点类中。当使用访问者模式时，要将尽可能多的对象浏览逻辑放在访问者类中，而不是放到它的子类中。访问者模式可以跨过几个类的等级结构访问属于不同的等级结构的成员</p>
 
       
     </div>
@@ -1824,8 +454,8 @@ P.S. 画图真的很辛苦，加上JavaEye的带宽也不是无限的……所�
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--深入理解JVM/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--深入理解JVM" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_设计类/">Java_设计类</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_设计类/" class="label label-success">Java_设计类</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--浅谈Java开发中的设计模式/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_设计类--浅谈Java开发中的设计模式" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1905,7 +535,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-23 21:54:38</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-25 18:15:42</em></span></div>
 </div>
 <div class="clearfix"></div>
 

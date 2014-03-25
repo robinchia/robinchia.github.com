@@ -110,6 +110,959 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--ApacheFTP实用代码/">Apache FTP 实用代码</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--ApacheFTP实用代码/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="apache-ftp-">Apache FTP 实用代码</h1>
+<h2 id="-apache-commons-net-ftputil-">结合网上两个使用apache commons-net包的两个优秀的代码，结合实际，写出了如下的FtpUtil，供参考！</h2>
+<p>参考网址：<a href="http://www.iteye.com/topic/173786" target="_blank"><a href="http://www.iteye.com/topic/173786">http://www.iteye.com/topic/173786</a></a>，<a href="http://hi.baidu.com/victorlin23/blog/item/edc62a35dbae8a1a91ef3947.html" target="_blank"><a href="http://hi.baidu.com/victorlin23/blog/item/edc62a35dbae8a1a91ef3947.html">http://hi.baidu.com/victorlin23/blog/item/edc62a35dbae8a1a91ef3947.html</a></a></p>
+<h2 id="-"> </h2>
+<p>package com.pccw.portlet.publictools;</p>
+<p>import java.io.File;</p>
+<p>import java.io.FileOutputStream;</p>
+<p>import java.io.IOException;</p>
+<p>import java.io.InputStream;</p>
+<p>import java.io.OutputStream;</p>
+<p>import java.io.RandomAccessFile;</p>
+<p>import java.net.SocketException;</p>
+<p>import java.util.ArrayList;</p>
+<p>import java.util.List;</p>
+<p>import org.apache.commons.logging.Log;</p>
+<p>import org.apache.commons.logging.LogFactory;</p>
+<p>import org.apache.commons.net.ftp.FTP;</p>
+<p>import org.apache.commons.net.ftp.FTPClient;</p>
+<p>import org.apache.commons.net.ftp.FTPFile;</p>
+<p>import org.apache.commons.net.ftp.FTPReply;</p>
+<p>//<em>/</em></p>
+<p> /* FTP工具类</p>
+<p> /*</p>
+<p> /* @author WangXianfeng 1:16:50 PM Jul 16, 2011</p>
+<p> /*/</p>
+<p>public class FtpUtil {</p>
+<pre><code>   private FTPClient ftpClient;
+
+   private static Log log = LogFactory.getLog(FtpUtil.class);
+
+
+
+   //*/*
+
+    /* 根路径为&quot;/&quot;,如果需要链接服务器之后跳转到路径，则在path中定义
+
+    /* @param ftpConfig
+
+    /* @throws SocketException
+
+    /* @throws IOException
+
+    /*/
+
+   public boolean connectServer(FtpConfig ftpConfig) throws SocketException,
+
+                 IOException {
+
+          String server = ftpConfig.getServer();
+
+          int port = ftpConfig.getPort();
+
+          String user = ftpConfig.getUsername();
+
+          String password = ftpConfig.getPassword();
+
+          String path = ftpConfig.getPath();
+
+          return connectServer(server, port, user, password, path);
+
+   }
+
+   //*/*
+
+    /* 连接ftp服务器
+
+    /* @param server 服务器ip
+
+    /* @param port 端口，通常为21
+
+    /* @param user 用户名
+
+    /* @param password 密码
+
+    /* @param path 进入服务器之后的默认路径
+
+    /* @return 连接成功返回true，否则返回false
+
+    /* @throws SocketException
+
+    /* @throws IOException
+
+    /*/
+
+   public boolean connectServer(String server, int port, String user,
+
+                 String password, String path) throws SocketException, IOException {
+
+          ftpClient = new FTPClient();
+
+          ftpClient.connect(server, port);
+
+          ftpClient.setControlEncoding(&quot;GBK&quot;);
+
+          log.info(&quot;Connected to &quot; + server + &quot;.&quot;);
+
+          log.info(&quot;FTP server reply code:&quot; + ftpClient.getReplyCode());
+
+          if (FTPReply.isPositiveCompletion(ftpClient.getReplyCode())) {
+
+                 if (ftpClient.login(user, password)) {
+
+                        // Path is the sub-path of the FTP path
+
+                        if (path.length() != 0) {
+
+                               ftpClient.changeWorkingDirectory(path);
+
+                        }
+
+                        return true;
+
+                 }
+
+          }
+
+          disconnect();
+
+          return false;
+
+   }
+
+   //*/*
+
+    /* 断开与远程服务器的连接
+
+    /* @throws IOException
+
+    /*/
+
+   public void disconnect() throws IOException {
+
+          if (ftpClient.isConnected()) {
+
+                 ftpClient.disconnect();
+
+          }
+
+   }
+
+
+
+   //*/*
+
+    /* 从FTP服务器上下载文件,支持断点续传，下载百分比汇报
+
+    /* @param remote 远程文件路径及名称
+
+    /* @param local 本地文件完整绝对路径
+
+    /* @return 下载的状态
+
+    /* @throws IOException
+
+    /*/
+
+   public DownloadStatus download(String remote, String local)
+
+                 throws IOException {
+
+          // 设置被动模式
+
+          ftpClient.enterLocalPassiveMode();
+
+          // 设置以二进制方式传输
+
+          ftpClient.setFileType(FTP.BINARY_FILE_TYPE);
+
+          DownloadStatus result;
+
+
+
+          // 检查远程文件是否存在
+
+          FTPFile[] files = ftpClient.listFiles(new String(
+
+                        remote.getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+          if (files.length != 1) {
+
+                 log.info(&quot;远程文件不存在&quot;);
+
+                 return DownloadStatus.RemoteFileNotExist;
+
+          }
+
+
+
+          long lRemoteSize = files[0].getSize();
+
+          File f = new File(local);
+
+          // 本地存在文件，进行断点下载
+
+          if (f.exists()) {
+
+                 long localSize = f.length();
+
+                 // 判断本地文件大小是否大于远程文件大小
+
+                 if (localSize &gt;= lRemoteSize) {
+
+                        log.info(&quot;本地文件大于远程文件，下载中止&quot;);
+
+                        return DownloadStatus.LocalFileBiggerThanRemoteFile;
+
+                 }
+
+
+
+                 // 进行断点续传，并记录状态
+
+                 FileOutputStream out = new FileOutputStream(f, true);
+
+                 ftpClient.setRestartOffset(localSize);
+
+                 InputStream in = ftpClient.retrieveFileStream(new String(remote
+
+                               .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+                 byte[] bytes = new byte[1024];
+
+                 long step = lRemoteSize / 100;
+
+                 step = step==0?1:step;//文件过小，step可能为0
+
+                 long process = localSize / step;
+
+                 int c;
+
+                 while ((c = in.read(bytes)) != -1) {
+
+                        out.write(bytes, 0, c);
+
+                        localSize += c;
+
+                        long nowProcess = localSize / step;
+
+                        if (nowProcess &gt; process) {
+
+                               process = nowProcess;
+
+                               if (process % 10 == 0){
+
+                                      log.info(&quot;下载进度：&quot; + process);
+
+                               }
+
+                        }
+
+                 }
+
+                 in.close();
+
+                 out.close();
+
+                 boolean isDo = ftpClient.completePendingCommand();
+
+                 if (isDo) {
+
+                        result = DownloadStatus.DownloadFromBreakSuccess;
+
+                 } else {
+
+                        result = DownloadStatus.DownloadFromBreakFailed;
+
+                 }
+
+          } else {
+
+                 OutputStream out = new FileOutputStream(f);
+
+                 InputStream in = ftpClient.retrieveFileStream(new String(remote
+
+                               .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+                 byte[] bytes = new byte[1024];
+
+                 long step = lRemoteSize / 100;
+
+                 step = step==0?1:step;//文件过小，step可能为0
+
+                 long process = 0;
+
+                 long localSize = 0L;
+
+                 int c;
+
+                 while ((c = in.read(bytes)) != -1) {
+
+                        out.write(bytes, 0, c);
+
+                        localSize += c;
+
+                        long nowProcess = localSize / step;
+
+                        if (nowProcess &gt; process) {
+
+                               process = nowProcess;
+
+                               if (process % 10 == 0){
+
+                                      log.info(&quot;下载进度：&quot; + process);
+
+                               }
+
+                        }
+
+                 }
+
+                 in.close();
+
+                 out.close();
+
+                 boolean upNewStatus = ftpClient.completePendingCommand();
+
+                 if (upNewStatus) {
+
+                        result = DownloadStatus.DownloadNewSuccess;
+
+                 } else {
+
+                        result = DownloadStatus.DownloadNewFailed;
+
+                 }
+
+          }
+
+          return result;
+
+   }
+
+
+
+   public boolean changeDirectory(String path) throws IOException {
+
+          return ftpClient.changeWorkingDirectory(path);
+
+   }
+
+
+
+   public boolean createDirectory(String pathName) throws IOException {
+
+          return ftpClient.makeDirectory(pathName);
+
+   }
+
+
+
+   public boolean removeDirectory(String path) throws IOException {
+
+          return ftpClient.removeDirectory(path);
+
+   }
+
+
+
+   public boolean removeDirectory(String path, boolean isAll)
+
+                 throws IOException {
+
+
+
+          if (!isAll) {
+
+                 return removeDirectory(path);
+
+          }
+
+
+
+          FTPFile[] ftpFileArr = ftpClient.listFiles(path);
+
+          if (ftpFileArr == null || ftpFileArr.length == 0) {
+
+                 return removeDirectory(path);
+
+          }
+
+          //  
+
+          for (FTPFile ftpFile : ftpFileArr) {
+
+                 String name = ftpFile.getName();
+
+                 if (ftpFile.isDirectory()) {
+
+                        log.info(&quot;/* [sD]Delete subPath [&quot; + path + &quot;/&quot; + name + &quot;]&quot;);
+
+                        if (!ftpFile.getName().equals(&quot;.&quot;)
+
+                                      &amp;&amp; (!ftpFile.getName().equals(&quot;..&quot;))) {
+
+                               removeDirectory(path + &quot;/&quot; + name, true);
+
+                        }
+
+                 } else if (ftpFile.isFile()) {
+
+                        log.info(&quot;/* [sF]Delete file [&quot; + path + &quot;/&quot; + name + &quot;]&quot;);
+
+                        deleteFile(path + &quot;/&quot; + name);
+
+                 } else if (ftpFile.isSymbolicLink()) {
+
+
+
+                 } else if (ftpFile.isUnknown()) {
+
+
+
+                 }
+
+          }
+
+          return ftpClient.removeDirectory(path);
+
+   }
+
+
+
+   //*/*
+
+    /* 查看目录是否存在
+
+    /* @param path
+
+    /* @return
+
+    /* @throws IOException
+
+    /*/
+
+   public boolean isDirectoryExists(String path) throws IOException {
+
+          boolean flag = false;
+
+          FTPFile[] ftpFileArr = ftpClient.listFiles(path);
+
+          for (FTPFile ftpFile : ftpFileArr) {
+
+                 if (ftpFile.isDirectory()
+
+                               &amp;&amp; ftpFile.getName().equalsIgnoreCase(path)) {
+
+                        flag = true;
+
+                        break;
+
+                 }
+
+          }
+
+          return flag;
+
+   }
+
+
+
+   //*/*
+
+    /* 得到某个目录下的文件名列表
+
+    /* @param path
+
+    /* @return
+
+    /* @throws IOException
+
+    /*/
+
+   public List&lt;String&gt; getFileList(String path) throws IOException {
+
+          // listFiles return contains directory and file, it&#39;s FTPFile instance
+
+          // listNames() contains directory, so using following to filer
+
+          // directory.
+
+          // String[] fileNameArr = ftpClient.listNames(path);
+
+          FTPFile[] ftpFiles = ftpClient.listFiles(path);
+
+
+
+          List&lt;String&gt; retList = new ArrayList&lt;String&gt;();
+
+          if (ftpFiles == null || ftpFiles.length == 0) {
+
+                 return retList;
+
+          }
+
+          for (FTPFile ftpFile : ftpFiles) {
+
+                 if (ftpFile.isFile()) {
+
+                        retList.add(ftpFile.getName());
+
+                 }
+
+          }
+
+          return retList;
+
+   }
+
+
+
+   public boolean deleteFile(String pathName) throws IOException {
+
+          return ftpClient.deleteFile(pathName);
+
+   }
+
+
+
+   //*/*
+
+    /* 上传文件到FTP服务器，支持断点续传
+
+    /* @param local 本地文件名称，绝对路径
+
+    /* @param remote 远程文件路径，按照Linux上的路径指定方式，支持多级目录嵌套，支持递归创建不存在的目录结构
+
+    /* @return 上传结果
+
+    /* @throws IOException
+
+    /*/
+
+   public UploadStatus upload(String local, String remote) throws IOException {
+
+          // 设置PassiveMode传输
+
+          ftpClient.enterLocalPassiveMode();
+
+          // 设置以二进制流的方式传输
+
+          ftpClient.setFileType(FTP.BINARY_FILE_TYPE);
+
+          ftpClient.setControlEncoding(&quot;GBK&quot;);
+
+          UploadStatus result;
+
+          // 对远程目录的处理
+
+          String remoteFileName = remote;
+
+          if (remote.contains(&quot;/&quot;)) {
+
+                 remoteFileName = remote.substring(remote.lastIndexOf(&quot;/&quot;) + 1);
+
+                 // 创建服务器远程目录结构，创建失败直接返回
+
+                 if (createDirecroty(remote, ftpClient) == UploadStatus.CreateDirectoryFail) {
+
+                        return UploadStatus.CreateDirectoryFail;
+
+                 }
+
+          }
+
+
+
+          // 检查远程是否存在文件
+
+          FTPFile[] files = ftpClient.listFiles(new String(remoteFileName
+
+                        .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+          if (files.length == 1) {
+
+                 long remoteSize = files[0].getSize();
+
+                 File f = new File(local);
+
+                 long localSize = f.length();
+
+                 if (remoteSize == localSize) { // 文件存在
+
+                        return UploadStatus.FileExits;
+
+                 } else if (remoteSize &gt; localSize) {
+
+                        return UploadStatus.RemoteFileBiggerThanLocalFile;
+
+                 }
+
+
+
+                 // 尝试移动文件内读取指针,实现断点续传
+
+                 result = uploadFile(remoteFileName, f, ftpClient, remoteSize);
+
+
+
+                 // 如果断点续传没有成功，则删除服务器上文件，重新上传
+
+                 if (result == UploadStatus.UploadFromBreakFailed) {
+
+                        if (!ftpClient.deleteFile(remoteFileName)) {
+
+                               return UploadStatus.DeleteRemoteFaild;
+
+                        }
+
+                        result = uploadFile(remoteFileName, f, ftpClient, 0);
+
+                 }
+
+          } else {
+
+                 result = uploadFile(remoteFileName, new File(local), ftpClient, 0);
+
+          }
+
+          return result;
+
+   }
+
+
+
+   //*/*
+
+    /* 递归创建远程服务器目录
+
+    /* @param remote 远程服务器文件绝对路径
+
+    /* @param ftpClient FTPClient对象
+
+    /* @return 目录创建是否成功
+
+    /* @throws IOException
+
+    /*/
+
+   public UploadStatus createDirecroty(String remote, FTPClient ftpClient)
+
+                 throws IOException {
+
+          UploadStatus status = UploadStatus.CreateDirectorySuccess;
+
+          String directory = remote.substring(0, remote.lastIndexOf(&quot;/&quot;) + 1);
+
+          if (!directory.equalsIgnoreCase(&quot;/&quot;)
+
+                        &amp;&amp; !ftpClient.changeWorkingDirectory(new String(directory
+
+                                      .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;))) {
+
+                 // 如果远程目录不存在，则递归创建远程服务器目录
+
+                 int start = 0;
+
+                 int end = 0;
+
+                 if (directory.startsWith(&quot;/&quot;)) {
+
+                        start = 1;
+
+                 } else {
+
+                        start = 0;
+
+                 }
+
+                 end = directory.indexOf(&quot;/&quot;, start);
+
+                 while (true) {
+
+                        String subDirectory = new String(remote.substring(start, end)
+
+                                      .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;);
+
+                        if (!ftpClient.changeWorkingDirectory(subDirectory)) {
+
+                               if (ftpClient.makeDirectory(subDirectory)) {
+
+                                      ftpClient.changeWorkingDirectory(subDirectory);
+
+                               } else {
+
+                                      log.info(&quot;创建目录失败&quot;);
+
+                                      return UploadStatus.CreateDirectoryFail;
+
+                               }
+
+                        }
+
+                        start = end + 1;
+
+                        end = directory.indexOf(&quot;/&quot;, start);
+
+                        // 检查所有目录是否创建完毕
+
+                        if (end &lt;= start) {
+
+                               break;
+
+                        }
+
+                 }
+
+          }
+
+          return status;
+
+   }
+
+
+
+   //*/*
+
+    /* 上传文件到服务器,新上传和断点续传
+
+    /* @param remoteFile 远程文件名，在上传之前已经将服务器工作目录做了改变
+
+    /* @param localFile 本地文件File句柄，绝对路径
+
+    /* @param processStep 需要显示的处理进度步进值
+
+    /* @param ftpClient FTPClient引用
+
+    /* @return
+
+    /* @throws IOException
+
+    /*/
+
+   public UploadStatus uploadFile(String remoteFile, File localFile,
+
+                 FTPClient ftpClient, long remoteSize) throws IOException {
+
+          UploadStatus status;
+
+          // 显示进度的上传
+
+          System.out.println(&quot;localFile.length():&quot;+localFile.length());
+
+          long step = localFile.length() / 100;
+
+          step = step==0?1:step;//文件过小，step可能为0
+
+          long process = 0;
+
+          long localreadbytes = 0L;
+
+          RandomAccessFile raf = new RandomAccessFile(localFile, &quot;r&quot;);
+
+          OutputStream out = ftpClient.appendFileStream(new String(remoteFile
+
+                        .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+          // 断点续传
+
+          if (remoteSize &gt; 0) {
+
+                 ftpClient.setRestartOffset(remoteSize);
+
+                 process = remoteSize / step;
+
+                 raf.seek(remoteSize);
+
+                 localreadbytes = remoteSize;
+
+          }
+
+          byte[] bytes = new byte[1024];
+
+          int c;
+
+          while ((c = raf.read(bytes)) != -1) {
+
+                 out.write(bytes, 0, c);
+
+                 localreadbytes += c;
+
+                 if (localreadbytes / step != process) {
+
+                        process = localreadbytes / step;
+
+                        if (process % 10 == 0){
+
+                               log.info(&quot;上传进度：&quot; + process);
+
+                        }
+
+                 }
+
+          }
+
+          out.flush();
+
+          raf.close();
+
+          out.close();
+
+          boolean result = ftpClient.completePendingCommand();
+
+          if (remoteSize &gt; 0) {
+
+                 status = result ? UploadStatus.UploadFromBreakSuccess
+
+                               : UploadStatus.UploadFromBreakFailed;
+
+          } else {
+
+                 status = result ? UploadStatus.UploadNewFileSuccess
+
+                               : UploadStatus.UploadNewFileFailed;
+
+          }
+
+          return status;
+
+   }
+
+
+
+   public InputStream downFile(String sourceFileName) throws IOException {
+
+          return ftpClient.retrieveFileStream(sourceFileName);
+
+   }
+
+
+
+   public enum UploadStatus {
+
+          CreateDirectoryFail, // 远程服务器相应目录创建失败
+
+          CreateDirectorySuccess, // 远程服务器闯将目录成功
+
+          UploadNewFileSuccess, // 上传新文件成功
+
+          UploadNewFileFailed, // 上传新文件失败
+
+          FileExits, // 文件已经存在
+
+          RemoteFileBiggerThanLocalFile, // 远程文件大于本地文件
+
+          UploadFromBreakSuccess, // 断点续传成功
+
+          UploadFromBreakFailed, // 断点续传失败
+
+          DeleteRemoteFaild; // 删除远程文件失败
+
+   }
+
+
+
+   public enum DownloadStatus {
+
+          RemoteFileNotExist, // 远程文件不存在
+
+          DownloadNewSuccess, // 下载文件成功
+
+          DownloadNewFailed, // 下载文件失败
+
+          LocalFileBiggerThanRemoteFile, // 本地文件大于远程文件
+
+          DownloadFromBreakSuccess, // 断点续传成功
+
+          DownloadFromBreakFailed; // 断点续传失败
+
+   }
+</code></pre><p>}
+FtpConfig类：
+//<em>/</em>
+ /<em> 
+ /</em>/
+package com.pccw.portlet.publictools;
+//<em>/</em>
+ /<em> FTP配置类
+ /</em> @author WangXianfeng 1:18:45 PM Jul 16, 2011
+ /<em>/
+public class FtpConfig {
+    private String server;
+    private int port;
+    private String username;
+    private String password;
+    private String path;
+    gets  。。sets。。
+}
+测试类：
+import java.util.List;
+import com.pccw.portlet.publictools.FtpConfig;
+import com.pccw.portlet.publictools.FtpUtil;
+//</em>/<em>
+ /</em> 
+ /<em> @author WangXianfeng 1:20:45 PM Jul 16, 2011
+ /</em>/
+public class HelloWorld {
+    //<em>/</em>
+     /<em> @param args
+     /</em>/
+    public static void main(String[] args) throws Exception {
+        FtpConfig config = new FtpConfig();
+        config.setServer(&quot;192.168.0.199&quot;);
+        config.setPort(21);
+        config.setUsername(&quot;wxf&quot;);
+        config.setPassword(&quot;wxf&quot;);
+        config.setPath(&quot;bankafile&quot;);
+        FtpUtil ftp = new FtpUtil();
+        ftp.connectServer(config);
+        String localFile = &quot;c:\Seagull.rar&quot;;
+        ftp.upload(localFile, &quot;sea.rar&quot;);
+        List<String> files = ftp.getFileList(&quot;&quot;);
+        //ftp.changeDirectory(&quot;bankafile&quot;);</p>
+<pre><code>    for(String file:files){
+        System.out.println(file);
+        String local = &quot;D:\\ct\\199\\temp\\&quot; + file;
+        ftp.download(file, local);
+    }
+}
+</code></pre><p>}</p>
+<p>来源： <a href="[http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/](http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/)">[http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/](http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ftp/">ftp</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ftp/" class="label label-primary">ftp</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-ftp--ApacheFTP实用代码/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ftp--ApacheFTP实用代码" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--FTP的主动模式/">FTP的主动模式</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--FTP的主动模式/">feb. 2 2014</a></time></span>      
@@ -191,1124 +1144,384 @@ pasv_max_port=2225</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope/">Java Service Wrapper </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--JSch-Java实现的SFTP（文件上传详解篇）/">JSch </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--JSch-Java实现的SFTP（文件上传详解篇）/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="java-service-wrapper-logging-configuration-properties">Java Service Wrapper - Logging Configuration Properties</h1>
-<p><img src="" alt="World Map">EnglishJapanese (Nihongo)German (Deutsch)</p>
-<p><strong>Please  or</strong></p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/" target="_blank"><img src="" alt="Java Service Wrapper Logo"></a></li>
-<li><a href="http://www.tanukisoftware.com/" target="_blank"><img src="" alt="Tanuki Software Ltd Logo"></a></li>
-</ul>
-<p>Java Service Wrapper is the easiest way to make your product more reliable.</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/requestTrial.jsp" target="_blank"><img src="" alt="Free Trial"></a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp" target="_blank"><img src="" alt="Buy Now"></a></li>
-<li><a href="http://www.tanukisoftware.com/" target="_blank">Tanuki Software</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/" target="_blank">Java Service Wrapper</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp" target="_blank">Home</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Product</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Overview</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/product-features.html" target="_blank">Features</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/licenseOverview.html" target="_blank">License</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/faq.html" target="_blank">FAQ</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp" target="_blank">Download</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp#stable" target="_blank">Stable Release</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/release-notes.html" target="_blank">Release Notes</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/versions.jsp" target="_blank">Past Releases</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp#purchase" target="_blank">Order</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp#purchase" target="_blank">Buy now</a></p>
-</li>
-<li><a href="http://www.tanukisoftware.com/en/distributors.php" target="_blank">Distributors</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/licenseOverview.html" target="_blank">License Overview</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/licenseOverview.html#examples" target="_blank">License FAQ</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Documentation</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Introduction</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/integrate.html" target="_blank">Integration Methods</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/launch.html" target="_blank">Launching your Application</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html" target="_blank">Configuration Properties</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/javadocs.html" target="_blank">Java API</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/i18n.html" target="_blank">Localization / i18n</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/security-model.html" target="_blank">Security Model</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/jmx.html" target="_blank">JMX Control</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/example.html" target="_blank">TestWrapper Application</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Support</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/debugging.html" target="_blank">Debugging</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/troubleshooting.html" target="_blank">Troubleshooting</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/howto.html" target="_blank">HOWTO</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/qna.html" target="_blank">Questions &amp; Answers</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/faq.html" target="_blank">FAQ</a></li>
-<li><a href="http://sourceforge.net/tracker/?group_id=39428" target="_blank">Issue Tracking</a></li>
-<li><a href="http://sourceforge.net/mail/?group_id=39428" target="_blank">Maling List</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Get Support</a></li>
-<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank">Community</a></p>
-</li>
-<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank">SourceForge Project</a></p>
-</li>
-<li><a href="http://sourceforge.net/svn/?group_id=39428" target="_blank">Source Repository</a></li>
-<li><p><a href="http://www.tanukisoftware.com/en/" target="_blank">About us</a></p>
-</li>
-<li><p><a href="http://www.tanukisoftware.com/en/company.php" target="_blank">Company Profile</a></p>
-</li>
-<li><a href="http://www.tanukisoftware.com/en/distributors.php" target="_blank">Distributors</a></li>
-<li><a href="http://www.tanukisoftware.com/en/customers.php" target="_blank">Customers</a></li>
-<li><a href="http://www.tanukisoftware.com/en/contact.php" target="_blank">Contact us</a></li>
-<li><h2 id="properties">Properties</h2>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html" target="_blank">Configuration Overview</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html#category" target="_blank">List by Category</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html#name" target="_blank">List by Name</a></p>
-</li>
-<li><h2 id="currently-logged-on-">Currently logged on:</h2>
-</li>
-<li><p>1 users, 100 guests</p>
-</li>
-<li><h2 id="customers">Customers</h2>
-</li>
-</ul>
-<p>Logging Configuration Properties <a href=""></a> # Logging Configuration Properties Logging properties are used to configure how where the Java Service Wrapper logs internal output as well as JVM output which would normally show up in the console used to launch a Java application. Wrapper Logging properties do not in any way control nor replace Logging tools within the Java application.</p>
-<p>[General/Common]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-adviser.html" target="_blank">wrapper.adviser</a> (3.1.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-debug.html" target="_blank">wrapper.debug</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#action" target="_blank">wrapper.filter.action.<n></a> (3.0.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#allow-wildcards" target="_blank">wrapper.filter.allow_wildcards.<n></a> (3.5.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#message" target="_blank">wrapper.filter.message.<n></a> (3.5.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#trigger" target="_blank">wrapper.filter.trigger.<n></a> (3.0.0)</li>
-</ul>
-<p>[Console]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-flush.html" target="_blank">wrapper.console.flush</a> (3.2.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-format.html" target="_blank">wrapper.console.format</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-loglevel.html" target="_blank">wrapper.console.loglevel</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-x-to-stderr.html" target="_blank">wrapper.console.error_to_stderr</a> (3.5.3)</p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-x-to-stderr.html" target="_blank">wrapper.console.fatal_to_stderr</a> (3.5.3)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-x-to-stderr.html" target="_blank">wrapper.console.warn_to_stderr</a> (3.5.3)</li>
-</ul>
-<p>[Command]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-java-command-loglevel.html" target="_blank">wrapper.java.command.loglevel</a> (3.1.2)</li>
-</ul>
-<p>[Log File]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile.html" target="_blank">wrapper.logfile</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-format.html" target="_blank">wrapper.logfile.format</a> (2.2.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-inactivity-timeout.html" target="_blank">wrapper.logfile.inactivity.timeout</a> (3.2.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-loglevel.html" target="_blank">wrapper.logfile.loglevel</a> (2.2.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-maxfiles.html" target="_blank">wrapper.logfile.maxfiles</a> (2.2.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-maxsize.html" target="_blank">wrapper.logfile.maxsize</a> (2.2.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-purge-pattern.html" target="_blank">wrapper.logfile.purge.pattern</a> (3.3.8)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-purge-sort.html" target="_blank">wrapper.logfile.purge.sort</a> (3.3.8)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-rollmode.html" target="_blank">wrapper.logfile.rollmode</a> (3.2.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-umask.html#x-umask" target="_blank">wrapper.logfile.umask</a> (3.2.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-log-lf-delay-threshold.html" target="_blank">wrapper.log.lf_delay.threshold</a> (3.5.10)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-log-warning-threshold.html" target="_blank">wrapper.log.warning.threshold</a> (3.5.8)</li>
-</ul>
-<p>[Log-Dialog]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-enable.html" target="_blank">wrapper.logdialog.enable</a> (3.3.1)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-format.html" target="_blank">wrapper.logdialog.format</a> (3.3.1)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-lines.html" target="_blank">wrapper.logdialog.lines</a> (3.3.1)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-loglevel.html" target="_blank">wrapper.logdialog.loglevel</a> (3.3.1)</li>
-</ul>
-<p>[Syslog]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-facility.html" target="_blank">wrapper.syslog.facility</a> (3.2.1)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-ident.html" target="_blank">wrapper.syslog.ident</a> (3.2.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-local-host.html" target="_blank">wrapper.syslog.local.host</a> (3.5.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-loglevel.html" target="_blank">wrapper.syslog.loglevel</a> (2.2.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-remote-host.html" target="_blank">wrapper.syslog.remote.host</a> (3.5.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-remote-port.html" target="_blank">wrapper.syslog.remote.port</a> (3.5.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/" target="_blank"><img src="" alt=""></a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Product</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Overview</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/product-features.html" target="_blank">Features</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp#stable" target="_blank">Download</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp#purchase" target="_blank">Buy Now</a></li>
-<li><a href="http://www.tanukisoftware.com/en/distributors.php" target="_blank">Distribuitors</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Documentation</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Introduction</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/integrate.html" target="_blank">Integration Methods</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html" target="_blank">Configuration Properties</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/javadocs.html" target="_blank">Java API</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Support</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/debugging.html" target="_blank">Debugging</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/troubleshooting.html" target="_blank">Troubleshooting</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/qna.html" target="_blank">Questions &amp; Answers</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/faq.html" target="_blank">FAQ</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Get Support</a></li>
-<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank">Community</a></p>
-</li>
-<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank"><img src="" alt="SourceForge Project"></a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/" target="_blank">English</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/japanese/" target="_blank">日本語</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/german/" target="_blank">Deutsch</a>
-Copyright (c) 2004-2011, Tanuki Software, Ltd. All Rights Reserved.</li>
-</ul>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wrapper/">wrapper</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wrapper/" class="label label-primary">wrapper</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-java-service-wrapper-tomcat-linux-tomcat-java-iteye-">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动 - Tomcat - Java - ITeye论坛</h1>
-<p><a href="http://www.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.iteye.com/login" target="_blank">登录</a> <a href="http://www.iteye.com/signup" target="_blank">注册</a></p>
-<p><a href="http://www.iteye.com/" target="_blank"><img src="&quot;ITeye-最棒的软件开发交流社区&quot;" alt="ITeye-最棒的软件开发交流社区"></a></p>
-<p>-</p>
-<p><a href="http://www.iteye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.iteye.com/forums/board/Java" target="_blank">Java企业应用论坛</a> →</p>
-<h1 id="-java-service-wrapper-tomcat-linux-">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动</h1>
-<p><a href="http://www.iteye.com/forums/board/Java" target="_blank">全部</a> <a href="http://www.iteye.com/forums/tag/Hibernate" target="_blank">Hibernate</a> <a href="http://www.iteye.com/forums/tag/Spring" target="_blank">Spring</a> <a href="http://www.iteye.com/forums/tag/Struts" target="_blank">Struts</a> <a href="http://www.iteye.com/forums/tag/iBATIS" target="_blank">iBATIS</a> <a href="http://www.iteye.com/forums/tag/%E4%BC%81%E4%B8%9A%E5%BA%94%E7%94%A8" target="_blank">企业应用</a> <a href="http://www.iteye.com/forums/tag/Lucene" target="_blank">Lucene</a> <a href="http://www.iteye.com/forums/tag/SOA" target="_blank">SOA</a> <a href="http://www.iteye.com/forums/tag/Java%E7%BB%BC%E5%90%88" target="_blank">Java综合</a> <a href="http://www.iteye.com/forums/tag/%E8%AE%BE%E8%AE%A1%E6%A8%A1%E5%BC%8F" target="_blank">设计模式</a> <a href="http://www.iteye.com/forums/tag/Tomcat" target="_blank">Tomcat</a> <a href="http://www.iteye.com/forums/tag/OO" target="_blank">OO</a> <a href="http://www.iteye.com/forums/tag/JBoss" target="_blank">JBoss</a>
-<a href="http://www.iteye.com/clicks/593" target="_blank">最成熟稳定甘特图控件,支持Java和.Net</a></p>
-<p>浏览 5354 次 锁定老帖子 <a href="">主题：使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动</a></p>
-<p>精华帖 (0) :: 良好帖 (0) :: 新手帖 (0) :: 隐藏帖 (0) 作者 正文 * wenson</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://wenson.iteye.com/" target="_blank"><img src="&quot;wenson的博客: 山下的人&quot;" alt="wenson的博客"></a></li>
-<li>性别: <img src="&quot;男&quot;" alt=""></li>
-<li>文章: 111</li>
-<li>积分: 80</li>
-<li>来自: 广州</li>
-<li><img src="" alt="">
-  发表时间：2008-01-11   最后修改：2009-02-02</li>
-</ul>
-<p><a href="http://www.iteye.com/topic/155159#" target="_blank">&lt;</a> <a href="http://www.iteye.com/topic/155159#" target="_blank">&gt;</a>  猎头职位: <a href="http://www.iteye.com/jobs/1847" target="_blank">北京:  ITeye网站诚聘产品交互设计</a></p>
-<p>相关文章: <a href="http://www.iteye.com/topic/155159#" title="关闭" target="_blank"> </a></p>
-<ul>
-<li><a href="http://www.iteye.com/topic/36657" title="把java程序做成windows服务（转）" target="_blank">把java程序做成windows服务（转）</a></li>
-<li><a href="http://www.iteye.com/topic/557980" title="tomcat源码—redirect和forward的实现" target="_blank">tomcat源码—redirect和forward的实现</a></li>
-<li><a href="http://www.iteye.com/topic/614683" title="tomcat集群时统计session与在线人数" target="_blank">tomcat集群时统计session与在线人数</a>
-推荐群组: <a href="http://ubuntu.group.iteye.com/" target="_blank">Ubuntu For Fun</a>
-<a href="http://www.iteye.com/wiki/topic/155159" target="_blank">更多相关推荐</a>
-<a href="http://www.iteye.com/forums/tag/Tomcat" target="_blank">Tomcat</a></li>
-</ul>
-<p>前几天总结了使用JSVC来设置tomcat作为linux服务并且开机自动启动，但是如果要更专业一点来控制tomcat的启动，使用Java Service Wrapper应该不失为一个好的选择，下面来总结一下Java Service Wrapper在Linux中对于tomcat启动的设置：
-<strong>1、</strong> 安装JDK、Tomcat,此处略过。比如tomcat安装在/opt/tomcat目录中。
-<strong>2</strong> 、使用命令wget 下载Java Service Wrapper(目前版本wrapper-linux-x86-32-3.2.3，官网：<a href="http://wrapper.tanukisoftware.org" target="_blank">http://wrapper.tanukisoftware.org</a>), 用命令tar -zxvf wrapper-linux-x86-32-3.2.3.tar.gz 解压，得到目录wrapper-linux-x86-32-3.2.3，使用ln -s wrapper-linux-x86-32-3.2.3 wrapper 给目录wrapper-linux-x86-32-3.2.3 建一个名称为wrapper的快捷方式。
-<strong>3</strong> 、复制wrapper\src\bin\sh.script.in到/opt/tomcat/bin目录，重命名为tomcat
-复制wrapper\src\conf\wrapper.conf.in到/opt/tomcat/conf目录，重命名为wrapper.conf
-复制wrapper\lib目录下的所有3个文件到/opt/tomcat/lib目录
-复制wrapper\bin目录下的wrapper文件到/opt/tomcat/bin目录
-<strong>4</strong> 、修改/opt/testapp/bin/tomcat文件
-APP_NAME=&quot;tomcat&quot;
-APP_LONG_NAME=&quot;Tomcat Application Server&quot;
-WRAPPER_CMD=&quot;./wrapper&quot;
-WRAPPER_CONF=&quot;../conf/wrapper.conf&quot;
-赋予执行权限
-chmod 775 /opt/tomcat/bin/tomcat
-chmod 775 /opt/tomcat/bin/tomcat
-<strong>5</strong> 、修改/opt/tomcat/conf/wrapper.conf文件，如：
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Java Application
-/# 设置环境变量
-set.JAVA_HOME=/usr/java/jdk1.6.0_01
-set.CATALINA_HOME=/opt/tomcat
-set.CATALINA_BASE=/opt/tomcat
-wrapper.java.command=/usr/java/jdk1.6.0_01/bin/java
-/# Java Main class. This class must implement the WrapperListener interface
-/# or guarantee that the WrapperManager class is initialized. Helper
-/# classes are provided to do this for you. See the Integration section
-/# of the documentation for details.
-/# 使用WrapperStartStopApp，这样可以通过命令带start/stop来启动/停止程序。
-wrapper.java.mainclass=org.tanukisoftware.wrapper.WrapperStartStopApp
-/# Java Classpath (include wrapper.jar) Add class path elements as
-/# needed starting from 1
-/# 设置执行tomcat的classpath文件
-wrapper.java.classpath.1=%CATALINA_HOME%/lib/wrapper.jar
-wrapper.java.classpath.2=%CATALINA_BASE%/bin/bootstrap.jar
-/# Java Library Path (location of Wrapper.DLL or libwrapper.so)
-/# 设置tomcat的lib路径
-wrapper.java.library.path.1=%CATALINA_HOME%/lib/
-/# Java Additional Parameters
-/# 设置额外参数
-wrapper.java.additional.1=-Djava.endorsed.dirs=%CATALINA_HOME%/common/endorsed
-wrapper.java.additional.2=-Dcatalina.base=%CATALINA_BASE%
-wrapper.java.additional.3=-Dcatalina.home=%CATALINA_HOME%
-wrapper.java.additional.4=-Djava.io.tmpdir=%CATALINA_BASE%/temp
-/# Initial Java Heap Size (in MB)
-/# 设置tomcat的JVM初始化堆的大小
-wrapper.java.initmemory=128
-/# Maximum Java Heap Size (in MB)
-/# 设置tomcat的JVM堆的最大值
-wrapper.java.maxmemory=512
-/# Application parameters. Add parameters as needed starting from 1
-/# 设置启动、停止和重启参数
-wrapper.app.parameter.1=org.apache.catalina.startup.Bootstrap
-wrapper.app.parameter.2=1
-wrapper.app.parameter.3=start
-wrapper.app.parameter.4=org.apache.catalina.startup.Bootstrap
-wrapper.app.parameter.5=true
-wrapper.app.parameter.6=1
-wrapper.app.parameter.7=stop
-wrapper.filter.trigger.1=java.lang.OutOfMemoryError
-wrapper.filter.action.1=RESTART
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Logging Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Format of output for the console. (See docs for formats)
-wrapper.console.format=PM
-/# Log Level for console output. (See docs for log levels)
-wrapper.console.loglevel=INFO
-/# Log file to use for wrapper output logging.
-/# 设置log文件路径
-wrapper.logfile=%CATALINA_BASE%/logs/wrapper.log
-/# Format of output for the log file. (See docs for formats)
-wrapper.logfile.format=LPTM
-/# Log Level for log file output. (See docs for log levels)
-wrapper.logfile.loglevel=INFO
-/# Maximum size that the log file will be allowed to grow to before
-/# the log is rolled. Size is specified in bytes. The default value
-/# of 0, disables log rolling. May abbreviate with the &#39;k&#39; (kb) or
-/# &#39;m&#39; (mb) suffix. For example: 10m = 10 megabytes.
-/# 设置log文件最大值
-wrapper.logfile.maxsize=5
-/# Maximum number of rolled log files which will be allowed before old
-/# files are deleted. The default value of 0 implies no limit.
-/#设置log文件最多个数
-wrapper.logfile.maxfiles=10
-/# Log Level for sys/event log output. (See docs for log levels)
-wrapper.syslog.loglevel=NONE
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Windows Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Title to use when running as a console
-/# windows下tomcat控制台名称
-wrapper.console.title=Tomcat6 Application Server
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Windows NT/2000/XP Service Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# WARNING - Do not modify any of these properties when an application
-/# using this configuration file has been installed as a service.
-/# Please uninstall the service before modifying this section. The
-/# service can then be reinstalled.
-/# Name of the service
-/# 设置服务名称
-wrapper.ntservice.name=tomcat6
-/# Display name of the service
-wrapper.ntservice.displayname=@app.long.name@
-/# Description of the service
-wrapper.ntservice.description=@app.description@
-/# Service dependencies. Add dependencies as needed starting from 1
-wrapper.ntservice.dependency.1=
-/# Mode in which the service is installed. AUTO_START or DEMAND_START
-/# 设置允许Tomcat服务自动启动
-wrapper.ntservice.starttype=AUTO_START
-/# Allow the service to interact with the desktop.
-wrapper.ntservice.interactive=false
-<strong>6</strong> 、设置tomcat开机自动运行：
-ln -s /opt/tomcat/bin/tomcat /etc/init.d/tomcat
-<strong>7</strong> 、测试,执行命令：service tomcat start|stop|restart|status
-至此，使用Java Service Wrapper来设置Tomcat作为Linux的服务完成，从此过程看来，Java Service Wrapper对tomcat的控制程度比tomcat自带的JSVC深入多了。
-目录结构：
-/opt/tomcat/bin
-                 | tomcat
-                 | wrapper
-/opt/tomcat/logs
-                 | wrapper.log（程序运行时自动产生）
-/opt/tomcat/conf
-                 | wrapper.conf
-/opt/tomcat/lib
-                 | libwrapper.so
-                 | wrapper.jar
-                 | test.jar</p>
-<p>声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。</p>
-<p>推荐链接</p>
-<ul>
-<li><a href="http://www.iteye.com/clicks/508" target="_blank">.Net程序员不用羡慕Android程序员，微软移动战役打响</a></li>
-<li><a href="http://www.iteye.com/clicks/716" target="_blank">想进外企，出国，跳槽，找工作？英语不好,快来充电吧</a></li>
-<li><a href="http://www.iteye.com/clicks/527" target="_blank">100万现金奖培训出来的程序员</a></li>
-<li><a href="http://www.iteye.com/clicks/609" target="_blank">-</a> <a href="http://www.iteye.com/topic/155159#" target="_blank">返回顶楼</a> <a href="http://wenson.iteye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://wenson.iteye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://my.iteye.com/messages/new?message%5Breceiver_name%5D=wenson" title="发送站内短信" target="_blank"> </a> <a href="http://wenson.iteye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://my.iteye.com/feed?subscription%5Bsubscribed_user_name%5D=wenson" title="关注作者" target="_blank"> </a>  * nwangwei</li>
-<li>等级: <img src="&quot;一星会员&quot;" alt="一星会员"></li>
-<li><a href="http://nwangwei.iteye.com/" target="_blank"><img src="&quot;nwangwei的博客: nwangwei&quot;" alt="nwangwei的博客"></a></li>
-<li>性别: <img src="&quot;男&quot;" alt=""></li>
-<li>文章: 41</li>
-<li>积分: 130</li>
-<li><img src="" alt="">
-  发表时间：2008-03-13  </li>
-</ul>
-<p>棒！
-tomcat的shutdown命令老是关不掉全部的java进程 <a href="http://www.iteye.com/topic/155159#" target="_blank">返回顶楼</a> <a href="http://nwangwei.iteye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://nwangwei.iteye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://my.iteye.com/messages/new?message%5Breceiver_name%5D=nwangwei" title="发送站内短信" target="_blank"> </a> <a href="http://nwangwei.iteye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://my.iteye.com/feed?subscription%5Bsubscribed_user_name%5D=nwangwei" title="关注作者" target="_blank"> </a> <a href="http://www.iteye.com/topic/155159#485194" title="nwangwei回帖:使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动" target="_blank">回帖地址</a></p>
-<p><a href="http://www.iteye.com/topic/155159#" title="好" target="_blank">0</a> <a href="http://www.iteye.com/topic/155159#" title="差" target="_blank">0</a> 请登录后投票</p>
-<p><a href="http://www.iteye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.iteye.com/forums/board/Java" target="_blank">Java企业应用版</a>
-跳转论坛:移动开发技术 Web前端技术 Java企业应用 编程语言技术 综合技术 入门技术 招聘求职 海阔天空</p>
-<ul>
-<li><a href="http://www.iteye.com/jobs/1555" title="北京:美团诚聘资深研发工程师（Java）" target="_blank">北京: 美团诚聘资深研发工程师（Java）</a></li>
-<li><a href="http://www.iteye.com/jobs/1554" title="北京:美团诚聘研发工程师（Java）" target="_blank">北京: 美团诚聘研发工程师（Java）</a></li>
-<li><a href="http://www.iteye.com/jobs/712" title="北京:ITeye官方招聘和猎头诚聘ITeye网站诚聘Java高级搜索工程师" target="_blank">北京: ITeye官方招聘和猎头诚聘ITeye网站诚聘Java</a></li>
-<li><a href="http://www.iteye.com/jobs/2068" title="吉林:用友汽车软件诚聘Java程序员" target="_blank">吉林: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1628" title="浙江:阿里巴巴诚聘高级Java工程师" target="_blank">浙江: 阿里巴巴诚聘高级Java工程师</a></li>
-<li><a href="http://www.iteye.com/jobs/2078" title="上海:用友汽车软件诚聘项目经理" target="_blank">上海: 用友汽车软件诚聘项目经理</a></li>
-<li><a href="http://www.iteye.com/jobs/1144" title="陕西:ThoughtWorks诚聘西安Senior Java Application Developer" target="_blank">陕西: ThoughtWorks诚聘西安Senior Java Applicatio</a></li>
-<li><a href="http://www.iteye.com/jobs/2067" title="重庆:用友汽车软件诚聘Java程序员" target="_blank">重庆: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/750" title="北京:杰嘉迪诚聘高级Java程序员" target="_blank">北京: 杰嘉迪诚聘高级Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/2111" title="北京:中油瑞飞/richfit诚聘JAVA开发工程师" target="_blank">北京: 中油瑞飞/richfit诚聘JAVA开发工程师</a></li>
-<li><a href="http://www.iteye.com/jobs/1891" title="北京:北大软件诚聘Java软件开发工程师（技术研发部110809）" target="_blank">北京: 北大软件诚聘Java软件开发工程师（技术研发部</a></li>
-<li><a href="http://www.iteye.com/jobs/755" title="北京:杰嘉迪诚聘Java程序员" target="_blank">北京: 杰嘉迪诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1231" title="北京:胡莱游戏诚聘年薪8-16万高级Java程序员" target="_blank">北京: 胡莱游戏诚聘年薪8-16万高级Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1541" title="上海:大众点评诚聘Java高级开发工程师（上海）" target="_blank">上海: 大众点评诚聘Java高级开发工程师（上海）</a></li>
-<li><a href="http://www.iteye.com/jobs/2066" title="湖北:用友汽车软件诚聘Java程序员" target="_blank">湖北: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1849" title="浙江:阿里巴巴诚聘C++开发工程师(搜索引擎和广告引擎方向，偏底层)" target="_blank">浙江: 阿里巴巴诚聘C++开发工程师(搜索引擎和广告</a></li>
-<li><a href="http://www.iteye.com/jobs/2065" title="安徽:用友汽车软件诚聘Java程序员" target="_blank">安徽: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/2080" title="上海:用友汽车软件诚聘软件研发工程师（实习岗位）" target="_blank">上海: 用友汽车软件诚聘软件研发工程师（实习岗位）</a></li>
-<li><p><a href="http://www.iteye.com/jobs/2064" title="上海:用友汽车软件诚聘高级Java程序员" target="_blank">上海: 用友汽车软件诚聘高级Java程序员</a></p>
-</li>
-<li><p><a href="http://www.iteye.com/" target="_blank">首页</a></p>
-</li>
-<li><a href="http://www.iteye.com/news" target="_blank">资讯</a></li>
-<li><a href="http://www.iteye.com/magazines" target="_blank">精华</a></li>
-<li><a href="http://www.iteye.com/forums" target="_blank">论坛</a></li>
-<li><a href="http://www.iteye.com/ask" target="_blank">问答</a></li>
-<li><a href="http://www.iteye.com/blogs" target="_blank">博客</a></li>
-<li><a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a></li>
-<li><a href="http://www.iteye.com/groups" target="_blank">群组</a></li>
-<li><a href="http://www.iteye.com/job" target="_blank">招聘</a></li>
-<li><a href="http://www.iteye.com/search" target="_blank">搜索</a></li>
-<li><a href="http://www.ciecloud.org/2012/index.html" target="_blank">云计算大会</a></li>
-<li><a href="http://www.iteye.com/index/service" target="_blank">广告服务</a></li>
-<li><a href="http://webmaster.iteye.com/" target="_blank">ITeye黑板报</a></li>
-<li><a href="http://www.iteye.com/index/contactus" target="_blank">联系我们</a></li>
-<li><a href="http://www.iteye.com/index/friend_links" target="_blank">友情链接</a></li>
-</ul>
-<p>© 2003-2011 ITeye.com. [ <a href="http://www.miibeian.gov.cn/" target="_blank">京ICP证110151号</a> 京公网安备110105010620 ]
-百联优力(北京)投资有限公司 版权所有
-上海炯耐计算机软件有限公司 提供商务支持 <img src="" alt=""></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wrapper/">wrapper</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wrapper/" class="label label-primary">wrapper</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-webservice-CXF--CXF发布Webservice服务，出现异常/">CXF发布Webservice服务，出现异常，请帮忙分析一下 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-webservice-CXF--CXF发布Webservice服务，出现异常/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="cxf-webservice-java-java-ee">CXF发布Webservice服务，出现异常，请帮忙分析一下 - Java - Java EE</h1>
-<p><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#" target="_blank"><img src="" alt=""></a></p>
-<ul>
-<li><a href=""></a></li>
-</ul>
-<h2 id="-">#</h2>
-<h2 id="-">#</h2>
-<p>&lt;&lt;&gt;&gt;
-<a href="http://www.csdn.net/" target="_blank">CSDN</a>-<a href="http://community.csdn.net/" target="_blank">CSDN社区</a>-<a href="http://forum.csdn.net/BList/Java/" target="_blank">Java</a>-<a href="http://forum.csdn.net/SList/J2EE//" target="_blank">Java EE</a></p>
-<ul>
-<li><p><a href="">管理菜单</a></p>
-</li>
-<li><p><a href="http://forum.csdn.net/PointForum/BuildTopic.aspx?topicId=68615908-0c81-480b-8ec2-36c88ed83271&amp;postDate=2008-10-12+16%3a13%3a23&amp;return=" target="_blank">生成帖子</a></p>
-</li>
-<li><a href="">置顶</a></li>
-<li><a href="">推荐</a></li>
-<li><a href="">取消推荐</a></li>
-<li><a href="">锁定</a></li>
-<li><a href="">解锁</a></li>
-<li><a href="">移动</a></li>
-<li><a href="">编辑</a></li>
-<li><a href="">删除</a></li>
-<li><a href="">帖子加分</a></li>
-<li><a href="">帖子高亮</a></li>
-<li><a href="">取消高亮</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Manage/TopicManageView.aspx?forumID=2efca177-6b51-42d9-a509-0216fbca231e&amp;topicID=68615908-0c81-480b-8ec2-36c88ed83271&amp;date=2008-10-12+16%3a13%3a23&amp;v=13" target="_blank">结  帖</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Forum/PostTopic.aspx?forumID=2efca177-6b51-42d9-a509-0216fbca231e" target="_blank">发  帖</a></li>
-<li><p><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#r_achor" target="_blank">回  复</a></p>
-<h1 id="-cxf-webservice-50-ma_liang-"><a href="">收藏</a> 不显示删除回复显示所有回复显示星级回复显示得分回复 <a href=""></a>CXF发布Webservice服务，出现异常，请帮忙分析一下<em>[问题点数:50分，结帖人:ma_liang]</em></h1>
-<ul>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank"><img src="" alt=""></a></li>
-</ul>
-</li>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank">ma_liang</a></li>
-<li>(黑马)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>结帖率：93.33%</li>
-<li><em>楼主</em>发表于：2008-10-12 16:13:23 使用Cxf发布WebServic出现如下异常，请帮忙分析一下
-信息: Creating Service {<a href="http://service.webservice.client.api.workflow.cvicse.com/}WsClient" target="_blank">http://service.webservice.client.api.workflow.cvicse.com/}WsClient</a> from class com.cvicse.workflow.api.client.webservice.service.WsClient
-Exception in thread &quot;main&quot; java.lang.AbstractMethodError: org.apache.xerces.dom.DocumentImpl.getInputEncoding()Ljava/lang/String;
-at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
-at sun.reflect.NativeMethodAccessorImpl.invoke(Unknown Source)
-at sun.reflect.DelegatingMethodAccessorImpl.invoke(Unknown Source)
-at java.lang.reflect.Method.invoke(Unknown Source)
-at org.apache.ws.commons.schema.utils.DOMUtil.getInputEncoding(DOMUtil.java:602)
-at org.apache.ws.commons.schema.SchemaBuilder.build(SchemaBuilder.java:84)
-at org.apache.ws.commons.schema.XmlSchemaCollection.read(XmlSchemaCollection.java:424)
-at org.apache.ws.commons.schema.XmlSchemaCollection.read(XmlSchemaCollection.java:418)
-at org.apache.cxf.common.xmlschema.SchemaCollection.read(SchemaCollection.java:142)
-at org.apache.cxf.databinding.AbstractDataBinding.addSchemaDocument(AbstractDataBinding.java:93)
-at org.apache.cxf.jaxb.JAXBDataBinding.initialize(JAXBDataBinding.java:336)
-at org.apache.cxf.service.factory.ReflectionServiceFactoryBean.buildServiceFromClass(ReflectionServiceFactoryBean.java:354)
-at org.apache.cxf.jaxws.support.JaxWsServiceFactoryBean.buildServiceFromClass(JaxWsServiceFactoryBean.java:514)
-at org.apache.cxf.service.factory.ReflectionServiceFactoryBean.initializeServiceModel(ReflectionServiceFactoryBean.java:405)
-at org.apache.cxf.service.factory.ReflectionServiceFactoryBean.create(ReflectionServiceFactoryBean.java:188)
-at org.apache.cxf.jaxws.support.JaxWsServiceFactoryBean.create(JaxWsServiceFactoryBean.java:164)
-at org.apache.cxf.frontend.AbstractWSDLBasedEndpointFactory.createEndpoint(AbstractWSDLBasedEndpointFactory.java:100)
-at org.apache.cxf.frontend.ServerFactoryBean.create(ServerFactoryBean.java:116)
-at org.apache.cxf.jaxws.JaxWsServerFactoryBean.create(JaxWsServerFactoryBean.java:168)
-at org.apache.cxf.jaxws.EndpointImpl.getServer(EndpointImpl.java:336)
-at org.apache.cxf.jaxws.EndpointImpl.doPublish(EndpointImpl.java:251)
-at org.apache.cxf.jaxws.EndpointImpl.publish(EndpointImpl.java:201)
-at org.apache.cxf.jaxws.spi.ProviderImpl.createAndPublishEndpoint(ProviderImpl.java:84)
-at javax.xml.ws.Endpoint.publish(Endpoint.java:47)
-at com.cvicse.workflow.WorkflowWebService.<init>(WorkflowWebService.java:13)
-at com.cvicse.workflow.WorkflowWebService.main(WorkflowWebService.java:18) * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>
-回复次数：9  * <a href="http://hi.csdn.net/accp206" target="_blank"><img src="&quot;accp206用户自定义头像&quot;" alt="accp206用户头像"></a></li>
-<li><a href="http://hi.csdn.net/accp206" target="_blank">accp206</a></li>
-<li>(与勋章仅一步之遥，遗憾……没太)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#1楼 得分：10回复于：2008-10-12 18:45:58<a href=""></a> 你接口中的某些方法，其参数或返回值类型是否有String数组的？
-如果有的话，消除这些类型的参数，用别的方式代替。比如String数组，可换成一个用“,”号分隔的字符串传递。
-在开发WebService程序时，尽量不要使用复杂数据类型。 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ma_liang" target="_blank"><img src="&quot;ma_liang用户自定义头像&quot;" alt="ma_liang用户头像"></a></li>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank">ma_liang</a></li>
-<li>(黑马)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#2楼 得分：0回复于：2008-10-12 21:17:36<a href=""></a> 接口中的方法里没有数组类型，不过返回值和参数里有接口类型的，我已经将它增加了适配器，如果不用适配器的话发布服务的时候会报JAXB绑定的错误，但是适配了所有后发布服务，报上面的错误，让人不解 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/teamlet" target="_blank"><img src="&quot;teamlet用户自定义头像&quot;" alt="teamlet用户头像"></a></li>
-<li><a href="http://hi.csdn.net/teamlet" target="_blank">teamlet</a></li>
-<li>(teamlet)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#3楼 得分：10回复于：2008-10-13 11:23:08<a href=""></a> 看看classpath路径下有没有 xercesImpl-2.8.1.jar ，如果没有加上试试。
-这是由于获取字符集的时候，你所使用的 jar 包中的org.apache.xerces.dom.DocumentImpl没有实现getInputEncoding()这个方法。 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/teamlet" target="_blank"><img src="&quot;teamlet用户自定义头像&quot;" alt="teamlet用户头像"></a></li>
-<li><a href="http://hi.csdn.net/teamlet" target="_blank">teamlet</a></li>
-<li>(teamlet)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#4楼 得分：10回复于：2008-10-13 12:55:22<a href=""></a> 报错后，字符集被设置为 UTF-8 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ma_liang" target="_blank"><img src="&quot;ma_liang用户自定义头像&quot;" alt="ma_liang用户头像"></a></li>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank">ma_liang</a></li>
-<li>(黑马)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#5楼 得分：0回复于：2008-10-14 08:38:30<a href=""></a> 我把项目构件路径中的 xercesImpl-2.8.1.jar 去掉了，反而发布成功了，为什么？ * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/teamlet" target="_blank"><img src="&quot;teamlet用户自定义头像&quot;" alt="teamlet用户头像"></a></li>
-<li><a href="http://hi.csdn.net/teamlet" target="_blank">teamlet</a></li>
-<li>(teamlet)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#6楼 得分：10回复于：2008-10-14 10:56:15<a href=""></a> <strong>更正一下</strong>
-org.apache.xerces.dom.DocumentImpl.getInputEncoding()在其父类CoreDocumentImpl中实现了。
-在DOMUtil.java中，通过如下语句调用 getInputEncoding 方法：
-Method m = Document.class.getMethod(&quot;getInputEncoding&quot;, new Class[]{});
-Document是一个接口，声明了 getInputEncoding 方法。
-DocumentImpl继承了CoreDocumentImpl，CoreDocumentImpl实现了Document接口。
-在通过Document接口调用DocumentImpl的时候，没有找到getInputEncoding 方法，
-因此提示java.lang.AbstractMethodError
-你的cxf是哪个版本的？在你的环境下使用的是哪个版本的 xercesImpl？是否存在多个不同的xercesImpl？ * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ma_liang" target="_blank"><img src="&quot;ma_liang用户自定义头像&quot;" alt="ma_liang用户头像"></a></li>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank">ma_liang</a></li>
-<li>(黑马)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#7楼 得分：0回复于：2008-10-15 08:32:12<a href=""></a> 我的Cxf是用的2.1.2版本，xercesImpl.jar只有一个，在构建路径里去掉就可以正常发布服务，实际上它在原来的项目里伴有重要的角色，去掉之后是可以发布服务了，但是以前的功能有些就不支持了 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ma_liang" target="_blank"><img src="&quot;ma_liang用户自定义头像&quot;" alt="ma_liang用户头像"></a></li>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank">ma_liang</a></li>
-<li>(黑马)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#8楼 得分：0回复于：2008-10-15 09:02:58<a href=""></a> 我还有一个疑问是在用Cxf发布服务时，怎么会调用这个类的方法，为什么去掉之后就不去找这个方法了？ * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/teamlet" target="_blank"><img src="&quot;teamlet用户自定义头像&quot;" alt="teamlet用户头像"></a></li>
-<li><a href="http://hi.csdn.net/teamlet" target="_blank">teamlet</a></li>
-<li>(teamlet)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#9楼 得分：10回复于：2008-10-15 10:57:07<a href=""></a> 1、在根据Class生成XMLSchema的时候，当涉及到如下的namespace就会调用这个方法：
-<a href="http://www.w3.org/2005/02/addressing/wsdl" target="_blank">http://www.w3.org/2005/02/addressing/wsdl</a>
-<a href="http://www.w3.org/2005/08/addressing" target="_blank">http://www.w3.org/2005/08/addressing</a>
-<a href="http://schemas.xmlsoap.org/ws/2005/02/rm" target="_blank">http://schemas.xmlsoap.org/ws/2005/02/rm</a>
-<a href="http://www.w3.org/2005/05/xmlmime" target="_blank">http://www.w3.org/2005/05/xmlmime</a>
-每个namespache对应的xsd在classpath中：
-&quot;<a href="http://www.w3.org/2005/02/addressing/wsdl&quot;,&quot;classpath:/schemas/wsdl/ws-addr-wsdl.xsd" target="_blank">http://www.w3.org/2005/02/addressing/wsdl&quot;,&quot;classpath:/schemas/wsdl/ws-addr-wsdl.xsd</a>&quot;);
-&quot;<a href="http://www.w3.org/2005/08/addressing" target="_blank">http://www.w3.org/2005/08/addressing</a>&quot;, &quot;classpath:/schemas/wsdl/ws-addr.xsd&quot;);
-&quot;<a href="http://schemas.xmlsoap.org/ws/2005/02/rm" target="_blank">http://schemas.xmlsoap.org/ws/2005/02/rm</a>&quot;, &quot;classpath:/schemas/wsdl/wsrm.xsd&quot;);
-&quot;<a href="http://www.w3.org/2005/05/xmlmime" target="_blank">http://www.w3.org/2005/05/xmlmime</a>&quot;, &quot;classpath:/schemas/wsdl/ws-addr.xsd&quot;);
-2、javax.xml.validation.SchemaFactory 是sun提供的一个抽象类，声明了一些抽象的方法；
-通过在classpath中查找同名的配置文件可以获得具体的实现。
-在xercesImpl.jar中有一个配置文件javax.xml.validation.SchemaFactory，声明使用xercesImpl中的类。
-当你去除这个jar的时候，这个配置无法读取，就不去找这个方法了！
-但是你的环境中还可以找到其他的 javax.xml.validation.SchemaFactory 文件，绑定的是其他的实现。
-如果这些实现只能解析特定的schema ，那么它不能解析的schema声明的功能就无法使用了。 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><p><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a></p>
-</li>
-<li><p><a href="">管理菜单</a></p>
-</li>
-<li><p><a href="http://forum.csdn.net/PointForum/BuildTopic.aspx?topicId=68615908-0c81-480b-8ec2-36c88ed83271&amp;postDate=2008-10-12+16%3a13%3a23&amp;return=" target="_blank">生成帖子</a></p>
-</li>
-<li><a href="">置顶</a></li>
-<li><a href="">推荐</a></li>
-<li><a href="">取消推荐</a></li>
-<li><a href="">锁定</a></li>
-<li><a href="">解锁</a></li>
-<li><a href="">移动</a></li>
-<li><a href="">编辑</a></li>
-<li><a href="">删除</a></li>
-<li><a href="">帖子加分</a></li>
-<li><a href="">帖子高亮</a></li>
-<li><a href="">取消高亮</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Manage/TopicManageView.aspx?forumID=2efca177-6b51-42d9-a509-0216fbca231e&amp;topicID=68615908-0c81-480b-8ec2-36c88ed83271&amp;date=2008-10-12+16%3a13%3a23&amp;v=13" target="_blank">结  帖</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Forum/PostTopic.aspx?forumID=2efca177-6b51-42d9-a509-0216fbca231e" target="_blank">发  帖</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#r_achor" target="_blank">回  复</a>
-相关问题 <a href="http://topic.csdn.net/u/20090513/09/5a3a5401-e059-4963-9147-136b65bce728.html" target="_blank">[求助大家]关于Web Service调用时出现&quot;no jbi part element&quot;的问题</a>    <img src="" alt=""></li>
-</ul>
-<p><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#" target="_blank">[关闭]</a>
-<a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#" target="_blank">[关闭]</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/webservice/">webservice</a></li></span><span class="breadcrumb"><li><a href="/categories/webservice/">webservice</a></li><li><a href="/categories/webservice/CXF/">CXF</a></li></span></span> | <span class="tags">Tagged <a href="/tags/CXF/" class="label label-primary">CXF</a><a href="/tags/webservice/" class="label label-success">webservice</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-webservice-CXF--CXF发布Webservice服务，出现异常/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-webservice-CXF--CXF发布Webservice服务，出现异常" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-Squid--利用Squid构建高速的ProxyServer-开源中国OSChinaNET/">利用Squid构建高速的Proxy Server </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-Squid--利用Squid构建高速的ProxyServer-开源中国OSChinaNET/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-squid-proxy-server-oschina-net">利用Squid构建高速的Proxy Server - 开源中国 OSChina.NET</h1>
-<ul>
-<li><a href="http://www.oschina.net/" target="_blank">首页</a></li>
-<li><a href="http://www.oschina.net/project" target="_blank">开源软件</a></li>
-<li><p><a href="http://www.oschina.net/question" target="_blank">讨论区</a></p>
-</li>
-<li><p><a href="http://www.oschina.net/question?catalog=1" target="_blank">技术问答 »</a></p>
-</li>
-<li><a href="http://www.oschina.net/question?catalog=2" target="_blank">技术分享 »</a></li>
-<li><a href="http://www.oschina.net/question?catalog=3" target="_blank">IT大杂烩 »</a></li>
-<li><a href="http://www.oschina.net/question?catalog=100" target="_blank">职业生涯 »</a></li>
-<li><a href="http://www.oschina.net/question?catalog=4" target="_blank">站务/建议 »</a></li>
-<li><a href="http://www.oschina.net/alipay" target="_blank">支付宝专区 »</a></li>
-<li><a href="http://www.oschina.net/code/list" target="_blank">代码分享</a></li>
-<li><a href="http://www.oschina.net/blog" target="_blank">博客</a></li>
-<li><a href="http://www.oschina.net/translate" target="_blank">翻译</a></li>
-<li><a href="http://www.oschina.net/news" target="_blank">资讯</a></li>
-<li><p><a href="http://www.oschina.net/android" target="_blank">移动开发</a></p>
-</li>
-<li><p><a href="http://www.oschina.net/android" target="_blank">Android开发专区</a></p>
-</li>
-<li><a href="http://www.oschina.net/ios/home" target="_blank">iOS开发专区</a></li>
-<li><a href="http://www.oschina.net/ios/codingList" target="_blank">iOS代码库</a></li>
-<li><a href="http://www.oschina.net/wp7" target="_blank">WP7开发专区</a></li>
-<li><a href="http://www.oschina.net/job" target="_blank">招聘</a></li>
-</ul>
-<p>当前访客身份：游客 [ <a href="http://www.oschina.net/home/login?goto_page=http%3A%2F%2Fwww.oschina.net%2Fquestion%2F12_6378" target="_blank">登录</a> | <a href="http://www.oschina.net/home/reg" target="_blank">加入开源中国</a> ]</p>
-<p><a href="http://www.oschina.net/" title="OSChina 开源中国" target="_blank">开源中国</a></p>
-<h1 id="-http-www-oschina-net-question-"><a href="http://www.oschina.net/question" target="_blank">讨论区</a></h1>
-<p>当前位置： <a href="http://www.oschina.net/question" target="_blank">讨论区</a> » <a href="http://www.oschina.net/question?catalog=2" target="_blank">技术分享</a> » <a href="http://www.oschina.net/p/squid" target="_blank">Squid</a>    搜 索
-<a href="http://my.oschina.net/javayou" target="_blank"><img src="&quot;红薯&quot;" alt="红薯"></a></p>
-<h1 id="-squid-proxy-server-"><a href="">利用Squid构建高速的Proxy Server</a></h1>
-<p><a href="http://my.oschina.net/javayou" target="_blank">红薯</a> 发表于 2009-5-5 17:43 3年前, <a href="http://www.oschina.net/question/12_6378#answers" target="_blank">1</a>回/1412阅, 最后回答: 4个月前</p>
-<p>Java、PHP、Ruby、iOS、Python 等 JetBrains 开发工具低至 99 元（3折），<a href="http://www.oschina.net/shop/jetbrains" target="_blank">详情»</a></p>
-<p>纪增雄        来自：[url=<a href="http://www.cnlinux.net]http://www.cnlinux.net" target="_blank">http://www.cnlinux.net]http://www.cnlinux.net</a>
-                转载请保留此信息，谢谢！
-一、什么是Proxy Server(代理服务器)，Proxy的作用。
-    在真实世界中我们常常会去帮人家办一些事情，例如帮人家交电费什么的，在这种情况下你不是电表的主人，而是代办者（代理者）的身份。在网络世界中Proxy就是相当于那个帮人家交电费的人了，当我们发出连接请求的时候，就会通过Proxy去帮我们直接与目标服务器沟通，帮我们取得资料。
-    通常我们所说的高速缓存代理，就是以空间换时间，就如下图那样。
-<img src="" alt=""> 
-client通过Proxy Server上网的步骤如下：
-①client端向Server发出请求。
-②Server收到请求后比较判断Cache中时候存在client想要的资料，如果没有则向远程Server发送数据请求。
-③将请求回来的资料先存放到Cache中，再将资料传送给client端。
-④当client发出的请求中所需要的资料在Cache中有，则将Cache中的资料直接传送给client端。
-虽然当第一访问这向Proxy请求的数据Cache中没有时，Proxy抓取数据后会先保存在Cache中，这样访问速度变慢了，可是第二个访问者以及后来的访问者需要该资料的时候，proxy都不要想远程服务器请求，直接将cache中的资料发送给后来的请求者就行了，这样就减少了连接远程服务器的流量，另外由于proxy是在本地的，所以传输速度也更快。
-二、使用Squid在构建Proxy Server
-本文中笔者所使用的环境是：
-操作系统: Redhat 9.0，内核:2.4.20-31.9，其他系统套件已经通过apt更新到最新了
-1.编译安装Squid
-由于Squid对系统硬件要求比较高，所以我们安装的时候应尽量优化。
-/#groupadd squid
-/#useradd squid
-添加suqid用户和用户组
-/#export CFLAGES=&#39;-O2 -mcpu=pentium4 -march=pentium4 -mmmx -msse -msse2&#39;
-可以根据你的CPU选择相应的参数
-GCC-3.1以上可針對CPU最佳化： 
-Pentium2: -O2 -mcpu=i686 -march=i686 -mmmx
-Pentium3: -O2 -mcpu=pentium3 -march=pentium3 -mmmx -msse
-Pentium4: -O2 -mcpu=pentium4 -march=pentium4 -mmmx -msse -msse2 
-/#./configure --prefix=/usr/local/squid --enable-gnuregex --enable-async-io=80 --enable-icmp --enable-kill-parent-hack --enable-snmp --disable-ident-lookups --enable-cahce-digests --enable-arp-acl --enable-err-language=&quot;Simplify_Chinese&quot; --enable-default-err-languages=&quot;Simplify_Chinese&quot;  --enable-poll --enable-linux-netfilter --enable-underscore
-/#make
-/#make install
-我个人安装软件都比较喜欢用源码包自己编译，觉得这样知道你自己在做什么，用rpm包好像不知道做什么的就安装好了。下面我们对各个编译参数进行解释，当然你可以通过./configure --help来查看其他的参数，以及各个参数的英文解释。
---prefix=/usr/local/squid  :指定软件的安装路径
---enable-gnuregex  :由于Squid大量使用字符串处理做各种判断，加入此项能更好的处理。
---enable-async-io=80 :这个主要是设置async模式来运行squid，我的理解是设置用线程来运行squid，如果服务器配置很不错，有1G以上内存，cpu使用SMP的方式的话可以考虑设成160或者更高。如果服务器比较糟糕就根据实际情况设了。另外此项还另cache文件支持aufs
---enable-icmp  :加入icmp支持
---enable-kill-parent-hack :关掉suqid的时候，要不要连同父进程一起关掉，这个当然要啦
---enable-snmp  :此选项可以让MRTG使用SNMP协议对服务器的流量状态进行监测，因此必须选择此项，使Squid支持SNMP接口。
---disable-ident-lookups  :防止系统使用RFC931规定的身份识别方法。
---enable-cahce-digests  :加快请求时，检索缓存内容的速度。
---enable-arp-acl  :可以在规则设置中直接通过客户端的MAC地址进行管理，防止客户使用IP欺骗。
---enable-err-language=&quot;Simplify_Chinese&quot; 和
---enable-default-err-languages=&quot;Simplify_Chinese&quot; :指定出错是显示的错误页面为简体中文
---enable-poll  :应启用Poll()函数而不是select()函数，通常而言poll(轮询)比select要好，但configure(脚本程序)已知Poll在某些平台下失效, 若你认为你比configure编译配置脚本程序要聪明的话，可以用这个选项启用Poll。总之就是用这个可以提升性能就是啦。
---enable-linux-netfilter :可以支持透明代理
---enable-underscore  :允许解析的URL中出现下划先，因为默认squid会认为带下划线的URL地址是非法的，并拒绝访问该地址。
-这里我们就安装好了，接下来就是修改配置文件了。
-2.修改定义配置参数
-下面是我的squid.conf文件
-/# NETWORK OPTIONS（有关的网络选项）
-/# -----------------------------------------------------------------------------
-http_port 3128  /#代理端口
-icp_port 3130  /#icp端口
-/# OPTIONS WHICH AFFECT THE NEIGHBOR SELECTION ALGORITHM（作用于邻居选择算法的有关选项）
-/#-----------------------------------------------------------------------------
-/#禁止缓存
-hierarchy_stoplist cgi-bin ?
-hierarchy_stoplist -i ^https:\ ?
-acl QUERY urlpath_regex -i cgi-bin \? .asp .php .jsp .cgi
-acl denyssl urlpath_regex -i ^https:\
-no_cache deny QUERY
-no_cache deny denyssl
-/#上面几个就是说遇到URL中有包含cgi-bin和以https:\开头的都不要缓存，
-/#还有asp、cgi、php等动态脚本也不要缓存，
-/#因为这些脚本通常都是动态更新的，这样数据不同步。
-/#还有<a href="https://开通的不缓存是因为一般我们进行电子商务交易，" target="_blank">https://开通的不缓存是因为一般我们进行电子商务交易，</a>
-/#例如银行付款等都是采用这个的，如果把信用卡号什么缓存那不是很危险。
-/# OPTIONS WHICH AFFECT THE CACHE SIZE(定义cache大小的选项)
-/# -----------------------------------------------------------------------------
-cache_mem 8 MB   /#额外使用内存量，可根据你的系统内存在设定，一般为实际内存的1/3
-cache_swap_low 90    /#最低缓存百分比
-cache_swap_high 95     /#/#最高缓存百分比，就是上面那个额外内存的使用百分比
-maximum_object_size 4096 KB  /#单个文件最大缓存大小，超过这个大小将不缓存
-maximum_object_size_in_memory 8 KB  /#在内存中单个文件最大缓存大小，超过这个大小将不缓存到内存中
-/#有DNS正反解所得到的IP存在缓存区的大小，这样可以加快解析速度
-ipcache_size 1024
-ipcache_low 90
-ipcache_high 95
-fqdncache_size 1024
-/# LOGFILE PATHNAMES AND CACHE DIRECTORIES(定义日志文件的路径及cache的目录）
-/# -----------------------------------------------------------------------------
-/#　　  ;   ;  &lt;目录所在&gt; ;   ;   ;   ; 
-/#　　那个 aufs 只有在编译的时候加入 --enable-async-io 那个选项才有支持， 
-/#　　至于目录所在地与所占用的磁盘大小则请视您的主机情况而定， 
-/#　　而后面 dir1, dir2 则是两个次目录的大小，通常 16 256 或 64 64 皆可， 
-/#　　一般来说，数字最好是 16 的倍数，据说性能会比较好啦！
-cache_dir aufs /Cache1 100 16 256<br>cache_dir aufs /Cache2 100 16 256
-/#日志存放位置
-cache_access_log /usr/local/squid/var/logs/access.log
-cache_log /usr/local/squid/var/logs/cache.log
-/#  TAG: cache_store_log
-cache_store_log /usr/local/squid/var/logs/store.log
-/#  TAG: pid_filename
-pid_filename /usr/local/squid/var/logs/squid.pid
-/# OPTIONS FOR EXTERNAL SUPPORT PROGRAMS(外部支持程序选项）
-/# -----------------------------------------------------------------------------
-/#用代理登陆匿名ftp服务选项
-/#  TAG: ftp_user
-ftp_user Squid@    /#用户名
-ftp_passive on     /#被动模式
-/#认证
-/#auth_param basic children 5
-/#auth_param basic realm Squid proxy-caching web server
-/#auth_param basic credentialsttl 2 hours
-/#auth_param basic casesensitive off
-/# OPTIONS FOR TUNING THE CACHE（调整cache的选项）
-/# -----------------------------------------------------------------------------
-/#  TAG: refresh_pattern    Cache更新时间设置
-/#  ;   ;  &lt;最小时间&gt; ;  &lt;百分比&gt; ;  &lt;最大时间&gt; ;
-refresh_pattern ^ftp: 1440 20% 10080
-refresh_pattern ^gopher: 1440 0% 1440
-refresh_pattern . 0 20% 4320
-/#上面第一行如果网址开头是 ftp 的话，那么在一天(1440分钟)后，
-/#如果proxy 再次取用这个档案时，则 cache 内的数据会被更新！
-/# TIMEOUTS （超时）
-/# -----------------------------------------------------------------------------
-/#连接到其他机器的最大尝试时间
-connect_timeout 1 minute
-/#连接到上层代理的超时时间
-peer_connect_timeout 30 seconds
-/#返回超时
-request_timeout 2 minutes
-/#持续连接时间
-persistent_request_timeout 1 minute
-/# ACCESS CONTROLS（访问控制）
-/# -----------------------------------------------------------------------------
-/#  TAG: acl
-/#Examples:
-/#acl myexample dst_as 1241
-/#acl password proxy_auth REQUIRED
-/#acl fileupload req_mime_type -i ^multipart/form-data$
-/#acl javascript rep_mime_type -i ^application/x-javascript$
-/#
-/#Recommended minimum configuration:
-acl all src 0.0.0.0/0.0.0.0
-acl manager proto cache_object
-acl localhost src 127.0.0.1/255.255.255.255
-acl to_localhost dst 127.0.0.0/8
-acl SSL_ports port 443 563
-acl Safe_ports port 80 /# http
-acl Safe_ports port 21 /# ftp
-acl Safe_ports port 443 563 /# https, snews
-acl Safe_ports port 70 /# gopher
-acl Safe_ports port 210 /# wais
-acl Safe_ports port 1025-65535 /# unregistered ports
-acl Safe_ports port 280 /# http-mgmt
-acl Safe_ports port 488 /# gss-http
-acl Safe_ports port 591 /# filemaker
-acl Safe_ports port 777 /# multiling http
-acl CONNECT method CONNECT
-acl inside src 192.168.1.0/24   /#内部网IP段
-acl localmac arp &quot;/usr/local/squid/localmac&quot;  /#mac地址文件
-/#  TAG: http_access
-http_access allow inside  /#允许inside规则通过
-http_access allow localmac  /#允许localmac里面有登记的mac地址通过
-/#
-/#Recommended minimum configuration:
-/#
-/# Only allow cachemgr access from localhost
-http_access allow manager localhost
-http_access deny manager
-/# Deny requests to unknown ports
-http_access deny !Safe_ports
-/# Deny CONNECT to other than SSL ports
-http_access deny CONNECT !SSL_ports
-/#
-/#http_access deny to_localhost
-/#
-/# And finally deny all other access to this proxy
-http_access deny all
-/#  TAG: http_reply_access
-http_reply_access allow all
-/#  TAG: icp_access
-/#icp_access allow all
-/#  TAG: cache_peer_access
-/# ADMINISTRATIVE PARAMETERS（管理参数）
-/# -----------------------------------------------------------------------------
-/#  TAG: cache_mgr
-cache_mgr webmaster@localhost  /#管理员信箱
-/#  TAG: cache_effective_user
-cache_effective_user squid  /#运行squid时的用户
-cache_effective_group  squid /#运行squid时的组
-/#  TAG: visible_hostname
-visible_hostname ProxyServer  /#代理服务器名称
-/# OPTIONS FOR THE CACHE REGISTRATION SERVICE（cache注册服务选项）
-/# -----------------------------------------------------------------------------
-/# HTTPD-ACCELERATOR OPTIONS（HTTPD加速选项）
-/# -----------------------------------------------------------------------------
-/#设定透明代理
-httpd_accel_host ProxyServer  /#主机名
-httpd_accel_port 80  /#透明代理端口
-httpd_accel_with_proxy on
-httpd_accel_uses_host_header on
-/# MISCELLANEOUS（杂项）
-/# -----------------------------------------------------------------------------
-/#  TAG: logfile_rotate
-/#squid会定期的将日志文件更名并打包。
-/#比如正在使用的日志文件为access.log,squid会将其更名并打包为 access.log.1.gz；
-/#过了一定时间后，squid又会将access.log.1.gz更名为access.log.2.gz
-/#并将当前的日志文件更名并打包为access.log.1.gz，以此循环。
-/#logfile_rotate指定的数字即为打包并备份的文件的数量，当达到这一数目时，
-/#squid将删除最老的备份文件。默认值为1 0。如果想手动来进行这些操作，
-/#可以用logfile_rotate 0来取消自动操作。
-logfile_rotate 4
-/#  TAG: forwarded_for on|off
-/#关闭此项将在访问某些论坛时显示的IP是unknown，
-/#如果打开则显示的是你client的内网IP
-forwarded_for off
-/#图标文件目录
-/# icon_directory /usr/local/squid/share/icons
-/#错误提示文件目录
-/# error_directory /usr/local/squid/share/errors/Simplify_Chinese
-/#  TAG: snmp_port
-/# Squid can now serve statistics and status information via SNMP.
-/# By default it listens to port 3401 on the machine. If you don&#39;t
-/# wish to use SNMP, set this to &quot;0&quot;.
-/#
-/#Default:
-/# snmp_port 3401
-/#  TAG: snmp_access
-/# Allowing or denying access to the SNMP port.
-/#
-/# All access to the agent is denied by default.
-/# usage:
-/#
-/# snmp_access allow|deny [!]aclname ...
-/#
-/#Example:
-/# snmp_access allow snmppublic localhost
-/# snmp_access deny all
-/#
-/#Default:
-/# snmp_access deny all
-/# DELAY POOL PARAMETERS (all require DELAY_POOLS compilation option)（延时池参数）
-/# -----------------------------------------------------------------------------
-/#  TAG: coredump_dir
-/#当squid突然挂掉的时候，或者突然出现什么故障的时候，将squid在内存中的资料写到硬盘中
-coredump_dir /usr/local/squid/var/cache
-3.设置iptables支持透明代理
-设置squid+iptables支持透明代理前请先设置好NAT，可以使用下面的简单语句
-echo &quot;1&quot; &gt;; /proc/sys/net/ipv4/ip_forward   /#设置转发
-/sbin/iptables -t nat -A POSTROUTING -j MASQUERADE  /#设置nat功能
-iptables -t nat -A PREROUTING -i eth0 -p tcp -s 192.168.1.0/24 --dport 80 -j REDIRECT --to-ports 3128 
-/#将所有80端口的请求都转发到suqid的3128端口上
-其中192.168.1.0/24表示192.168.1.1-254这个网段通过squid和nat做透明代理。
-这样，当用户访问www服务的时候可以使用cache作为高速代理，减少流量，而其他服务则通过nat转发。
-4.使用上层代理
-当你访问国外网站比较慢的时候，可以通过设置代理访问，那么我们自己的代理服务器能否也设置别人的代理来访问国外的网站呢？答案是肯定的。
-例如有代理proxy1.cnlinux.net能以较快的速度访问国外，且我们访问它也比较快，所以我们用它来作为我们访问国外网站的上层代理。
-我们需要在squid.conf中添加如下参数：
-;  &lt;主机名称/地址&gt; ;  &lt;类别&gt; ;   ;   ;  &lt;其他参数&gt; ;
-类别主要有上层的parent和同一层的sibling两种，我们这里主要介绍的是上层代理，就是parent，如果你需要架设代理服务器集群的话可以采用sibling，这里我们就不做讨论了。
-其他参数有：
-proxy-only :只向上层代理要资料，自己不缓存到本地proxy中。
-weight=n   :比重，当我们设置多台上层代理的时候，这几台代理的功能都相同的，可以通过设置此项来决定那台上层代理比较重要，n越大表示越重要。
-no-query   :当使用sibling类别的时候，向同一层的proxy索要资料的时候就会向其送出icp请求，可以使用no-query来取消icp请求，一般我们向上层proxy请求资料的时候可以不需要发送icp包，以降低流量。
-default    :表示将这台proxy设置为默认proxy
-no-netdb-exchange :表示不向proxy送出imcp包的请求。
-no-digest  :表示不纪录向上层proxy提交的请求。
-/#上层proxy设置
-cache_peer proxy1.cnlinux.net parent 3128 3130 no-digest no-netdb-exchange
-/#设置访问规则，可以用域名，也可以用IP
-acl usa dstdomain .com.us /#美国.com.us的网站
-acl usaip dst 18.0.0.0/8  /#美国的部分IP段
-/#放行禁止规则
-cache_peer_access proxy1.cnlinux.net allow usa /#允许usa规则使用此上层proxy
-cache_peer_access proxy1.cnlinux.net deny !usa /#禁止所有非usa规则使用此上层proxy
-cache_peer_access proxy1.cnlinux.net allow usaip
-cache_peer_access proxy1.cnlinux.net deny !usaip
-5.启动，关闭squid
-a.将cache目录的所有者更改为squid
-/#chown -R squid:squid /Cache1
-/#chown -R squid:squid /Cache2
-b.对cache目录进行初始化
-/#/usr/local/squid/sbin/squid -z
-2004/11/01 23:06:29| Creating Swap Directories
-FATAL: Failed to make swap directory /Cache1/00: (13) Permission denied
-Squid Cache (Version 2.5.STABLE7): Terminated abnormally.
-CPU Usage: 0.000 seconds = 0.000 user + 0.000 sys
-Maximum Resident Size: 0 KB
-Page faults with physical i/o: 10
-如果出现上面这样的错误信息，表示你/Cache1目录权限错误，请检查/Cache1目录所有者是否为squid用户所有。
-c.启动squid
-/#su squid -c &quot;/usr/local/squid/bin/RunCache &amp;&quot;
-d.关闭squid
-/#/usr/local/squid/sbin/squid -k shutdown
-要执行两次才能正常关闭suqid
-e.重新读取squid.conf文件
-/#/usr/local/squid/sbin/squid -k reconfigure
-需要执行两次才能重新读取squid.conf文件
-6.日志分析
-Proxy服务器安装好后，我们当然要对服务器进行监控，通过日志分析，我们可以知道那些用户上了那些网站，用了多少流量等，下面为大家介绍sarg这个日志分析工具，在squid的官方网站还推介了其他几种日志分析工具，大家有兴趣的话可以上去看看。
-a.安装
-/#./configure --prefix=/usr/local/sarg --enable-bindir=/usr/local/sarg/bin
-/#make &amp;&amp; make install
-b.设置sarg.conf文件
-/#vi /usr/local/sarg/sarg.conf
-language language English  /#由于官方网站还没有发布中文版，所以我们就使用英文好了，那位有兴趣可以自己翻译一下
-access_log /usr/local/squid/var/logs/access.log.0 /#squid日志文件存放位置
-title &quot;Squid 使用报告&quot;   /#标题
-temporary_dir /tmp   /#临时目录
-output_dir /var/www/html/sarg   /#生成后的html存放到那里，设置到你的网站目录下，以便浏览
-overwrite_report no  /#是否覆盖报告，当那个日期的报告已经存在时是否覆盖掉
-mail_utility mail 
-topsites_num 100 
-exclude_codes /usr/local/sarg/exclude_codes 
-max_elapsed 28800000 
-charset GB2312  /#字符集
-c.生成报告
-设置好sarg.conf文件后，执行
-/#/usr/local/sarg/bin/sarg
-将提示：SARG: Successful report generated on /usr/local/apache/htdocs/sarg/2004Oct31-2004Nov01
-表示报告生成成功，还有报告存放位置，可以马上打开您的浏览器查看报告了。
-三、关于Cache目录的建议
-由于cache目录是经常的读写，所以最好硬盘能用SCSI的，速度比较快而且稳定。如果我们的cache大概需要40G的大小，那么我们尽量使用多硬盘，不要当纯用一个40G的硬盘，可以使用4个10G的硬盘，这样，对于cache的速度更快。比如，当你有10M的东西要写到cache中，如果是只是用一个硬盘的话，虽然可能你已经将4个cache目录分别放在4个分区，可是你只有一个硬盘，同时只有一个在写入，可是当你有4个硬盘的时候，你每个硬盘就只要写入2.5M的东西，那样是不是更快呢？
-还有，建议将每个cache目录单独存放在一个分区中，分区不要划分太大，一般2至4G就行，这样proxy搜索资料的时候不用耗费太多的时间。
-本文参考了各位前辈的文章，如有冒犯请多多包涵！
+        <h1 id="jsch-java-sftp-">JSch - Java实现的SFTP（文件上传详解篇）</h1>
+<p> JSch是Java Secure Channel的缩写。JSch是一个SSH2的纯Java实现。它允许你连接到一个SSH服务器，并且可以使用端口转发，X11转发，文件传输等，当然你也可以集成它的功能到你自己的应用程序。</p>
+<p>  本文只介绍如何使用JSch实现的SFTP功能。
+  SFTP 是Secure File Transfer Protocol的缩写，安全文件传送协议。可以为传输文件提供一种安全的加密方法。SFTP 为 SSH的一部份，是一种传输文件到服务器的安全方式。SFTP是使用加密传输认证信息和传输的数据，所以，使用SFTP是非常安全的。但是，由于这种传输 方式使用了加密/解密技术，所以传输效率比普通的FTP要低得多，如果您对网络安全性要求更高时，可以使用SFTP代替FTP。（来自百度的解释） </p>
+<p>  要使用JSch，需要下载它的jar包，请从官网下载它：<a href="http://www.jcraft.com/jsch/" target="_blank"><a href="http://www.jcraft.com/jsch/">http://www.jcraft.com/jsch/</a></a></p>
+<p>ChannelSftp类是JSch实现SFTP核心类，它包含了所有SFTP的方法，如：
+put()：      文件上传</p>
+<p>get()：      文件下载
+cd()：       进入指定目录</p>
+<p>ls()：       得到指定目录下的文件列表
+rename()：   重命名指定文件或目录</p>
+<p>rm()：       删除指定文件
+mkdir()：    创建目录</p>
+<p>rmdir()：    删除目录
+等等（这里省略了方法的参数，put和get都有多个重载方法，具体请看源代码，这里不一一列出。）</p>
+<p>JSch支持三种文件传输模式：</p>
+<p><strong>OVERWRITE</strong> 完全覆盖模式，这是JSch的默认文件传输模式，即如果目标文件已经存在，传输的文件将完全覆盖目标文件，产生新的文件。 <strong>RESUME</strong> 
+恢复模式，如果文件已经传输一部分，这时由于网络或其他任何原因导致文件传输中断，如果下一次传输相同的文件，</p>
+<p>则会从上一次中断的地方续传。 <strong>APPEND</strong> 追加模式，如果目标文件已存在，传输的文件将在目标文件后追加。</p>
+<p><strong>创建ChannelSftp对象</strong></p>
+<p>编写一个工具类，根据ip，用户名及密码得到一个SFTP channel对象，即ChannelSftp的实例对象，在应用程序中就可以使用该对象来调用SFTP的各种操作方法。</p>
+<p>SFTPChannel.java
+<img src="" alt="">SFTPChannel.java</p>
+<p>SFTPConstants是一个静态成员变量类：</p>
+<p>SFTPConstans.java
+<img src="" alt="">SFTPConstants.java</p>
+<p><strong>文件上传</strong></p>
+<p>实现文件上传可以调用ChannelSftp对象的put方法。ChannelSftp中有12个put方法的重载方法：</p>
+<p><strong>public void put(String src, String dst)</strong> 
+将本地文件名为src的文件上传到目标服务器，目标文件名为dst，若dst为目录，则目标文件名将与src文件名相同。</p>
+<p>采用默认的传输模式：OVERWRITE <strong>public void put(String src, String dst, int mode)</strong> 
+将本地文件名为src的文件上传到目标服务器，目标文件名为dst，若dst为目录，则目标文件名将与src文件名相同。</p>
+<p>指定文件传输模式为mode（mode可选值为：ChannelSftp.OVERWRITE，ChannelSftp.RESUME，</p>
+<p>ChannelSftp.APPEND）  </p>
+<p><strong>public void put(String src, String dst, SftpProgressMonitor monitor)</strong></p>
+<p>将本地文件名为src的文件上传到目标服务器，目标文件名为dst，若dst为目录，则目标文件名将与src文件名相同。</p>
+<p>采用默认的传输模式：OVERWRITE</p>
+<p>并使用实现了SftpProgressMonitor接口的monitor对象来监控文件传输的进度。 <strong>public void put(String src, String dst,</strong>
+<strong>SftpProgressMonitor monitor, int mode)</strong></p>
+<p>将本地文件名为src的文件上传到目标服务器，目标文件名为dst，若dst为目录，则目标文件名将与src文件名相同。</p>
+<p>指定传输模式为mode</p>
+<p>并使用实现了SftpProgressMonitor接口的monitor对象来监控文件传输的进度。 <strong>public void put(InputStream src, String dst)</strong> 
+将本地的input stream对象src上传到目标服务器，目标文件名为dst，dst不能为目录。</p>
+<p>采用默认的传输模式：OVERWRITE <strong>public void put(InputStream src, String dst, int mode)</strong> 
+将本地的input stream对象src上传到目标服务器，目标文件名为dst，dst不能为目录。</p>
+<p>指定文件传输模式为mode <strong>public void put(InputStream src, String dst, SftpProgressMonitor monitor)</strong></p>
+<p>将本地的input stream对象src上传到目标服务器，目标文件名为dst，dst不能为目录。</p>
+<p>采用默认的传输模式：OVERWRITE</p>
+<p>并使用实现了SftpProgressMonitor接口的monitor对象来监控传输的进度。 <strong>public void put(InputStream src, String dst,</strong>
+<strong>SftpProgressMonitor monitor, int mode)</strong></p>
+<p>将本地的input stream对象src上传到目标服务器，目标文件名为dst，dst不能为目录。</p>
+<p>指定文件传输模式为mode</p>
+<p>并使用实现了SftpProgressMonitor接口的monitor对象来监控传输的进度。 <strong>public OutputStream put(String dst)</strong> 
+该方法返回一个输出流，可以向该输出流中写入数据，最终将数据传输到目标服务器，目标文件名为dst，dst不能为目录。</p>
+<p>采用默认的传输模式：OVERWRITE <strong>public OutputStream put(String dst, final int mode)</strong> 
+该方法返回一个输出流，可以向该输出流中写入数据，最终将数据传输到目标服务器，目标文件名为dst，dst不能为目录。</p>
+<p>指定文件传输模式为mode <strong>public OutputStream put(String dst, final SftpProgressMonitor monitor, final int mode) </strong> 
+该方法返回一个输出流，可以向该输出流中写入数据，最终将数据传输到目标服务器，目标文件名为dst，dst不能为目录。</p>
+<p>指定文件传输模式为mode</p>
+<p>并使用实现了SftpProgressMonitor接口的monitor对象来监控传输的进度。 <strong>public OutputStream put(String dst, final SftpProgressMonitor monitor, final int mode, long offset)</strong> 
+该方法返回一个输出流，可以向该输出流中写入数据，最终将数据传输到目标服务器，目标文件名为dst，dst不能为目录。</p>
+<p>指定文件传输模式为mode</p>
+<p>并使用实现了SftpProgressMonitor接口的monitor对象来监控传输的进度。</p>
+<p>offset指定了一个偏移量，从输出流偏移offset开始写入数据。</p>
+<p><strong>应用实例：</strong></p>
+<p>SFTPTest.java
+<img src="" alt="">SFTPTest.java</p>
+<p><strong>注</strong>：请分别将代码段1，代码段2，代码段3取消注释，运行程序来进行测试。这三段代码分别演示了如何使用JSch的不同的put方法来进行文件上传。</p>
+<p><strong>代码段1</strong>：采用向put方法返回的输出流中写入数据的方式来传输文件。 需要由程序来决定写入什么样的数据，这里是将本地文件的输入流写入输出流。采用这种方式的好处是，可以自行设定每次写入输出流的数据块大小，如本示例中的语句：
+byte[] buff = new byte[1024 /* 256]; // 设定每次传输的数据块大小为256KB</p>
+<p><strong>代码段2</strong>：直接将本地文件名为src的文件上传到目标服务器，目标文件名为dst。（注：使用这个方法时，dst可以是目录，当dst是目录时，上传后的目标文件名将与src文件名相同）</p>
+<p><strong>代码段3</strong>：将本地文件名为src的文件输入流上传到目标服务器，目标文件名为dst。</p>
+<p>这三段代码实现的功能是一样的，都是将本地的文件src上传到了服务器的dst文件。使用时可根据具体情况选择使用哪种实现方式。</p>
+<p><strong>监控传输进度</strong></p>
+<p>从前面的介绍中知道，JSch支持在文件传输时对传输进度的监控。可以实现JSch提供的SftpProgressMonitor接口来完成这个功能。</p>
+<p>SftpProgressMonitor接口类的定义为：
+<img src="" alt="">SftpProgressMonitor.java</p>
+<p><strong>init():    </strong>当文件开始传输时，调用init方法。</p>
+<p><strong>count():  </strong> 当每次传输了一个数据块后，调用count方法，count方法的参数为这一次传输的数据块大小。</p>
+<p><strong>end():     </strong>当传输结束时，调用end方法。</p>
+<p>下面是一个简单的实现：</p>
+<p>MyProgressMonitor.java
+<img src="" alt="">MyProgressMonitor.java</p>
+<p>此时如果改变SFTPTest main方法里调用的put方法，即可实现监控传输进度：</p>
+<p>SFTPTest.java
+<img src="" alt="">SFTPTest.java</p>
+<p>注意修改的内容仅仅是put方法，在put方法中增加了SftpProgressMonitor的实现类对象monitor作为参数，即添加了对进度监控的支持。</p>
+<p>运行，输出结果如下：
+<img src="" alt="">logs</p>
+<p>当然这个SftpProgressMonitor的实现实在太简单。JSch每次传输一个数据块，就会调用count方法来实现主动进度通知。</p>
+<p>现在我们希望每间隔一定的时间才获取一下文件传输的进度。。。看看下面的SftpProgressMonitor实现：
 <img src="" alt=""></p>
-<p><strong>标签：</strong> <a href="http://www.oschina.net/question/tag/squid" title="代理服务器 Squid" target="_blank">Squid</a>
-<a href="">补充话题说明»</a></p>
-<p><strong>分享到</strong> <a href="&quot;分享到新浪微博&quot;"></a><a href="&quot;分享到腾讯微博&quot;"></a>**</p>
-<p><a href="&quot;收藏此话题&quot;">收藏</a>
-**</p>
-<p>3
-**</p>
-<p><a href="">举报</a>
-**</p>
-<p><a href="&quot;踩：这问题不知道在说什么，或者没什么用&quot;">踩</a> 0 | <a href="&quot;顶：这问题很有用或者很清晰明了&quot;">顶</a> 0
-**</p>
-<h2 id="-http-www-oschina-net-question-12_6378-answers-http-www-oschina-net-question-12_6378-sort-time-answers-http-www-oschina-net-question-12_6378-top-1-http-www-oschina-net-question-12_6378-answerform-"><a href="http://www.oschina.net/question/12_6378#answers" target="_blank">按默认排序</a> | <a href="http://www.oschina.net/question/12_6378?sort=time#answers" target="_blank">显示最新评论</a> | <a href="http://www.oschina.net/question/12_6378#top" target="_blank">回页面顶部</a>  <a href=""></a>共有<em>1</em>个评论 <a href="http://www.oschina.net/question/12_6378#answerform">发表评论»</a></h2>
-<ul>
-<li><a href="http://my.oschina.net/u/876254" target="_blank"><img src="&quot;隋济远&quot;" alt="隋济远"></a></li>
-</ul>
-<p><a href="http://my.oschina.net/u/876254" target="_blank">隋济远</a> 回答于 2012-11-29 10:12</p>
-<p><a href="">举报</a>
-学习了，非常感谢！
-<a href="&quot;这是一个好评论，能解决问题&quot;">有帮助</a><em>(0)</em> | <a href="&quot;这评论无法解决问题，或者模糊不清&quot;">没帮助</a><em>(0)</em> | <a href="">评论</a><em>(0)</em> | <a href="http://www.oschina.net/question/answer?question=6378&amp;answer=360621" target="_blank">引用此评论</a></p>
-<p><a href=""><img src="&quot;非会员用户&quot;" alt="非会员用户"></a>
-<a href="http://www.oschina.net/question/12_6378#answers" target="_blank">回评论顶部</a> | <a href="http://www.oschina.net/question/12_6378#top" target="_blank">回页面顶部</a></p>
-<p><a href="http://www.oschina.net/action/visit/ad?id=1033" title="JPush——极光推送" target="_blank"><img src="" alt=""></a></p>
-<p>有什么技术问题吗？ <a href="http://www.oschina.net/question/ask" target="_blank">我要提问</a>
-<strong><a href="http://my.oschina.net/javayou/?ft=bbs&amp;scope=2&amp;showme=1" target="_blank">全部(4926)...</a><em>红薯</em>的其他问题</strong></p>
-<ul>
-<li><a href="http://www.oschina.net/question/12_106724" title="类似 DNSPod 智能 DNS 解析无效的一种情形" target="_blank">类似 DNSPod 智能 DNS 解析无效的一种情形</a>(3回/198阅,7天前)</li>
-<li><a href="http://www.oschina.net/question/12_106555" title="Ruby 2.0 中未被提及的特性" target="_blank">Ruby 2.0 中未被提及的特性</a>(0回/128阅,8天前)</li>
-<li><a href="http://www.oschina.net/question/12_106453" title="2013 第一期：OSC 深圳源创会高清无码大片放映" target="_blank">2013 第一期：OSC 深圳源创会高清无码大片放映</a>(106回/7120阅,9天前)</li>
-<li><a href="http://www.oschina.net/question/12_106368" title="PostgreSQL 9.3 新特性预览 —— JSON 操作" target="_blank">PostgreSQL 9.3 新特性预览 —— JSON 操作</a>(18回/4385阅,10天前)</li>
-<li><a href="http://www.oschina.net/question/12_106012" title="号召大家给 @滔哥 和 @走在路上 送上祝福" target="_blank">号召大家给 @滔哥 和 @走在路上 送上祝福</a>(35回/2011阅,12天前)</li>
-</ul>
-<p><strong>类似的话题</strong></p>
-<ul>
-<li><a href="http://www.oschina.net/question/12_6962" title="Squid应用 高效配置Linux系统代理服务器  " target="_blank">Squid应用 高效配置Linux系统代理服务器</a>(0回/1046阅,3年前)</li>
-<li><a href="http://www.oschina.net/question/12_8153" title="Squid 安装调试过程中的几个常用命令" target="_blank">Squid 安装调试过程中的几个常用命令</a>(0回/919阅,3年前)</li>
-<li><a href="http://www.oschina.net/question/12_295" title="利用 squid 反向代理提高网站性能" target="_blank">利用 squid 反向代理提高网站性能</a>(4回/2635阅,4年前)</li>
-<li><a href="http://www.oschina.net/question/44278_3403" title="有没有人做过squid+wccp！！跪求！！！！谢谢各位！！！" target="_blank">有没有人做过squid+wccp！！跪求！！！！谢谢各位！！！</a>(15回/756阅,3年前)</li>
-<li><a href="http://www.oschina.net/question/17_3563" title="批量更新 squid 缓存。" target="_blank">批量更新 squid 缓存。</a>(0回/913阅,3年前)</li>
-<li><a href="http://www.oschina.net/question/17_4996" title="Squid 3.0 更新某连接缓存的方法...其实太简单了!! " target="_blank">Squid 3.0 更新某连接缓存的方法...其实太简单了!!</a>(0回/128阅,4年前)</li>
-<li><a href="http://www.oschina.net/question/17_4997" title="squid 2.6.0 配置方法" target="_blank">squid 2.6.0 配置方法</a>(0回/79阅,4年前)</li>
-<li><a href="http://www.oschina.net/question/1_5230" title="用squid再次疯狂加速你的web" target="_blank">用squid再次疯狂加速你的web</a>(0回/113阅,4年前)</li>
-<li><a href="http://www.oschina.net/question/12_6365" title=" squid 配置详解＋认证" target="_blank">squid 配置详解＋认证</a>(0回/1133阅,3年前)</li>
-<li><a href="http://www.oschina.net/question/17_6371" title=" netfilter和squid配合创建透明代理的问题讨论" target="_blank">netfilter和squid配合创建透明代理的问题讨论</a>(0回/172阅,3年前)</li>
-<li><a href="http://www.oschina.net/question/12_6374" title=" squid开多端口代理的心得" target="_blank">squid开多端口代理的心得</a>(0回/411阅,3年前)</li>
-<li><a href="http://www.oschina.net/question/16_6380" title=" SQUID的ncsa_auth认证原理" target="_blank">SQUID的ncsa_auth认证原理</a>(0回/144阅,3年前)</li>
-<li><a href="http://www.oschina.net/question/16_6382" title=" 带用户验证的SQUID源码编译安装" target="_blank">带用户验证的SQUID源码编译安装</a>(0回/273阅,3年前)</li>
-<li><a href="http://www.oschina.net/question/12_6383" title=" [转]linux+squid+wccp+cisco，虽是转也希望加精" target="_blank">[转]linux+squid+wccp+cisco，虽是转也希望加精</a>(0回/988阅,3年前)</li>
-<li><a href="http://www.oschina.net/question/11_6385" title=" squid用openldap实现验证" target="_blank">squid用openldap实现验证</a>(0回/275阅,3年前)</li>
-<li><a href="http://www.oschina.net/question/16_6387" title=" [好文共享]《Squid 中文权威指南》第1章 译者：彭勇华" target="_blank">[好文共享]《Squid 中文权威指南》第1章 译者：彭勇华</a>(0回/211阅,3年前)</li>
-</ul>
-<p>© 开源中国(OsChina.NET) | <a href="http://www.oschina.net/home/about" target="_blank">关于我们</a> | <a href="mailto:oschina.net@gmail.com">广告联系</a> | <a href="http://weibo.com/oschina2010" target="_blank">@新浪微博</a> | <a href="http://m.oschina.net/" target="_blank">开源中国手机版</a> | <a href="http://www.miitbeian.gov.cn/" target="_blank">粤ICP备12009483号-3</a> 开源中国手机客户端： <a href="http://www.oschina.net/app" title="Android客户端" target="_blank">Android</a> <a href="http://www.oschina.net/app" title="iPhone 客户端" target="_blank">iPhone</a> <a href="http://www.oschina.net/app" title="Windows Phone 客户端" target="_blank">WP7</a></p>
-<p><a href=""></a><a href=""></a><a href=""></a>
+<p><a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<p>package</p>
+<p>com.longyg.sftp;
+ import java.text.DecimalFormat;import java.util.Timer;import</p>
+<p>java.util.TimerTask;
+ import</p>
+<p>com.jcraft.jsch.SftpProgressMonitor;
+ public class FileProgressMonitor extends TimerTask implements</p>
+<p>SftpProgressMonitor {</p>
+<p>private long progressInterval = 5 /* 1000; // 默认间隔时间为5秒</p>
+<p>private boolean isEnd = false; // 记录传输是否结束</p>
+<p>private long transfered; // 记录已传输的数据总大小</p>
+<p>private long fileSize; // 记录文件总大小</p>
+<p>private Timer timer; // 定时器对象</p>
+<p>private boolean isScheduled = false; // 记录是否已启动timer记时器</p>
+<p>public FileProgressMonitor(long</p>
+<p>fileSize) {
+ this.fileSize =</p>
+<p>fileSize;
+    }</p>
+<pre><code>@Override
+</code></pre><p>public void</p>
+<p>run() {
+ if (!isEnd()) { // 判断传输是否已结束</p>
+<pre><code>        System.out.println(&quot;Transfering is in progress.&quot;
+</code></pre><p>);
+ long transfered =</p>
+<p>getTransfered();
+ if (transfered != fileSize) { // 判断当前已传输数据大小是否等于文件总大小</p>
+<pre><code>            System.out.println(&quot;Current transfered: &quot; + transfered + &quot; bytes&quot;
+</code></pre><p>);
+                sendProgressMessage(transfered);</p>
+<pre><code>        }
+</code></pre><p>else</p>
+<p>{
+                System.out.println(&quot;File transfering is done.&quot;</p>
+<p>);
+                setEnd(true); // 如果当前已传输数据大小等于文件总大小，说明已完成，设置end</p>
+<pre><code>        }
+    }else
+</code></pre><p>{
+            System.out.println(&quot;Transfering done. Cancel timer.&quot;</p>
+<p>);
+            stop();// 如果传输结束，停止timer记时器</p>
+<p> return</p>
+<p>;
+        }</p>
+<pre><code>}
+</code></pre><p>public void</p>
+<p>stop() {
+        System.out.println(&quot;Try to stop progress monitor.&quot;</p>
+<p>);
+ if (timer != null</p>
+<p>) {
+            timer.cancel();</p>
+<pre><code>        timer.purge();
+        timer= null
+</code></pre><p>;
+            isScheduled= false</p>
+<p>;
+        }</p>
+<pre><code>    System.out.println(
+</code></pre><p>&quot;Progress monitor stoped.&quot;</p>
+<p>);
+    }</p>
+<p> public void</p>
+<p>start() {
+        System.out.println(&quot;Try to start progress monitor.&quot;</p>
+<p>);
+ if (timer == null</p>
+<p>) {
+            timer= new</p>
+<p>Timer();
+        }</p>
+<pre><code>    timer.schedule(
+</code></pre><p>this, 1000</p>
+<p>, progressInterval);
+        isScheduled= true</p>
+<p>;
+        System.out.println(&quot;Progress monitor started.&quot;</p>
+<p>);
+    }</p>
+<p> //<em>/</em></p>
+<pre><code> /* 打印progress信息
+
+ /*
+</code></pre><p>@param</p>
+<p>transfered
+ /*/</p>
+<p> private void sendProgressMessage(long</p>
+<p>transfered) {
+ if (fileSize != 0</p>
+<p>) {
+ double d = ((double)transfered /* 100)/(double</p>
+<p>)fileSize;
+            DecimalFormat df= new DecimalFormat( &quot;/#./#/#&quot;</p>
+<p>);
+            System.out.println(&quot;Sending progress message: &quot; + df.format(d) + &quot;%&quot;</p>
+<p>);
+        }else</p>
+<p>{
+            System.out.println(&quot;Sending progress message: &quot; +</p>
+<p>transfered);
+        }</p>
+<pre><code>}
+</code></pre><p>//<em>/</em></p>
+<pre><code> /* 实现了SftpProgressMonitor接口的count方法
+</code></pre><p>/*/</p>
+<p> public boolean count(long</p>
+<p>count) {
+ if (isEnd()) return false</p>
+<p>;
+ if (!</p>
+<p>isScheduled) {
+            start();</p>
+<pre><code>    }
+    add(count);
+</code></pre><p>return true</p>
+<p>;
+    }</p>
+<p> //<em>/</em></p>
+<pre><code> /* 实现了SftpProgressMonitor接口的end方法
+</code></pre><p>/*/</p>
+<p> public void</p>
+<p>end() {
+        setEnd(true</p>
+<p>);
+        System.out.println(&quot;transfering end.&quot;</p>
+<p>);
+    }</p>
+<p> private synchronized void add(long</p>
+<p>count) {
+        transfered= transfered +</p>
+<p>count;
+    }</p>
+<p> private synchronized long</p>
+<p>getTransfered() {
+ return</p>
+<p>transfered;
+    }</p>
+<p> public synchronized void setTransfered(long</p>
+<p>transfered) {
+ this.transfered =</p>
+<p>transfered;
+    }</p>
+<p> private synchronized void setEnd(boolean</p>
+<p>isEnd) {
+ this.isEnd =</p>
+<p>isEnd;
+    }</p>
+<p> private synchronized boolean</p>
+<p>isEnd() {
+ return</p>
+<p>isEnd;
+    }</p>
+<p> public void init(int op, String src, String dest, long</p>
+<p>max) {
+ // Not used for putting InputStream</p>
+<pre><code>}
+</code></pre><p>}
+<a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<p>再次修改SFTPTest main方法里的put方法，改为使用新的SftpProgressMonitor的实现类对象monitor作为参数，注意新的monitor对象的构造函数需要传入文件大小作为参数：
 <img src="" alt=""></p>
+<p><a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<p>package</p>
+<p>com.longyg.sftp;
+ import java.io.File;import java.util.HashMap;import</p>
+<p>java.util.Map;
+ import</p>
+<p>com.jcraft.jsch.ChannelSftp;
+ public class</p>
+<p>SFTPTest {</p>
+<p>public</p>
+<p>SFTPChannel getSFTPChannel() {
+ return new</p>
+<p>SFTPChannel();
+    }</p>
+<p> //<em>/</em></p>
+<pre><code> /*@param
+</code></pre><p>args
+     /*@throws</p>
+<p>Exception
+ /*/</p>
+<p> public static void main(String[] args) throws</p>
+<p>Exception {
+        SFTPTest test= new</p>
+<p>SFTPTest();</p>
+<pre><code>    Map
+</code></pre><p><String, String> sftpDetails = new HashMap<String, String></p>
+<p>();
+ // 设置主机ip，端口，用户名，密码</p>
+<pre><code>    sftpDetails.put(SFTPConstants.SFTP_REQ_HOST, &quot;10.9.167.55&quot;
+</code></pre><p>);
+        sftpDetails.put(SFTPConstants.SFTP_REQ_USERNAME,&quot;root&quot;</p>
+<p>);
+        sftpDetails.put(SFTPConstants.SFTP_REQ_PASSWORD,&quot;arthur&quot;</p>
+<p>);
+        sftpDetails.put(SFTPConstants.SFTP_REQ_PORT,&quot;22&quot;</p>
+<p>);</p>
+<pre><code>    String src
+</code></pre><p>= &quot;D:\DevSoft\HB-SnagIt1001.rar&quot;; // 本地文件名</p>
+<pre><code>    String dst = &quot;/home/omc/ylong/sftp/HB-SnagIt1001.rar&quot;;// 目标文件名
+
+
+    SFTPChannel channel=
+</code></pre><p>test.getSFTPChannel();
+        ChannelSftp chSftp= channel.getChannel(sftpDetails, 60000</p>
+<p>);</p>
+<pre><code>    File file
+</code></pre><p>= new</p>
+<p>File(src);
+ long fileSize =</p>
+<p>file.length();</p>
+<p>//<em>/</em></p>
+<pre><code>     /* 代码段1
+
+    OutputStream out = chSftp.put(dst, new FileProgressMonitor(fileSize), ChannelSftp.OVERWRITE); // 使用OVERWRITE模式
+    byte[] buff = new byte[1024 /* 256]; // 设定每次传输的数据块大小为256KB
+
+    int read;
+    if (out != null) {
+
+        System.out.println(&quot;Start to read input stream&quot;);
+        InputStream is = new FileInputStream(src);
+
+        do {
+            read = is.read(buff, 0, buff.length);
+
+            if (read &gt; 0) {
+                out.write(buff, 0, read);
+
+            }
+            out.flush();
+
+        } while (read &gt;= 0);
+        System.out.println(&quot;input stream read done.&quot;);
+
+    }
+    /*/*/
+
+
+
+
+    chSftp.put(src, dst,
+</code></pre><p>new FileProgressMonitor(fileSize), ChannelSftp.OVERWRITE); //</p>
+<p>代码段2</p>
+<p>// chSftp.put(new FileInputStream(src), dst, new FileProgressMonitor(fileSize), ChannelSftp.OVERWRITE); // 代码段3</p>
+<pre><code>    chSftp.quit();
+
+    channel.closeChannel();
+}
+</code></pre><p>}
+<a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<p>再次运行，结果输出为： 
+<img src="" alt=""></p>
+<p><a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<p>Try to start progress monitor.</p>
+<p>Progress monitor started.
+Transfering is in progress.</p>
+<p>Current transfered: 98019 bytes
+Sending progress message: 2.55%</p>
+<p>Transfering is in progress.
+Current transfered: 751479 bytes</p>
+<p>Sending progress message: 19.53%
+Transfering is in progress.</p>
+<p>Current transfered: 1078209 bytes
+Sending progress message: 28.02%</p>
+<p>......
+Transfering is in progress.</p>
+<p>Current transfered: 3430665 bytes
+Sending progress message: 89.15%</p>
+<p>transfering end.
+Transfering done. Cancel timer.</p>
+<p>Try to stop progress monitor.
+Progress monitor stoped.
+<a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a></p>
+<p>现在，程序每隔5秒钟才会打印一下进度信息。可以修改FileProgressMonitor类里的progressInterval变量的值，来修改默认的间隔时间。</p>
+<p>来源： <a href="[http://www.cnblogs.com/longyg/archive/2012/06/25/2556576.html](http://www.cnblogs.com/longyg/archive/2012/06/25/2556576.html)">[http://www.cnblogs.com/longyg/archive/2012/06/25/2556576.html](http://www.cnblogs.com/longyg/archive/2012/06/25/2556576.html)</a> </p>
 
       
     </div>
@@ -1318,8 +1531,246 @@ c.生成报告
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/Squid/">Squid</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Squid/" class="label label-primary">Squid</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-Squid--利用Squid构建高速的ProxyServer-开源中国OSChinaNET/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-Squid--利用Squid构建高速的ProxyServer-开源中国OSChinaNET" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ftp/">ftp</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ftp/" class="label label-primary">ftp</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-ftp--JSch-Java实现的SFTP（文件上传详解篇）/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ftp--JSch-Java实现的SFTP（文件上传详解篇）" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--被动模式下FTP的详细工作过程/">被动模式下FTP的详细工作过程</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--被动模式下FTP的详细工作过程/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-ftp-">被动模式下FTP的详细工作过程</h1>
+<p><strong>被动模式下FTP的详细工作过程</strong></p>
+<p>PASV FTP在工作的第一步，与PORT FTP一样，会首先使用21端口建立控制连接；但在第二步，由FTP客户端主动发起建立数据传输连接请求，服务器的数据传输端口为随机端口，因此，每次建立的数据传输连接通道，服务器所使用的端口都不相同。</p>
+<p>本示例客户端IP是192.168.120.168，服务器IP是192.168.120.240，因为客户端的MS-DOS不支持PASV模式，所以使用FlashFXP软件来连接服务器。通过抓包工具来查看用户从连接FTP服务器到退出FTP服务器经过的所有过程。
+使用FlashFXP所做的操作：1.输入FTP服务器的IP，要登入的用户名和密码。2.进入用户家目录，查看.bashrc和.bash_profile两个文件。3.退出FTP。</p>
+<p><strong>PASV FTP**</strong>的详细工作过程：**</p>
+<p><strong>1.</strong> 因为FTP使用的是TCP协议，所以客户端FlashFXP在连接服务器192.168.120.240时，首先会经历TCP的三次握手来建立控制通道。客户端使用任意的端口N（&gt;1024）来连接FTP服务器默认的21端口。这和PORT模式一样。
+<strong>2.</strong> 在TCP三次握手结束后，服务器端正式响应客户端的控制连接请求，控制通道建立。</p>
+<p><strong>3.</strong> 客户端向服务器发送含有ACK的数据段来确认控制连接建立并发送用户名。
+<strong>4.</strong> 服务器向客户端发送含有ACK的数据段来确认用户名。</p>
+<p><strong>5.</strong> 服务器向客户端询问密码。
+<strong>6.</strong> 客户端向服务器发送含有ACK的数据段来确认并发送密码，密码为明文。</p>
+<p><strong>7.</strong> 服务器向客户端发送含有ACK的数据段来确认密码收到。
+<strong>8.</strong> 服务器向客户端发送登陆成功的信息。</p>
+<p><strong>9.</strong> 客户端向服务器发送含有ACK的数据段来确认并发送查询系统类型的指令（见图一）。
+<strong>10.</strong> 服务器向客户端发送含有ACK的数据段来确认收到指令。</p>
+<p><strong>11.</strong> 服务器向客户端回应系统的类型为UNIX（见图二）。
+<strong>12.</strong> 客户端向服务器发送列出服务器的所有扩展命令和扩展功能的指令（见图三）。</p>
+<p><strong>13.</strong> 服务器响应客户端的FEAT请求（见图四）。
+<strong>14.</strong> 服务器响应客户端有EPSV（扩展PASV，支持非IPV4）的扩展功能（见图五）。</p>
+<p><strong>15.</strong> 客户端向服务器发送含有ACK的数据段来确认收到信息。
+<strong>16.</strong> 服务器响应客户端自己的其他特性（见图六）。MDTM：保留下载文件的日期/时间；REST STREAM：重设文件传输方式为stream形式。</p>
+<p><strong>17.</strong> 客户端确认收到服务器的信息。
+<strong>18.</strong> 服务器响应客户端进入到用户的家目录（见图七）。</p>
+<p><strong>19.</strong> 客户端确认收到服务器的信息。
+<strong>20.</strong> 客户端向服务器发送文件传输使用何种模式（Binary、ASCII）的指令（见图八）。</p>
+<p><strong>21.</strong> 服务器回应客户端使用Binary模式（见图九）。
+<strong>22.</strong> 客户端向服务器询问.bashrc文件的大小（见图十）。</p>
+<p><strong>23.</strong> 服务器回应客户端.bashrc文件的大小为124字节（见图十一）。
+<strong>24.</strong> 客户端向服务器发出PASV的指令（用来进行数据传输）（见图十二）。</p>
+<p><strong>25.</strong> 服务器回应客户端使用PASV模式，并且商量数据传输端口用232x256+151=59543（见图十三）。
+<strong>26.</strong> 客户端主动使用N+1端口来连接服务器的59543端口，并且向服务器发送含有SYN的数据段来开始进行数据传输连接的第1次握手（见图十四）。</p>
+<p><strong>27.</strong> 服务器向客户端发送含有SYN和ACK的数据段来进行第2次握手（见图十五）。
+<strong>28.</strong> 客户端向服务器发送含有ACK的数据段来进行第3次握手（见图十六）。</p>
+<p><strong>29.</strong> 3次握手过程完成，客户端向服务器发送查看.bashrc文件的指令（见图十七）。
+<strong>30.</strong> 服务器回应客户端使用Binary数据传输模式连接.bashrc文件（见图十八）。</p>
+<p><strong>31.</strong> 服务器开始进行数据传输。
+<strong>32.</strong> 服务器确定数据传输完毕，然后向客户端发送含有FIN和ACK的数据段来请求断开本次数据连接，第1次断开（见图十九）。</p>
+<p><strong>33.</strong> 客户端向服务器发送含有ACK的数据段答应服务器的断接请求，第2次断开（见图二十）。
+<strong>34.</strong> 服务器响应客户端文件发送完成的信息（见图二十一）。</p>
+<p><strong>35.</strong> 客户端向服务器发送含有ACK的数据段来确认收到信息。
+<strong>36.</strong> 客户端向服务器发送含有FIN和ACK的数据段来请求断开客户端到服务器之间的数据连接，第3次断开（见图二十二）。</p>
+<p><strong>37.</strong> 服务器向客户端发送含有ACK的数据段确认断开连接，第4次断开（见图二十三）
+<strong>38.</strong> 接下来是查看.bash_profile文件的过程。其过程和查看.bashrc文件的过程一样（在此不详述了），只是服务器和客户端的数据传输端口变了。服务器的数据传输端口是随机的；客户端的数据传输端口是N+2。</p>
+<p><strong>39.</strong> 客户端在查看完.bash_profile文件并彻底完成该次数据连接的4次断开后，向服务器发送退出的指令（见图二十四）。
+<strong>40.</strong> 服务器响应客户端的退出请求（见图二十五）。</p>
+<p><strong>41.</strong> 服务器向客户端发送含有FIN和ACK的数据段，请求断开控制连接（见图二十六）。这是第一次断开控制连接。
+<strong>42.</strong> 客户端向服务器发送含有ACK的数据段来应答服务器的断接请求（见图二十七）。这是第二次断开控制连接。</p>
+<p><strong>43.</strong> 客户端向服务器发送含有FIN和ACK的数据段，请求断开到服务器之间的控制连接（见图二十八）。这是第三次断开控制连接。
+<strong>44.</strong> 服务器向客户端发送含有ACK的数据段，来确认客户端的断接请求（见图二十九）。这样本次FTP控制连接完全断开。</p>
+<p><strong>通过查看本次示例（被动FTP）的详细过程，我们可以得到以下几点结果：</strong></p>
+<p><strong>1.</strong> 服务器的控制连接端口为21，数据传输端口随机（&gt;1024）并且每次的数据传输端口都不一样。
+<strong>2.</strong> 客户端的控制连接端口为N（&gt;1024），数据传输端口在第一次进行数据传输时为N+1,在第二次数据传输时为N+2，依次类推。</p>
+<p><strong>3.</strong> 服务器主动告诉客户端自己的数据传输端口。
+<strong>4.</strong> 客户端主动用数据传输端口N+x去连接服务器的随机数据传输端口。</p>
+<p><strong>5.</strong> 在一次FTP连接的过程中，只有一次控制连接，却可以有多次数据传输连接。
+<strong>6.</strong> 不管是控制连接还是数据传输连接，在每次从建立到完成都需要经过3次连接和4次断开的过程。（这符合TCP协议的要求）</p>
+<p><strong>本文档使用的图例：</strong></p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935974PU0j.gif" target="_blank"><img src="" alt="11"></a> 
+图一：客户端发送查询系统类型的指令</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935976j9JR.jpg" target="_blank"></a><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935977k2F8.gif"><img src="" alt="13"></a></p>
+<p>图二：服务器响应客户端系统类型为UNIX</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935978q1o9.gif" target="_blank"><img src="" alt="14"></a>
+图三：客户端请求服务器列出它的所有扩展命令和扩展功能</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935983sdRz.gif" target="_blank"><img src="" alt="15"></a></p>
+<p>图四：服务器响应客户端的FEAT请求</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936006Aznp.gif" target="_blank"><img src="" alt="16"></a>
+图五：服务器响应客户端有EPSV（扩展PASV，支持非IPV4）的扩展功能</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249360074yJ5.gif" target="_blank"><img src="" alt="18"></a></p>
+<p>图六：服务器响应客户端自己支持的其他特性</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936015iZgn.gif" target="_blank"><img src="" alt="20"></a>
+图七：服务器响应客户端进入到用户家目录</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936017ZmNc.gif" target="_blank"><img src="" alt="22"></a></p>
+<p>图八：客户端向服务器询问文件传输的模式</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936018IMjR.gif" target="_blank"><img src="" alt="23"></a>
+图九：服务器响应客户端使用Binary模式</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936020hNul.gif" target="_blank"><img src="" alt="24"></a></p>
+<p>图十：客户端向服务器询问.bashrc文件的大小</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936022sj6P.gif" target="_blank"><img src="" alt="25"></a>
+图十一：服务器回应客户端.bashrc文件的大小为124字节</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249360237iAu.gif" target="_blank"><img src="" alt="26"></a></p>
+<p>图十二：客户端向服务器发送PASV指令</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249361801LGh.gif" target="_blank"><img src="" alt="27"></a>
+图十三：服务器响应客户端使用PASV模式，并且商量数据传输端口用59543</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936181n4nW.gif" target="_blank"><img src="" alt="28"></a></p>
+<p>图十四：第一次数据传输连接之第一次握手</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_122493618223uT.gif" target="_blank"><img src="" alt="29"></a>
+图十五：第一次数据传输连接之第二次握手</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936183BjjV.gif" target="_blank"><img src="" alt="30"></a></p>
+<p>图十六：第一次数据传输连接之第三次握手</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936185srsz.gif" target="_blank"><img src="" alt="31"></a>
+图十七：客户端向服务器发送查看.bashrc文件的指令</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936186ZS1w.gif" target="_blank"><img src="" alt="32"></a></p>
+<p>图十八：服务器响应客户端使用Binary数据传输模式来连接.bashrc文件</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936188Q6dX.gif" target="_blank"><img src="" alt="34"></a>
+图十九：服务器发送FIN和ACK请求断开本次数据连接（第1次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936210T20g.gif" target="_blank"><img src="" alt="35"></a></p>
+<p>图二十：客户端发送ACK答应服务器的请求（第2次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936213ulWM.gif" target="_blank"><img src="" alt="36"></a>
+图二十一：服务器响应客户端文件发送完毕的信息</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936217J6aY.gif" target="_blank"><img src="" alt="38"></a></p>
+<p>图二十二：客户端向服务器发送含有FIN和ACK的数据段请求断开数据连接（第3次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936218Leca.gif" target="_blank"><img src="" alt="39"></a>
+图二十三：服务器向客户端发送含有ACK的数据段确认断开连接（第4次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936220HQq5.gif" target="_blank"><img src="" alt="56"></a></p>
+<p>图二十四：客户端向服务器发出退出的指令</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936221ejql.gif" target="_blank"><img src="" alt="57"></a>
+图二十五：服务器响应客户端的退出请求</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936223xMjK.gif" target="_blank"><img src="" alt="58"></a></p>
+<p>图二十六：服务器向客户端发送FIN和ACK请求断开控制连接（第1次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249362249BCE.gif" target="_blank"><img src="" alt="59"></a>
+图二十七：客户端向服务器发送ACK答应服务器请求（第2次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936225gvOK.gif" target="_blank"><img src="" alt="60"></a></p>
+<p>图二十八：客户端向服务器发送FIN和ACK请求断开控制连接（第3次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936226MLVx.gif" target="_blank"><img src="" alt="61"></a>
+图二十九：服务器向客户端发送ACK答应断开控制连接（第4次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936227MSuY.gif" target="_blank"><img src="" alt="62"></a></p>
+<p>图三十：本次示例全部过程</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ftp/">ftp</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ftp/" class="label label-primary">ftp</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-ftp--被动模式下FTP的详细工作过程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ftp--被动模式下FTP的详细工作过程" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-webservice--Java开发的WebService获取客户端IP地址/">Java开发的WebService获取客户端IP地址_数据库 开发_比特网</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-webservice--Java开发的WebService获取客户端IP地址/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-webservice-ip-">Java开发WebService获取客户端IP地址</h1>
+<p>1.基于jax-ws开发的webservice获取客户端ip的方法【在代理类XXXDelegate添加如下代码】：</p>
+<p>import javax.annotation.Resource;</p>
+<p>import javax.servlet.http.HttpServletRequest;</p>
+<p>import javax.xml.ws.WebServiceContext;</p>
+<p>import javax.xml.ws.handler.MessageContext;</p>
+<p>@Resource</p>
+<p>private WebServiceContext wsContext;</p>
+<p>private String getClientInfo(){</p>
+<p>MessageContext mc = wsContext.getMessageContext();</p>
+<p>HttpServletRequest request = (HttpServletRequest)(mc.get(MessageContext.SERVLET_REQUEST));</p>
+<p>String remortAddress = request.getRemoteAddr();</p>
+<p>return (remortAddress);</p>
+<p>}</p>
+<p>2.基于axis发布的webservice获取客户端ip的方法</p>
+<p>//<em>/</em></p>
+<p>/* 获取客户端IP地址，如调用方的IP，以便检查权限。</p>
+<p>/* 适用于axis发布的webservice</p>
+<p>/* @return</p>
+<p>/*/</p>
+<p>public String getClientIpAxis() {</p>
+<p>MessageContext mc = null;</p>
+<p>HttpServletRequest request = null;</p>
+<p>try {</p>
+<p>mc = MessageContext.getCurrentMessageContext();</p>
+<p>if (mc == null)</p>
+<p>throw new Exception(“无法获取到MessageContext”);</p>
+<p>request = (HttpServletRequest) mc</p>
+<p>.getProperty(HTTPConstants.MC_HTTP_SERVLETREQUEST);</p>
+<p>System.out.println(“remote ip: ” + request.getRemoteAddr());</p>
+<p>} catch (Exception e) {</p>
+<p>System.out.println(e.getMessage());</p>
+<p>e.printStackTrace();</p>
+<p>}</p>
+<p>return request.getRemoteAddr();</p>
+<p>}</p>
+<p>3.基于xfire发布的webservice获取客户端ip的方法</p>
+<p>//<em>/</em></p>
+<p>/* 获取客户端IP地址</p>
+<p>/* 适用于xfire发布的webservice</p>
+<p>/* @return</p>
+<p>/*/</p>
+<p>public String getClientIpXfire() {</p>
+<p>String ip = “”;</p>
+<p>try {</p>
+<p>HttpServletRequest request = XFireServletController.getRequest();</p>
+<p>ip = request.getRemoteAddr();</p>
+<p>} catch (Exception e) {</p>
+<p>System.out.println(“无法获取HttpServletRequest.”);</p>
+<p>e.printStackTrace();</p>
+<p>}</p>
+<p>return ip;</p>
+<p>}
+关键字：Java</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/webservice/">webservice</a></li></span></span> | <span class="tags">Tagged <a href="/tags/webservice/" class="label label-primary">webservice</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:39:04"datetime="2014-03-07 10:39:04"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-webservice--Java开发的WebService获取客户端IP地址/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-webservice--Java开发的WebService获取客户端IP地址" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1399,7 +1850,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-23 21:54:37</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-25 18:15:41</em></span></div>
 </div>
 <div class="clearfix"></div>
 
