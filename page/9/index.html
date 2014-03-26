@@ -110,6 +110,808 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-tomcat--Servlet工作原理/">Servlet工作原理</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-服务器-tomcat--Servlet工作原理/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="servlet-">Servlet工作原理</h1>
+<p><a href="http://blog.csdn.net/haojun186/article/details/7467100" target="_blank">Servlet工作原理</a></p>
+<p><a href="">从 Servlet 容器说起</a></p>
+<p>要介绍 Servlet 必须要先把 Servlet 容器说清楚，Servlet 与 Servlet 容器的关系有点像枪和子弹的关系，枪是为子弹而生，而子弹又让枪有了杀伤力。虽然它们是彼此依存的，但是又相互独立发展，这一切都是为了适应工业化生产的结果。从技术角度来说是为了解耦，通过标准化接口来相互协作。既然接口是连接 Servlet 与 Servlet 容器的关键，那我们就从它们的接口说起。</p>
+<p>前面说了 Servlet 容器作为一个独立发展的标准化产品，目前它的种类很多，但是它们都有自己的市场定位，很难说谁优谁劣，各有特点。例如现在比较流行的 Jetty，在定制化和移动领域有不错的发展，我们这里还是以大家最为熟悉 Tomcat 为例来介绍 Servlet 容器如何管理 Servlet。Tomcat 本身也很复杂，我们只从 Servlet 与 Servlet 容器的接口部分开始介绍，关于 Tomcat 的详细介绍可以参考我的另外一篇文章《 Tomcat 系统架构与模式设计分析》。</p>
+<p>Tomcat 的容器等级中，Context 容器是直接管理 Servlet 在容器中的包装类 Wrapper，所以 Context 容器如何运行将直接影响 Servlet 的工作方式。
+<a href=""><strong>图 1 . Tomcat 容器模型</strong></a>
+<img src="" alt="图 1 . Tomcat 容器模型"></p>
+<p>从上图可以看出 Tomcat 的容器分为四个等级，真正管理 Servlet 的容器是 Context 容器，一个 Context 对应一个 Web 工程，在 Tomcat 的配置文件中可以很容易发现这一点，如下：
+<a href=""><strong>清单 1 Context 配置参数</strong></a></p>
+<Context path="/projectOne " docBase="D:\projects\projectOne"
+reloadable="true" />
+
+<p>下面详细介绍一下 Tomcat 解析 Context 容器的过程，包括如何构建 Servlet 的过程。</p>
+<p><a href="">Servlet 容器的启动过程</a></p>
+<p>Tomcat7 也开始支持嵌入式功能，增加了一个启动类 org.apache.catalina.startup.Tomcat。创建一个实例对象并调用 start 方法就可以很容易启动 Tomcat，我们还可以通过这个对象来增加和修改 Tomcat 的配置参数，如可以动态增加 Context、Servlet 等。下面我们就利用这个 Tomcat 类来管理新增的一个 Context 容器，我们就选择 Tomcat7 自带的 examples Web 工程，并看看它是如何加到这个 Context 容器中的。
+<a href=""><strong>清单 2 . 给 Tomcat 增加一个 Web 工程</strong></a></p>
+<p>Tomcat tomcat = getTomcatInstance();
+File appDir = new File(getBuildDirectory(), &quot;webapps/examples&quot;);</p>
+<p>tomcat.addWebapp(null, &quot;/examples&quot;, appDir.getAbsolutePath());
+tomcat.start();</p>
+<p>ByteChunk res = getUrl(&quot;<a href="http://localhost" target="_blank">http://localhost</a>:&quot; + getPort() +
+               &quot;/examples/servlets/servlet/HelloWorldExample&quot;);</p>
+<p>assertTrue(res.toString().indexOf(&quot;<h1>Hello World!</h1>&quot;) &gt; 0);</p>
+<p>清单 1 的代码是创建一个 Tomcat 实例并新增一个 Web 应用，然后启动 Tomcat 并调用其中的一个 HelloWorldExample Servlet，看有没有正确返回预期的数据。</p>
+<p>Tomcat 的 addWebapp 方法的代码如下：
+<a href=""><strong>清单 3 .Tomcat.addWebapp</strong></a></p>
+<p>public Context addWebapp(Host host, String url, String path) {
+        silence(url);</p>
+<pre><code>    Context ctx = new StandardContext();
+    ctx.setPath( url );
+
+    ctx.setDocBase(path);
+    if (defaultRealm == null) {
+
+        initSimpleAuth();
+    }
+
+    ctx.setRealm(defaultRealm);
+    ctx.addLifecycleListener(new DefaultWebXmlListener());
+
+    ContextConfig ctxCfg = new ContextConfig();
+    ctx.addLifecycleListener(ctxCfg);
+
+    ctxCfg.setDefaultWebXml(&quot;org/apache/catalin/startup/NO_DEFAULT_XML&quot;);
+    if (host == null) {
+
+        getHost().addChild(ctx);
+    } else {
+
+        host.addChild(ctx);
+    }
+
+    return ctx;
+</code></pre><p>}</p>
+<p>前面已经介绍了一个 Web 应用对应一个 Context 容器，也就是 Servlet 运行时的 Servlet 容器，添加一个 Web 应用时将会创建一个 StandardContext 容器，并且给这个 Context 容器设置必要的参数，url 和 path 分别代表这个应用在 Tomcat 中的访问路径和这个应用实际的物理路径，这个两个参数与清单 1 中的两个参数是一致的。其中最重要的一个配置是 ContextConfig，这个类将会负责整个 Web 应用配置的解析工作，后面将会详细介绍。最后将这个 Context 容器加到父容器 Host 中。</p>
+<p>接下去将会调用 Tomcat 的 start 方法启动 Tomcat，如果你清楚 Tomcat 的系统架构，你会容易理解 Tomcat 的启动逻辑，Tomcat 的启动逻辑是基于观察者模式设计的，所有的容器都会继承 Lifecycle 接口，它管理者容器的整个生命周期，所有容器的的修改和状态的改变都会由它去通知已经注册的观察者（Listener），关于这个设计模式可以参考《 Tomcat 的系统架构与设计模式，第二部分：设计模式》。Tomcat 启动的时序图可以用图 2 表示。
+<a href=""><strong>图 2. Tomcat 主要类的启动时序图（</strong></a><strong><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/image003.jpg" target="_blank">查看大图</a>）</strong>
+<img src="" alt="图 2. Tomcat 主要类的启动时序图"></p>
+<p>上图描述了 Tomcat 启动过程中，主要类之间的时序关系，下面我们将会重点关注添加 examples 应用所对应的 StandardContext 容器的启动过程。</p>
+<p>当 Context 容器初始化状态设为 init 时，添加在 Contex 容器的 Listener 将会被调用。ContextConfig 继承了 LifecycleListener 接口，它是在调用清单 3 时被加入到 StandardContext 容器中。ContextConfig 类会负责整个 Web 应用的配置文件的解析工作。</p>
+<p>ContextConfig 的 init 方法将会主要完成以下工作：</p>
+<ol>
+<li>创建用于解析 xml 配置文件的 contextDigester 对象</li>
+<li>读取默认 context.xml 配置文件，如果存在解析它</li>
+<li>读取默认 Host 配置文件，如果存在解析它</li>
+<li>读取默认 Context 自身的配置文件，如果存在解析它</li>
+<li>设置 Context 的 DocBase</li>
+</ol>
+<p>ContextConfig 的 init 方法完成后，Context 容器的会执行 startInternal 方法，这个方法启动逻辑比较复杂，主要包括如下几个部分：</p>
+<ol>
+<li>创建读取资源文件的对象</li>
+<li>创建 ClassLoader 对象</li>
+<li>设置应用的工作目录</li>
+<li>启动相关的辅助类如：logger、realm、resources 等</li>
+<li>修改启动状态，通知感兴趣的观察者（Web 应用的配置）</li>
+<li>子容器的初始化</li>
+<li>获取 ServletContext 并设置必要的参数</li>
+<li>初始化“load on startup”的 Servlet</li>
+</ol>
+<p><a href="">Web 应用的初始化工作</a></p>
+<p>Web 应用的初始化工作是在 ContextConfig 的 configureStart 方法中实现的，应用的初始化主要是要解析 web.xml 文件，这个文件描述了一个 Web 应用的关键信息，也是一个 Web 应用的入口。</p>
+<p>Tomcat 首先会找 globalWebXml 这个文件的搜索路径是在 engine 的工作目录下寻找以下两个文件中的任一个 org/apache/catalin/startup/NO_DEFAULT_XML 或 conf/web.xml。接着会找 hostWebXml 这个文件可能会在 System.getProperty(&quot;catalina.base&quot;)/conf/${EngineName}/${HostName}/web.xml.default，接着寻找应用的配置文件 examples/WEB-INF/web.xml。web.xml 文件中的各个配置项将会被解析成相应的属性保存在 WebXml 对象中。如果当前应用支持 Servlet3.0，解析还将完成额外 9 项工作，这个额外的 9 项工作主要是为 Servlet3.0 新增的特性，包括 jar 包中的 META-INF/web-fragment.xml 的解析以及对 annotations 的支持。</p>
+<p>接下去将会将 WebXml 对象中的属性设置到 Context 容器中，这里包括创建 Servlet 对象、filter、listener 等等。这段代码在 WebXml 的 configureContext 方法中。下面是解析 Servlet 的代码片段：
+<a href=""><strong>清单 4. 创建 Wrapper 实例</strong></a></p>
+<p>for (ServletDef servlet : servlets.values()) {
+            Wrapper wrapper = context.createWrapper();</p>
+<pre><code>        String jspFile = servlet.getJspFile();
+        if (jspFile != null) {
+
+            wrapper.setJspFile(jspFile);
+        }
+
+        if (servlet.getLoadOnStartup() != null) {
+            wrapper.setLoadOnStartup(servlet.getLoadOnStartup().intValue());
+
+        }
+        if (servlet.getEnabled() != null) {
+
+            wrapper.setEnabled(servlet.getEnabled().booleanValue());
+        }
+
+        wrapper.setName(servlet.getServletName());
+        Map&lt;String,String&gt; params = servlet.getParameterMap();
+
+        for (Entry&lt;String, String&gt; entry : params.entrySet()) {
+            wrapper.addInitParameter(entry.getKey(), entry.getValue());
+
+        }
+        wrapper.setRunAs(servlet.getRunAs());
+
+        Set&lt;SecurityRoleRef&gt; roleRefs = servlet.getSecurityRoleRefs();
+        for (SecurityRoleRef roleRef : roleRefs) {
+
+            wrapper.addSecurityReference(
+                    roleRef.getName(), roleRef.getLink());
+
+        }
+        wrapper.setServletClass(servlet.getServletClass());
+
+        MultipartDef multipartdef = servlet.getMultipartDef();
+        if (multipartdef != null) {
+
+            if (multipartdef.getMaxFileSize() != null &amp;&amp;
+                    multipartdef.getMaxRequestSize()!= null &amp;&amp;
+
+                    multipartdef.getFileSizeThreshold() != null) {
+                wrapper.setMultipartConfigElement(new
+</code></pre><p>MultipartConfigElement(
+                            multipartdef.getLocation(),</p>
+<pre><code>                        Long.parseLong(multipartdef.getMaxFileSize()),
+                        Long.parseLong(multipartdef.getMaxRequestSize()),
+
+                        Integer.parseInt(
+                                multipartdef.getFileSizeThreshold())));
+
+            } else {
+                wrapper.setMultipartConfigElement(new
+</code></pre><p>MultipartConfigElement(
+                            multipartdef.getLocation()));</p>
+<pre><code>            }
+        }
+
+        if (servlet.getAsyncSupported() != null) {
+            wrapper.setAsyncSupported(
+
+                    servlet.getAsyncSupported().booleanValue());
+        }
+
+        context.addChild(wrapper);
+</code></pre><p>}</p>
+<p>这段代码清楚的描述了如何将 Servlet 包装成 Context 容器中的 StandardWrapper，这里有个疑问，为什么要将 Servlet 包装成 StandardWrapper 而不直接是 Servlet 对象。这里 StandardWrapper 是 Tomcat 容器中的一部分，它具有容器的特征，而 Servlet 为了一个独立的 web 开发标准，不应该强耦合在 Tomcat 中。</p>
+<p>除了将 Servlet 包装成 StandardWrapper 并作为子容器添加到 Context 中，其它的所有 web.xml 属性都被解析到 Context 中，所以说 Context 容器才是真正运行 Servlet 的 Servlet 容器。一个 Web 应用对应一个 Context 容器，容器的配置属性由应用的 web.xml 指定，这样我们就能理解 web.xml 到底起到什么作用了。</p>
+<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">创建 Servlet 实例</a></p>
+<p>前面已经完成了 Servlet 的解析工作，并且被包装成 StandardWrapper 添加在 Context 容器中，但是它仍然不能为我们工作，它还没有被实例化。下面我们将介绍 Servlet 对象是如何创建的，以及如何被初始化的。</p>
+<p><a href="">创建 Servlet 对象</a></p>
+<p>如果 Servlet 的 load-on-startup 配置项大于 0，那么在 Context 容器启动的时候就会被实例化，前面提到在解析配置文件时会读取默认的 globalWebXml，在 conf 下的 web.xml 文件中定义了一些默认的配置项，其定义了两个 Servlet，分别是：org.apache.catalina.servlets.DefaultServlet 和 org.apache.jasper.servlet.JspServlet 它们的 load-on-startup 分别是 1 和 3，也就是当 Tomcat 启动时这两个 Servlet 就会被启动。</p>
+<p>创建 Servlet 实例的方法是从 Wrapper. loadServlet 开始的。loadServlet 方法要完成的就是获取 servletClass 然后把它交给 InstanceManager 去创建一个基于 servletClass.class 的对象。如果这个 Servlet 配置了 jsp-file，那么这个 servletClass 就是 conf/web.xml 中定义的 org.apache.jasper.servlet.JspServlet 了。</p>
+<p>创建 Servlet 对象的相关类结构图如下：
+<a href=""><strong>图 3. 创建 Servlet 对象的相关类结构</strong></a>
+<img src="" alt="图 3. 创建 Servlet 对象的相关类结构"></p>
+<p><a href="">初始化 Servlet</a></p>
+<p>初始化 Servlet 在 StandardWrapper 的 initServlet 方法中，这个方法很简单就是调用 Servlet 的 init 的方法，同时把包装了 StandardWrapper 对象的 StandardWrapperFacade 作为 ServletConfig 传给 Servlet。Tomcat 容器为何要传 StandardWrapperFacade 给 Servlet 对象将在后面做详细解析。</p>
+<p>如果该 Servlet 关联的是一个 jsp 文件，那么前面初始化的就是 JspServlet，接下去会模拟一次简单请求，请求调用这个 jsp 文件，以便编译这个 jsp 文件为 class，并初始化这个 class。</p>
+<p>这样 Servlet 对象就初始化完成了，事实上 Servlet 从被 web.xml 中解析到完成初始化，这个过程非常复杂，中间有很多过程，包括各种容器状态的转化引起的监听事件的触发、各种访问权限的控制和一些不可预料的错误发生的判断行为等等。我们这里只抓了一些关键环节进行阐述，试图让大家有个总体脉络。</p>
+<p>下面是这个过程的一个完整的时序图，其中也省略了一些细节。
+<a href=""><strong>图 4. 初始化 Servlet 的时序图（</strong></a><strong><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/image007.jpg" target="_blank">查看大图</a>）</strong>
+<img src="" alt="图 4. 初始化 Servlet 的时序图"></p>
+<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">Servlet 体系结构</a></p>
+<p>我们知道 Java Web 应用是基于 Servlet 规范运转的，那么 Servlet 本身又是如何运转的呢？为何要设计这样的体系结构。
+<a href=""><strong>图 5.Servlet 顶层类关联图</strong></a>
+<img src="" alt="图 5.Servlet 顶层类关联图"></p>
+<p>从上图可以看出 Servlet 规范就是基于这几个类运转的，与 Servlet 主动关联的是三个类，分别是 ServletConfig、ServletRequest 和 ServletResponse。这三个类都是通过容器传递给 Servlet 的，其中 ServletConfig 是在 Servlet 初始化时就传给 Servlet 了，而后两个是在请求达到时调用 Servlet 时传递过来的。我们很清楚 ServletRequest 和 ServletResponse 在 Servlet 运行的意义，但是 ServletConfig 和 ServletContext 对 Servlet 有何价值？仔细查看 ServletConfig 接口中声明的方法发现，这些方法都是为了获取这个 Servlet 的一些配置属性，而这些配置属性可能在 Servlet 运行时被用到。而 ServletContext 又是干什么的呢？ Servlet 的运行模式是一个典型的“握手型的交互式”运行模式。所谓“握手型的交互式”就是两个模块为了交换数据通常都会准备一个交易场景，这个场景一直跟随个这个交易过程直到这个交易完成为止。这个交易场景的初始化是根据这次交易对象指定的参数来定制的，这些指定参数通常就会是一个配置类。所以对号入座，交易场景就由 ServletContext 来描述，而定制的参数集合就由 ServletConfig 来描述。而 ServletRequest 和 ServletResponse 就是要交互的具体对象了，它们通常都是作为运输工具来传递交互结果。</p>
+<p>ServletConfig 是在 Servlet init 时由容器传过来的，那么 ServletConfig 到底是个什么对象呢？</p>
+<p>下图是 ServletConfig 和 ServletContext 在 Tomcat 容器中的类关系图。
+<a href=""><strong>图 6. ServletConfig 在容器中的类关联图</strong></a>
+<img src="" alt="图 6. ServletConfig 在容器中的类关联图"></p>
+<p>上图可以看出 StandardWrapper 和 StandardWrapperFacade 都实现了 ServletConfig 接口，而 StandardWrapperFacade 是 StandardWrapper 门面类。所以传给 Servlet 的是 StandardWrapperFacade 对象，这个类能够保证从 StandardWrapper 中拿到 ServletConfig 所规定的数据，而又不把 ServletConfig 不关心的数据暴露给 Servlet。</p>
+<p>同样 ServletContext 也与 ServletConfig 有类似的结构，Servlet 中能拿到的 ServletContext 的实际对象也是 ApplicationContextFacade 对象。ApplicationContextFacade 同样保证 ServletContex 只能从容器中拿到它该拿的数据，它们都起到对数据的封装作用，它们使用的都是门面设计模式。</p>
+<p>通过 ServletContext 可以拿到 Context 容器中一些必要信息，比如应用的工作路径，容器支持的 Servlet 最小版本等。</p>
+<p>Servlet 中定义的两个 ServletRequest 和 ServletResponse 它们实际的对象又是什么呢？，我们在创建自己的 Servlet 类时通常使用的都是 HttpServletRequest 和 HttpServletResponse，它们继承了 ServletRequest 和 ServletResponse。为何 Context 容器传过来的 ServletRequest、ServletResponse 可以被转化为 HttpServletRequest 和 HttpServletResponse 呢？
+<a href=""><strong>图 7.Request 相关类结构图</strong></a>
+<img src="" alt="图 7.Request 相关类结构图"></p>
+<p>上图是 Tomcat 创建的 Request 和 Response 的类结构图。Tomcat 一接受到请求首先将会创建 org.apache.coyote.Request 和 org.apache.coyote.Response，这两个类是 Tomcat 内部使用的描述一次请求和相应的信息类它们是一个轻量级的类，它们作用就是在服务器接收到请求后，经过简单解析将这个请求快速的分配给后续线程去处理，所以它们的对象很小，很容易被 JVM 回收。接下去当交给一个用户线程去处理这个请求时又创建 org.apache.catalina.connector. Request 和 org.apache.catalina.connector. Response 对象。这两个对象一直穿越整个 Servlet 容器直到要传给 Servlet，传给 Servlet 的是 Request 和 Response 的门面类 RequestFacade 和 RequestFacade，这里使用门面模式与前面一样都是基于同样的目的——封装容器中的数据。一次请求对应的 Request 和 Response 的类转化如下图所示：
+<a href=""><strong>图 8.Request 和 Response 的转变过程</strong></a>
+<img src="" alt="图 8.Request 和 Response 的转变过程"></p>
+<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">Servlet 如何工作</a></p>
+<p>我们已经清楚了 Servlet 是如何被加载的、Servlet 是如何被初始化的，以及 Servlet 的体系结构，现在的问题就是它是如何被调用的。</p>
+<p>当用户从浏览器向服务器发起一个请求，通常会包含如下信息：<a href="http://hostname" target="_blank">http://hostname</a>: port /contextpath/servletpath，hostname 和 port 是用来与服务器建立 TCP 连接，而后面的 URL 才是用来选择服务器中那个子容器服务用户的请求。那服务器是如何根据这个 URL 来达到正确的 Servlet 容器中的呢？</p>
+<p>Tomcat7.0 中这件事很容易解决，因为这种映射工作有专门一个类来完成的，这个就是 org.apache.tomcat.util.http.mapper，这个类保存了 Tomcat 的 Container 容器中的所有子容器的信息，当 org.apache.catalina.connector. Request 类在进入 Container 容器之前，mapper 将会根据这次请求的 hostnane 和 contextpath 将 host 和 context 容器设置到 Request 的 mappingData 属性中。所以当 Request 进入 Container 容器之前，它要访问那个子容器这时就已经确定了。
+<a href=""><strong>图 9.Request 的 Mapper 类关系图</strong></a>
+<img src="" alt="图 9.Request 的 Mapper 类关系图"></p>
+<p>可能你有疑问，mapper 中怎么会有容器的完整关系，这要回到图 2 中 19 步 MapperListener 类的初始化过程，下面是 MapperListener 的 init 方法代码 :
+<a href=""><strong>清单 5. MapperListener.init</strong></a></p>
+<p>public void init() {
+        findDefaultHost();</p>
+<pre><code>    Engine engine = (Engine) connector.getService().getContainer();
+    engine.addContainerListener(this);
+
+    Container[] conHosts = engine.findChildren();
+    for (Container conHost : conHosts) {
+
+        Host host = (Host) conHost;
+        if (!LifecycleState.NEW.equals(host.getState())) {
+
+            host.addLifecycleListener(this);
+            registerHost(host);
+
+        }
+    }
+</code></pre><p>}</p>
+<p>这段代码的作用就是将 MapperListener 类作为一个监听者加到整个 Container 容器中的每个子容器中，这样只要任何一个容器发生变化，MapperListener 都将会被通知，相应的保存容器关系的 MapperListener 的 mapper 属性也会修改。for 循环中就是将 host 及下面的子容器注册到 mapper 中。
+<a href=""><strong>图 10.Request 在容器中的路由图</strong></a>
+<img src="" alt="图 10.Request 在容器中的路由图"></p>
+<p>上图描述了一次 Request 请求是如何达到最终的 Wrapper 容器的，我们现正知道了请求是如何达到正确的 Wrapper 容器，但是请求到达最终的 Servlet 还要完成一些步骤，必须要执行 Filter 链，以及要通知你在 web.xml 中定义的 listener。</p>
+<p>接下去就要执行 Servlet 的 service 方法了，通常情况下，我们自己定义的 servlet 并不是直接去实现 javax.servlet.servlet 接口，而是去继承更简单的 HttpServlet 类或者 GenericServlet 类，我们可以有选择的覆盖相应方法去实现我们要完成的工作。</p>
+<p>Servlet 的确已经能够帮我们完成所有的工作了，但是现在的 web 应用很少有直接将交互全部页面都用 servlet 来实现，而是采用更加高效的 MVC 框架来实现。这些 MVC 框架基本的原理都是将所有的请求都映射到一个 Servlet，然后去实现 service 方法，这个方法也就是 MVC 框架的入口。</p>
+<p>当 Servlet 从 Servlet 容器中移除时，也就表明该 Servlet 的生命周期结束了，这时 Servlet 的 destroy 方法将被调用，做一些扫尾工作。</p>
+<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">Session 与 Cookie</a></p>
+<p>前面我们已经说明了 Servlet 如何被调用，我们基于 Servlet 来构建应用程序，那么我们能从 Servlet 获得哪些数据信息呢？</p>
+<p>Servlet 能够给我们提供两部分数据，一个是在 Servlet 初始化时调用 init 方法时设置的 ServletConfig，这个类基本上含有了 Servlet 本身和 Servlet 所运行的 Servlet 容器中的基本信息。根据前面的介绍 ServletConfig 的实际对象是 StandardWrapperFacade，到底能获得哪些容器信息可以看看这类提供了哪些接口。还有一部分数据是由 ServletRequest 类提供，它的实际对象是 RequestFacade，从提供的方法中发现主要是描述这次请求的 HTTP 协议的信息。所以要掌握 Servlet 的工作方式必须要很清楚 HTTP 协议，如果你还不清楚赶紧去找一些参考资料。关于这一块还有一个让很多人迷惑的 Session 与 Cookie。</p>
+<p>Session 与 Cookie 不管是对 Java Web 的熟练使用者还是初学者来说都是一个令人头疼的东西。Session 与 Cookie 的作用都是为了保持访问用户与后端服务器的交互状态。它们有各自的优点也有各自的缺陷。然而具有讽刺意味的是它们优点和它们的使用场景又是矛盾的，例如使用 Cookie 来传递信息时，随着 Cookie 个数的增多和访问量的增加，它占用的网络带宽也很大，试想假如 Cookie 占用 200 个字节，如果一天的 PV 有几亿的时候，它要占用多少带宽。所以大访问量的时候希望用 Session，但是 Session 的致命弱点是不容易在多台服务器之间共享，所以这也限制了 Session 的使用。</p>
+<p>不管 Session 和 Cookie 有什么不足，我们还是要用它们。下面详细讲一下，Session 如何基于 Cookie 来工作。实际上有三种方式能可以让 Session 正常工作：</p>
+<ol>
+<li>基于 URL Path Parameter，默认就支持</li>
+<li>基于 Cookie，如果你没有修改 Context 容器个 cookies 标识的话，默认也是支持的</li>
+<li>基于 SSL，默认不支持，只有 connector.getAttribute(&quot;SSLEnabled&quot;) 为 TRUE 时才支持</li>
+</ol>
+<p>第一种情况下，当浏览器不支持 Cookie 功能时，浏览器会将用户的 SessionCookieName 重写到用户请求的 URL 参数中，它的传递格式如 /path/Servlet;name=value;name2=value2? Name3=value3，其中“Servlet；”后面的 K-V 对就是要传递的 Path Parameters，服务器会从这个 Path Parameters 中拿到用户配置的 SessionCookieName。关于这个 SessionCookieName，如果你在 web.xml 中配置 session-config 配置项的话，其 cookie-config 下的 name 属性就是这个 SessionCookieName 值，如果你没有配置 session-config 配置项，默认的 SessionCookieName 就是大家熟悉的“JSESSIONID”。接着 Request 根据这个 SessionCookieName 到 Parameters 拿到 Session ID 并设置到 request.setRequestedSessionId 中。</p>
+<p>请注意如果客户端也支持 Cookie 的话，Tomcat 仍然会解析 Cookie 中的 Session ID，并会覆盖 URL 中的 Session ID。</p>
+<p>如果是第三种情况的话将会根据 javax.servlet.request.ssl_session 属性值设置 Session ID。</p>
+<p>有了 Session ID 服务器端就可以创建 HttpSession 对象了，第一次触发是通过 request. getSession() 方法，如果当前的 Session ID 还没有对应的 HttpSession 对象那么就创建一个新的，并将这个对象加到 org.apache.catalina. Manager 的 sessions 容器中保存，Manager 类将管理所有 Session 的生命周期，Session 过期将被回收，服务器关闭，Session 将被序列化到磁盘等。只要这个 HttpSession 对象存在，用户就可以根据 Session ID 来获取到这个对象，也就达到了状态的保持。
+<a href=""><strong>图 11.Session 相关类图</strong></a>
+<img src="" alt="图 11.Session 相关类图"></p>
+<p>上从图中可以看出从 request.getSession 中获取的 HttpSession 对象实际上是 StandardSession 对象的门面对象，这与前面的 Request 和 Servlet 是一样的原理。下图是 Session 工作的时序图：
+<a href=""><strong>图 12.Session 工作的时序图（</strong></a><strong><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/image023.jpg" target="_blank">查看大图</a>）</strong>
+<img src="" alt="图 12.Session 工作的时序图"></p>
+<p>还有一点与 Session 关联的 Cookie 与其它 Cookie 没有什么不同，这个配置的配置可以通过 web.xml 中的 session-config 配置项来指定。</p>
+<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">Servlet 中的 Listener</a></p>
+<p>整个 Tomcat 服务器中 Listener 使用的非常广泛，它是基于观察者模式设计的，Listener 的设计对开发 Servlet 应用程序提供了一种快捷的手段，能够方便的从另一个纵向维度控制程序和数据。目前 Servlet 中提供了 5 种两类事件的观察者接口，它们分别是：4 个 EventListeners 类型的，ServletContextAttributeListener、ServletRequestAttributeListener、ServletRequestListener、HttpSessionAttributeListener 和 2 个 LifecycleListeners 类型的，ServletContextListener、HttpSessionListener。如下图所示：
+<a href=""><strong>图 13.Servlet 中的 Listener（</strong></a><strong><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/image025.png" target="_blank">查看大图</a>）</strong>
+<img src="" alt="图 13.Servlet 中的 Listener"></p>
+<p>它们基本上涵盖了整个 Servlet 生命周期中，你感兴趣的每种事件。这些 Listener 的实现类可以配置在 web.xml 中的 <listener> 标签中。当然也可以在应用程序中动态添加 Listener，需要注意的是 ServletContextListener 在容器启动之后就不能再添加新的，因为它所监听的事件已经不会再出现。掌握这些 Listener 的使用，能够让我们的程序设计的更加灵活。
+来源： <a href="[http://blog.csdn.net/haojun186/article/details/7467100](http://blog.csdn.net/haojun186/article/details/7467100)">[http://blog.csdn.net/haojun186/article/details/7467100](http://blog.csdn.net/haojun186/article/details/7467100)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/tomcat/">tomcat</a></li></span></span> | <span class="tags">Tagged <a href="/tags/tomcat/" class="label label-primary">tomcat</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-tomcat--Servlet工作原理/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-tomcat--Servlet工作原理" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-tomcat--Tomcat工作原理2/">Tomcat工作原理2</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-服务器-tomcat--Tomcat工作原理2/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="tomcat-2">Tomcat工作原理2</h1>
+<p><a href="http://blog.csdn.net/haojun186/article/details/7467112" target="_blank">Tomcat工作原理2</a></p>
+<p><a href="">门面设计模式</a></p>
+<p>门面设计模式在 Tomcat 中有多处使用，在 Request 和 Response 对象封装中、Standard Wrapper 到 ServletConfig 封装中、ApplicationContext 到 ServletContext 封装中等都用到了这种设计模式。</p>
+<p><a href="">门面设计模式的原理</a></p>
+<p>这么多场合都用到了这种设计模式，那这种设计模式究竟能有什么作用呢？顾名思义，就是将一个东西封装成一个门面好与人家更容易进行交流，就像一个国家的外交部一样。</p>
+<p>这种设计模式主要用在一个大的系统中有多个子系统组成时，这多个子系统肯定要涉及到相互通信，但是每个子系统又不能将自己的内部数据过多的暴露给其它系统，不然就没有必要划分子系统了。每个子系统都会设计一个门面，把别的系统感兴趣的数据封装起来，通过这个门面来进行访问。这就是门面设计模式存在的意义。</p>
+<p>门面设计模式示意图如下：
+<a href=""><strong>图 1. 门面示意图</strong></a>
+<img src="" alt="图 1. 门面示意图"></p>
+<p>Client 只能访问到 Façade 中提供的数据是门面设计模式的关键，至于 Client 如何访问 Façade 和 Subsystem 如何提供 Façade 门面设计模式并没有规定死。</p>
+<p><a href="">Tomcat 的门面设计模式示例</a></p>
+<p>Tomcat 中门面设计模式使用的很多，因为 Tomcat 中有很多不同组件，每个组件要相互交互数据，用门面模式隔离数据是个很好的方法。</p>
+<p>下面是 Request 上使用的门面设计模式：
+<a href=""><strong>图 2. Request 的门面设计模式类图</strong></a>
+<img src="" alt="图 2. Request 的门面设计模式类图"></p>
+<p>从图中可以看出 HttpRequestFacade 类封装了 HttpRequest 接口能够提供数据，通过 HttpRequestFacade 访问到的数据都被代理到 HttpRequest 中，通常被封装的对象都被设为 Private 或者 Protected 访问修饰，以防止在 Façade 中被直接访问。</p>
+<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-tomcat2/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">观察者设计模式</a></p>
+<p>这种设计模式也是常用的设计方法通常也叫发布 - 订阅模式，也就是事件监听机制，通常在某个事件发生的前后会触发一些操作。</p>
+<p><a href="">观察者模式的原理</a></p>
+<p>观察者模式原理也很简单，就是你在做事的时候旁边总有一个人在盯着你，当你做的事情是它感兴趣的时候，它就会跟着做另外一些事情。但是盯着你的人必须要到你那去登记，不然你无法通知它。观察者模式通常包含下面这几个角色：</p>
+<ul>
+<li>Subject 就是抽象主题：它负责管理所有观察者的引用，同时定义主要的事件操作。</li>
+<li>ConcreteSubject 具体主题：它实现了抽象主题的所有定义的接口，当自己发生变化时，会通知所有观察者。</li>
+<li>Observer 观察者：监听主题发生变化相应的操作接口。</li>
+</ul>
+<p><a href="">Tomcat 的观察者模式示例</a></p>
+<p>Tomcat 中观察者模式也有多处使用，前面讲的控制组件生命周期的 Lifecycle 就是这种模式的体现，还有对 Servlet 实例的创建、Session 的管理、Container 等都是同样的原理。下面主要看一下 Lifecycle 的具体实现。</p>
+<p>Lifecycle 的观察者模式结构图：
+<a href=""><strong>图 3. Lifecycle 的观察者模式结构图</strong></a>
+<img src="" alt="图 3. Lifecycle 的观察者模式结构图"></p>
+<p>上面的结构图中，LifecycleListener 代表的是抽象观察者，它定义一个 lifecycleEvent 方法，这个方法就是当主题变化时要执行的方法。 ServerLifecycleListener 代表的是具体的观察者，它实现了 LifecycleListener 接口的方法，就是这个具体的观察者具体的实现方式。Lifecycle 接口代表的是抽象主题，它定义了管理观察者的方法和它要所做的其它方法。而 StandardServer 代表的是具体主题，它实现了抽象主题的所有方法。这里 Tomcat 对观察者做了扩展，增加了另外两个类：LifecycleSupport、LifecycleEvent，它们作为辅助类扩展了观察者的功能。LifecycleEvent 使得可以定义事件类别，不同的事件可区别处理，更加灵活。LifecycleSupport 类代理了主题对多观察者的管理，将这个管理抽出来统一实现，以后如果修改只要修改 LifecycleSupport 类就可以了，不需要去修改所有具体主题，因为所有具体主题的对观察者的操作都被代理给 LifecycleSupport 类了。这可以认为是观察者模式的改进版。</p>
+<p>LifecycleSupport 调用观察者的方法代码如下：
+<a href=""><strong>清单 1. LifecycleSupport 中的 fireLifecycleEvent 方法</strong></a></p>
+<p>public void fireLifecycleEvent(String type, Object data) {
+    LifecycleEvent event = new LifecycleEvent(lifecycle, type, data);</p>
+<pre><code>LifecycleListener interested[] = null;
+synchronized (listeners) {
+
+    interested = (LifecycleListener[]) listeners.clone();
+}
+
+for (int i = 0; i &lt; interested.length; i++)
+    interested[i].lifecycleEvent(event);
+</code></pre><p>}</p>
+<p>主题是怎么通知观察者呢？看下面代码：
+<a href=""><strong>清单 2. 容器中的 start 方法</strong></a></p>
+<p>public void start() throws LifecycleException {
+    lifecycle.fireLifecycleEvent(BEFORE_START_EVENT, null);</p>
+<pre><code>lifecycle.fireLifecycleEvent(START_EVENT, null);
+started = true;
+
+synchronized (services) {
+    for (int i = 0; i &lt; services.length; i++) {
+
+        if (services[i] instanceof Lifecycle)
+            ((Lifecycle) services[i]).start();
+
+        }
+    }
+
+lifecycle.fireLifecycleEvent(AFTER_START_EVENT, null);
+</code></pre><p>}</p>
+<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-tomcat2/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">命令设计模式</a></p>
+<p>前面把 Tomcat 中两个核心组件 Connector 和 Container，比作一对夫妻。男的将接受过来的请求以命令的方式交给女主人。对应到 Connector 和 Container，Connector 也是通过命令模式调用 Container 的。</p>
+<p><a href="">命令模式的原理</a></p>
+<p>命令模式主要作用就是封装命令，把发出命令的责任和执行命令的责任分开。也是一种功能的分工。不同的模块可以对同一个命令做出不同解释。</p>
+<p>下面是命令模式通常包含下面几个角色：</p>
+<ul>
+<li>Client：创建一个命令，并决定接受者</li>
+<li>Command 命令：命令接口定义一个抽象方法</li>
+<li>ConcreteCommand：具体命令，负责调用接受者的相应操作</li>
+<li>Invoker 请求者：负责调用命令对象执行请求</li>
+<li>Receiver 接受者：负责具体实施和执行一次请求</li>
+</ul>
+<p><a href="">Tomcat 中的命令模式的示例</a></p>
+<p>Tomcat 中命令模式在 Connector 和 Container 组件之间有体现，Tomcat 作为一个应用服务器，无疑会接受到很多请求，如何分配和执行这些请求是必须的功能。</p>
+<p>下面看一下 Tomcat 是如何实现命令模式的，下面是 Tomcat 命令模式的结构图：
+<a href=""><strong>图 4. Tomcat 命令模式的结构图</strong></a>
+<img src="" alt="图 4. Tomcat 命令模式的结构图"></p>
+<p>Connector 作为抽象请求者，HttpConnector 作为具体请求者。HttpProcessor 作为命令。Container 作为命令的抽象接受者，ContainerBase 作为具体的接受者。客户端就是应用服务器 Server 组件了。Server 首先创建命令请求者 HttpConnector 对象，然后创建命令 HttpProcessor 命令对象。再把命令对象交给命令接受者 ContainerBase 容器来处理命令。命令的最终是被 Tomcat 的 Container 执行的。命令可以以队列的方式进来，Container 也可以以不同的方式来处理请求，如 HTTP1.0 协议和 HTTP1.1 的处理方式就会不同。</p>
+<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-tomcat2/#ibm-pcon" target="_blank">回页首</a></p>
+<p><a href="">责任链模式</a></p>
+<p>Tomcat 中一个最容易发现的设计模式就是责任链模式，这个设计模式也是 Tomcat 中 Container 设计的基础，整个容器的就是通过一个链连接在一起，这个链一直将请求正确的传递给最终处理请求的那个 Servlet。</p>
+<p><a href="">责任链模式的原理</a></p>
+<p>责任链模式，就是很多对象有每个对象对其下家的引用而连接起来形成一条链，请求在这条链上传递，直到链上的某个对象处理此请求，或者每个对象都可以处理请求，并传给下一家，直到最终链上每个对象都处理完。这样可以不影响客户端而能够在链上增加任意的处理节点。</p>
+<p>通常责任链模式包含下面几个角色：</p>
+<ul>
+<li>Handler（抽象处理者）：定义一个处理请求的接口</li>
+<li>ConcreteHandler（具体处理者）：处理请求的具体类，或者传给下家</li>
+</ul>
+<p><a href="">Tomcat 中责任链模式示例</a></p>
+<p>在 tomcat 中这种设计模式几乎被完整的使用，tomcat 的容器设置就是责任链模式，从 Engine 到 Host 再到 Context 一直到 Wrapper 都是通过一个链传递请求。</p>
+<p>Tomcat 中责任链模式的类结构图如下：
+<a href=""><strong>图 5. Tomcat 责任链模式的结构图</strong></a>
+<img src="" alt="图 5. Tomcat 责任链模式的结构图"></p>
+<p>上图基本描述了四个子容器使用责任链模式的类结构图，对应的责任链模式的角色，Container 扮演抽象处理者角色，具体处理者由 StandardEngine 等子容器扮演。与标准的责任链不同的是，这里引入了 Pipeline 和 Valve 接口。他们有什么作用呢？</p>
+<p>实际上 Pipeline 和 Valve 是扩展了这个链的功能，使得在链往下传递过程中，能够接受外界的干预。Pipeline 就是连接每个子容器的管子，里面传递的 Request 和 Response 对象好比管子里流的水，而 Valve 就是这个管子上开的一个个小口子，让你有机会能够接触到里面的水，做一些额外的事情。</p>
+<p>为了防止水被引出来而不能流到下一个容器中，每一段管子最后总有一个节点保证它一定能流到下一个子容器，所以每个容器都有一个 StandardXXXValve。只要涉及到这种有链式是处理流程这是一个非常值得借鉴的模式。
+来源： <a href="[http://blog.csdn.net/haojun186/article/details/7467112](http://blog.csdn.net/haojun186/article/details/7467112)">[http://blog.csdn.net/haojun186/article/details/7467112](http://blog.csdn.net/haojun186/article/details/7467112)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/tomcat/">tomcat</a></li></span></span> | <span class="tags">Tagged <a href="/tags/tomcat/" class="label label-primary">tomcat</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-tomcat--Tomcat工作原理2/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-tomcat--Tomcat工作原理2" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-tomcat--Tomcat源码分析/">Tomcat源码分析</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-服务器-tomcat--Tomcat源码分析/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="tomcat-">Tomcat源码分析</h1>
+<p><a href="http://blog.csdn.net/haojun186/article/details/7464912" target="_blank">Tomcat源码分析</a></p>
+<p>TOMCAT源码分析(启动框架)
+前言：
+   本文是我阅读了TOMCAT源码后的一些心得。 主要是讲解TOMCAT的系统框架， 以及启动流程。若有错漏之处，敬请批评指教！
+建议：
+   毕竟TOMCAT的框架还是比较复杂的， 单是从文字上理解， 是不那么容易掌握TOMCAT的框架的。 所以得实践、实践、再实践。 建议下载一份TOMCAT的源码， 调试通过， 然后单步跟踪其启动过程。 如果有不明白的地方， 再来查阅本文， 看是否能得到帮助。 我相信这样效果以及学习速度都会好很多！</p>
+<ol>
+<li><p>Tomcat的整体框架结构
+Tomcat的基本框架， 分为4个层次。
+Top Level Elements:
+ Server
+ Service<br>Connector
+ HTTP
+ AJP
+Container
+Engine
+  Host
+Context
+Component<br> manager
+logger
+loader
+pipeline
+valve</p>
+<pre><code>  ...
+</code></pre><p>站在框架的顶层的是Server和Service
+Server:  其实就是BackGroud程序， 在Tomcat里面的Server的用处是启动和监听服务端事件（诸如重启、关闭等命令。 在tomcat的标准配置文件：server.xml里面， 我们可以看到“<Server port="8005" shutdown="SHUTDOWN" debug="0">;”这里的&quot;SHUTDOWN&quot;就是server在监听服务端事件的时候所使用的命令字）
+Service： 在tomcat里面，service是指一类问题的解决方案。  通常我们会默认使用tomcat提供的：Tomcat-Standalone 模式的service。 在这种方式下的service既给我们提供解析jsp和servlet的服务， 同时也提供给我们解析静态文本的服务。</p>
+<p>Connector: Tomcat都是在容器里面处理问题的， 而容器又到哪里去取得输入信息呢？
+Connector就是专干这个的。 他会把从socket传递过来的数据， 封装成Request, 传递给容器来处理。
+通常我们会用到两种Connector,一种叫http connectoer， 用来传递http需求的。 另一种叫AJP， 在我们整合apache与tomcat工作的时候，apache与tomcat之间就是通过这个协议来互动的。 （说到apache与tomcat的整合工作， 通常我们的目的是为了让apache 获取静态资源， 而让tomcat来解析动态的jsp或者servlet。）
+Container: 当http connector把需求传递给顶级的container: Engin的时候， 我们的视线就应该移动到Container这个层面来了。
+在Container这个层， 我们包含了3种容器：Engin, Host, Context.
+Engin: 收到service传递过来的需求， 处理后， 将结果返回给service( service 是通过connector 这个媒介来和Engin互动的).
+Host: Engin收到service传递过来的需求后，不会自己处理， 而是交给合适的Host来处理。
+Host在这里就是<a href="http://www.honhei.com/" target="_blank">虚拟主机</a>的意思， 通常我们都只会使用一个主机，既“localhost”本地机来处理。
+Context: Host接到了从Host传过来的需求后， 也不会自己处理， 而是交给合适的Context来处理。
+比如：<a href="http://127.0.0.1:8080/foo/index.jsp" target="_blank">http://127.0.0.1:8080/foo/index.jsp</a>;</p>
+<pre><code>  &lt;http://127.0.1:8080/bar/index.jsp&gt;;
+</code></pre><p>前者交给foo这个Context来处理， 后者交给bar这个Context来处理。
+很明显吧！context的意思其实就是一个web app的意思。
+我们通常都会在server.xml里面做这样的配置
+<Context path="/foo" docBase="D:/project/foo/web" />;
+这个context容器，就是用来干我们该干的事儿的地方的。</p>
+<p>Compenent: 接下来， 我们继续讲讲component是干什么用的。
+我们得先理解一下容器和组件的关系。
+需求被传递到了容器里面， 在合适的时候， 会传递给下一个容器处理。
+而容器里面又盛装着各种各样的组件， 我们可以理解为提供各种各样的增值服务。
+manager: 当一个容器里面装了manager组件后，这个容器就支持session管理了， 事实上在tomcat里面的session管理， 就是靠的在context里面装的manager component.
+logger: 当一个容器里面装了logger组件后， 这个容器里所发生的事情， 就被该组件记录下来啦！ 我们通常会在logs/ 这个目录下看见catalina_log.time.txt 以及localhost.time.txt 和localhost_examples_log.time.txt。 这就是因为我们分别为：engin, host以及context(examples)这三个容器安装了logger组件， 这也是默认安装， 又叫做标配 ：）
+loader: loader这个组件通常只会给我们的context容器使用，loader是用来启动context以及管理这个context的classloader用的。
+ pipline: pipeline是这样一个东西， 当一个容器决定了要把从上级传递过来的需求交给子容器的时候， 他就把这个需求放进容器的管道(pipeline)里面去。 而需求傻呼呼得在管道里面流动的时候， 就会被管道里面的各个阀门拦截下来。 比如管道里面放了两个阀门。 第一个阀门叫做“access_allow_vavle”， 也就是说需求流过来的时候，它会看这个需求是哪个IP过来的， 如果这个IP已经在黑名单里面了，sure, 杀！ 第二个阀门叫做“defaul_access_valve”它会做例行的检查， 如果通过的话，OK， 把需求传递给当前容器的子容器。 就是通过这种方式， 需求就在各个容器里面传递，流动， 最后抵达目的地的了。
+ valve: 就是上面所说的阀门啦。
+Tomcat里面大概就是这么些东西， 我们可以简单地这么理解tomcat的框架，它是一种自上而下， 容器里又包含子容器的这样一种结构。</p>
+</li>
+<li><p>Tomcat的启动流程
+这篇文章是讲tomcat怎么启动的，既然我们大体上了解了TOMCAT的框架结构了， 那么我们可以望文生意地就猜到tomcat的启动， 会先启动父容器，然后逐个启动里面的子容器。 启动每一个容器的时候， 都会启动安插在他身上的组件。 当所有的组件启动完毕， 所有的容器启动完毕的时候，tomcat本身也就启动完毕了。
+顺理成章地， 我们同样可以猜到，tomcat的启动会分成两大部分， 第一步是装配工作。 第二步是启动工作。
+装配工作就是为父容器装上子容器， 为各个容器安插进组件的工作。 这个地方我们会用到digester模式， 至于digester模式什么， 有什么用， 怎么工作的. 请参考<a href="http://software.ccidnet.com/pub/article/c322_a31671_p2.html" target="_blank">http://software.ccidnet.com/pub/article/c322_a31671_p2.html</a>;
+启动工作是在装配工作之后， 一旦装配成功了， 我们就只需要点燃最上面的一根导线， 整个tomcat就会被激活起来。 这就好比我们要开一辆已经装配好了的汽车的时候一样，我们只要把钥匙插进钥匙孔，一拧，汽车的引擎就会发动起来，空调就会开起来， 安全装置就会生效， 如此一来，汽车整个就发动起来了。（这个过程确实和TOMCAT的启动过程不谋而和， 让我们不得不怀疑TOMCAT的设计者是在GE做JAVA开发的）。
+2.1 一些有意思的名称：
+Catalina
+Tomcat
+Bootstrap
+Engin
+Host
+Context
+他们的意思很有意思：
+Catalina: 远程轰炸机
+Tomcat: 熊猫轰炸机-- 轰炸机的一种（这让我想起了让国人引以为豪的熊猫手机，是不是英文可以叫做tomcat??? ， 又让我想起了另一则广告： 波导-手机中的战斗机、波音-客机中的战斗机 ）
+Bootstap: 引导
+Engin: 发动机
+Host: 主机，领土
+Context: 内容， 目标， 上下文</p>
+<p>... 在许多许多年后， 现代人类已经灭绝。 后现代生物发现了这些单词零落零落在一块。 一个自以为聪明的家伙把这些东西翻译出来了：
+在地勤人员的引导(bootstrap)下， 一架轰炸架(catalina)腾空跃起， 远看是熊猫轰炸机(tomcat)， 近看还是熊猫轰炸机！ 凭借着优秀的发动机技术(engin)， 这架熊猫轰炸机飞临了敌国的领土上空(host)， 对准目标(context)投下了毁天灭地的核弹头，波~ 现代生物就这么隔屁了~</p>
+<p>综上所述， 这又不得不让人联想到GE是不是也参与了军事设备的生产呢？
+反对美帝国主义！ 反对美霸权主义！ 和平万岁！ 自由万岁！</p>
+</li>
+</ol>
+<p>2.2  历史就是那么惊人的相似！tomcat的启动就是从org.apache.catalina.startup.Bootstrap这个类悍然启动的！
+   在Bootstrap里做了两件事：</p>
+<ol>
+<li>指定了3种类型classloader:
+commonLoader: common/classes、common/lib、common/endorsed
+catalinaLoader: server/classes、server/lib、commonLoader
+sharedLoader：  shared/classes、shared/lib、commonLoader</li>
+<li>引导Catalina的启动。
+用Reflection技术调用org.apache.catalina.startup.Catalina的process方法， 并传递参数过去。</li>
+</ol>
+<p>2.3 Catalina.java
+   Catalina完成了几个重要的任务：</p>
+<ol>
+<li>使用Digester技术装配tomcat各个容器与组件。
+1.1 装配工作的主要内容是安装各个大件。 比如server下有什么样的servcie。Host会容纳多少个context。Context都会使用到哪些组件等等。
+1.2 同时呢， 在装配工作这一步， 还完成了mbeans的配置工作。 在这里，我简单地但不十分精确地描述一下mbean是什么，干什么用的。<pre><code>我们自己生成的对象， 自己管理， 天经地义！ 但是如果我们创建了对象了， 想让别人来管， 怎么办呢？ 我想至少得告诉别人我们都有什么， 以及通过什么方法可以找到  吧！JMX技术给我们提供了一种手段。JMX里面主要有3种东西。Mbean, agent, connector.
+</code></pre> Mbean： 用来映射我们的对象。也许mbean就是我们创建的对象， 也许不是， 但有了它， 就可以引用到我们的对象了。
+ Agent:  通过它， 就可以找到mbean了。
+ Connector: 连接Agent的方式。 可以是http的， 也可以是rmi的，还可以直接通过socket。
+发生在tomcat 装配过程中的事情:  GlobalResourcesLifecycleListener 类的初始化会被触发：
+   protected static Registry registry = MBeanUtils.createRegistry();  会运行
+   MBeanUtils.createRegistry()  会依据/org/apache/catalina/mbeans/mbeans- descriptors.xml这个配置文件创建mbeans. Ok, 外界就有了条途径访问tomcat中的各个组件了。（有点像后门儿）</li>
+<li>为top level 的server 做初始化工作。 实际上就是做通常会配置给service的两条connector.(http, ajp)</li>
+<li>从server这个容器开始启动， 点燃整个tomcat.</li>
+<li>为server做一个hook程序， 检测当server shutdown的时候， 关闭tomcat的各个容器用。</li>
+<li>监听8005端口， 如果发送&quot;SHUTDOWN&quot;（默认培植下字符串）过来， 关闭8005serverSocket。
+2.4 启动各个容器</li>
+<li>Server
+触发Server容器启动前(before_start)， 启动中(start)， 启动后(after_start)3个事件， 并运行相应的事件处理器。
+启动Server的子容器：Servcie.</li>
+<li>Service
+启动Service的子容器：Engin
+启动Connector</li>
+<li><p>Engin
+到了Engin这个层次，以及以下级别的容器，Tomcat就使用了比较一致的启动方式了。
+首先，  运行各个容器自己特有一些任务
+随后，  触发启动前事件
+立即，  设置标签，就表示该容器已经启动
+接着，  启动容器中的各个组件：loader, logger, manager等等
+再接着，启动mapping组件。（注1）
+紧跟着，启动子容器。
+接下来，启动该容器的管道(pipline)
+然后，  触发启动中事件
+最后，  触发启动后事件。</p>
+<p>Engin大致会这么做，Host大致也会这么做， Context大致还是会这么做。 那么很显然地， 我们需要在这里使用到代码复用的技术。tomcat在处理这个问题的时候， 漂亮地使用了抽象类来处理。ContainerBase. 最后使得这部分完成复杂功能的代码显得干净利落， 干练爽快， 实在是令人觉得叹为观止， 细细品来， 直觉如享佳珍， 另人齿颊留香， 留恋往返啊！</p>
+<p>Engin的触发启动前事件里， 会激活绑定在Engin上的唯一一个Listener：EnginConfig。
+这个EnginConfig类基本上没有做什么事情， 就是把EnginConfig的调试级别设置为和Engin相当。 另外就是输出几行文本， 表示Engin已经配置完毕， 并没有做什么实质性的工作。
+注1: mapping组件的用处是， 当一个需求将要从父容器传递到子容器的时候， 而父容器又有多个子容器的话， 那么应该选择哪个子容器来处理需求呢？ 这个由mapping 组件来定夺。</p>
+</li>
+<li><p>Host
+ 同Engin一样， 也是调用ContainerBase里面的start()方法， 不过之前做了些自个儿的任务,就是往Host这个容器的通道（pipline）里面， 安装了一个叫做
+“org.apache.catalina.valves.ErrorReportValve”的阀门。
+ 这个阀门的用处是这样的：  需求在被Engin传递给Host后， 会继续传递给Context做具体的处理。 这里需求其实就是作为参数传递的Request, Response。 所以在context把需求处理完后， 通常会改动response。 而这个org.apache.catalina.valves.ErrorReportValve的作用就是检察response是否包含错误， 如果有就做相应的处理。</p>
+</li>
+<li>Context
+ 到了这里， 就终于轮到了tomcat启动中真正的重头戏，启动Context了。
+StandardContext.start() 这个启动Context容器的方法被StandardHost调用.
+5.1 webappResources 该context所指向的具体目录
+5.2 安装defaultContex, DefaultContext 就是默认Context。 如果我们在一个Host下面安装了DefaultContext，而且defaultContext里面又安装了一个数据库连接池资源的话。 那么其他所有的在该Host下的Context, 都可以直接使用这个数据库连接池， 而不用格外做配置了。
+5.3 指定Loader. 通常用默认的org.apache.catalina.loader.WebappLoader这个类。   Loader就是用来指定这个context会用到哪些类啊， 哪些jar包啊这些什么的。
+5.4 指定Manager. 通常使用默认的org.apache.catalina.session. StandardManager 。Manager是用来管理session的。
+其实session的管理也很好实现。 以一种简单的session管理为例。 当需求传递过来的时候， 在Request对象里面有一个sessionId 属性。OK， 得到这个sessionId后， 我们就可以把它作为map的key，而value我们可以放置一个HashMap. HashMap里边儿， 再放我们想放的东西。
+5.5 postWorkDirectory (). Tomcat下面有一个work目录。 我们把临时文件都扔在那儿去。 这个步骤就是在那里创建一个目录。 一般说来会在%CATALINA_HOME%/work/Standalone\localhost\ 这个地方生成一个目录。
+5.6  Binding thread。到了这里， 就应该发生class Loader 互换了。 之前是看得见tomcat下面所有的class和lib. 接下来需要看得见当前context下的class。 所以要设置contextClassLoader, 同时还要把旧的ClassLoader记录下来，因为以后还要用的。
+5.7  启动Loader. 指定这个Context具体要使用哪些classes， 用到哪些jar文件。 如果reloadable设置成了true, 就会启动一个线程来监视classes的变化， 如果有变化就重新启动Context。
+5.8  启动logger
+5.9  触发安装在它身上的一个监听器。
+lifecycle.fireLifecycleEvent(START_EVENT, null);
+作为监听器之一，ContextConfig会被启动. ContextConfig就是用来配置web.xml的。 比如这个Context有多少Servlet， 又有多少Filter， 就是在这里给Context装上去的。
+5.9.1 defaultConfig. 每个context都得配置tomcat/conf/web.xml 这个文件。
+5.9.2 applicationConfig 配置自己的WEB-INF/web.xml 文件
+5.9.3 validateSecurityRoles 权限验证。 通常我们在访问/admin 或者/manager的时候，需要用户要么是admin的要么是manager的， 才能访问。 而且我们还可以限制那些资源可以访问， 而哪些不能。 都是在这里实现的。
+5.9.4 tldScan: 扫描一下， 需要用到哪些标签(tag lab)
+5.10 启动manager
+5.11 postWelcomeFiles() 我们通常会用到的3个启动文件的名称：
+index.html、index.htm、index.jsp 就被默认地绑在了这个context上
+5.12 listenerStart 配置listener
+5.13 filterStart 配置filter
+5.14 启动带有<load-on-startup>;1</load-on-startup>;的Servlet.
+顺序是从小到大：1,2,3… 最后是0
+默认情况下， 至少会启动如下3个的Servlet:
+org.apache.catalina.servlets.DefaultServlet<br>处理静态资源的Servlet. 什么图片啊，html啊，css啊，js啊都找他
+org.apache.catalina.servlets.InvokerServlet
+处理没有做Servlet Mapping的那些Servlet.
+org.apache.jasper.servlet.JspServlet
+处理JSP文件的.
+ 5.15  标识context已经启动完毕。
+走了多少个步骤啊，Context总算是启动完毕喽。
+OK! 走到了这里， 每个容器以及组件都启动完毕。Tomcat终于不辞辛劳地为人民服务了！<ol>
+<li>参考文献：
+<a href="http://jakarta.apache.org/tomcat/" target="_blank">http://jakarta.apache.org/tomcat/</a>;
+<a href="http://www.onjava.com/pub/a/onjava/2003/05/14/java_webserver.html" target="_blank">http://www.onjava.com/pub/a/onjava/2003/05/14/java_webserver.html</a>;</li>
+</ol>
+</li>
+</ol>
+<ol>
+<li><p>后记
+ 这篇文章是讲解tomcat启动框架的，还有篇文章是讲解TOMCAT里面的消息处理流程的细节的。 文章内容已经写好了， 现在正在整理阶段。 相信很快就可以做出来， 大家共同研究共同进步。
+ 这篇文章是独自分析TOMCAT<a href="http://www.2cto.com/ym" target="_blank">源码</a>所写的， 所以一定有地方是带有个人主观色彩， 难免会有片面之处。若有不当之处敬请批评指教，这样不仅可以使刚开始研究TOMCAT的兄弟们少走弯路， 我也可以学到东西。</p>
+</li>
+<li><p>tomcat源码分析(消息处理)</p>
+</li>
+</ol>
+<p>[ZT]TOMCAT源码分析
+0：前言
+我们知道了tomcat的整体框架了， 也明白了里面都有些什么组件， 以及各个组件是干什么用的了。</p>
+<p><a href="http://www.csdn.net/Develop/read_article.[asp](http://www.2cto.com/kf/web/asp/)?id=27225" target="_blank">http://www.csdn.net/Develop/read_article.[asp](http://www.2cto.com/kf/web/asp/)?id=27225</a></p>
+<p>我想，接下来我们应该去了解一下tomcat 是如何处理<a href="http://www.2cto.com/kf/web/jsp/" target="_blank">jsp</a>和servlet请求的。</p>
+<ol>
+<li>我们以一个具体的例子，来跟踪TOMCAT， 看看它是如何把Request一层一层地递交给下一个容器， 并最后交给Wrapper来处理的。</li>
+</ol>
+<p>以<a href="http://localhost:8080/web/login.jsp为例子" target="_blank">http://localhost:8080/web/login.jsp为例子</a></p>
+<p>（以下例子， 都是以tomcat4 源码为参考）</p>
+<p>这篇心得主要分为3个部分： 前期， 中期， 和末期。</p>
+<p>前期：讲解了在<a href="http://www.2cto.com/os/liulanqi/" target="_blank">浏览器</a>里面输入一个URL，是怎么被tomcat抓住的。</p>
+<p>中期：讲解了被tomcat抓住后，又是怎么在各个容器里面穿梭， 最后到达最后的处理地点。</p>
+<p>末期：讲解到达最后的处理地点后，又是怎么具体处理的。</p>
+<p>2、  前期Request的born.</p>
+<pre><code>在这里我先简单讲一下request这个东西。
+
+ 我们先看着这个URL：http://localhost:8080/web/login.jsp  它是动用了8080端口来进行socket通讯的。
+
+ 我们知道, 通过
+
+   InputStream in = socket.getInputStream() 和
+
+   OutputStream out = socket.getOutputStream()
+
+ 就可以实现消息的来来往往了。
+
+ 但是如果把Stream给应用层看，显然操作起来不方便。
+
+ 所以，在tomcat 的Connector里面，socket被封装成了Request和Response这两个对象。
+
+ 我们可以简单地把Request看成管发到服务器来的数据，把Response看成想发出服务器的数据。
+
+
+
+ 但是这样又有其他问题了啊？Request这个对象是把socket封装起来了， 但是他提供的又东西太多了。
+
+ 诸如Request.getAuthorization(), Request.getSocket()。  像Authorization这种东西开发人员拿来基本上用不太着，而像socket这种东西，暴露给开发 人员又有潜在的危险。 而且啊， 在Servlet Specification里面标准的通信类是ServletRequest和HttpServletRequest，而非这个Request类。So, So, So. Tomcat必须得捣持捣持Request才行。 最后tomcat选择了使用捣持模式（应该叫适配器模式）来解决这个问题。它把org.apache.catalina.Request 捣持成了org.apache.coyote.tomcat4.CoyoteRequest。 而CoyoteRequest又实现了ServletRequest和HttpServletRequest 这两种接口。 这样就提供给开发人员需要且刚刚需要的方法了。
+
+
+
+ok, 让我们在tomcat的顶层容器- StandardEngin 的invoke()方法这里设置一个断点， 然后访问
+
+http://localhost:8080/web/login.jsp ， 我们来看看在前期都会路过哪些地方：
+
+   1. run(): 536, java.lang.Thread, Thread.java
+
+   CurrentThread
+
+  2.  run():666, org.apache.tomcat.util.threads.ThreadPool$ControlRunnable, ThreadPool.java
+
+           ThreadPool
+
+   3.  runIt():589, org.apache.tomcat.util.net.TcpWorkerThread, PoolTcpEndpoint.java
+
+      ThreadWorker
+</code></pre><ol>
+<li>processConnection():  549</li>
+</ol>
+<p>org.apache.coyote.http11.Http11Protocol$Http11ConnectionHandler, Http11Protocol.java</p>
+<pre><code>              http protocol parser
+
+  5.  Process(): 781, org.apache.coyote.http11.Http11Processor, Http11Processor.java
+
+      http request processor
+
+   6. service(): 193, org.apache.coyote.tomcat4.CoyoteAdapter,CoyoteAdapter.java
+
+      adapter
+
+   7. invoke(): 995, org.apache.catalina.core.ContainerBase, ContainerBase.java
+</code></pre><p>   StandardEngin</p>
+<pre><code>1. 主线程
+
+2. 启动线程池.
+
+3. 调出线程池里面空闲的工作线程。
+
+4. 把8080端口传过来由httpd协议封装的数据，解析成Request和Response对象。
+
+5. 使用Http11Processor来处理request
+
+6. 在Http11Processor里面， 又会call CoyoteAdapter来进行适配处理，把Request适配成实现了ServletRequest和HttpServletRequest接口的CoyoteRequest.
+</code></pre><ol>
+<li>到了这里，前期的去毛拔皮工作就基本上搞定，可以交给StandardEngin 做核心的处理工作了。</li>
+</ol>
+<ol>
+<li><p>中期。 在各个容器间的穿梭。</p>
+<p> Request在各个容器里面的穿梭大致是这样一种方式：</p>
+<p> 每个容器里面都有一个管道（pipline）， 专门用来传送Request用的。</p>
+<p> 管道里面又有好几个阀门（valve）， 专门用来过滤Request用的。</p>
+<p> 在管道的低部通常都会放上一个默认的阀们。 这个阀们至少会做一件事情，就是把Request交给子容器。</p>
+<p> 让我们来想象一下：</p>
+<p>  当一个Request进入一个容器后， 它就在管道里面流动，波罗~ 波罗~ 波罗~ 地穿过各个阀门。在流到最后一个阀门的时候，吧唧~ 那个该死的阀门就把它扔给了子容器。 然后又开始 波罗~ 波罗~ 波罗~ ... 吧唧~....  波罗~  波罗~ 波罗~ ....吧唧~....</p>
+<p> 就是通过这种方式，Request 走完了所有的容器。（ 感觉有点像消化系统，最后一个地方有点像那里~  ）</p>
+<p> OK， 让我们具体看看都有些什么容器， 各个容器里面又都有些什么阀门，这些阀们都对我们的Request做了些什么吧：</p>
+</li>
+</ol>
+<p>3.1 StandardEngin 的pipeline里面放的是：StandardEnginValve</p>
+<p>在这里，VALVE做了三件事：</p>
+<ol>
+<li>验证传递过来的request是不是httpservletRequest.</li>
+</ol>
+<p>2    验证传递过来的request 是否携带了host header信息.</p>
+<p>3    选择相应的host去处理它。（一般我们都只有一个host:localhost，也就是127.0.0.1）。</p>
+<p>到了这个地方， 我们的request就已经完成了在Engin这个部分的历史使命， 通向前途未卜的下一站：host了。</p>
+<p>3.2 StandardHost 的pipline里面放的是：StandardHostValve</p>
+<ol>
+<li><p>验证传递过来的request是不是httpservletRequest.</p>
+</li>
+<li><p>根据Request来确定哪个Context来处理。</p>
+</li>
+</ol>
+<p>Context其实就是webapp， 比如<a href="http://localhost:8080/web/login.jsp" target="_blank">http://localhost:8080/web/login.jsp</a></p>
+<p>这里web就是Context罗！</p>
+<ol>
+<li><p>既然确定了是哪个Context了，那么就应该把那个Context的classloader付给当前线程了。</p>
+<p>   Thread.currentThread().setContextClassLoader(context.getLoader().getClassLoader());</p>
+<p>这样request就只看得见指定的context下面的classes啊，jar啊这些， 而看不见tomcat本身的类， 什么Engin啊，Valve啊。 不然还得了啊！</p>
+</li>
+<li><p>既然request到了这里了，看来用户是准备访问web这个web app了，咋们得更新一下这个用户的session不是！Ok , 就由manager更新一下用户的session信息</p>
+</li>
+<li><p>交给具体的Context 容器去继续处理Request.</p>
+</li>
+<li><p>Context处理完毕了，把classloader还回来。</p>
+</li>
+</ol>
+<p>3.3 StandardContext 的pipline里面放的是：StandardContextValve</p>
+<ol>
+<li><p>验证传递过来的request是不是httpservletRequest.</p>
+</li>
+<li><p>如果request意图不轨，想要访问/meta-inf, /web-inf这些目录下的东西，呵呵，没有用D!</p>
+</li>
+<li><p>这个时候就会根据Request到底是Servlet，还是jsp，还是静态资源来决定到底用哪种Wrapper来处理这个Reqeust了。</p>
+</li>
+<li><p>一旦决定了到底用哪种Wrapper，OK，交给那个Wrapper处理。</p>
+</li>
+</ol>
+<ol>
+<li>末期。 不同的需求是怎么处理的.</li>
+</ol>
+<p>StandardWrapper</p>
+<p>之前对Wrapper没有做过讲解，其实它是这样一种东西。</p>
+<p>我们在处理Request的时候，可以分成3种。</p>
+<p>处理静态的：org.apache.catalina.servlets.DefaultServlet  </p>
+<p>处理jsp的：org.apache.jasper.servlet.JspServlet</p>
+<p>处理servlet的：org.apache.catalina.servlets.InvokerServlet</p>
+<p>不同的request就用这3种不同的servlet去处理。</p>
+<p>Wrapper就是对它们的一种简单的封装，有了Wrapper后，我们就可以轻松地拦截每次的Request。也可以容易地调用servlet的init()和destroy()方法， 便于管理嘛！</p>
+<p>具体情况是这么滴：</p>
+<p>   如果request是找jsp文件，StandardWrapper里面就会封装一个org.apache.jasper.servlet.JspServlet去处理它。</p>
+<p>   如果request是找 静态资源 ，StandardWrapper里面就会封装一个org.apache.jasper.servlet.DefaultServlet  去处理它。</p>
+<p>   如果request是找servlet ，StandardWrapper里面就会封装一个org.apache.jasper.servlet.InvokerServlet 去处理它。</p>
+<p>StandardWrapper同样也是容器，既然是容器， 那么里面一定留了一个管道给request去穿，管道低部肯定也有一个阀门(注1)，用来做最后一道拦截工作.</p>
+<p>在这最底部的阀门里，其实就主要做了两件事:</p>
+<p>   一是启动过滤器，让request在N个过滤器里面筛一通，如果OK！ 那就PASS。 否则就跳到其他地方去了。</p>
+<p>   二是servlet.service((HttpServletRequest) request,(HttpServletResponse) response); 这个方法.</p>
+<pre><code> 如果是JspServlet， 那么先把jsp文件编译成servlet_xxx, 再invoke servlet_xxx的servie()方法。
+
+ 如果是DefaultServlet， 就直接找到静态资源，取出内容， 发送出去。
+
+ 如果是InvokerServlet， 就调用那个具体的servlet的service()方法。
+</code></pre><p>   ok! 完毕。</p>
+<p>注1: StandardWrapper 里面的阀门是最后一道关口了。 如果这个阀门欲意把request交给StandardWrapper 的子容器处理。 对不起， 在设计考虑的时候，Wrapper就被考虑成最末的一个容器， 压根儿就不会给Wrapper添加子容器的机会！ 如果硬是要调用addChild(), 立马抛出IllegalArgumentException！</p>
+<p>参考：</p>
+<pre><code> &lt;http://jakarta.apache.org/tomcat/&gt;;
+</code></pre><p>   <a href="http://www.onjava.com/pub/a/onjava/2003/05/14/java_webserver.html" target="_blank">http://www.onjava.com/pub/a/onjava/2003/05/14/java_webserver.html</a>;</p>
+<p><a href="http://www.2cto.com/os/201202/119145.html" target="_blank">http://www.2cto.com/os/201202/119145.html</a>
+来源： <a href="[http://blog.csdn.net/haojun186/article/details/7464912](http://blog.csdn.net/haojun186/article/details/7464912)">[http://blog.csdn.net/haojun186/article/details/7464912](http://blog.csdn.net/haojun186/article/details/7464912)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/tomcat/">tomcat</a></li></span></span> | <span class="tags">Tagged <a href="/tags/tomcat/" class="label label-primary">tomcat</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-tomcat--Tomcat源码分析/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-tomcat--Tomcat源码分析" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-tomcat--tomcat详解/">tomcat详解</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-服务器-tomcat--tomcat详解/">feb. 2 2014</a></time></span>      
@@ -1393,228 +2195,132 @@ jdbc:microsoft:sqlserver://127.0.0.1:1433;DatabaseName=DataBonus
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--发布Java程序为Windows（Linux）服务JavaServiceWrapper-/">发布Java程序为Windows（Linux）服务[Java Service Wrapper] </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--被动模式下FTP的详细工作过程/">被动模式下FTP的详细工作过程</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--发布Java程序为Windows（Linux）服务JavaServiceWrapper-/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--被动模式下FTP的详细工作过程/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-java-windows-linux-java-service-wrapper-iteye-">发布Java程序为Windows（Linux）服务[Java Service Wrapper] - 点点知识小屋 - ITeye技术网站</h1>
-<p><a href="http://www.iteye.com/" target="_blank">首页</a> <a href="http://www.iteye.com/news" target="_blank">资讯</a> <a href="http://www.iteye.com/magazines" target="_blank">精华</a> <a href="http://www.iteye.com/forums" target="_blank">论坛</a> <a href="http://www.iteye.com/ask" target="_blank">问答</a> <a href="http://www.iteye.com/blogs" target="_blank">博客</a> <a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a> <a href="http://www.iteye.com/groups" target="_blank">群组</a> <a href="http://tsunzhang.iteye.com/blog/969521#" target="_blank">更多 ▼</a></p>
-<p><a href="http://www.iteye.com/job" target="_blank">招聘</a> <a href="http://www.iteye.com/search" target="_blank">搜索</a></p>
-<p><a href="http://tsunzhang.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://tsunzhang.iteye.com/login" target="_blank">登录</a> <a href="http://tsunzhang.iteye.com/signup" target="_blank">注册</a></p>
-<h1 id="-http-tsunzhang-iteye-com-"><a href="http://tsunzhang.iteye.com/" target="_blank">点点知识小屋</a></h1>
-<ul>
-<li><a href="http://tsunzhang.iteye.com/" target="_blank"><strong>博客</strong></a></li>
-<li><a href="http://tsunzhang.iteye.com/weibo" target="_blank">微博</a></li>
-<li><a href="http://tsunzhang.iteye.com/album" target="_blank">相册</a></li>
-<li><a href="http://tsunzhang.iteye.com/link" target="_blank">收藏</a></li>
-<li><a href="http://tsunzhang.iteye.com/blog/guest_book" target="_blank">留言</a></li>
-<li><a href="http://tsunzhang.iteye.com/blog/profile" target="_blank">关于我</a></li>
-</ul>
-<h3 id="-java-windows-linux-java-service-wrapper-"><a href="">发布Java程序为Windows（Linux）服务[Java Service Wrapper]</a> **</h3>
-<p><strong>博客分类：</strong></p>
-<ul>
-<li><a href="http://tsunzhang.iteye.com/category/60981" target="_blank">java</a>
-<a href="http://www.iteye.com/blogs/tag/Java" target="_blank">Java</a><a href="http://www.iteye.com/blogs/tag/Windows" target="_blank">Windows</a><a href="http://www.iteye.com/blogs/tag/Linux" target="_blank">Linux</a><a href="http://www.iteye.com/blogs/tag/JVM" target="_blank">JVM</a><a href="http://www.iteye.com/blogs/tag/MySQL" target="_blank">MySQL</a></li>
-</ul>
-<p>☆<strong>下载Windows版本</strong>：(请使用Community版本，因Professional和Standard版本需要购买Licenses)
-      ☆假设项目放在目录project文件夹下，发布的包放在project/lib下，日志文件放在project/log下，配置文件放在project/conf下，运行的jar为myjar.jar。
-      ☆在下载包后解压，将Java Service Wrapper包中src/bin/的App.bat.in，InstallApp-NT.bat.in，UninstallApp-NT.bat.in和bin/下的wrapper.exe放在project目录下，把后缀.in去掉。【App.bat(可以直接运行程序)，InstallApp-NT.bat(安装成Windows服务)，UninstallApp-NT.bat(卸载Windows服务)】。修改App.bat，InstallApp-NT.bat，UninstallApp-NT.bat中的set _WRAPPER_CONF=&quot;%_REALPATH%conf\wrapper.conf&quot;。
-      ☆把Java Service Wrapper包中lib目录下的Wrapper.DLL，wrapper.jar拷贝到project/lib下，在原来的运行的jar文件myjar.jar中的MANIFEST.MF增加Class-Path: 其他jar wrapper.jar wrapper.dll。
-      ☆把Java Service Wrapper包中src/conf目录下的wrapper.conf.in放到project/conf下，去掉后缀.in。然后修改为
-wrapper.java.classpath.1=dist/wrapper.jar
-wrapper.java.classpath.2=dist/myjar.jar
-wrapper.java.library.path.1=dist
-/#原来程序运行的入口
-wrapper.app.parameter.1=myapp.mainClass
-wrapper.logfile=log/wrapper.log
-wrapper.console.title=MyApp服务
-wrapper.ntservice.name=MyApp服务
-wrapper.ntservice.displayname=MyApp服务
-wrapper.ntservice.description=MyApp服务</p>
-<pre><code>  ☆然后直接运行App.bat，如果运行成功的话，然后就可以执行InstallApp-NT.bat发布成Windows服务，然后就可以设置成开机自启动了，不怕别人启动的时候自己的程序没有执行。另外如果在project/bin当成bat的目录的话没这么麻烦。
-</code></pre><!-- Linux-->
-
-<p>使用Java Service Wrapper将java程序作为linux服务并且开机自动启动
-以java应用程序为例，打包为tianlong.jar，程序入口为tianlong.QueueTest。
-下面在linux的/opt下建立tianlong目录，复制tianlong.jar到/opt/tianlong/lib目录下。
-1、下载Java Service Wrapper(请使用Community版本，因Professional和Standard版本需要购买Licenses), 解压。 
-      <a href="http://wrapper.tanukisoftware.org/" target="_blank"><a href="http://wrapper.tanukisoftware.org/">http://wrapper.tanukisoftware.org/</a></a>
-      复制src\bin\sh.script.in到/opt/tianlong/bin目录，重命名为QueueTest
-      复制wrapper\bin目录下的wrapper文件到/opt/tianlong/bin目录
-      复制src\conf\wrapper.conf.in到/opt/tianlong/conf目录，重命名为wrapper.conf
-      复制src\lib\lib目录下3个文件到/opt/tianlong/lib目录
-              wrapper.so
-              wrapper.jar
-              wrappertest.jar
-2、修改/opt/tianlong/bin/QueueTest文件
-      APP_NAME=&quot;QueueTest&quot; //注意这里，这里的应用服务名称应该与第1步的/opt/tianlong/bin里面的  QueueTest名字相同
-      APP_LONG_NAME=&quot;QueueTest Application Server&quot;
-      WRAPPER_CMD=&quot;./wrapper&quot; //这里的路径要写正确，这里是对应了/opt/tianlong/bin/wrapper这个文件
-      WRAPPER_CONF=&quot;../conf/wrapper.conf&quot; //这里的路径要写正确，这里是对应了/opt/tianlong/conf/wrapper.conf这个文件
-      赋予执行权限
-      chmod 775 /opt/testapp/bin/SocketServer
-      chmod 775 /opt/testapp/bin/wrapper
-3、修改/opt/tianlong/conf/wrapper.conf文件
-      wrapper.java.command=/usr/java/jdk1.6.0_07/bin/java   //这里是写java的安装路径
-      使用WrapperStartStopApp，这样可以通过命令带start/stop来启动/停止程序。
-      wrapper.java.mainclass=org.tanukisoftware.wrapper.WrapperStartStopApp
-      /#这里添加你用到的jar包文件，从1..n你自己全写上吧，不过wrapper是必须的
-      wrapper.java.classpath.1=../lib/wrapper.jar
-      wrapper.java.classpath.2=../lib/tianlong.jar     //这里表示将打包好的tianlong.jar放在/opt/tianlong/lib这个文件夹中
-      wrapper.java.classpath.3=../lib/asterisk-java-0.3.jar
-      wrapper.java.classpath.4=../lib/mysql-connector-java-5.1.6-bin.jar
-      wrapper.java.classpath.5=/usr/java/jdk1.6.0_07/lib/dt.jar
-      wrapper.java.classpath.6=/usr/java/jdk1.6.0_07/lib/tools.jar
-      wrapper.java.classpath.7=../cofig.properties   //这个是应用程序用到的配置文件。如果使用的应用程序需要用到  配置，就需要把这个文件包含进来
-      wrapper.java.library.path.1=../lib   //这里是表示wrapper使用到的jar包的路径，一般默认即可，绝对路径是：/opt/tianlong/lib
-      /#wrapper.java.initmemory=3
-        JVM启动时的初始内存大小,当前是3M,如果要自定义，将/#去掉，设置自己的值即可。
-      /#wrapper.java.maxmemory=64
-      JVM启动时的最大内存使用量,当前是64M,如果要自定义，将/#去掉，设置自己的值即可。
-      /#这个就是你自己可执行程序的主类(MainClass)，一般来说，就是包含public static void main的那个类
-      wrapper.app.parameter.1=tianlong.QueueTest
-      wrapper.app.parameter.2=1
-      wrapper.app.parameter.3=true
-      wrapper.app.parameter.4=tianlong.QueueTest
-      wrapper.app.parameter.5=true
-      wrapper.app.parameter.6=1
-      wrapper.app.parameter.7=stop
-4、让QueueTest开机自动运行
-      ln -s /opt/tianlong/bin/QueueTest  /etc/init.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc0.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc1.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc2.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc3.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc4.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc5.d/QueueTest
-      ln -s /opt/tianlong/bin/QueueTest /etc/rc6.d/QueueTest
-5、测试 执行命令：service QueueTest start|stop|restart|status
-      程序运行时，Java Service Wrapper在/opt/tianlong/bin/目录下产生wrapper.log日志，
-      STATUS | wrapper  | 2009/02/25 17:04:01 | --&gt; Wrapper Started as Daemon
-      STATUS | wrapper  | 2009/02/25 17:04:01 | Java Service Wrapper Community Edition 3.3.2
-      STATUS | wrapper  | 2009/02/25 17:04:01 |   Copyright (C) 1999-2009 Tanuki Software, Ltd.  All Rights Reserved.
-      STATUS | wrapper  | 2009/02/25 17:04:01 |     <a href="http://wrapper.tanukisoftware.org" target="_blank">http://wrapper.tanukisoftware.org</a>
-      STATUS | wrapper  | 2009/02/25 17:04:01 |
-      STATUS | wrapper  | 2009/02/25 17:04:01 | Launching a JVM...
-      INFO   | jvm 1    | 2009/02/25 17:04:02 | WrapperManager: Initializing...
-出现上面这个就表示已经配置成功了。如果配置有错误的话，在wrapper.log里面会有提示。
-同时，如果程序配置成功的并且启动的话，在/opt/tianlong/bin里面会有一个QueueTest.pid。
-附目录结构
-/opt/tianlong/
-    cofig.properties
-/opt/tianlong/bin
-                 | QueueTest
-                 | wrapper
-                 | wrapper.log（程序运行时自动产生）
-/opt/tianlong/conf
-                | wrapper.conf
-/opt/tianlong/lib
-                | libwrapper.so
-                | wrapper.jar
-                | tianlong.jar
-                | mysql-connector-java-5.1.6-bin.jar
-                | asterisk-java-0.3.jar</p>
-<ul>
-<li><a href="http://dl.iteye.com/topics/download/b2a3facb-d7b0-3245-b5be-4eec51a884aa" target="_blank">wrapper-linux-x86-32-3.5.7.tar.gz</a> (415.6 KB)</li>
-<li><p>下载次数: 15</p>
-</li>
-<li><p><a href="http://dl.iteye.com/topics/download/8d826566-6eae-330c-b75f-9607844f3ea2" target="_blank">wrapper-windows-x86-32-3.5.7.zip</a> (556.5 KB)</p>
-</li>
-<li>下载次数: 5</li>
-</ul>
-<p>分享到： <a href="&quot;分享到新浪微博&quot;"><img src="" alt=""></a> <a href="&quot;分享到腾讯微博&quot;"><img src="" alt=""></a>
-<a href="http://tsunzhang.iteye.com/blog/970749" title="log4j配置简要说明" target="_blank">log4j配置简要说明</a> | <a href="http://tsunzhang.iteye.com/blog/899637" title="EXP-××××: 问题处理方法(整理中..)" target="_blank">EXP-××××: 问题处理方法(整理中..)</a></p>
-<ul>
-<li>2011-03-21 16:18:34</li>
-<li>浏览 411</li>
-<li><a href="http://tsunzhang.iteye.com/blog/969521#comments" target="_blank">评论(0)</a></li>
-<li>分类:<a href="http://www.iteye.com/blogs/category/language" target="_blank">编程语言</a></li>
-<li><a href="http://www.iteye.com/wiki/blog/969521" target="_blank">相关推荐</a><h3 id="-">评论</h3>
-</li>
-</ul>
-<p><a href=""></a></p>
-<h3 id="-">发表评论</h3>
-<p><a href="http://tsunzhang.iteye.com/login" target="_blank"><img src="" alt=""></a><a href="http://tsunzhang.iteye.com/login" target="_blank">您还没有登录,请您登录后再发表评论</a></p>
-<p><a href="http://tsunzhang.iteye.com/" target="_blank"><img src="&quot;coconut_zhang的博客: 点点知识小屋&quot;" alt="coconut_zhang的博客"></a></p>
-<p>coconut_zhang</p>
-<ul>
-<li>浏览: 62966 次</li>
-<li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
-<li>来自: 天津</li>
-<li><img src="" alt=""><h3 id="-http-tsunzhang-iteye-com-blog-user_visits-">最近访客 <a href="http://tsunzhang.iteye.com/blog/user_visits" target="_blank">更多访客&gt;&gt;</a></h3>
-</li>
-</ul>
-<p><a href="http://jjunxiao.iteye.com/" target="_blank"><img src="&quot;jjunxiao的博客: jjunxiao&quot;" alt="jjunxiao的博客"></a></p>
-<p><a href="http://jjunxiao.iteye.com/" target="_blank">jjunxiao</a></p>
-<p><a href="http://eyubean-163-com.iteye.com/" target="_blank"><img src="&quot;毛广斌的博客: &quot;" alt="毛广斌的博客"></a></p>
-<p><a href="http://eyubean-163-com.iteye.com/" target="_blank">毛广斌</a>
-<a href="http://alex-zeng.iteye.com/" target="_blank"><img src="&quot;alex.zeng的博客: &quot;" alt="alex.zeng的博客"></a></p>
-<p><a href="http://alex-zeng.iteye.com/" target="_blank">alex.zeng</a></p>
-<p><a href="http://return-space.iteye.com/" target="_blank"><img src="&quot;return_space的博客: &quot;" alt="return_space的博客"></a></p>
-<p><a href="http://return-space.iteye.com/" target="_blank">return_space</a></p>
-<h3 id="-">文章分类</h3>
-<ul>
-<li><a href="http://tsunzhang.iteye.com/" target="_blank">全部博客 (128)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60979" target="_blank">hibernate,struts,spring (9)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60981" target="_blank">java (28)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60982" target="_blank">c,c++,c/# (39)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60983" target="_blank">eclipse,myeclipse,lomboz (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60984" target="_blank">tomcat,weblogic (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60985" target="_blank">javascript,ajax,web (4)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/60980" target="_blank">oracle,sqlserver,mysql,sql (22)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/104329" target="_blank">linux,unix,windows (11)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/61096" target="_blank">文摘 (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/104330" target="_blank">生活 (0)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/183172" target="_blank">javascript (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/183173" target="_blank">ajax (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/183174" target="_blank">web (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/186108" target="_blank">strtus2.0实现上传 (1)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/186109" target="_blank">hibernate (3)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/186110" target="_blank">struts (3)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/186111" target="_blank">spring (3)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/187825" target="_blank">tomcat (2)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/187826" target="_blank">weblogic (1)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/191426" target="_blank">linux (1)</a></li>
-<li><a href="http://tsunzhang.iteye.com/category/191427" target="_blank">unix (1)</a></li>
-<li><p><a href="http://tsunzhang.iteye.com/category/191428" target="_blank">windows (1)</a></p>
-<h3 id="-">社区版块</h3>
-</li>
-<li><p><a href="http://tsunzhang.iteye.com/blog/news" target="_blank">我的资讯</a> (0)</p>
-</li>
-<li><a href="http://tsunzhang.iteye.com/blog/post" target="_blank">我的论坛</a> (221)</li>
-<li><a href="http://tsunzhang.iteye.com/blog/solution" target="_blank">我解决的问题</a> (0)</li>
-</ul>
-<h3 id="-">存档分类</h3>
-<ul>
-<li><a href="http://tsunzhang.iteye.com/blog/monthblog/2012-02" target="_blank">2012-02</a> (3)</li>
-<li><a href="http://tsunzhang.iteye.com/blog/monthblog/2011-11" target="_blank">2011-11</a> (4)</li>
-<li><a href="http://tsunzhang.iteye.com/blog/monthblog/2011-10" target="_blank">2011-10</a> (3)</li>
-<li><p><a href="http://tsunzhang.iteye.com/blog/monthblog_more" target="_blank">更多存档...</a></p>
-<h3 id="-">评论排行榜</h3>
-</li>
-<li><p><a href="http://tsunzhang.iteye.com/blog/1064298" title="关于shell脚本中报 “/bin/sh^M: bad interpreter: 没有那个文件或目录”的解决方法" target="_blank">关于shell脚本中报 “/bin/sh^M: bad int ...</a></p>
-</li>
-</ul>
-<h3 id="-">最新评论</h3>
-<ul>
-<li><a href="http://ronqi.iteye.com/" target="_blank">RonQi</a>： 今天在CentOS上面做Tomcat的自启动，那个脚本文件是在 ...
-<a href="http://tsunzhang.iteye.com/blog/1064298#bc2221452" target="_blank">关于shell脚本中报 “/bin/sh^M: bad interpreter: 没有那个文件或目录”的解决方法</a></li>
-<li><a href="http://huqingwei311.iteye.com/" target="_blank">huqingwei311</a>： 非常感谢楼主，我的问题也解决了
-<a href="http://tsunzhang.iteye.com/blog/758378#bc2216263" target="_blank">struts2与jasperreport整合不能显示图片imgags/px</a></li>
-<li><a href="http://beisicao.iteye.com/" target="_blank">beisicao</a>： ...
-<a href="http://tsunzhang.iteye.com/blog/732624#bc2208607" target="_blank">Applet安全限制和签名Applet</a></li>
-<li><a href="http://tsunzhang.iteye.com/" target="_blank">coconut_zhang</a>： hastune 写道Struts2拦截器都是放在栈里的。 AO ...
-<a href="http://tsunzhang.iteye.com/blog/811566#bc1997752" target="_blank">Struts2拦截器执行顺序</a></li>
-<li><a href="http://hastune.iteye.com/" target="_blank">hastune</a>： Struts2拦截器都是放在栈里的。AOP就是需要一个Invo ...
-<a href="http://tsunzhang.iteye.com/blog/811566#bc1997073" target="_blank">Struts2拦截器执行顺序</a>
-声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
-© 2003-2011 ITeye.com. All rights reserved. [ 京ICP证110151号 京公网安备110105010620 ]
-<img src="" alt=""></li>
-</ul>
+        <h1 id="-ftp-">被动模式下FTP的详细工作过程</h1>
+<p><strong>被动模式下FTP的详细工作过程</strong></p>
+<p>PASV FTP在工作的第一步，与PORT FTP一样，会首先使用21端口建立控制连接；但在第二步，由FTP客户端主动发起建立数据传输连接请求，服务器的数据传输端口为随机端口，因此，每次建立的数据传输连接通道，服务器所使用的端口都不相同。</p>
+<p>本示例客户端IP是192.168.120.168，服务器IP是192.168.120.240，因为客户端的MS-DOS不支持PASV模式，所以使用FlashFXP软件来连接服务器。通过抓包工具来查看用户从连接FTP服务器到退出FTP服务器经过的所有过程。
+使用FlashFXP所做的操作：1.输入FTP服务器的IP，要登入的用户名和密码。2.进入用户家目录，查看.bashrc和.bash_profile两个文件。3.退出FTP。</p>
+<p><strong>PASV FTP**</strong>的详细工作过程：**</p>
+<p><strong>1.</strong> 因为FTP使用的是TCP协议，所以客户端FlashFXP在连接服务器192.168.120.240时，首先会经历TCP的三次握手来建立控制通道。客户端使用任意的端口N（&gt;1024）来连接FTP服务器默认的21端口。这和PORT模式一样。
+<strong>2.</strong> 在TCP三次握手结束后，服务器端正式响应客户端的控制连接请求，控制通道建立。</p>
+<p><strong>3.</strong> 客户端向服务器发送含有ACK的数据段来确认控制连接建立并发送用户名。
+<strong>4.</strong> 服务器向客户端发送含有ACK的数据段来确认用户名。</p>
+<p><strong>5.</strong> 服务器向客户端询问密码。
+<strong>6.</strong> 客户端向服务器发送含有ACK的数据段来确认并发送密码，密码为明文。</p>
+<p><strong>7.</strong> 服务器向客户端发送含有ACK的数据段来确认密码收到。
+<strong>8.</strong> 服务器向客户端发送登陆成功的信息。</p>
+<p><strong>9.</strong> 客户端向服务器发送含有ACK的数据段来确认并发送查询系统类型的指令（见图一）。
+<strong>10.</strong> 服务器向客户端发送含有ACK的数据段来确认收到指令。</p>
+<p><strong>11.</strong> 服务器向客户端回应系统的类型为UNIX（见图二）。
+<strong>12.</strong> 客户端向服务器发送列出服务器的所有扩展命令和扩展功能的指令（见图三）。</p>
+<p><strong>13.</strong> 服务器响应客户端的FEAT请求（见图四）。
+<strong>14.</strong> 服务器响应客户端有EPSV（扩展PASV，支持非IPV4）的扩展功能（见图五）。</p>
+<p><strong>15.</strong> 客户端向服务器发送含有ACK的数据段来确认收到信息。
+<strong>16.</strong> 服务器响应客户端自己的其他特性（见图六）。MDTM：保留下载文件的日期/时间；REST STREAM：重设文件传输方式为stream形式。</p>
+<p><strong>17.</strong> 客户端确认收到服务器的信息。
+<strong>18.</strong> 服务器响应客户端进入到用户的家目录（见图七）。</p>
+<p><strong>19.</strong> 客户端确认收到服务器的信息。
+<strong>20.</strong> 客户端向服务器发送文件传输使用何种模式（Binary、ASCII）的指令（见图八）。</p>
+<p><strong>21.</strong> 服务器回应客户端使用Binary模式（见图九）。
+<strong>22.</strong> 客户端向服务器询问.bashrc文件的大小（见图十）。</p>
+<p><strong>23.</strong> 服务器回应客户端.bashrc文件的大小为124字节（见图十一）。
+<strong>24.</strong> 客户端向服务器发出PASV的指令（用来进行数据传输）（见图十二）。</p>
+<p><strong>25.</strong> 服务器回应客户端使用PASV模式，并且商量数据传输端口用232x256+151=59543（见图十三）。
+<strong>26.</strong> 客户端主动使用N+1端口来连接服务器的59543端口，并且向服务器发送含有SYN的数据段来开始进行数据传输连接的第1次握手（见图十四）。</p>
+<p><strong>27.</strong> 服务器向客户端发送含有SYN和ACK的数据段来进行第2次握手（见图十五）。
+<strong>28.</strong> 客户端向服务器发送含有ACK的数据段来进行第3次握手（见图十六）。</p>
+<p><strong>29.</strong> 3次握手过程完成，客户端向服务器发送查看.bashrc文件的指令（见图十七）。
+<strong>30.</strong> 服务器回应客户端使用Binary数据传输模式连接.bashrc文件（见图十八）。</p>
+<p><strong>31.</strong> 服务器开始进行数据传输。
+<strong>32.</strong> 服务器确定数据传输完毕，然后向客户端发送含有FIN和ACK的数据段来请求断开本次数据连接，第1次断开（见图十九）。</p>
+<p><strong>33.</strong> 客户端向服务器发送含有ACK的数据段答应服务器的断接请求，第2次断开（见图二十）。
+<strong>34.</strong> 服务器响应客户端文件发送完成的信息（见图二十一）。</p>
+<p><strong>35.</strong> 客户端向服务器发送含有ACK的数据段来确认收到信息。
+<strong>36.</strong> 客户端向服务器发送含有FIN和ACK的数据段来请求断开客户端到服务器之间的数据连接，第3次断开（见图二十二）。</p>
+<p><strong>37.</strong> 服务器向客户端发送含有ACK的数据段确认断开连接，第4次断开（见图二十三）
+<strong>38.</strong> 接下来是查看.bash_profile文件的过程。其过程和查看.bashrc文件的过程一样（在此不详述了），只是服务器和客户端的数据传输端口变了。服务器的数据传输端口是随机的；客户端的数据传输端口是N+2。</p>
+<p><strong>39.</strong> 客户端在查看完.bash_profile文件并彻底完成该次数据连接的4次断开后，向服务器发送退出的指令（见图二十四）。
+<strong>40.</strong> 服务器响应客户端的退出请求（见图二十五）。</p>
+<p><strong>41.</strong> 服务器向客户端发送含有FIN和ACK的数据段，请求断开控制连接（见图二十六）。这是第一次断开控制连接。
+<strong>42.</strong> 客户端向服务器发送含有ACK的数据段来应答服务器的断接请求（见图二十七）。这是第二次断开控制连接。</p>
+<p><strong>43.</strong> 客户端向服务器发送含有FIN和ACK的数据段，请求断开到服务器之间的控制连接（见图二十八）。这是第三次断开控制连接。
+<strong>44.</strong> 服务器向客户端发送含有ACK的数据段，来确认客户端的断接请求（见图二十九）。这样本次FTP控制连接完全断开。</p>
+<p><strong>通过查看本次示例（被动FTP）的详细过程，我们可以得到以下几点结果：</strong></p>
+<p><strong>1.</strong> 服务器的控制连接端口为21，数据传输端口随机（&gt;1024）并且每次的数据传输端口都不一样。
+<strong>2.</strong> 客户端的控制连接端口为N（&gt;1024），数据传输端口在第一次进行数据传输时为N+1,在第二次数据传输时为N+2，依次类推。</p>
+<p><strong>3.</strong> 服务器主动告诉客户端自己的数据传输端口。
+<strong>4.</strong> 客户端主动用数据传输端口N+x去连接服务器的随机数据传输端口。</p>
+<p><strong>5.</strong> 在一次FTP连接的过程中，只有一次控制连接，却可以有多次数据传输连接。
+<strong>6.</strong> 不管是控制连接还是数据传输连接，在每次从建立到完成都需要经过3次连接和4次断开的过程。（这符合TCP协议的要求）</p>
+<p><strong>本文档使用的图例：</strong></p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935974PU0j.gif" target="_blank"><img src="" alt="11"></a> 
+图一：客户端发送查询系统类型的指令</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935976j9JR.jpg" target="_blank"></a><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935977k2F8.gif"><img src="" alt="13"></a></p>
+<p>图二：服务器响应客户端系统类型为UNIX</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935978q1o9.gif" target="_blank"><img src="" alt="14"></a>
+图三：客户端请求服务器列出它的所有扩展命令和扩展功能</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224935983sdRz.gif" target="_blank"><img src="" alt="15"></a></p>
+<p>图四：服务器响应客户端的FEAT请求</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936006Aznp.gif" target="_blank"><img src="" alt="16"></a>
+图五：服务器响应客户端有EPSV（扩展PASV，支持非IPV4）的扩展功能</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249360074yJ5.gif" target="_blank"><img src="" alt="18"></a></p>
+<p>图六：服务器响应客户端自己支持的其他特性</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936015iZgn.gif" target="_blank"><img src="" alt="20"></a>
+图七：服务器响应客户端进入到用户家目录</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936017ZmNc.gif" target="_blank"><img src="" alt="22"></a></p>
+<p>图八：客户端向服务器询问文件传输的模式</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936018IMjR.gif" target="_blank"><img src="" alt="23"></a>
+图九：服务器响应客户端使用Binary模式</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936020hNul.gif" target="_blank"><img src="" alt="24"></a></p>
+<p>图十：客户端向服务器询问.bashrc文件的大小</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936022sj6P.gif" target="_blank"><img src="" alt="25"></a>
+图十一：服务器回应客户端.bashrc文件的大小为124字节</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249360237iAu.gif" target="_blank"><img src="" alt="26"></a></p>
+<p>图十二：客户端向服务器发送PASV指令</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249361801LGh.gif" target="_blank"><img src="" alt="27"></a>
+图十三：服务器响应客户端使用PASV模式，并且商量数据传输端口用59543</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936181n4nW.gif" target="_blank"><img src="" alt="28"></a></p>
+<p>图十四：第一次数据传输连接之第一次握手</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_122493618223uT.gif" target="_blank"><img src="" alt="29"></a>
+图十五：第一次数据传输连接之第二次握手</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936183BjjV.gif" target="_blank"><img src="" alt="30"></a></p>
+<p>图十六：第一次数据传输连接之第三次握手</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936185srsz.gif" target="_blank"><img src="" alt="31"></a>
+图十七：客户端向服务器发送查看.bashrc文件的指令</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936186ZS1w.gif" target="_blank"><img src="" alt="32"></a></p>
+<p>图十八：服务器响应客户端使用Binary数据传输模式来连接.bashrc文件</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936188Q6dX.gif" target="_blank"><img src="" alt="34"></a>
+图十九：服务器发送FIN和ACK请求断开本次数据连接（第1次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936210T20g.gif" target="_blank"><img src="" alt="35"></a></p>
+<p>图二十：客户端发送ACK答应服务器的请求（第2次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936213ulWM.gif" target="_blank"><img src="" alt="36"></a>
+图二十一：服务器响应客户端文件发送完毕的信息</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936217J6aY.gif" target="_blank"><img src="" alt="38"></a></p>
+<p>图二十二：客户端向服务器发送含有FIN和ACK的数据段请求断开数据连接（第3次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936218Leca.gif" target="_blank"><img src="" alt="39"></a>
+图二十三：服务器向客户端发送含有ACK的数据段确认断开连接（第4次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936220HQq5.gif" target="_blank"><img src="" alt="56"></a></p>
+<p>图二十四：客户端向服务器发出退出的指令</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936221ejql.gif" target="_blank"><img src="" alt="57"></a>
+图二十五：服务器响应客户端的退出请求</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936223xMjK.gif" target="_blank"><img src="" alt="58"></a></p>
+<p>图二十六：服务器向客户端发送FIN和ACK请求断开控制连接（第1次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_12249362249BCE.gif" target="_blank"><img src="" alt="59"></a>
+图二十七：客户端向服务器发送ACK答应服务器请求（第2次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936225gvOK.gif" target="_blank"><img src="" alt="60"></a></p>
+<p>图二十八：客户端向服务器发送FIN和ACK请求断开控制连接（第3次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936226MLVx.gif" target="_blank"><img src="" alt="61"></a>
+图二十九：服务器向客户端发送ACK答应断开控制连接（第4次断开）</p>
+<p><a href="http://img1.51cto.com/attachment/200810/25/363003_1224936227MSuY.gif" target="_blank"><img src="" alt="62"></a></p>
+<p>图三十：本次示例全部过程</p>
 
       
     </div>
@@ -1624,650 +2330,8 @@ wrapper.ntservice.description=MyApp服务</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wrapper/">wrapper</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wrapper/" class="label label-primary">wrapper</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-wrapper--发布Java程序为Windows（Linux）服务JavaServiceWrapper-/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wrapper--发布Java程序为Windows（Linux）服务JavaServiceWrapper-" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-java-service-wrapper-tomcat-linux-tomcat-java-iteye-">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动 - Tomcat - Java - ITeye论坛</h1>
-<p><a href="http://www.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.iteye.com/login" target="_blank">登录</a> <a href="http://www.iteye.com/signup" target="_blank">注册</a></p>
-<p><a href="http://www.iteye.com/" target="_blank"><img src="&quot;ITeye-最棒的软件开发交流社区&quot;" alt="ITeye-最棒的软件开发交流社区"></a></p>
-<p>-</p>
-<p><a href="http://www.iteye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.iteye.com/forums/board/Java" target="_blank">Java企业应用论坛</a> →</p>
-<h1 id="-java-service-wrapper-tomcat-linux-">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动</h1>
-<p><a href="http://www.iteye.com/forums/board/Java" target="_blank">全部</a> <a href="http://www.iteye.com/forums/tag/Hibernate" target="_blank">Hibernate</a> <a href="http://www.iteye.com/forums/tag/Spring" target="_blank">Spring</a> <a href="http://www.iteye.com/forums/tag/Struts" target="_blank">Struts</a> <a href="http://www.iteye.com/forums/tag/iBATIS" target="_blank">iBATIS</a> <a href="http://www.iteye.com/forums/tag/%E4%BC%81%E4%B8%9A%E5%BA%94%E7%94%A8" target="_blank">企业应用</a> <a href="http://www.iteye.com/forums/tag/Lucene" target="_blank">Lucene</a> <a href="http://www.iteye.com/forums/tag/SOA" target="_blank">SOA</a> <a href="http://www.iteye.com/forums/tag/Java%E7%BB%BC%E5%90%88" target="_blank">Java综合</a> <a href="http://www.iteye.com/forums/tag/%E8%AE%BE%E8%AE%A1%E6%A8%A1%E5%BC%8F" target="_blank">设计模式</a> <a href="http://www.iteye.com/forums/tag/Tomcat" target="_blank">Tomcat</a> <a href="http://www.iteye.com/forums/tag/OO" target="_blank">OO</a> <a href="http://www.iteye.com/forums/tag/JBoss" target="_blank">JBoss</a>
-<a href="http://www.iteye.com/clicks/593" target="_blank">最成熟稳定甘特图控件,支持Java和.Net</a></p>
-<p>浏览 5354 次 锁定老帖子 <a href="">主题：使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动</a></p>
-<p>精华帖 (0) :: 良好帖 (0) :: 新手帖 (0) :: 隐藏帖 (0) 作者 正文 * wenson</p>
-<ul>
-<li>等级: 初级会员</li>
-<li><a href="http://wenson.iteye.com/" target="_blank"><img src="&quot;wenson的博客: 山下的人&quot;" alt="wenson的博客"></a></li>
-<li>性别: <img src="&quot;男&quot;" alt=""></li>
-<li>文章: 111</li>
-<li>积分: 80</li>
-<li>来自: 广州</li>
-<li><img src="" alt="">
-  发表时间：2008-01-11   最后修改：2009-02-02</li>
-</ul>
-<p><a href="http://www.iteye.com/topic/155159#" target="_blank">&lt;</a> <a href="http://www.iteye.com/topic/155159#" target="_blank">&gt;</a>  猎头职位: <a href="http://www.iteye.com/jobs/1847" target="_blank">北京:  ITeye网站诚聘产品交互设计</a></p>
-<p>相关文章: <a href="http://www.iteye.com/topic/155159#" title="关闭" target="_blank"> </a></p>
-<ul>
-<li><a href="http://www.iteye.com/topic/36657" title="把java程序做成windows服务（转）" target="_blank">把java程序做成windows服务（转）</a></li>
-<li><a href="http://www.iteye.com/topic/557980" title="tomcat源码—redirect和forward的实现" target="_blank">tomcat源码—redirect和forward的实现</a></li>
-<li><a href="http://www.iteye.com/topic/614683" title="tomcat集群时统计session与在线人数" target="_blank">tomcat集群时统计session与在线人数</a>
-推荐群组: <a href="http://ubuntu.group.iteye.com/" target="_blank">Ubuntu For Fun</a>
-<a href="http://www.iteye.com/wiki/topic/155159" target="_blank">更多相关推荐</a>
-<a href="http://www.iteye.com/forums/tag/Tomcat" target="_blank">Tomcat</a></li>
-</ul>
-<p>前几天总结了使用JSVC来设置tomcat作为linux服务并且开机自动启动，但是如果要更专业一点来控制tomcat的启动，使用Java Service Wrapper应该不失为一个好的选择，下面来总结一下Java Service Wrapper在Linux中对于tomcat启动的设置：
-<strong>1、</strong> 安装JDK、Tomcat,此处略过。比如tomcat安装在/opt/tomcat目录中。
-<strong>2</strong> 、使用命令wget 下载Java Service Wrapper(目前版本wrapper-linux-x86-32-3.2.3，官网：<a href="http://wrapper.tanukisoftware.org" target="_blank">http://wrapper.tanukisoftware.org</a>), 用命令tar -zxvf wrapper-linux-x86-32-3.2.3.tar.gz 解压，得到目录wrapper-linux-x86-32-3.2.3，使用ln -s wrapper-linux-x86-32-3.2.3 wrapper 给目录wrapper-linux-x86-32-3.2.3 建一个名称为wrapper的快捷方式。
-<strong>3</strong> 、复制wrapper\src\bin\sh.script.in到/opt/tomcat/bin目录，重命名为tomcat
-复制wrapper\src\conf\wrapper.conf.in到/opt/tomcat/conf目录，重命名为wrapper.conf
-复制wrapper\lib目录下的所有3个文件到/opt/tomcat/lib目录
-复制wrapper\bin目录下的wrapper文件到/opt/tomcat/bin目录
-<strong>4</strong> 、修改/opt/testapp/bin/tomcat文件
-APP_NAME=&quot;tomcat&quot;
-APP_LONG_NAME=&quot;Tomcat Application Server&quot;
-WRAPPER_CMD=&quot;./wrapper&quot;
-WRAPPER_CONF=&quot;../conf/wrapper.conf&quot;
-赋予执行权限
-chmod 775 /opt/tomcat/bin/tomcat
-chmod 775 /opt/tomcat/bin/tomcat
-<strong>5</strong> 、修改/opt/tomcat/conf/wrapper.conf文件，如：
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Java Application
-/# 设置环境变量
-set.JAVA_HOME=/usr/java/jdk1.6.0_01
-set.CATALINA_HOME=/opt/tomcat
-set.CATALINA_BASE=/opt/tomcat
-wrapper.java.command=/usr/java/jdk1.6.0_01/bin/java
-/# Java Main class. This class must implement the WrapperListener interface
-/# or guarantee that the WrapperManager class is initialized. Helper
-/# classes are provided to do this for you. See the Integration section
-/# of the documentation for details.
-/# 使用WrapperStartStopApp，这样可以通过命令带start/stop来启动/停止程序。
-wrapper.java.mainclass=org.tanukisoftware.wrapper.WrapperStartStopApp
-/# Java Classpath (include wrapper.jar) Add class path elements as
-/# needed starting from 1
-/# 设置执行tomcat的classpath文件
-wrapper.java.classpath.1=%CATALINA_HOME%/lib/wrapper.jar
-wrapper.java.classpath.2=%CATALINA_BASE%/bin/bootstrap.jar
-/# Java Library Path (location of Wrapper.DLL or libwrapper.so)
-/# 设置tomcat的lib路径
-wrapper.java.library.path.1=%CATALINA_HOME%/lib/
-/# Java Additional Parameters
-/# 设置额外参数
-wrapper.java.additional.1=-Djava.endorsed.dirs=%CATALINA_HOME%/common/endorsed
-wrapper.java.additional.2=-Dcatalina.base=%CATALINA_BASE%
-wrapper.java.additional.3=-Dcatalina.home=%CATALINA_HOME%
-wrapper.java.additional.4=-Djava.io.tmpdir=%CATALINA_BASE%/temp
-/# Initial Java Heap Size (in MB)
-/# 设置tomcat的JVM初始化堆的大小
-wrapper.java.initmemory=128
-/# Maximum Java Heap Size (in MB)
-/# 设置tomcat的JVM堆的最大值
-wrapper.java.maxmemory=512
-/# Application parameters. Add parameters as needed starting from 1
-/# 设置启动、停止和重启参数
-wrapper.app.parameter.1=org.apache.catalina.startup.Bootstrap
-wrapper.app.parameter.2=1
-wrapper.app.parameter.3=start
-wrapper.app.parameter.4=org.apache.catalina.startup.Bootstrap
-wrapper.app.parameter.5=true
-wrapper.app.parameter.6=1
-wrapper.app.parameter.7=stop
-wrapper.filter.trigger.1=java.lang.OutOfMemoryError
-wrapper.filter.action.1=RESTART
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Logging Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Format of output for the console. (See docs for formats)
-wrapper.console.format=PM
-/# Log Level for console output. (See docs for log levels)
-wrapper.console.loglevel=INFO
-/# Log file to use for wrapper output logging.
-/# 设置log文件路径
-wrapper.logfile=%CATALINA_BASE%/logs/wrapper.log
-/# Format of output for the log file. (See docs for formats)
-wrapper.logfile.format=LPTM
-/# Log Level for log file output. (See docs for log levels)
-wrapper.logfile.loglevel=INFO
-/# Maximum size that the log file will be allowed to grow to before
-/# the log is rolled. Size is specified in bytes. The default value
-/# of 0, disables log rolling. May abbreviate with the &#39;k&#39; (kb) or
-/# &#39;m&#39; (mb) suffix. For example: 10m = 10 megabytes.
-/# 设置log文件最大值
-wrapper.logfile.maxsize=5
-/# Maximum number of rolled log files which will be allowed before old
-/# files are deleted. The default value of 0 implies no limit.
-/#设置log文件最多个数
-wrapper.logfile.maxfiles=10
-/# Log Level for sys/event log output. (See docs for log levels)
-wrapper.syslog.loglevel=NONE
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Windows Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Title to use when running as a console
-/# windows下tomcat控制台名称
-wrapper.console.title=Tomcat6 Application Server
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# Wrapper Windows NT/2000/XP Service Properties
-/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-/# WARNING - Do not modify any of these properties when an application
-/# using this configuration file has been installed as a service.
-/# Please uninstall the service before modifying this section. The
-/# service can then be reinstalled.
-/# Name of the service
-/# 设置服务名称
-wrapper.ntservice.name=tomcat6
-/# Display name of the service
-wrapper.ntservice.displayname=@app.long.name@
-/# Description of the service
-wrapper.ntservice.description=@app.description@
-/# Service dependencies. Add dependencies as needed starting from 1
-wrapper.ntservice.dependency.1=
-/# Mode in which the service is installed. AUTO_START or DEMAND_START
-/# 设置允许Tomcat服务自动启动
-wrapper.ntservice.starttype=AUTO_START
-/# Allow the service to interact with the desktop.
-wrapper.ntservice.interactive=false
-<strong>6</strong> 、设置tomcat开机自动运行：
-ln -s /opt/tomcat/bin/tomcat /etc/init.d/tomcat
-<strong>7</strong> 、测试,执行命令：service tomcat start|stop|restart|status
-至此，使用Java Service Wrapper来设置Tomcat作为Linux的服务完成，从此过程看来，Java Service Wrapper对tomcat的控制程度比tomcat自带的JSVC深入多了。
-目录结构：
-/opt/tomcat/bin
-                 | tomcat
-                 | wrapper
-/opt/tomcat/logs
-                 | wrapper.log（程序运行时自动产生）
-/opt/tomcat/conf
-                 | wrapper.conf
-/opt/tomcat/lib
-                 | libwrapper.so
-                 | wrapper.jar
-                 | test.jar</p>
-<p>声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。</p>
-<p>推荐链接</p>
-<ul>
-<li><a href="http://www.iteye.com/clicks/508" target="_blank">.Net程序员不用羡慕Android程序员，微软移动战役打响</a></li>
-<li><a href="http://www.iteye.com/clicks/716" target="_blank">想进外企，出国，跳槽，找工作？英语不好,快来充电吧</a></li>
-<li><a href="http://www.iteye.com/clicks/527" target="_blank">100万现金奖培训出来的程序员</a></li>
-<li><a href="http://www.iteye.com/clicks/609" target="_blank">-</a> <a href="http://www.iteye.com/topic/155159#" target="_blank">返回顶楼</a> <a href="http://wenson.iteye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://wenson.iteye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://my.iteye.com/messages/new?message%5Breceiver_name%5D=wenson" title="发送站内短信" target="_blank"> </a> <a href="http://wenson.iteye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://my.iteye.com/feed?subscription%5Bsubscribed_user_name%5D=wenson" title="关注作者" target="_blank"> </a>  * nwangwei</li>
-<li>等级: <img src="&quot;一星会员&quot;" alt="一星会员"></li>
-<li><a href="http://nwangwei.iteye.com/" target="_blank"><img src="&quot;nwangwei的博客: nwangwei&quot;" alt="nwangwei的博客"></a></li>
-<li>性别: <img src="&quot;男&quot;" alt=""></li>
-<li>文章: 41</li>
-<li>积分: 130</li>
-<li><img src="" alt="">
-  发表时间：2008-03-13  </li>
-</ul>
-<p>棒！
-tomcat的shutdown命令老是关不掉全部的java进程 <a href="http://www.iteye.com/topic/155159#" target="_blank">返回顶楼</a> <a href="http://nwangwei.iteye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://nwangwei.iteye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://my.iteye.com/messages/new?message%5Breceiver_name%5D=nwangwei" title="发送站内短信" target="_blank"> </a> <a href="http://nwangwei.iteye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://my.iteye.com/feed?subscription%5Bsubscribed_user_name%5D=nwangwei" title="关注作者" target="_blank"> </a> <a href="http://www.iteye.com/topic/155159#485194" title="nwangwei回帖:使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动" target="_blank">回帖地址</a></p>
-<p><a href="http://www.iteye.com/topic/155159#" title="好" target="_blank">0</a> <a href="http://www.iteye.com/topic/155159#" title="差" target="_blank">0</a> 请登录后投票</p>
-<p><a href="http://www.iteye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.iteye.com/forums/board/Java" target="_blank">Java企业应用版</a>
-跳转论坛:移动开发技术 Web前端技术 Java企业应用 编程语言技术 综合技术 入门技术 招聘求职 海阔天空</p>
-<ul>
-<li><a href="http://www.iteye.com/jobs/1555" title="北京:美团诚聘资深研发工程师（Java）" target="_blank">北京: 美团诚聘资深研发工程师（Java）</a></li>
-<li><a href="http://www.iteye.com/jobs/1554" title="北京:美团诚聘研发工程师（Java）" target="_blank">北京: 美团诚聘研发工程师（Java）</a></li>
-<li><a href="http://www.iteye.com/jobs/712" title="北京:ITeye官方招聘和猎头诚聘ITeye网站诚聘Java高级搜索工程师" target="_blank">北京: ITeye官方招聘和猎头诚聘ITeye网站诚聘Java</a></li>
-<li><a href="http://www.iteye.com/jobs/2068" title="吉林:用友汽车软件诚聘Java程序员" target="_blank">吉林: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1628" title="浙江:阿里巴巴诚聘高级Java工程师" target="_blank">浙江: 阿里巴巴诚聘高级Java工程师</a></li>
-<li><a href="http://www.iteye.com/jobs/2078" title="上海:用友汽车软件诚聘项目经理" target="_blank">上海: 用友汽车软件诚聘项目经理</a></li>
-<li><a href="http://www.iteye.com/jobs/1144" title="陕西:ThoughtWorks诚聘西安Senior Java Application Developer" target="_blank">陕西: ThoughtWorks诚聘西安Senior Java Applicatio</a></li>
-<li><a href="http://www.iteye.com/jobs/2067" title="重庆:用友汽车软件诚聘Java程序员" target="_blank">重庆: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/750" title="北京:杰嘉迪诚聘高级Java程序员" target="_blank">北京: 杰嘉迪诚聘高级Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/2111" title="北京:中油瑞飞/richfit诚聘JAVA开发工程师" target="_blank">北京: 中油瑞飞/richfit诚聘JAVA开发工程师</a></li>
-<li><a href="http://www.iteye.com/jobs/1891" title="北京:北大软件诚聘Java软件开发工程师（技术研发部110809）" target="_blank">北京: 北大软件诚聘Java软件开发工程师（技术研发部</a></li>
-<li><a href="http://www.iteye.com/jobs/755" title="北京:杰嘉迪诚聘Java程序员" target="_blank">北京: 杰嘉迪诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1231" title="北京:胡莱游戏诚聘年薪8-16万高级Java程序员" target="_blank">北京: 胡莱游戏诚聘年薪8-16万高级Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1541" title="上海:大众点评诚聘Java高级开发工程师（上海）" target="_blank">上海: 大众点评诚聘Java高级开发工程师（上海）</a></li>
-<li><a href="http://www.iteye.com/jobs/2066" title="湖北:用友汽车软件诚聘Java程序员" target="_blank">湖北: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/1849" title="浙江:阿里巴巴诚聘C++开发工程师(搜索引擎和广告引擎方向，偏底层)" target="_blank">浙江: 阿里巴巴诚聘C++开发工程师(搜索引擎和广告</a></li>
-<li><a href="http://www.iteye.com/jobs/2065" title="安徽:用友汽车软件诚聘Java程序员" target="_blank">安徽: 用友汽车软件诚聘Java程序员</a></li>
-<li><a href="http://www.iteye.com/jobs/2080" title="上海:用友汽车软件诚聘软件研发工程师（实习岗位）" target="_blank">上海: 用友汽车软件诚聘软件研发工程师（实习岗位）</a></li>
-<li><p><a href="http://www.iteye.com/jobs/2064" title="上海:用友汽车软件诚聘高级Java程序员" target="_blank">上海: 用友汽车软件诚聘高级Java程序员</a></p>
-</li>
-<li><p><a href="http://www.iteye.com/" target="_blank">首页</a></p>
-</li>
-<li><a href="http://www.iteye.com/news" target="_blank">资讯</a></li>
-<li><a href="http://www.iteye.com/magazines" target="_blank">精华</a></li>
-<li><a href="http://www.iteye.com/forums" target="_blank">论坛</a></li>
-<li><a href="http://www.iteye.com/ask" target="_blank">问答</a></li>
-<li><a href="http://www.iteye.com/blogs" target="_blank">博客</a></li>
-<li><a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a></li>
-<li><a href="http://www.iteye.com/groups" target="_blank">群组</a></li>
-<li><a href="http://www.iteye.com/job" target="_blank">招聘</a></li>
-<li><a href="http://www.iteye.com/search" target="_blank">搜索</a></li>
-<li><a href="http://www.ciecloud.org/2012/index.html" target="_blank">云计算大会</a></li>
-<li><a href="http://www.iteye.com/index/service" target="_blank">广告服务</a></li>
-<li><a href="http://webmaster.iteye.com/" target="_blank">ITeye黑板报</a></li>
-<li><a href="http://www.iteye.com/index/contactus" target="_blank">联系我们</a></li>
-<li><a href="http://www.iteye.com/index/friend_links" target="_blank">友情链接</a></li>
-</ul>
-<p>© 2003-2011 ITeye.com. [ <a href="http://www.miibeian.gov.cn/" target="_blank">京ICP证110151号</a> 京公网安备110105010620 ]
-百联优力(北京)投资有限公司 版权所有
-上海炯耐计算机软件有限公司 提供商务支持 <img src="" alt=""></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wrapper/">wrapper</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wrapper/" class="label label-primary">wrapper</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper把Java程序作为Windows系统服务--IT/">使用Java Service Wrapper 把Java程序作为Windows系统服务 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper把Java程序作为Windows系统服务--IT/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-java-service-wrapper-java-windows-iteye-">使用Java Service Wrapper 把Java程序作为Windows系统服务 - - ITeye技术网站</h1>
-<p><a href="http://www.iteye.com/" target="_blank">首页</a> <a href="http://www.iteye.com/news" target="_blank">资讯</a> <a href="http://www.iteye.com/magazines" target="_blank">精华</a> <a href="http://www.iteye.com/forums" target="_blank">论坛</a> <a href="http://www.iteye.com/ask" target="_blank">问答</a> <a href="http://www.iteye.com/blogs" target="_blank">博客</a> <a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a> <a href="http://www.iteye.com/groups" target="_blank">群组</a> <a href="http://lbyzx123.iteye.com/blog/248210#" target="_blank">更多 ▼</a></p>
-<p><a href="http://www.iteye.com/job" target="_blank">招聘</a> <a href="http://www.iteye.com/search" target="_blank">搜索</a></p>
-<p><a href="http://lbyzx123.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://lbyzx123.iteye.com/login" target="_blank">登录</a> <a href="http://lbyzx123.iteye.com/signup" target="_blank">注册</a></p>
-<h1 id="-lbyzx123-http-lbyzx123-iteye-com-"><a href="http://lbyzx123.iteye.com/" target="_blank">lbyzx123</a></h1>
-<ul>
-<li><a href="http://lbyzx123.iteye.com/" target="_blank"><strong>博客</strong></a></li>
-<li><a href="http://lbyzx123.iteye.com/weibo" target="_blank">微博</a></li>
-<li><a href="http://lbyzx123.iteye.com/album" target="_blank">相册</a></li>
-<li><a href="http://lbyzx123.iteye.com/link" target="_blank">收藏</a></li>
-<li><a href="http://lbyzx123.iteye.com/blog/guest_book" target="_blank">留言</a></li>
-<li><a href="http://lbyzx123.iteye.com/blog/profile" target="_blank">关于我</a></li>
-</ul>
-<h3 id="-java-service-wrapper-java-windows-"><a href="">使用Java Service Wrapper 把Java程序作为Windows系统服务</a> **</h3>
-<p><a href="http://www.iteye.com/blogs/tag/Java" target="_blank">Java</a><a href="http://www.iteye.com/blogs/tag/Windows" target="_blank">Windows</a><a href="http://www.iteye.com/blogs/tag/Tomcat" target="_blank">Tomcat</a><a href="http://www.iteye.com/blogs/tag/%E9%85%8D%E7%BD%AE%E7%AE%A1%E7%90%86" target="_blank">配置管理</a><a href="http://www.iteye.com/blogs/tag/C%23" target="_blank">C/#</a></p>
-<p>Java程序很多情况下是作为服务程序运行的，在Un/<em>x平台下可以利用在命令后加“&amp;”把程序作为后台服务运行，但在Windows下看作那个Console窗口在桌面上，你是否一直担心别的同时把你的Console窗口关闭？是否怀念用VC写的Win32服务程序？
-翻开JBOSS、Tomcat的发布包，发现他们都使用了一个Open source——Java Service Wrapper。用Java Service Wrapper可以轻松解决我们的需求，让我们的服务程序成为 Win32系统服务。
-当然，在Un/</em>x下也可以使用Java Service Wrapper，可以避免加“&amp;”的粗暴方式，导致每天收到一堆mail，通过Java Service Wrapper提供的日志方式查看运行信息。
-Java Service Wrapper功能很强大，同时支持Windows及Un/*x平台，提供三种方式把你的Java程序包装成系统服务，这里只介绍最简单的一种方式，因这种方式无需对已有的服务程序作任何改变，仅仅增加几个script、配置文件就可以把你的Java服务程序改造成系统服务程序了。
-当然在使用之前需要到<a href="http://sourceforge.net/project/showfiles.php?group_id=39428下载Java" target="_blank">http://sourceforge.net/project/showfiles.php?group_id=39428下载Java</a> Service Wrapper的发布包。
-下面简单介绍一下具体的使用步骤：</p>
-<ol>
-<li>将下载的Java Service Wrapper包解压到本地，目录为{WRAPPER_HOME}；</li>
-<li>服务应用程序名为MyServApp，在目录d:\MyServApp下建立bin、conf、logs、lib目录；并把你的已有应用程序如NioBlockingServer.class拷贝到该目录下；</li>
-<li>将{WRAPPER_HOME}\src\bin\下的遗以下文件拷贝到MyServApp目录下，并重命名。
-{WRAPPER_HOME}\bin\Wrapper.exe  C:\ MyServApp \bin\Wrapper.exe
-{WRAPPER_HOME}\src\bin\App.bat.in  C:\ MyServApp\bin\MyApp.bat
-{WRAPPER_HOME}\src\bin\InstallApp-NT.bat.in  C:\ MyServApp\bin\InstallMyApp-NT.bat
-{WRAPPER_HOME}\src\bin\UninstallApp-NT.bat.in  C:\ MyServApp\bin\UninstallMyApp-NT.bat</li>
-<li>将{WRAPPER_HOME}\lib下的以下文件拷贝到C:\ MyServApp \lib目录下
-{WRAPPER_HOME}\lib\Wrapper.DLL
-{WRAPPER_HOME}\lib\wrapper.jar</li>
-<li>将{WRAPPER_HOME}\src\conf\wrapper.conf.in拷贝到C:\ MyServApp \conf目录下并命名为wrapper.conf；并修改wrapper.conf文件，在其中配置您的应用服务。
-主要修改以下几项即可：
-/#你的JVM位置：
-wrapper.java.command=D:\Sun\j2sdk1.4.0_03\bin\java
-/#运行参数：如：
-wrapper.java.additional.1=-Dprogram.name=run.bat
-/#classpath：
-wrapper.java.classpath.1=../lib/wrapper.jar
-wrapper.java.classpath.2=../bin/.
-/# Java Library Path (location of Wrapper.DLL or libwrapper.so)
-wrapper.java.library.path.1=../lib
-/#MAIN CLASS 此处决定了使用Java Service Wrapper的方式
-wrapper.java.mainclass=org.tanukisoftware.wrapper.WrapperSimpleApp
-/#你的Java应用类
-wrapper.app.parameter.1= NonBlockingServer
-/# 服务名
-wrapper.ntservice.name=NB
-/# Display name of the service
-wrapper.ntservice.displayname=Nio Nonblocking Server
-/# 服务描述
-wrapper.ntservice.description=Nio Nonblocking Server
-其他的配置根据你的需要改变即可</li>
-<li>对以上配置的MyApp.bat进行测试，运行MyApp.bat，就像在Console窗口下运行Tomcat一样；</li>
-<li>对以上配置的服务进行测试，运行C:\ MyServApp\bin\InstallMyApp-NT.bat将把你的应用（此处为NioBlockingServer）安装到Win32系统服务中了。</li>
-<li>打开控制面板－管理程序－服务，看到Nio Nonblocking Server已经在系统服务中了，其他用法就与我们熟悉的Windows服务一样了。
-Tomcat使用的是Java Service Wrapper模式二，这种方式需要对已有的程序进行小的改动，但可以通过Socket端口的方式控制服务程序核心的启动，更加灵活。Java Service Wrapper提供的模式三比较复杂，需要作出更多的编码，我没有研究。
-采用模式一，即可简单有效的把我们的服务程序包装成为系统服务程序，并增强了日志功能，我们可以把MyServApp的几个文件做成模板，每次修改文件名，配置文件就可以了，有精力的朋友更可以做成Eclipse的plugin，鼠标点点就把应用配成服务了。
-附件是一个模板，可以直接修改文件名和配置文件就可以把服务改造了。
-希望本文能对大家有所帮助，当然也申请加分了，我的2分实在不够混的了。 <h1 id="-files-cai9911-ntservicewrappertemplate-rar-http-files-cnblogs-com-cai9911-ntservicewrappertemplate-rar-"><a href="http://files.cnblogs.com/cai9911/NTServiceWrapperTemplate.rar" target="_blank">/Files/cai9911/NTServiceWrapperTemplate.rar</a></h1>
-自己做的一个例子,可以直接拿来修改:
-(写下来备忘)
-主要修改config/wrapper.conf 一个地方:
-wrapper.app.parameter.1= HelloWorld  &lt;要启动的类&gt;
-其他的可以修改应用程序的服务名称等.
-<a href="http://files.cnblogs.com/cai9911/JavaService.rar" target="_blank">/Files/cai9911/JavaService.rar</a>
-分享到： <a href="&quot;分享到新浪微博&quot;"><img src="" alt=""></a> <a href="&quot;分享到腾讯微博&quot;"><img src="" alt=""></a></li>
-</ol>
-<p><a href="http://lbyzx123.iteye.com/blog/258505" title="javascript中如何给二维数组赋值？" target="_blank">javascript中如何给二维数组赋值？</a> | <a href="http://lbyzx123.iteye.com/blog/248209" title="an error has occurred.See error log for more deta." target="_blank">an error has occurred.See error log for ...</a></p>
-<ul>
-<li>2008-09-30 13:40:07</li>
-<li>浏览 4068</li>
-<li><a href="http://lbyzx123.iteye.com/blog/248210#comments" target="_blank">评论(0)</a></li>
-<li><a href="http://www.iteye.com/wiki/blog/248210" target="_blank">相关推荐</a></li>
-</ul>
-<h3 id="-">评论</h3>
-<p><a href=""></a></p>
-<h3 id="-">发表评论</h3>
-<p><a href="http://lbyzx123.iteye.com/login" target="_blank"><img src="" alt=""></a><a href="http://lbyzx123.iteye.com/login" target="_blank">您还没有登录,请您登录后再发表评论</a></p>
-<p><a href="http://lbyzx123.iteye.com/" target="_blank"><img src="&quot;lbyzx123的博客: &quot;" alt="lbyzx123的博客"></a></p>
-<p>lbyzx123</p>
-<ul>
-<li>浏览: 51258 次</li>
-<li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
-<li>来自: 杭州</li>
-<li><img src="" alt=""><h3 id="-http-lbyzx123-iteye-com-blog-user_visits-">最近访客 <a href="http://lbyzx123.iteye.com/blog/user_visits" target="_blank">更多访客&gt;&gt;</a></h3>
-</li>
-</ul>
-<p><a href="http://zhaoyijun.iteye.com/" target="_blank"><img src="&quot;zhaoyijun的博客: &quot;" alt="zhaoyijun的博客"></a></p>
-<p><a href="http://zhaoyijun.iteye.com/" target="_blank">zhaoyijun</a></p>
-<p><a href="http://yang8580330.iteye.com/" target="_blank"><img src="&quot;yang8580330的博客: &quot;" alt="yang8580330的博客"></a></p>
-<p><a href="http://yang8580330.iteye.com/" target="_blank">yang8580330</a>
-<a href="http://bgvhuy38.iteye.com/" target="_blank"><img src="&quot;bgvhuy38的博客: &quot;" alt="bgvhuy38的博客"></a></p>
-<p><a href="http://bgvhuy38.iteye.com/" target="_blank">bgvhuy38</a></p>
-<p><a href="http://taibin.iteye.com/" target="_blank"><img src="&quot;taibin的博客: &quot;" alt="taibin的博客"></a></p>
-<p><a href="http://taibin.iteye.com/" target="_blank">taibin</a></p>
-<h3 id="-">文章分类</h3>
-<ul>
-<li><a href="http://lbyzx123.iteye.com/" target="_blank">全部博客 (93)</a></li>
-<li><a href="http://lbyzx123.iteye.com/category/42284" target="_blank">AJAX (0)</a></li>
-<li><a href="http://lbyzx123.iteye.com/category/42285" target="_blank">J2EE (11)</a></li>
-<li><a href="http://lbyzx123.iteye.com/category/42283" target="_blank">数据库 (14)</a></li>
-<li><a href="http://lbyzx123.iteye.com/category/42286" target="_blank">JAVASCRIPT (16)</a></li>
-<li><a href="http://lbyzx123.iteye.com/category/42287" target="_blank">哲理 (6)</a></li>
-<li><a href="http://lbyzx123.iteye.com/category/42315" target="_blank">开发工具问题 (12)</a></li>
-<li><a href="http://lbyzx123.iteye.com/category/42316" target="_blank">设计模式 (0)</a></li>
-<li><a href="http://lbyzx123.iteye.com/category/44335" target="_blank">ExtJS (10)</a></li>
-<li><a href="http://lbyzx123.iteye.com/category/122708" target="_blank">java (9)</a></li>
-<li><a href="http://lbyzx123.iteye.com/category/137565" target="_blank">测试 (2)</a></li>
-<li><p><a href="http://lbyzx123.iteye.com/category/191171" target="_blank">c++ (1)</a></p>
-<h3 id="-">社区版块</h3>
-</li>
-<li><p><a href="http://lbyzx123.iteye.com/blog/news" target="_blank">我的资讯</a> (0)</p>
-</li>
-<li><a href="http://lbyzx123.iteye.com/blog/post" target="_blank">我的论坛</a> (1)</li>
-<li><a href="http://lbyzx123.iteye.com/blog/solution" target="_blank">我解决的问题</a> (0)</li>
-</ul>
-<h3 id="-">存档分类</h3>
-<ul>
-<li><a href="http://lbyzx123.iteye.com/blog/monthblog/2012-01" target="_blank">2012-01</a> (1)</li>
-<li><a href="http://lbyzx123.iteye.com/blog/monthblog/2011-12" target="_blank">2011-12</a> (4)</li>
-<li><a href="http://lbyzx123.iteye.com/blog/monthblog/2011-11" target="_blank">2011-11</a> (3)</li>
-<li><p><a href="http://lbyzx123.iteye.com/blog/monthblog_more" target="_blank">更多存档...</a></p>
-<h3 id="-">评论排行榜</h3>
-</li>
-<li><p><a href="http://lbyzx123.iteye.com/blog/1139428" title="extjs4 异步树的写法" target="_blank">extjs4 异步树的写法</a></p>
-</li>
-<li><a href="http://lbyzx123.iteye.com/blog/1073789" title="请问一下mysql是不是限制了单个表的容量，能改吗" target="_blank">请问一下mysql是不是限制了单个表的容量， ...</a></li>
-<li><a href="http://lbyzx123.iteye.com/blog/1172418" title="三个故事说穿许多人" target="_blank">三个故事说穿许多人</a></li>
-</ul>
-<h3 id="-">最新评论</h3>
-<ul>
-<li><a href="http://paradigm.iteye.com/" target="_blank">paradigm</a>： 谢谢
-<a href="http://lbyzx123.iteye.com/blog/764985#bc2227490" target="_blank">WebSphere7.0数据源配置与应用程序发布之创建数据源</a></li>
-<li><a href="http://gooderlee.iteye.com/" target="_blank">maozilee</a>： windows下面就用NTFS，没事儿！
-<a href="http://lbyzx123.iteye.com/blog/1073789#bc2218928" target="_blank">请问一下mysql是不是限制了单个表的容量，能改吗</a></li>
-<li><a href="http://lljjssljseye.iteye.com/" target="_blank">lljjssljseye</a>： ...
-<a href="http://lbyzx123.iteye.com/blog/1172418#bc2216979" target="_blank">三个故事说穿许多人</a></li>
-<li><a href="http://lbyzx123.iteye.com/" target="_blank">lbyzx123</a>： hable 写道看不明白啊,能不能加点注释 很简单呀，既然是异 ...
-<a href="http://lbyzx123.iteye.com/blog/1139428#bc2213672" target="_blank">extjs4 异步树的写法</a></li>
-<li><a href="http://hable.iteye.com/" target="_blank">hable</a>： 看不明白啊,能不能加点注释
-<a href="http://lbyzx123.iteye.com/blog/1139428#bc2213623" target="_blank">extjs4 异步树的写法</a>
-声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
-© 2003-2011 ITeye.com. All rights reserved. [ 京ICP证110151号 京公网安备110105010620 ]
-<img src="" alt=""></li>
-</ul>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wrapper/">wrapper</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wrapper/" class="label label-primary">wrapper</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper把Java程序作为Windows系统服务--IT/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wrapper--使用JavaServiceWrapper把Java程序作为Windows系统服务--IT" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope/">Java Service Wrapper </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-service-wrapper-logging-configuration-properties">Java Service Wrapper - Logging Configuration Properties</h1>
-<p><img src="" alt="World Map">EnglishJapanese (Nihongo)German (Deutsch)</p>
-<p><strong>Please  or</strong></p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/" target="_blank"><img src="" alt="Java Service Wrapper Logo"></a></li>
-<li><a href="http://www.tanukisoftware.com/" target="_blank"><img src="" alt="Tanuki Software Ltd Logo"></a></li>
-</ul>
-<p>Java Service Wrapper is the easiest way to make your product more reliable.</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/requestTrial.jsp" target="_blank"><img src="" alt="Free Trial"></a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp" target="_blank"><img src="" alt="Buy Now"></a></li>
-<li><a href="http://www.tanukisoftware.com/" target="_blank">Tanuki Software</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/" target="_blank">Java Service Wrapper</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp" target="_blank">Home</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Product</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Overview</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/product-features.html" target="_blank">Features</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/licenseOverview.html" target="_blank">License</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/faq.html" target="_blank">FAQ</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp" target="_blank">Download</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp#stable" target="_blank">Stable Release</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/release-notes.html" target="_blank">Release Notes</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/versions.jsp" target="_blank">Past Releases</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp#purchase" target="_blank">Order</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp#purchase" target="_blank">Buy now</a></p>
-</li>
-<li><a href="http://www.tanukisoftware.com/en/distributors.php" target="_blank">Distributors</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/licenseOverview.html" target="_blank">License Overview</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/licenseOverview.html#examples" target="_blank">License FAQ</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Documentation</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Introduction</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/integrate.html" target="_blank">Integration Methods</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/launch.html" target="_blank">Launching your Application</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html" target="_blank">Configuration Properties</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/javadocs.html" target="_blank">Java API</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/i18n.html" target="_blank">Localization / i18n</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/security-model.html" target="_blank">Security Model</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/jmx.html" target="_blank">JMX Control</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/example.html" target="_blank">TestWrapper Application</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Support</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/debugging.html" target="_blank">Debugging</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/troubleshooting.html" target="_blank">Troubleshooting</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/howto.html" target="_blank">HOWTO</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/qna.html" target="_blank">Questions &amp; Answers</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/faq.html" target="_blank">FAQ</a></li>
-<li><a href="http://sourceforge.net/tracker/?group_id=39428" target="_blank">Issue Tracking</a></li>
-<li><a href="http://sourceforge.net/mail/?group_id=39428" target="_blank">Maling List</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Get Support</a></li>
-<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank">Community</a></p>
-</li>
-<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank">SourceForge Project</a></p>
-</li>
-<li><a href="http://sourceforge.net/svn/?group_id=39428" target="_blank">Source Repository</a></li>
-<li><p><a href="http://www.tanukisoftware.com/en/" target="_blank">About us</a></p>
-</li>
-<li><p><a href="http://www.tanukisoftware.com/en/company.php" target="_blank">Company Profile</a></p>
-</li>
-<li><a href="http://www.tanukisoftware.com/en/distributors.php" target="_blank">Distributors</a></li>
-<li><a href="http://www.tanukisoftware.com/en/customers.php" target="_blank">Customers</a></li>
-<li><a href="http://www.tanukisoftware.com/en/contact.php" target="_blank">Contact us</a></li>
-<li><h2 id="properties">Properties</h2>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html" target="_blank">Configuration Overview</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html#category" target="_blank">List by Category</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html#name" target="_blank">List by Name</a></p>
-</li>
-<li><h2 id="currently-logged-on-">Currently logged on:</h2>
-</li>
-<li><p>1 users, 100 guests</p>
-</li>
-<li><h2 id="customers">Customers</h2>
-</li>
-</ul>
-<p>Logging Configuration Properties <a href=""></a> # Logging Configuration Properties Logging properties are used to configure how where the Java Service Wrapper logs internal output as well as JVM output which would normally show up in the console used to launch a Java application. Wrapper Logging properties do not in any way control nor replace Logging tools within the Java application.</p>
-<p>[General/Common]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-adviser.html" target="_blank">wrapper.adviser</a> (3.1.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-debug.html" target="_blank">wrapper.debug</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#action" target="_blank">wrapper.filter.action.<n></a> (3.0.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#allow-wildcards" target="_blank">wrapper.filter.allow_wildcards.<n></a> (3.5.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#message" target="_blank">wrapper.filter.message.<n></a> (3.5.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#trigger" target="_blank">wrapper.filter.trigger.<n></a> (3.0.0)</li>
-</ul>
-<p>[Console]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-flush.html" target="_blank">wrapper.console.flush</a> (3.2.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-format.html" target="_blank">wrapper.console.format</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-loglevel.html" target="_blank">wrapper.console.loglevel</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-x-to-stderr.html" target="_blank">wrapper.console.error_to_stderr</a> (3.5.3)</p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-x-to-stderr.html" target="_blank">wrapper.console.fatal_to_stderr</a> (3.5.3)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-x-to-stderr.html" target="_blank">wrapper.console.warn_to_stderr</a> (3.5.3)</li>
-</ul>
-<p>[Command]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-java-command-loglevel.html" target="_blank">wrapper.java.command.loglevel</a> (3.1.2)</li>
-</ul>
-<p>[Log File]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile.html" target="_blank">wrapper.logfile</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-format.html" target="_blank">wrapper.logfile.format</a> (2.2.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-inactivity-timeout.html" target="_blank">wrapper.logfile.inactivity.timeout</a> (3.2.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-loglevel.html" target="_blank">wrapper.logfile.loglevel</a> (2.2.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-maxfiles.html" target="_blank">wrapper.logfile.maxfiles</a> (2.2.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-maxsize.html" target="_blank">wrapper.logfile.maxsize</a> (2.2.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-purge-pattern.html" target="_blank">wrapper.logfile.purge.pattern</a> (3.3.8)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-purge-sort.html" target="_blank">wrapper.logfile.purge.sort</a> (3.3.8)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-rollmode.html" target="_blank">wrapper.logfile.rollmode</a> (3.2.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-umask.html#x-umask" target="_blank">wrapper.logfile.umask</a> (3.2.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-log-lf-delay-threshold.html" target="_blank">wrapper.log.lf_delay.threshold</a> (3.5.10)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-log-warning-threshold.html" target="_blank">wrapper.log.warning.threshold</a> (3.5.8)</li>
-</ul>
-<p>[Log-Dialog]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-enable.html" target="_blank">wrapper.logdialog.enable</a> (3.3.1)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-format.html" target="_blank">wrapper.logdialog.format</a> (3.3.1)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-lines.html" target="_blank">wrapper.logdialog.lines</a> (3.3.1)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-loglevel.html" target="_blank">wrapper.logdialog.loglevel</a> (3.3.1)</li>
-</ul>
-<p>[Syslog]</p>
-<ul>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-facility.html" target="_blank">wrapper.syslog.facility</a> (3.2.1)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-ident.html" target="_blank">wrapper.syslog.ident</a> (3.2.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-local-host.html" target="_blank">wrapper.syslog.local.host</a> (3.5.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-loglevel.html" target="_blank">wrapper.syslog.loglevel</a> (2.2.5)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-remote-host.html" target="_blank">wrapper.syslog.remote.host</a> (3.5.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-remote-port.html" target="_blank">wrapper.syslog.remote.port</a> (3.5.0)</li>
-<li><a href="http://wrapper.tanukisoftware.com/" target="_blank"><img src="" alt=""></a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Product</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Overview</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/product-features.html" target="_blank">Features</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp#stable" target="_blank">Download</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp#purchase" target="_blank">Buy Now</a></li>
-<li><a href="http://www.tanukisoftware.com/en/distributors.php" target="_blank">Distribuitors</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Documentation</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Introduction</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/integrate.html" target="_blank">Integration Methods</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html" target="_blank">Configuration Properties</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/javadocs.html" target="_blank">Java API</a></li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Support</a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/debugging.html" target="_blank">Debugging</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/troubleshooting.html" target="_blank">Troubleshooting</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/qna.html" target="_blank">Questions &amp; Answers</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/faq.html" target="_blank">FAQ</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Get Support</a></li>
-<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank">Community</a></p>
-</li>
-<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank"><img src="" alt="SourceForge Project"></a></p>
-</li>
-<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/" target="_blank">English</a></p>
-</li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/japanese/" target="_blank">日本語</a></li>
-<li><a href="http://wrapper.tanukisoftware.com/doc/german/" target="_blank">Deutsch</a>
-Copyright (c) 2004-2011, Tanuki Software, Ltd. All Rights Reserved.</li>
-</ul>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wrapper/">wrapper</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wrapper/" class="label label-primary">wrapper</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ftp/">ftp</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ftp/" class="label label-primary">ftp</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-ftp--被动模式下FTP的详细工作过程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ftp--被动模式下FTP的详细工作过程" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -2347,7 +2411,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-25 18:15:41</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-26 21:21:32</em></span></div>
 </div>
 <div class="clearfix"></div>
 

@@ -110,26 +110,290 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识/">深入浅出 Java Concurrency (1) </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency2-原子操作/">深入浅出 Java Concurrency (2)</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency2-原子操作/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-java-concurrency-1-j-u-c-">深入浅出 Java Concurrency (1) : J.U.C的整体认识</h1>
-<p>最近一直用的比较多的就是java.util.concurrent(J.U.C)，实际上这块一直也没有完全深入研究，这次准备花点时间研究下Java里面整个并发体系。初步的设想包括比较大的方便（包括硬件、软件、思想以及误区等等），因此可能会持续较长的时间。这块内容也是Java在多线程方面引以为豪的一部分，深入这一部分不仅对整个Java体系有更深的了解，也对工作、学习的态度有多帮助。</p>
-<p>从深入浅出入手，大体内容包括一下几个方面：</p>
-<p>（1）J.U.C的API：包括完整的类库结构和样例分析。</p>
-<p>（2）J.U.C的硬件原理以及软件思想：这部分也就将自己个人对硬件与程序语言的一些认识与大家分享，主要以总结前人的经验和所谓的理论来进行一些描述。</p>
-<p>（3）J.U.C的误区和常见陷阱：包括对J.U.C的一些设计思想和使用上的原则进行说明，同时对可能犯的错误进行一些总结。</p>
-<p>下面的图是J.U.C完整的API。<a href="http://www.blogjava.net/images/blogjava_net/xylz/WindowsLiveWriter/JavaConcurrent_FB25/J.U.C_2.png" target="_blank">完整的图片地址在这里</a>。</p>
-<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-Java-Concurrency-1--J.U.C_9314/J.U.C_2.png" target="_blank"><img src="&quot;J.U.C&quot;" alt="J.U.C"></a></p>
-<p>完整的MindManger图形可以从下面的地址得到（注意，我是用MindManger 8写的，低版本没有测试是否能正常显示）。</p>
-<p> <a href="http://www.blogjava.net/Files/xylz/J.U.C.zip" title="J.U.C完整的MindManger图形" target="_blank">J.U.C完整的MindManger图形</a></p>
-<p>在接下来的系列文章中，我们将根据这张API的图形进行完整的分析和研究。
-来源： <a href="[http://www.blogjava.net/xylz/archive/2010/06/30/324915.html](http://www.blogjava.net/xylz/archive/2010/06/30/324915.html)">[http://www.blogjava.net/xylz/archive/2010/06/30/324915.html](http://www.blogjava.net/xylz/archive/2010/06/30/324915.html)</a> </p>
+        <h1 id="-java-concurrency-2-">深入浅出 Java Concurrency (2): 原子操作</h1>
+<p>从相对简单的Atomic入手（java.util.concurrent是基于Queue的并发包，而Queue，很多情况下使用到了Atomic操作，因此首先从这里开始）。很多情况下我们只是需要一个简单的、高效的、线程安全的递增递减方案。注意，这里有三个条件：简单，意味着程序员尽可能少的操作底层或者实现起来要比较容易；高效意味着耗用资源要少，程序处理速度要快；线程安全也非常重要，这个在多线程下能保证数据的正确性。这三个条件看起来比较简单，但是实现起来却难以令人满意。</p>
+<p>通常情况下，在Java里面，++i或者--i不是线程安全的，这里面有三个独立的操作：或者变量当前值，为该值+1/-1，然后写回新的值。在没有额外资源可以利用的情况下，只能使用加锁才能保证读-改-写这三个操作时“原子性”的。</p>
+<p>Doug Lea在未将<a href="http://backport-jsr166.sourceforge.net/" target="_blank">backport-util-concurrent</a>合并到<a href="http://jcp.org/en/jsr/detail?id=166" target="_blank">JSR 166</a>里面来之前，是采用纯Java实现的，于是不可避免的采用了synchronized关键字。</p>
+<p>public final synchronized void set(int newValue);</p>
+<p>public final synchronized int getAndSet(int newValue);</p>
+<p>public final synchronized int incrementAndGet();</p>
+<p>同时在变量上使用了volatile （后面会具体来讲volatile到底是个什么东东）来保证get()的时候不用加锁。尽管synchronized的代价还是很高的，但是在没有JNI的手段下纯Java语言还是不能实现此操作的。</p>
+<p>JSR 166提上日程后，backport-util-concurrent就合并到JDK 5.0里面了，在这里面重复使用了现代CPU的特性来降低锁的消耗。后本章的最后小结中会谈到这些原理和特性。在此之前先看看API的使用。</p>
+<p>一切从java.util.concurrent.atomic.AtomicInteger开始。</p>
+<p>int addAndGet(int delta)
+          以原子方式将给定值与当前值相加。 实际上就是等于线程安全版本的i =i+delta操作。</p>
+<p>boolean compareAndSet(int expect, int update)
+          如果当前值 == 预期值，则以原子方式将该值设置为给定的更新值。 如果成功就返回true，否则返回false，并且不修改原值。</p>
+<p>int decrementAndGet()
+          以原子方式将当前值减 1。 相当于线程安全版本的--i操作。</p>
+<p>int get()
+          获取当前值。</p>
+<p>int getAndAdd(int delta)
+          以原子方式将给定值与当前值相加。 相当于线程安全版本的t=i;i+=delta;return t;操作。</p>
+<p>int getAndDecrement()
+          以原子方式将当前值减 1。 相当于线程安全版本的i--操作。</p>
+<p>int getAndIncrement()
+          以原子方式将当前值加 1。 相当于线程安全版本的i++操作。</p>
+<p>int getAndSet(int newValue)
+          以原子方式设置为给定值，并返回旧值。 相当于线程安全版本的t=i;i=newValue;return t;操作。</p>
+<p>int incrementAndGet()
+          以原子方式将当前值加 1。 相当于线程安全版本的++i操作。 </p>
+<p>void lazySet(int newValue)
+          最后设置为给定值。 延时设置变量值，这个等价于set()方法，但是由于字段是volatile类型的，因此次字段的修改会比普通字段（非volatile字段）有稍微的性能延时（尽管可以忽略），所以如果不是想立即读取设置的新值，允许在“后台”修改值，那么此方法就很有用。如果还是难以理解，这里就类似于启动一个后台线程如执行修改新值的任务，原线程就不等待修改结果立即返回（这种解释其实是不正确的，但是可以这么理解）。</p>
+<p>void set(int newValue)
+          设置为给定值。 直接修改原始值，也就是i=newValue操作。</p>
+<p>boolean weakCompareAndSet(int expect, int update)
+          如果当前值 == 预期值，则以原子方式将该设置为给定的更新值。JSR规范中说：以原子方式读取和有条件地写入变量但<em>不</em> 创建任何 happen-before 排序，因此不提供与除 weakCompareAndSet 目标外任何变量以前或后续读取或写入操作有关的任何保证。大意就是说调用weakCompareAndSet时并不能保证不存在happen-before的发生（也就是可能存在指令重排序导致此操作失败）。但是从Java源码来看，其实此方法并没有实现JSR规范的要求，最后效果和compareAndSet是等效的，都调用了unsafe.compareAndSwapInt()完成操作。
+下面的代码是一个测试样例，为了省事就写在一个方法里面来了。
+<img src="" alt="">package xylz.study.concurrency.atomic;
+<img src="" alt="">
+<img src="" alt="">import java.util.concurrent.atomic.AtomicInteger;
+<img src="" alt="">
+<img src="" alt="">import org.junit.Test;
+<img src="" alt="">
+<img src="" alt="">import static org.junit.Assert./*;
+<img src="" alt="">
+<img src="" alt="">public class AtomicIntegerTest {
+<img src="" alt="">
+<img src="" alt="">    @Test
+<img src="" alt="">    public void testAll() throws InterruptedException{
+<img src="" alt="">        final AtomicInteger value = new AtomicInteger(10);
+<img src="" alt="">        assertEquals(value.compareAndSet(1, 2), false);
+<img src="" alt="">        assertEquals(value.get(), 10);
+<img src="" alt="">        assertTrue(value.compareAndSet(10, 3));
+<img src="" alt="">        assertEquals(value.get(), 3);
+<img src="" alt="">        value.set(0);
+<img src="" alt="">        //
+<img src="" alt="">        assertEquals(value.incrementAndGet(), 1);
+<img src="" alt="">        assertEquals(value.getAndAdd(2),1);
+<img src="" alt="">        assertEquals(value.getAndSet(5),3);
+<img src="" alt="">        assertEquals(value.get(),5);
+<img src="" alt="">        //
+<img src="" alt="">        final int threadSize = 10;
+<img src="" alt="">        Thread[] ts = new Thread[threadSize];
+<img src="" alt="">        for (int i = 0; i &lt; threadSize; i++) {
+<img src="" alt="">            ts[i] = new Thread() {
+<img src="" alt="">                public void run() {
+<img src="" alt="">                    value.incrementAndGet();
+<img src="" alt="">                }
+<img src="" alt="">            };
+<img src="" alt="">        }
+<img src="" alt="">        //
+<img src="" alt="">        for(Thread t:ts) {
+<img src="" alt="">            t.start();
+<img src="" alt="">        }
+<img src="" alt="">        for(Thread t:ts) {
+<img src="" alt="">            t.join();
+<img src="" alt="">        }
+<img src="" alt="">        //
+<img src="" alt="">        assertEquals(value.get(), 5+threadSize);
+<img src="" alt="">    }
+<img src="" alt="">
+<img src="" alt="">}
+<img src="" alt="">
+ 由于这里例子比较简单，这里就不做过多介绍了。
+AtomicInteger和AtomicLong、AtomicBoolean、AtomicReference差不多，这里就不介绍了。在下一篇中就介绍下数组、字段等其他方面的原子操作。
+ 参考资料：
+(1)<a href="http://stackoverflow.com/questions/2443239/java-atomicinteger-what-are-the-differences-between-compareandset-and-weakcompar" target="_blank"><a href="http://stackoverflow.com/questions/2443239/java-atomicinteger-what-are-the-differences-between-compareandset-and-weakcompar">http://stackoverflow.com/questions/2443239/java-atomicinteger-what-are-the-differences-between-compareandset-and-weakcompar</a></a>
+(2)<a href="http://stackoverflow.com/questions/1468007/atomicinteger-lazyset-and-set" target="_blank"><a href="http://stackoverflow.com/questions/1468007/atomicinteger-lazyset-and-set">http://stackoverflow.com/questions/1468007/atomicinteger-lazyset-and-set</a></a></p>
+<p>来源： <a href="[http://www.blogjava.net/xylz/archive/2010/07/01/324988.html](http://www.blogjava.net/xylz/archive/2010/07/01/324988.html)">[http://www.blogjava.net/xylz/archive/2010/07/01/324988.html](http://www.blogjava.net/xylz/archive/2010/07/01/324988.html)</a></p>
+<p>在这一部分开始讨论数组原子操作和一些其他的原子操作。</p>
+<p><strong>AtomicIntegerArray/AtomicLongArray/AtomicReferenceArray</strong>的API类似，选择有代表性的AtomicIntegerArray来描述这些问题。</p>
+<p><strong>int get(int i)</strong></p>
+<p>获取位置 </p>
+<p>i
+ 的当前值。很显然，由于这个是数组操作，就有索引越界的问题（IndexOutOfBoundsException异常）。</p>
+<p>对于下面的API起始和AtomicInteger是类似的，这种通过方法、参数的名称就能够得到函数意义的写法是非常值得称赞的。在<a href="http://www.china-pub.com/12901" target="_blank">《重构：改善既有代码的设计》</a>和<a href="http://www.china-pub.com/196266" target="_blank">《代码整洁之道》</a>中都非常推崇这种做法。</p>
+<p><strong>void set(int i, int newValue)</strong>
+<strong>void lazySet(int i, int newValue)
+int getAndSet(int i, int newValue)
+boolean compareAndSet(int i, int expect, int update)
+boolean weakCompareAndSet(int i, int expect, int update)
+int getAndIncrement(int i)
+int getAndDecrement(int i)
+int getAndAdd(int i, int delta)
+int incrementAndGet(int i)
+int decrementAndGet(int i)
+int addAndGet(int i, int delta)</strong></p>
+<p>整体来说，数组的原子操作在理解上还是相对比较容易的，这些API就是有多使用才能体会到它们的好处，而不仅仅是停留在理论阶段。</p>
+<p>现在关注字段的原子更新。</p>
+<p><strong>AtomicIntegerFieldUpdater<T>/AtomicLongFieldUpdater<T>/AtomicReferenceFieldUpdater<T,V></strong>是基于反射的原子更新字段的值。</p>
+<p>相应的API也是非常简单的，但是也是有一些约束的。</p>
+<p>（1）字段必须是volatile类型的！在后面的章节中会详细说明为什么必须是volatile，volatile到底是个什么东西。</p>
+<p>（2）字段的描述类型（修饰符public/protected/default/private）是与调用者与操作对象字段的关系一致。也就是说调用者能够直接操作对象字段，那么就可以反射进行原子操作。但是对于父类的字段，子类是不能直接操作的，尽管子类可以访问父类的字段。</p>
+<p>（3）只能是实例变量，不能是类变量，也就是说不能加static关键字。</p>
+<p>（4）只能是可修改变量，不能使final变量，因为final的语义就是不可修改。实际上final的语义和volatile是有冲突的，这两个关键字不能同时存在。</p>
+<p>（5）对于<strong>AtomicIntegerFieldUpdater</strong>和<strong>AtomicLongFieldUpdater</strong>只能修改int/long类型的字段，不能修改其包装类型（Integer/Long）。如果要修改包装类型就需要使用<strong>AtomicReferenceFieldUpdater</strong>。</p>
+<p>在下面的例子中描述了操作的方法。</p>
+<p><img src="" alt="">package xylz.study.concurrency.atomic; 
+<img src="" alt="">
+<img src="" alt="">import java.util.concurrent.atomic.AtomicIntegerFieldUpdater; 
+<img src="" alt="">
+<img src="" alt="">public class AtomicIntegerFieldUpdaterDemo { 
+<img src="" alt="">
+<img src="" alt="">   class DemoData{
+<img src="" alt="">       public volatile int value1 = 1;
+<img src="" alt="">       volatile int value2 = 2;
+<img src="" alt="">       protected volatile int value3 = 3;
+<img src="" alt="">       private volatile int value4 = 4;
+<img src="" alt="">   }
+<img src="" alt="">    AtomicIntegerFieldUpdater<DemoData> getUpdater(String fieldName) {
+<img src="" alt="">        return AtomicIntegerFieldUpdater.newUpdater(DemoData.class, fieldName);
+<img src="" alt="">    }
+<img src="" alt="">    void doit() {
+<img src="" alt="">        DemoData data = new DemoData();
+<img src="" alt="">        System.out.println(&quot;1 ==&gt; &quot;+getUpdater(&quot;value1&quot;).getAndSet(data, 10));
+<img src="" alt="">        System.out.println(&quot;3 ==&gt; &quot;+getUpdater(&quot;value2&quot;).incrementAndGet(data));
+<img src="" alt="">        System.out.println(&quot;2 ==&gt; &quot;+getUpdater(&quot;value3&quot;).decrementAndGet(data));
+<img src="" alt="">        System.out.println(&quot;true ==&gt; &quot;+getUpdater(&quot;value4&quot;).compareAndSet(data, 4, 5));
+<img src="" alt="">    }
+<img src="" alt="">    public static void main(String[] args) {
+<img src="" alt="">        AtomicIntegerFieldUpdaterDemo demo = new AtomicIntegerFieldUpdaterDemo();
+<img src="" alt="">        demo.doit();
+<img src="" alt="">    }
+<img src="" alt="">} 
+<img src="" alt="">
+<img src="" alt=""></p>
+<p>在上面的例子中DemoData的字段value3/value4对于AtomicIntegerFieldUpdaterDemo类是不可见的，因此通过反射是不能直接修改其值的。</p>
+<p><strong>AtomicMarkableReference</strong>类描述的一个<Object,Boolean>的对，可以原子的修改Object或者Boolean的值，这种数据结构在一些缓存或者状态描述中比较有用。这种结构在单个或者同时修改Object/Boolean的时候能够有效的提高吞吐量。</p>
+<p><strong>AtomicStampedReference</strong>类维护带有整数“标志”的对象引用，可以用原子方式对其进行更新。对比<strong>AtomicMarkableReference</strong>类的<Object,Boolean>，<strong>AtomicStampedReference</strong>维护的是一种类似<Object,int>的数据结构，其实就是对对象（引用）的一个并发计数。但是与<strong>AtomicInteger</strong>不同的是，此数据结构可以携带一个对象引用（Object），并且能够对此对象和计数同时进行原子操作。</p>
+<p>在后面的章节中会提到“ABA问题”，而<strong>AtomicMarkableReference/**</strong>AtomicStampedReference<strong>在解决“ABA问题”上很有用</strong>。**</p>
+<hr>
+<p>原子操作的使用大概就是这么多，大体来说还算是比较清晰的，在下一个章节中，将对象原子操作进行总结，重点介绍下原子操作的原理和设计思想。
+来源： <a href="[http://www.blogjava.net/xylz/archive/2010/07/02/325079.html](http://www.blogjava.net/xylz/archive/2010/07/02/325079.html)">[http://www.blogjava.net/xylz/archive/2010/07/02/325079.html](http://www.blogjava.net/xylz/archive/2010/07/02/325079.html)</a> </p>
+<p>在这个小结里面重点讨论原子操作的原理和设计思想。</p>
+<p>由于在下一个章节中会谈到锁机制，因此此小节中会适当引入锁的概念。</p>
+<p>在<a href="http://www.amazon.com/exec/obidos/ASIN/0321349601/ref=nosim/none0b69" title="http://www.amazon.com/exec/obidos/ASIN/0321349601/ref=nosim/none0b69" target="_blank">Java Concurrency in Practice</a>中是这样定义线程安全的：
+<strong>当多个线程访问一个类时，如果不用考虑这些线程在运行时环境下的调度和交替运行，并且不需要额外的同步及在调用方代码不必做其他的协调，这个类的行为仍然是正确的，那么这个类就是线程安全的。</strong></p>
+<p>显然只有资源竞争时才会导致线程不安全，因此<strong><em>无状态对象永远是线程安全的</em></strong>。</p>
+<p>原子操作的描述是： 多个线程执行一个操作时，其中<strong><em>任何一个线程要么完全执行完此操作，要么没有执行此操作的任何步骤</em></strong>，那么这个操作就是原子的。</p>
+<p>枯燥的定义介绍完了，下面说更枯燥的理论知识。</p>
+<p><strong>指令重排序</strong></p>
+<p>Java语言规范规定了JVM线程内部维持顺序化语义，也就是说只要程序的最终结果等同于它在严格的顺序化环境下的结果，那么指令的执行顺序就可能与代码的顺序不一致。这个过程通过叫做指令的重排序。指令重排序存在的意义在于：JVM能够根据处理器的特性（CPU的多级缓存系统、多核处理器等）适当的重新排序机器指令，使机器指令更符合CPU的执行特点，最大限度的发挥机器的性能。</p>
+<p>程序执行最简单的模型是按照指令出现的顺序执行，这样就与执行指令的CPU无关，最大限度的保证了指令的可移植性。这个模型的专业术语叫做顺序化一致性模型。但是现代计算机体系和处理器架构都不保证这一点（因为人为的指定并不能总是保证符合CPU处理的特性）。</p>
+<p>我们来看最经典的一个案例。
+<img src="" alt="">package xylz.study.concurrency.atomic; 
+<img src="" alt="">
+<img src="" alt="">public class ReorderingDemo { 
+<img src="" alt="">
+<img src="" alt="">    static int x = 0, y = 0, a = 0, b = 0; 
+<img src="" alt="">
+<img src="" alt="">    public static void main(String[] args) throws Exception { 
+<img src="" alt="">
+<img src="" alt="">        for (int i = 0; i &lt; 100; i++) {
+<img src="" alt="">            x=y=a=b=0;
+<img src="" alt="">            Thread one = new Thread() {
+<img src="" alt="">                public void run() {
+<img src="" alt="">                    a = 1;
+<img src="" alt="">                    x = b;
+<img src="" alt="">                }
+<img src="" alt="">            };
+<img src="" alt="">            Thread two = new Thread() {
+<img src="" alt="">                public void run() {
+<img src="" alt="">                    b = 1;
+<img src="" alt="">                    y = a;
+<img src="" alt="">                }
+<img src="" alt="">            };
+<img src="" alt="">            one.start();
+<img src="" alt="">            two.start();
+<img src="" alt="">            one.join();
+<img src="" alt="">            two.join();
+<img src="" alt="">            System.out.println(x + &quot; &quot; + y);
+<img src="" alt="">        }
+<img src="" alt="">    } 
+<img src="" alt="">
+<img src="" alt="">}
+<img src="" alt="">
+<img src="" alt="">
+在这个例子中one/two两个线程修改区x,y,a,b四个变量，在执行100次的情况下，可能得到(0 1)或者（1 0）或者（1 1）。事实上按照JVM的规范以及CPU的特性有很可能得到（0 0）。当然上面的代码大家不一定能得到（0 0），因为run()里面的操作过于简单，可能比启动一个线程花费的时间还少，因此上面的例子难以出现（0,0）。但是在现代CPU和JVM上确实是存在的。由于run()里面的动作对于结果是无关的，因此里面的指令可能发生指令重排序，即使是按照程序的顺序执行，数据变化刷新到主存也是需要时间的。假定是按照a=1;x=b;b=1;y=a;执行的，x=0是比较正常的，虽然a=1在y=a之前执行的，但是由于线程one执行a=1完成后还没有来得及将数据1写回主存（这时候数据是在线程one的堆栈里面的），线程two从主存中拿到的数据a可能仍然是0（显然是一个过期数据，但是是有可能的），这样就发生了数据错误。</p>
+<p>在两个线程交替执行的情况下数据的结果就不确定了，在机器压力大，多核CPU并发执行的情况下，数据的结果就更加不确定了。</p>
+<p><strong>Happens-before法则</strong></p>
+<p>Java存储模型有一个happens-before原则，就是如果动作B要看到动作A的执行结果（无论A/B是否在同一个线程里面执行），那么A/B就需要满足happens-before关系。</p>
+<p>在介绍happens-before法则之前介绍一个概念：JMM动作（Java Memeory Model Action），Java存储模型动作。一个动作（Action）包括：变量的读写、监视器加锁和释放锁、线程的start()和join()。后面还会提到锁的的。</p>
+<p>happens-before完整规则：
+（1）同一个线程中的每个Action都happens-before于出现在其后的任何一个Action。</p>
+<p>（2）对一个监视器的解锁happens-before于每一个后续对同一个监视器的加锁。</p>
+<p>（3）对volatile字段的写入操作happens-before于每一个后续的同一个字段的读操作。</p>
+<p>（4）Thread.start()的调用会happens-before于启动线程里面的动作。</p>
+<p>（5）Thread中的所有动作都happens-before于其他线程检查到此线程结束或者Thread.join（）中返回或者Thread.isAlive()==false。</p>
+<p>（6）一个线程A调用另一个另一个线程B的interrupt（）都happens-before于线程A发现B被A中断（B抛出异常或者A检测到B的isInterrupted（）或者interrupted()）。</p>
+<p>（7）一个对象构造函数的结束happens-before与该对象的finalizer的开始</p>
+<p>（8）如果A动作happens-before于B动作，而B动作happens-before与C动作，那么A动作happens-before于C动作。</p>
+<p><strong>volatile语义</strong></p>
+<p>到目前为止，我们多次提到volatile，但是却仍然没有理解volatile的语义。</p>
+<p>volatile相当于synchronized的弱实现，也就是说volatile实现了类似synchronized的语义，却又没有锁机制。它确保对volatile字段的更新以可预见的方式告知其他的线程。</p>
+<p>volatile包含以下语义：</p>
+<p>（1）Java 存储模型不会对valatile指令的操作进行重排序：这个保证对volatile变量的操作时按照指令的出现顺序执行的。</p>
+<p>（2）volatile变量不会被缓存在寄存器中（只有拥有线程可见）或者其他对CPU不可见的地方，每次总是从主存中读取volatile变量的结果。也就是说对于volatile变量的修改，其它线程总是可见的，并且不是使用自己线程栈内部的变量。也就是在happens-before法则中，对一个valatile变量的写操作后，其后的任何读操作理解可见此写操作的结果。</p>
+<p>尽管volatile变量的特性不错，但是volatile并不能保证线程安全的，也就是说volatile字段的操作不是原子性的，volatile变量只能保证可见性（一个线程修改后其它线程能够理解看到此变化后的结果），要想保证原子性，目前为止只能加锁！</p>
+<p>volatile通常在下面的场景：</p>
+<p><img src="" alt="">volatile boolean done = false;
+<img src="" alt="">
+<img src="" alt="">…
+<img src="" alt="">
+<img src="" alt="">    while( ! done ){
+<img src="" alt="">        dosomething();
+<img src="" alt="">    }</p>
+<p>应用volatile变量的三个原则：
+（1）写入变量不依赖此变量的值，或者只有一个线程修改此变量</p>
+<p>（2）变量的状态不需要与其它变量共同参与不变约束</p>
+<p>（3）访问变量不需要加锁</p>
+<p><strong>这一节理论知识比较多，但是这是很面很多章节的基础，在后面的章节中会多次提到这些特性。</strong></p>
+<p>本小节中还是没有谈到原子操作的原理和思想，在下一节中将根据上面的一些知识来介绍原子操作。</p>
+<p>参考资料：</p>
+<p>（1）<a href="http://www.amazon.com/exec/obidos/ASIN/0321349601/ref=nosim/none0b69" title="http://www.amazon.com/exec/obidos/ASIN/0321349601/ref=nosim/none0b69" target="_blank">Java Concurrency in Practice</a></p>
+<p>（2）<a href="http://www.ibm.com/developerworks/cn/java/j-jtp06197.html" target="_blank">正确使用 Volatile 变量</a>
+来源： <a href="[http://www.blogjava.net/xylz/archive/2010/07/03/325168.html](http://www.blogjava.net/xylz/archive/2010/07/03/325168.html)">[http://www.blogjava.net/xylz/archive/2010/07/03/325168.html](http://www.blogjava.net/xylz/archive/2010/07/03/325168.html)</a> </p>
+<p>在JDK 5之前Java语言是靠synchronized关键字保证同步的，这会导致有锁（后面的章节还会谈到锁）。</p>
+<p>锁机制存在以下问题：</p>
+<p>（1）在多线程竞争下，加锁、释放锁会导致比较多的上下文切换和调度延时，引起性能问题。</p>
+<p>（2）一个线程持有锁会导致其它所有需要此锁的线程挂起。</p>
+<p>（3）如果一个优先级高的线程等待一个优先级低的线程释放锁会导致优先级倒置，引起性能风险。</p>
+<p>volatile是不错的机制，但是volatile不能保证原子性。因此对于同步最终还是要回到锁机制上来。</p>
+<p>独占锁是一种悲观锁，synchronized就是一种独占锁，会导致其它所有需要锁的线程挂起，等待持有锁的线程释放锁。而另一个更加有效的锁就是乐观锁。所谓乐观锁就是，每次不加锁而是假设没有冲突而去完成某项操作，如果因为冲突失败就重试，直到成功为止。</p>
+<p><strong>CAS 操作</strong></p>
+<p>上面的乐观锁用到的机制就是CAS，Compare and Swap。</p>
+<p>CAS有3个操作数，内存值V，旧的预期值A，要修改的新值B。当且仅当预期值A和内存值V相同时，将内存值V修改为B，否则什么都不做。</p>
+<p><strong>非阻塞算法 （nonblocking algorithms）</strong>
+一个线程的失败或者挂起不应该影响其他线程的失败或挂起的算法。</p>
+<p>现代的CPU提供了特殊的指令，可以自动更新共享数据，而且能够检测到其他线程的干扰，而 compareAndSet() 就用这些代替了锁定。</p>
+<p>拿出AtomicInteger来研究在没有锁的情况下是如何做到数据正确性的。
+private volatile int value;</p>
+<p>首先毫无以为，在没有锁的机制下可能需要借助volatile原语，保证线程间的数据是可见的（共享的）。</p>
+<p>这样才获取变量的值的时候才能直接读取。
+public final int get() {
+        return value;
+    }</p>
+<p>然后来看看++i是怎么做到的。</p>
+<p>public final int incrementAndGet() {
+    for (;;) {
+        int current = get();
+        int next = current + 1;
+        if (compareAndSet(current, next))
+            return next;
+    }
+}</p>
+<p>在这里采用了CAS操作，每次从内存中读取数据然后将此数据和+1后的结果进行CAS操作，如果成功就返回结果，否则重试直到成功为止。</p>
+<p>而compareAndSet利用JNI来完成CPU指令的操作。
+public final boolean compareAndSet(int expect, int update) {<br>    return unsafe.compareAndSwapInt(this, valueOffset, expect, update);
+    }</p>
+<p>整体的过程就是这样子的，利用CPU的CAS指令，同时借助JNI来完成Java的非阻塞算法。其它原子操作都是利用类似的特性完成的。</p>
+<p>而整个J.U.C都是建立在CAS之上的，因此对于synchronized阻塞算法，J.U.C在性能上有了很大的提升。参考资料的文章中介绍了如果利用CAS构建非阻塞计数器、队列等数据结构。</p>
+<p>CAS看起来很爽，但是会导致“ABA问题”。</p>
+<p>CAS算法实现一个重要前提需要取出内存中某时刻的数据，而在下时刻比较并替换，那么在这个时间差类会导致数据的变化。</p>
+<p>比如说一个线程one从内存位置V中取出A，这时候另一个线程two也从内存中取出A，并且two进行了一些操作变成了B，然后two又将V位置的数据变成A，这时候线程one进行CAS操作发现内存中仍然是A，然后one操作成功。尽管线程one的CAS操作成功，但是不代表这个过程就是没有问题的。如果链表的头在变化了两次后恢复了原值，但是不代表链表就没有变化。因此前面提到的原子操作AtomicStampedReference/AtomicMarkableReference就很有用了。这允许一对变化的元素进行原子操作。</p>
+<p>参考资料：</p>
+<p>（1）<a href="http://www.ibm.com/developerworks/cn/java/j-jtp04186/" target="_blank">非阻塞算法简介</a></p>
+<p>（2）<a href="https://www.ibm.com/developerworks/cn/java/j-jtp11234/" target="_blank">流行的原子</a>
+来源： <a href="[http://www.blogjava.net/xylz/archive/2010/07/04/325206.html](http://www.blogjava.net/xylz/archive/2010/07/04/325206.html)">[http://www.blogjava.net/xylz/archive/2010/07/04/325206.html](http://www.blogjava.net/xylz/archive/2010/07/04/325206.html)</a> </p>
 
       
     </div>
@@ -140,7 +404,7 @@ var _js2load = [];
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_多线程/">Java_多线程</a></li><li><a href="/categories/Java&J2EE/Java_多线程/并发/">并发</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_多线程/" class="label label-success">Java_多线程</a><a href="/tags/并发/" class="label label-info">并发</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency1-JUC的整体认识" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency2-原子操作/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency2-原子操作" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -155,819 +419,1748 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-java-com-jacob--jacob合并几个word文件到一个word文件/">jacob合并几个word文件到一个word文件</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-SQL_Java--SQL解析Jsqlparser/">SQL解析(Jsqlparser)</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-java-com-jacob--jacob合并几个word文件到一个word文件/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-SQL_Java--SQL解析Jsqlparser/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jacob-word-word-">jacob合并几个word文件到一个word文件</h1>
-<pre><code> 因项目需要将几个word文件合并到一个word文件，后面附项目运用的jar包jacob-1.9
-</code></pre><p>jacob运用中，需要将附件内的jacob.dll放到windows/system32下</p>
-<pre><code> 直接上代码：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+        <h1 id="sql-jsqlparser-">SQL解析(Jsqlparser)</h1>
+<p>前段时间主要研究了一下SQL语句的解析，主要的几个开源产品试用了一下。本文大概总结一下个人体会。
+首先是ZQL，ZQL有个比较突出的优点是使用起来比较简单，基本上属于拿上手就可以用的。但支持的功能有限，selectItem可以是简单的表达式，但不支持查询作为一个selectItem，对于其他的子查询同样也不支持。
+最终我选择使用了Jsqlparser，主要原因有两点：
+1）功能强大，基本上能够覆盖所有的SQL语法（没有研究是不是包含了数据库特殊的关键字，如LIMIT ），包含UNION,GROUP BY,HAVING,ORDER BY,JOIN,SUB JOIN,SUB SELECT,FUNCTION等。支持SQL深层嵌套。
+2）本身设计不错，使用起来感觉很灵活。Jsqlparser对于SQL的遍历采用了VISITOR模式可以很方便的遍历SQL语句。
+下面主要介绍一下Jsqlparser在我的项目中的应用情况。
+背景：通过SQL语句的解析，从而增强SQL语句增加特定的查询过滤条件（如：状态过滤、权限过滤等）
+1）解析SQL
+2）根据SQL中涉及的表增强SQL
+3）重新生成ORACLE数据库的SQL
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
 <ol>
-<li>public static void main(String[] args) {  </li>
-<li>List list  = new ArrayList();  </li>
-<li>String file1= &quot;D:\file1.doc&quot;;  </li>
-<li>String file2= &quot;D:\file2.doc&quot;;  </li>
-<li>String file3= &quot;D:\file3.doc&quot;;  </li>
-<li>list.add(file1);  </li>
-<li>list.add(file2);  </li>
-<li>list.add(file3);  </li>
-<li>uniteDoc(list,&quot;d:\file.doc&quot;);  </li>
+<li>CCJSqlParserManager parserManager = new CCJSqlParserManager();  </li>
+<li>try {  </li>
+<li>Select select = (Select) parserManager.parse(new StringReader(sql)); //解析SQL语句  </li>
+<li>SelectBody body = select.getSelectBody();   </li>
+<li>VisitContext vc = new VisitContext(filterContext, params);  </li>
+<li>vc.setTableFilterFactory(tableFilterFactory);//表的字段过滤  </li>
+<li>body.accept(new SelectVisitorImpl(vc)); //访问SQL并根据SQL中涉及的表来增强SQL  </li>
+<li>ExpressionDeParser expressionDeParser = new ExpressionDeParser();  </li>
+<li>StringBuffer stringBuffer = new StringBuffer();  </li>
+<li>SelectDeParser deParser = new OracleSelectDeParser(expressionDeParser, stringBuffer); //针对ORACLE的SQL生成  </li>
+<li>expressionDeParser.setSelectVisitor(deParser);  </li>
+<li>expressionDeParser.setBuffer(stringBuffer);  </li>
+<li></li>
+<li>body.accept(deParser);  </li>
+<li>return new FilterResult(deParser.getBuffer().toString(), vc.getResultSqlParams());  </li>
+<li>} catch (JSQLParserException e) {  </li>
+<li>throw new FilterException(e);  </li>
+<li><p>}  </p>
+<pre><code> CCJSqlParserManager parserManager = new CCJSqlParserManager();
+
+ try {
+     Select select = (Select) parserManager.parse(new StringReader(sql)); //解析SQL语句
+
+     SelectBody body = select.getSelectBody();
+     VisitContext vc = new VisitContext(filterContext, params);
+
+     vc.setTableFilterFactory(tableFilterFactory);//表的字段过滤
+     body.accept(new SelectVisitorImpl(vc)); //访问SQL并根据SQL中涉及的表来增强SQL
+
+     ExpressionDeParser expressionDeParser = new ExpressionDeParser();
+     StringBuffer stringBuffer = new StringBuffer();
+
+     SelectDeParser deParser = new OracleSelectDeParser(expressionDeParser, stringBuffer); //针对ORACLE的SQL生成
+     expressionDeParser.setSelectVisitor(deParser);
+
+     expressionDeParser.setBuffer(stringBuffer);
+</code></pre></li>
+</ol>
+<pre><code>        body.accept(deParser);
+        return new FilterResult(deParser.getBuffer().toString(), vc.getResultSqlParams());
+
+    } catch (JSQLParserException e) {
+        throw new FilterException(e);
+
+    }
+</code></pre><p>接下去是各个VISITOR，用来访问解析后的SQL
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class SelectVisitorImpl extends AbstractVisitor implements SelectVisitor {  </li>
+<li></li>
+<li>public SelectVisitorImpl(VisitContext ctx) {  </li>
+<li>super(ctx);  </li>
 <li>}  </li>
-<li>public static void uniteDoc(List fileList, String savepaths) {  </li>
-<li>if (fileList.size() == 0 || fileList == null) {  </li>
+<li></li>
+<li>@SuppressWarnings(&quot;unchecked&quot;)  </li>
+<li>public void visit(PlainSelect ps) {  </li>
+<li>//SELECT ITEM访问  </li>
+<li>List<SelectItem> selectItems = ps.getSelectItems();  </li>
+<li>for (SelectItem item : selectItems) {  </li>
+<li>item.accept(new SelectItemVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>//FROM访问  </li>
+<li>FromItem from = ps.getFromItem();  </li>
+<li>FromItemVisitorImpl fv = new FromItemVisitorImpl(context);  </li>
+<li>from.accept(fv);  </li>
+<li></li>
+<li>//查询条件访问  </li>
+<li>if (ps.getWhere() != null) {  </li>
+<li>ps.getWhere().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>//过滤增强的条件  </li>
+<li>if (fv.getEnhancedCondition() != null) {  </li>
+<li>if (ps.getWhere() != null) {  </li>
+<li>Expression expr = new Parenthesis(ps.getWhere());  </li>
+<li>AndExpression and = new AndExpression(fv.getEnhancedCondition(), expr);  </li>
+<li>ps.setWhere(and);  </li>
+<li>} else {  </li>
+<li>ps.setWhere(fv.getEnhancedCondition());  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>//JOIN表的访问  </li>
+<li>List<Join> joins = ps.getJoins();  </li>
+<li>if (CollectionUtil.isNotEmpty(joins)) {  </li>
+<li>for (Join join : joins) {  </li>
+<li>FromItemVisitorImpl tempfv = new FromItemVisitorImpl(context);  </li>
+<li>join.getRightItem().accept(tempfv);  </li>
+<li>if (join.getOnExpression() != null) {  </li>
+<li>join.getOnExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>if (tempfv.getEnhancedCondition() != null) {  </li>
+<li>Expression expr = new Parenthesis(join.getOnExpression());  </li>
+<li>AndExpression and = new AndExpression(tempfv.getEnhancedCondition(), expr);  </li>
+<li>join.setOnExpression(and);  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>//ORDER BY 访问  </li>
+<li>List<OrderByElement> elements = ps.getOrderByElements();  </li>
+<li>if (CollectionUtil.isNotEmpty(elements)) {  </li>
+<li>for (OrderByElement e : elements) {  </li>
+<li>e.getExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>//GROUP BY的HAVING访问  </li>
+<li>if (ps.getHaving() != null) {  </li>
+<li>ps.getHaving().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>@SuppressWarnings(&quot;unchecked&quot;)  </li>
+<li>public void visit(Union un) {  </li>
+<li>List<PlainSelect> selects = un.getPlainSelects();  </li>
+<li>for (PlainSelect select : selects) {  </li>
+<li>select.accept(new SelectVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li>List<OrderByElement> elements = un.getOrderByElements();  </li>
+<li>if (CollectionUtil.isNotEmpty(elements)) {  </li>
+<li>for (OrderByElement e : elements) {  </li>
+<li>e.getExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>}  </li>
+</ol>
+<p>public class SelectVisitorImpl extends AbstractVisitor implements SelectVisitor {</p>
+<pre><code>public SelectVisitorImpl(VisitContext ctx) {
+
+    super(ctx);
+}
+
+
+@SuppressWarnings(&quot;unchecked&quot;)
+
+public void visit(PlainSelect ps) {
+    //SELECT ITEM访问
+
+    List&lt;SelectItem&gt; selectItems = ps.getSelectItems();
+    for (SelectItem item : selectItems) {
+
+        item.accept(new SelectItemVisitorImpl(this.getContext()));
+    }
+
+
+    //FROM访问
+
+    FromItem from = ps.getFromItem();
+    FromItemVisitorImpl fv = new FromItemVisitorImpl(context);
+
+    from.accept(fv);
+
+
+    //查询条件访问
+    if (ps.getWhere() != null) {
+
+        ps.getWhere().accept(new ExpressionVisitorImpl(this.getContext()));
+    }
+
+
+    //过滤增强的条件
+
+    if (fv.getEnhancedCondition() != null) {
+        if (ps.getWhere() != null) {
+
+            Expression expr = new Parenthesis(ps.getWhere());
+            AndExpression and = new AndExpression(fv.getEnhancedCondition(), expr);
+
+            ps.setWhere(and);
+        } else {
+
+            ps.setWhere(fv.getEnhancedCondition());
+        }
+
+    }
+
+
+    //JOIN表的访问
+    List&lt;Join&gt; joins = ps.getJoins();
+
+    if (CollectionUtil.isNotEmpty(joins)) {
+        for (Join join : joins) {
+
+            FromItemVisitorImpl tempfv = new FromItemVisitorImpl(context);
+            join.getRightItem().accept(tempfv);
+
+            if (join.getOnExpression() != null) {
+                join.getOnExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+
+                if (tempfv.getEnhancedCondition() != null) {
+                    Expression expr = new Parenthesis(join.getOnExpression());
+
+                    AndExpression and = new AndExpression(tempfv.getEnhancedCondition(), expr);
+                    join.setOnExpression(and);
+
+                }
+            }
+
+        }
+    }
+
+
+    //ORDER BY 访问
+
+    List&lt;OrderByElement&gt; elements = ps.getOrderByElements();
+    if (CollectionUtil.isNotEmpty(elements)) {
+
+        for (OrderByElement e : elements) {
+            e.getExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+
+        }
+    }
+
+
+    //GROUP BY的HAVING访问
+
+    if (ps.getHaving() != null) {
+        ps.getHaving().accept(new ExpressionVisitorImpl(this.getContext()));
+
+    }
+}
+
+
+@SuppressWarnings(&quot;unchecked&quot;)
+
+public void visit(Union un) {
+    List&lt;PlainSelect&gt; selects = un.getPlainSelects();
+
+    for (PlainSelect select : selects) {
+        select.accept(new SelectVisitorImpl(this.getContext()));
+
+    }
+    List&lt;OrderByElement&gt; elements = un.getOrderByElements();
+
+    if (CollectionUtil.isNotEmpty(elements)) {
+        for (OrderByElement e : elements) {
+
+            e.getExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+        }
+
+    }
+}
+</code></pre><p>}
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class SelectItemVisitorImpl extends AbstractVisitor implements SelectItemVisitor {  </li>
+<li></li>
+<li>public SelectItemVisitorImpl(VisitContext ctx) {  </li>
+<li>super(ctx);  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(AllColumns ac) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(AllTableColumns atc) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(SelectExpressionItem sei) {  </li>
+<li>sei.getExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>}  </li>
+</ol>
+<p>public class SelectItemVisitorImpl extends AbstractVisitor implements SelectItemVisitor {</p>
+<pre><code>public SelectItemVisitorImpl(VisitContext ctx) {
+
+    super(ctx);
+}
+
+
+public void visit(AllColumns ac) {
+
+}
+
+
+public void visit(AllTableColumns atc) {
+}
+
+
+public void visit(SelectExpressionItem sei) {
+
+    sei.getExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+}
+</code></pre><p>}
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class ItemsListVisitorImpl extends AbstractVisitor implements ItemsListVisitor {  </li>
+<li></li>
+<li>public ItemsListVisitorImpl(VisitContext ctx) {  </li>
+<li>super(ctx);  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(SubSelect ss) {  </li>
+<li>ss.getSelectBody().accept(new SelectVisitorImpl(context));  </li>
+<li>}  </li>
+<li></li>
+<li>@SuppressWarnings(&quot;unchecked&quot;)  </li>
+<li>public void visit(ExpressionList el) {  </li>
+<li>List<Expression> list = el.getExpressions();  </li>
+<li>if (CollectionUtil.isNotEmpty(list)) {  </li>
+<li>for (Expression expr : list) {  </li>
+<li>expr.accept(new ExpressionVisitorImpl(context));  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>}  </li>
+</ol>
+<p>public class ItemsListVisitorImpl extends AbstractVisitor implements ItemsListVisitor {</p>
+<pre><code>public ItemsListVisitorImpl(VisitContext ctx) {
+
+    super(ctx);
+}
+
+
+public void visit(SubSelect ss) {
+
+    ss.getSelectBody().accept(new SelectVisitorImpl(context));
+}
+
+
+@SuppressWarnings(&quot;unchecked&quot;)
+
+public void visit(ExpressionList el) {
+    List&lt;Expression&gt; list = el.getExpressions();
+
+    if (CollectionUtil.isNotEmpty(list)) {
+        for (Expression expr : list) {
+
+            expr.accept(new ExpressionVisitorImpl(context));
+        }
+
+    }
+}
+</code></pre><p>}
+如果FROM的内容是table的话，则根据table的增强配置对SQL增强
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class FromItemVisitorImpl extends AbstractVisitor implements FromItemVisitor {  </li>
+<li>private String varPattern = &quot;@\{\s/<em>?(\w+)\s/</em>?\}&quot;;  </li>
+<li>private Expression enhancedCondition;  </li>
+<li></li>
+<li>public FromItemVisitorImpl(VisitContext ctx) {  </li>
+<li>super(ctx);  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(Table table) {  </li>
+<li>Set<FieldFilter> filters = context.getTableFilterFactory().getTableFilter(table.getName());  </li>
+<li>if (filters == null) {  </li>
+<li>filters = Collections.emptySet();  </li>
+<li>}  </li>
+<li>for (FieldFilter ff : filters) {  </li>
+<li>Column c = new Column(new Table(null, table.getAlias()), ff.getFieldName());  </li>
+<li>JdbcParameter param = new JdbcParameter();  </li>
+<li>Object fieldValue = getRawValue(ff.getFieldValue(), this.context.getFilterContext());  </li>
+<li>Expression[] exps;  </li>
+<li>if (&quot;between&quot;.equalsIgnoreCase(ff.getOperator()) || &quot;not between&quot;.equalsIgnoreCase(ff.getOperator())) {  </li>
+<li>Object[] objs = (Object[]) fieldValue;  </li>
+<li>this.getContext().getResultSqlParams().add(objs[0]);  </li>
+<li>this.getContext().getResultSqlParams().add(objs[1]);  </li>
+<li>exps = new Expression[] { c, param, param };  </li>
+<li>} else if (&quot;is null&quot;.equalsIgnoreCase(ff.getOperator()) || &quot;is not null&quot;.equalsIgnoreCase(ff.getOperator())) {  </li>
+<li>exps = new Expression[] { c };  </li>
+<li>} else {  </li>
+<li>this.getContext().getResultSqlParams().add(fieldValue);  </li>
+<li>exps = new Expression[] { c, param };  </li>
+<li>}  </li>
+<li>Expression operator = this.getOperator(ff.getOperator(), exps);  </li>
+<li>if (this.enhancedCondition != null) {  </li>
+<li>enhancedCondition = new AndExpression(enhancedCondition, operator);  </li>
+<li>} else {  </li>
+<li>enhancedCondition = operator;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(SubSelect ss) {  </li>
+<li>ss.getSelectBody().accept(new SelectVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(SubJoin sj) {  </li>
+<li>Join join = sj.getJoin();  </li>
+<li>join.getRightItem().accept(new FromItemVisitorImpl(this.getContext()));  </li>
+<li>join.getOnExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>private Expression getOperator(String op, Expression[] exp) {  </li>
+<li>if (&quot;=&quot;.equals(op)) {  </li>
+<li>EqualsTo eq = new EqualsTo();  </li>
+<li>eq.setLeftExpression(exp[0]);  </li>
+<li>eq.setRightExpression(exp[1]);  </li>
+<li>return eq;  </li>
+<li>} else if (&quot;&gt;&quot;.equals(op)) {  </li>
+<li>GreaterThan gt = new GreaterThan();  </li>
+<li>gt.setLeftExpression(exp[0]);  </li>
+<li>gt.setRightExpression(exp[1]);  </li>
+<li>return gt;  </li>
+<li>} else if (&quot;&gt;=&quot;.equals(op)) {  </li>
+<li>GreaterThanEquals geq = new GreaterThanEquals();  </li>
+<li>geq.setLeftExpression(exp[0]);  </li>
+<li>geq.setRightExpression(exp[1]);  </li>
+<li>return geq;  </li>
+<li>} else if (&quot;&lt;&quot;.equals(op)) {  </li>
+<li>MinorThan mt = new MinorThan();  </li>
+<li>mt.setLeftExpression(exp[0]);  </li>
+<li>mt.setRightExpression(exp[1]);  </li>
+<li>return mt;  </li>
+<li>} else if (&quot;&lt;=&quot;.equals(op)) {  </li>
+<li>MinorThanEquals leq = new MinorThanEquals();  </li>
+<li>leq.setLeftExpression(exp[0]);  </li>
+<li>leq.setRightExpression(exp[1]);  </li>
+<li>return leq;  </li>
+<li>} else if (&quot;&lt;&gt;&quot;.equals(op)) {  </li>
+<li>NotEqualsTo neq = new NotEqualsTo();  </li>
+<li>neq.setLeftExpression(exp[0]);  </li>
+<li>neq.setRightExpression(exp[1]);  </li>
+<li>return neq;  </li>
+<li>} else if (&quot;is null&quot;.equalsIgnoreCase(op)) {  </li>
+<li>IsNullExpression isNull = new IsNullExpression();  </li>
+<li>isNull.setNot(false);  </li>
+<li>isNull.setLeftExpression(exp[0]);  </li>
+<li>return isNull;  </li>
+<li>} else if (&quot;is not null&quot;.equalsIgnoreCase(op)) {  </li>
+<li>IsNullExpression isNull = new IsNullExpression();  </li>
+<li>isNull.setNot(true);  </li>
+<li>isNull.setLeftExpression(exp[0]);  </li>
+<li>return isNull;  </li>
+<li>} else if (&quot;like&quot;.equalsIgnoreCase(op)) {  </li>
+<li>LikeExpression like = new LikeExpression();  </li>
+<li>like.setNot(false);  </li>
+<li>like.setLeftExpression(exp[0]);  </li>
+<li>like.setRightExpression(exp[1]);  </li>
+<li>return like;  </li>
+<li>} else if (&quot;not like&quot;.equalsIgnoreCase(op)) {  </li>
+<li>LikeExpression nlike = new LikeExpression();  </li>
+<li>nlike.setNot(true);  </li>
+<li>nlike.setLeftExpression(exp[0]);  </li>
+<li>nlike.setRightExpression(exp[1]);  </li>
+<li>return nlike;  </li>
+<li>} else if (&quot;between&quot;.equalsIgnoreCase(op)) {  </li>
+<li>Between bt = new Between();  </li>
+<li>bt.setNot(false);  </li>
+<li>bt.setLeftExpression(exp[0]);  </li>
+<li>bt.setBetweenExpressionStart(exp[1]);  </li>
+<li>bt.setBetweenExpressionEnd(exp[2]);  </li>
+<li>return bt;  </li>
+<li>} else if (&quot;not between&quot;.equalsIgnoreCase(op)) {  </li>
+<li>Between bt = new Between();  </li>
+<li>bt.setNot(true);  </li>
+<li>bt.setLeftExpression(exp[0]);  </li>
+<li>bt.setBetweenExpressionStart(exp[1]);  </li>
+<li>bt.setBetweenExpressionEnd(exp[2]);  </li>
+<li>return bt;  </li>
+<li>}  </li>
+<li>throw new FilterException(&quot;Unknown operator:&quot; + op);  </li>
+<li>}  </li>
+<li></li>
+<li>protected Object getRawValue(Object value, Map<String, Object> context) {  </li>
+<li>if (context == null) {  </li>
+<li>return value;  </li>
+<li>}  </li>
+<li>if (value instanceof String) {  </li>
+<li>String v = (String) value;  </li>
+<li>Pattern pattern = Pattern.compile(varPattern);  </li>
+<li>Matcher matcher = pattern.matcher(v);  </li>
+<li>if (matcher.find()) {  </li>
+<li>return context.get(matcher.group(1));  </li>
+<li>}  </li>
+<li>}  </li>
+<li>return value;  </li>
+<li>}  </li>
+<li></li>
+<li>public Expression getEnhancedCondition() {  </li>
+<li>return enhancedCondition;  </li>
+<li>}  </li>
+<li></li>
+<li>}  </li>
+</ol>
+<p>public class FromItemVisitorImpl extends AbstractVisitor implements FromItemVisitor {</p>
+<pre><code>private String varPattern = &quot;@\\{\\s/*?(\\w+)\\s/*?\\}&quot;;
+private Expression enhancedCondition;
+
+
+public FromItemVisitorImpl(VisitContext ctx) {
+
+    super(ctx);
+}
+
+
+public void visit(Table table) {
+
+    Set&lt;FieldFilter&gt; filters = context.getTableFilterFactory().getTableFilter(table.getName());
+    if (filters == null) {
+
+        filters = Collections.emptySet();
+    }
+
+    for (FieldFilter ff : filters) {
+        Column c = new Column(new Table(null, table.getAlias()), ff.getFieldName());
+
+        JdbcParameter param = new JdbcParameter();
+        Object fieldValue = getRawValue(ff.getFieldValue(), this.context.getFilterContext());
+
+        Expression[] exps;
+        if (&quot;between&quot;.equalsIgnoreCase(ff.getOperator()) || &quot;not between&quot;.equalsIgnoreCase(ff.getOperator())) {
+
+            Object[] objs = (Object[]) fieldValue;
+            this.getContext().getResultSqlParams().add(objs[0]);
+
+            this.getContext().getResultSqlParams().add(objs[1]);
+            exps = new Expression[] { c, param, param };
+
+        } else if (&quot;is null&quot;.equalsIgnoreCase(ff.getOperator()) || &quot;is not null&quot;.equalsIgnoreCase(ff.getOperator())) {
+            exps = new Expression[] { c };
+
+        } else {
+            this.getContext().getResultSqlParams().add(fieldValue);
+
+            exps = new Expression[] { c, param };
+        }
+
+        Expression operator = this.getOperator(ff.getOperator(), exps);
+        if (this.enhancedCondition != null) {
+
+            enhancedCondition = new AndExpression(enhancedCondition, operator);
+        } else {
+
+            enhancedCondition = operator;
+        }
+
+    }
+}
+
+
+public void visit(SubSelect ss) {
+
+    ss.getSelectBody().accept(new SelectVisitorImpl(this.getContext()));
+}
+
+
+public void visit(SubJoin sj) {
+
+    Join join = sj.getJoin();
+    join.getRightItem().accept(new FromItemVisitorImpl(this.getContext()));
+
+    join.getOnExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+}
+
+
+private Expression getOperator(String op, Expression[] exp) {
+
+    if (&quot;=&quot;.equals(op)) {
+        EqualsTo eq = new EqualsTo();
+
+        eq.setLeftExpression(exp[0]);
+        eq.setRightExpression(exp[1]);
+
+        return eq;
+    } else if (&quot;&gt;&quot;.equals(op)) {
+
+        GreaterThan gt = new GreaterThan();
+        gt.setLeftExpression(exp[0]);
+
+        gt.setRightExpression(exp[1]);
+        return gt;
+
+    } else if (&quot;&gt;=&quot;.equals(op)) {
+        GreaterThanEquals geq = new GreaterThanEquals();
+
+        geq.setLeftExpression(exp[0]);
+        geq.setRightExpression(exp[1]);
+
+        return geq;
+    } else if (&quot;&lt;&quot;.equals(op)) {
+
+        MinorThan mt = new MinorThan();
+        mt.setLeftExpression(exp[0]);
+
+        mt.setRightExpression(exp[1]);
+        return mt;
+
+    } else if (&quot;&lt;=&quot;.equals(op)) {
+        MinorThanEquals leq = new MinorThanEquals();
+
+        leq.setLeftExpression(exp[0]);
+        leq.setRightExpression(exp[1]);
+
+        return leq;
+    } else if (&quot;&lt;&gt;&quot;.equals(op)) {
+
+        NotEqualsTo neq = new NotEqualsTo();
+        neq.setLeftExpression(exp[0]);
+
+        neq.setRightExpression(exp[1]);
+        return neq;
+
+    } else if (&quot;is null&quot;.equalsIgnoreCase(op)) {
+        IsNullExpression isNull = new IsNullExpression();
+
+        isNull.setNot(false);
+        isNull.setLeftExpression(exp[0]);
+
+        return isNull;
+    } else if (&quot;is not null&quot;.equalsIgnoreCase(op)) {
+
+        IsNullExpression isNull = new IsNullExpression();
+        isNull.setNot(true);
+
+        isNull.setLeftExpression(exp[0]);
+        return isNull;
+
+    } else if (&quot;like&quot;.equalsIgnoreCase(op)) {
+        LikeExpression like = new LikeExpression();
+
+        like.setNot(false);
+        like.setLeftExpression(exp[0]);
+
+        like.setRightExpression(exp[1]);
+        return like;
+
+    } else if (&quot;not like&quot;.equalsIgnoreCase(op)) {
+        LikeExpression nlike = new LikeExpression();
+
+        nlike.setNot(true);
+        nlike.setLeftExpression(exp[0]);
+
+        nlike.setRightExpression(exp[1]);
+        return nlike;
+
+    } else if (&quot;between&quot;.equalsIgnoreCase(op)) {
+        Between bt = new Between();
+
+        bt.setNot(false);
+        bt.setLeftExpression(exp[0]);
+
+        bt.setBetweenExpressionStart(exp[1]);
+        bt.setBetweenExpressionEnd(exp[2]);
+
+        return bt;
+    } else if (&quot;not between&quot;.equalsIgnoreCase(op)) {
+
+        Between bt = new Between();
+        bt.setNot(true);
+
+        bt.setLeftExpression(exp[0]);
+        bt.setBetweenExpressionStart(exp[1]);
+
+        bt.setBetweenExpressionEnd(exp[2]);
+        return bt;
+
+    }
+    throw new FilterException(&quot;Unknown operator:&quot; + op);
+
+}
+
+
+protected Object getRawValue(Object value, Map&lt;String, Object&gt; context) {
+    if (context == null) {
+
+        return value;
+    }
+
+    if (value instanceof String) {
+        String v = (String) value;
+
+        Pattern pattern = Pattern.compile(varPattern);
+        Matcher matcher = pattern.matcher(v);
+
+        if (matcher.find()) {
+            return context.get(matcher.group(1));
+
+        }
+    }
+
+    return value;
+}
+
+
+public Expression getEnhancedCondition() {
+
+    return enhancedCondition;
+}
+</code></pre><p>}
+1）对JDBC parameter做了处理，如果参数为NULL则自动忽略该parameter，忽略后需要处理and or between 等情况
+   如：where name=? and age=? ，假如name对应的参数为null，则条件改为where 1=1 and age=?，如果是or的话则改为 where 1=0 or age=?
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class ExpressionVisitorImpl extends AbstractVisitor implements ExpressionVisitor {  </li>
+<li></li>
+<li>public ExpressionVisitorImpl(VisitContext ctx) {  </li>
+<li>super(ctx);  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(NullValue nv) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(Function f) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(InverseExpression ie) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(JdbcParameter jp) {  </li>
+<li>this.getContext().getResultSqlParams().add(context.removeFirstParam());  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(DoubleValue dv) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(LongValue lv) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(DateValue dv) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(TimeValue tv) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(TimestampValue tv) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(Parenthesis parenthesis) {  </li>
+<li>ExpressionVisitorImpl ev = new ExpressionVisitorImpl(context);  </li>
+<li>parenthesis.getExpression().accept(ev);  </li>
+<li>if (ev.isNotValid()) {  </li>
+<li>parenthesis.setExpression(this.createTrueEquals());  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(StringValue s) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(Addition a) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(Division d) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(Multiplication m) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(Subtraction s) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(AndExpression and) {  </li>
+<li>ExpressionVisitorImpl left = new ExpressionVisitorImpl(this.getContext());  </li>
+<li>and.getLeftExpression().accept(left);  </li>
+<li>if (left.isNotValid()) {  </li>
+<li>and.setLeftExpression(this.createTrueEquals());  </li>
+<li>}  </li>
+<li>ExpressionVisitorImpl right = new ExpressionVisitorImpl(this.getContext());  </li>
+<li>and.getRightExpression().accept(right);  </li>
+<li>if (right.isNotValid()) {  </li>
+<li>and.setRightExpression(this.createTrueEquals());  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(OrExpression or) {  </li>
+<li>ExpressionVisitorImpl left = new ExpressionVisitorImpl(this.getContext());  </li>
+<li>or.getLeftExpression().accept(left);  </li>
+<li>if (left.isNotValid()) {  </li>
+<li>or.setLeftExpression(this.createFalseEquals());  </li>
+<li>}  </li>
+<li>ExpressionVisitorImpl right = new ExpressionVisitorImpl(this.getContext());  </li>
+<li>or.getRightExpression().accept(right);  </li>
+<li>if (right.isNotValid()) {  </li>
+<li>or.setRightExpression(this.createFalseEquals());  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(Between btw) {  </li>
+<li>Expression start = btw.getBetweenExpressionStart();  </li>
+<li>Expression end = btw.getBetweenExpressionEnd();  </li>
+<li>if (start instanceof JdbcParameter &amp;&amp; end instanceof JdbcParameter) {  </li>
+<li>Object o1 = this.context.getFirstParam();  </li>
+<li>Object o2 = this.context.getParam(1);  </li>
+<li>if (o1 == null || o2 == null) {  </li>
+<li>this.context.removeFirstParam();  </li>
+<li>this.context.removeFirstParam();  </li>
+<li>this.setValid(false);  </li>
 <li>return;  </li>
 <li>}  </li>
-<li>//打开word  </li>
-<li>ActiveXComponent app = new ActiveXComponent(&quot;Word.Application&quot;);//启动word  </li>
-<li>try {  </li>
-<li>// 设置word不可见  </li>
-<li>app.setProperty(&quot;Visible&quot;, new Variant(false));  </li>
-<li>//获得documents对象  </li>
-<li>Object docs = app.getProperty(&quot;Documents&quot;).toDispatch();  </li>
-<li>//打开第一个文件  </li>
-<li>Object doc = Dispatch  </li>
-<li>.invoke(  </li>
-<li>(Dispatch) docs,  </li>
-<li>&quot;Open&quot;,  </li>
-<li>Dispatch.Method,  </li>
-<li>new Object[] { (String) fileList.get(0),  </li>
-<li>new Variant(false), new Variant(true) },  </li>
-<li>new int[3]).toDispatch();  </li>
-<li>//追加文件  </li>
-<li>for (int i = 1; i &lt; fileList.size(); i++) {  </li>
-<li>Dispatch.invoke(app.getProperty(&quot;Selection&quot;).toDispatch(),  </li>
-<li>&quot;insertFile&quot;, Dispatch.Method, new Object[] {  </li>
-<li>(String) fileList.get(i), &quot;&quot;,  </li>
-<li>new Variant(false), new Variant(false),  </li>
-<li>new Variant(false) }, new int[3]);  </li>
+<li>} else if (start instanceof JdbcParameter || end instanceof JdbcParameter) {  </li>
+<li>Object o1 = this.context.getFirstParam();  </li>
+<li>if (o1 == null) {  </li>
+<li>this.context.removeFirstParam();  </li>
+<li>this.setValid(false);  </li>
+<li>return;  </li>
 <li>}  </li>
-<li>//保存新的word文件  </li>
-<li>Dispatch.invoke((Dispatch) doc, &quot;SaveAs&quot;, Dispatch.Method,  </li>
-<li>new Object[] { savepaths, new Variant(1) }, new int[3]);  </li>
-<li>Variant f = new Variant(false);  </li>
-<li>Dispatch.call((Dispatch) doc, &quot;Close&quot;, f);  </li>
-<li>} catch (Exception e) {  </li>
-<li>throw new RuntimeException(&quot;合并word文件出错.原因:&quot; + e);  </li>
-<li>} finally {  </li>
-<li>app.invoke(&quot;Quit&quot;, new Variant[] {});  </li>
 <li>}  </li>
+<li>btw.getLeftExpression().accept(new ExpressionVisitorImpl(context));  </li>
+<li>btw.getBetweenExpressionStart().accept(new ExpressionVisitorImpl(context));  </li>
+<li>btw.getBetweenExpressionEnd().accept(new ExpressionVisitorImpl(context));  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(EqualsTo eq) {  </li>
+<li>if (eq.getRightExpression() instanceof JdbcParameter) {  </li>
+<li>Object o = this.context.getFirstParam();  </li>
+<li>if (o == null) {  </li>
+<li>this.setValid(false);  </li>
+<li>this.getContext().removeFirstParam();  </li>
+<li>return;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>eq.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>eq.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(GreaterThan gt) {  </li>
+<li>if (gt.getRightExpression() instanceof JdbcParameter) {  </li>
+<li>Object o = this.context.getFirstParam();  </li>
+<li>if (o == null) {  </li>
+<li>this.setValid(false);  </li>
+<li>this.getContext().removeFirstParam();  </li>
+<li>}  </li>
+<li>}  </li>
+<li>gt.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>gt.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(GreaterThanEquals gte) {  </li>
+<li>if (gte.getRightExpression() instanceof JdbcParameter) {  </li>
+<li>Object o = this.context.getFirstParam();  </li>
+<li>if (o == null) {  </li>
+<li>this.setValid(false);  </li>
+<li>this.getContext().removeFirstParam();  </li>
+<li>}  </li>
+<li>}  </li>
+<li>gte.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>gte.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(InExpression in) {  </li>
+<li>ItemsList list = in.getItemsList();  </li>
+<li>list.accept(new ItemsListVisitorImpl(context));  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(IsNullExpression ine) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(LikeExpression le) {  </li>
+<li>if (le.getRightExpression() instanceof JdbcParameter) {  </li>
+<li>Object o = this.context.getFirstParam();  </li>
+<li>if (o == null) {  </li>
+<li>this.setValid(false);  </li>
+<li>this.getContext().removeFirstParam();  </li>
+<li>}  </li>
+<li>}  </li>
+<li>le.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>le.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(MinorThan mt) {  </li>
+<li>if (mt.getRightExpression() instanceof JdbcParameter) {  </li>
+<li>Object o = this.context.getFirstParam();  </li>
+<li>if (o == null) {  </li>
+<li>this.setValid(false);  </li>
+<li>this.getContext().removeFirstParam();  </li>
+<li>}  </li>
+<li>}  </li>
+<li>mt.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>mt.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(MinorThanEquals mte) {  </li>
+<li>if (mte.getRightExpression() instanceof JdbcParameter) {  </li>
+<li>Object o = this.context.getFirstParam();  </li>
+<li>if (o == null) {  </li>
+<li>this.setValid(false);  </li>
+<li>this.getContext().removeFirstParam();  </li>
+<li>}  </li>
+<li>}  </li>
+<li>mte.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>mte.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(NotEqualsTo neq) {  </li>
+<li>if (neq.getRightExpression() instanceof JdbcParameter) {  </li>
+<li>Object o = this.context.getFirstParam();  </li>
+<li>if (o == null) {  </li>
+<li>this.setValid(false);  </li>
+<li>this.getContext().removeFirstParam();  </li>
+<li>return;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>neq.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>neq.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(Column c) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(SubSelect ss) {  </li>
+<li>ss.getSelectBody().accept(new SelectVisitorImpl(context));  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(CaseExpression ce) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(WhenClause wc) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(ExistsExpression ee) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(AllComparisonExpression ace) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(AnyComparisonExpression ace) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(Concat c) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(Matches m) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(BitwiseAnd ba) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(BitwiseOr bo) {  </li>
+<li>}  </li>
+<li></li>
+<li>public void visit(BitwiseXor bx) {  </li>
+<li>}  </li>
+<li></li>
+<li>private EqualsTo createTrueEquals() {  </li>
+<li>EqualsTo eq = new EqualsTo();  </li>
+<li>eq.setLeftExpression(new LongValue(&quot;1&quot;));  </li>
+<li>eq.setRightExpression(new LongValue(&quot;1&quot;));  </li>
+<li>return eq;  </li>
+<li>}  </li>
+<li></li>
+<li>private EqualsTo createFalseEquals() {  </li>
+<li>EqualsTo eq = new EqualsTo();  </li>
+<li>eq.setLeftExpression(new LongValue(&quot;1&quot;));  </li>
+<li>eq.setRightExpression(new LongValue(&quot;0&quot;));  </li>
+<li>return eq;  </li>
+<li>}  </li>
+<li></li>
 <li>}  </li>
 </ol>
-<p>public static void main(String[] args) {</p>
-<pre><code>        List list  = new ArrayList();
-        String file1= &quot;D:\\file1.doc&quot;;
+<p>public class ExpressionVisitorImpl extends AbstractVisitor implements ExpressionVisitor {</p>
+<pre><code>public ExpressionVisitorImpl(VisitContext ctx) {
 
-        String file2= &quot;D:\\file2.doc&quot;;
-        String file3= &quot;D:\\file3.doc&quot;;
+    super(ctx);
+}
 
-        list.add(file1);
-        list.add(file2);
 
-        list.add(file3);
-        uniteDoc(list,&quot;d:\\file.doc&quot;);
+public void visit(NullValue nv) {
 
 }
-public static void uniteDoc(List fileList, String savepaths) {
 
-    if (fileList.size() == 0 || fileList == null) {
-        return;
+
+public void visit(Function f) {
+}
+
+
+public void visit(InverseExpression ie) {
+
+}
+
+
+public void visit(JdbcParameter jp) {
+    this.getContext().getResultSqlParams().add(context.removeFirstParam());
+
+}
+
+
+public void visit(DoubleValue dv) {
+}
+
+
+public void visit(LongValue lv) {
+
+}
+
+
+public void visit(DateValue dv) {
+}
+
+
+public void visit(TimeValue tv) {
+
+}
+
+
+public void visit(TimestampValue tv) {
+}
+
+
+public void visit(Parenthesis parenthesis) {
+
+    ExpressionVisitorImpl ev = new ExpressionVisitorImpl(context);
+    parenthesis.getExpression().accept(ev);
+
+    if (ev.isNotValid()) {
+        parenthesis.setExpression(this.createTrueEquals());
 
     }
-    //打开word
+}
 
-    ActiveXComponent app = new ActiveXComponent(&quot;Word.Application&quot;);//启动word
-    try {
 
-        // 设置word不可见
-        app.setProperty(&quot;Visible&quot;, new Variant(false));
+public void visit(StringValue s) {
 
-        //获得documents对象
-        Object docs = app.getProperty(&quot;Documents&quot;).toDispatch();
+}
 
-        //打开第一个文件
-        Object doc = Dispatch
 
-            .invoke(
-                    (Dispatch) docs,
+public void visit(Addition a) {
+}
 
-                    &quot;Open&quot;,
-                    Dispatch.Method,
 
-                    new Object[] { (String) fileList.get(0),
-                            new Variant(false), new Variant(true) },
+public void visit(Division d) {
 
-                    new int[3]).toDispatch();
-        //追加文件
+}
 
-        for (int i = 1; i &lt; fileList.size(); i++) {
-            Dispatch.invoke(app.getProperty(&quot;Selection&quot;).toDispatch(),
 
-                &quot;insertFile&quot;, Dispatch.Method, new Object[] {
-                        (String) fileList.get(i), &quot;&quot;,
+public void visit(Multiplication m) {
+}
 
-                        new Variant(false), new Variant(false),
-                        new Variant(false) }, new int[3]);
+
+public void visit(Subtraction s) {
+
+}
+
+
+public void visit(AndExpression and) {
+    ExpressionVisitorImpl left = new ExpressionVisitorImpl(this.getContext());
+
+    and.getLeftExpression().accept(left);
+    if (left.isNotValid()) {
+
+        and.setLeftExpression(this.createTrueEquals());
+    }
+
+    ExpressionVisitorImpl right = new ExpressionVisitorImpl(this.getContext());
+    and.getRightExpression().accept(right);
+
+    if (right.isNotValid()) {
+        and.setRightExpression(this.createTrueEquals());
+
+    }
+}
+
+
+public void visit(OrExpression or) {
+
+    ExpressionVisitorImpl left = new ExpressionVisitorImpl(this.getContext());
+    or.getLeftExpression().accept(left);
+
+    if (left.isNotValid()) {
+        or.setLeftExpression(this.createFalseEquals());
+
+    }
+    ExpressionVisitorImpl right = new ExpressionVisitorImpl(this.getContext());
+
+    or.getRightExpression().accept(right);
+    if (right.isNotValid()) {
+
+        or.setRightExpression(this.createFalseEquals());
+    }
+
+}
+
+
+public void visit(Between btw) {
+    Expression start = btw.getBetweenExpressionStart();
+
+    Expression end = btw.getBetweenExpressionEnd();
+    if (start instanceof JdbcParameter &amp;&amp; end instanceof JdbcParameter) {
+
+        Object o1 = this.context.getFirstParam();
+        Object o2 = this.context.getParam(1);
+
+        if (o1 == null || o2 == null) {
+            this.context.removeFirstParam();
+
+            this.context.removeFirstParam();
+            this.setValid(false);
+
+            return;
+        }
+
+    } else if (start instanceof JdbcParameter || end instanceof JdbcParameter) {
+        Object o1 = this.context.getFirstParam();
+
+        if (o1 == null) {
+            this.context.removeFirstParam();
+
+            this.setValid(false);
+            return;
 
         }
-        //保存新的word文件
+    }
 
-        Dispatch.invoke((Dispatch) doc, &quot;SaveAs&quot;, Dispatch.Method,
-            new Object[] { savepaths, new Variant(1) }, new int[3]);
+    btw.getLeftExpression().accept(new ExpressionVisitorImpl(context));
+    btw.getBetweenExpressionStart().accept(new ExpressionVisitorImpl(context));
 
-        Variant f = new Variant(false);
-        Dispatch.call((Dispatch) doc, &quot;Close&quot;, f);
+    btw.getBetweenExpressionEnd().accept(new ExpressionVisitorImpl(context));
+}
 
-    } catch (Exception e) {
-        throw new RuntimeException(&quot;合并word文件出错.原因:&quot; + e);
 
-    } finally {
-        app.invoke(&quot;Quit&quot;, new Variant[] {});
+public void visit(EqualsTo eq) {
+
+    if (eq.getRightExpression() instanceof JdbcParameter) {
+        Object o = this.context.getFirstParam();
+
+        if (o == null) {
+            this.setValid(false);
+
+            this.getContext().removeFirstParam();
+            return;
+
+        }
+    }
+
+    eq.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+    eq.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+
+}
+
+
+public void visit(GreaterThan gt) {
+    if (gt.getRightExpression() instanceof JdbcParameter) {
+
+        Object o = this.context.getFirstParam();
+        if (o == null) {
+
+            this.setValid(false);
+            this.getContext().removeFirstParam();
+
+        }
+    }
+
+    gt.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+    gt.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+
+}
+
+
+public void visit(GreaterThanEquals gte) {
+    if (gte.getRightExpression() instanceof JdbcParameter) {
+
+        Object o = this.context.getFirstParam();
+        if (o == null) {
+
+            this.setValid(false);
+            this.getContext().removeFirstParam();
+
+        }
+    }
+
+    gte.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+    gte.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+
+}
+
+
+public void visit(InExpression in) {
+    ItemsList list = in.getItemsList();
+
+    list.accept(new ItemsListVisitorImpl(context));
+}
+
+
+public void visit(IsNullExpression ine) {
+
+}
+
+
+public void visit(LikeExpression le) {
+    if (le.getRightExpression() instanceof JdbcParameter) {
+
+        Object o = this.context.getFirstParam();
+        if (o == null) {
+
+            this.setValid(false);
+            this.getContext().removeFirstParam();
+
+        }
+    }
+
+    le.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+    le.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+
+}
+
+
+public void visit(MinorThan mt) {
+    if (mt.getRightExpression() instanceof JdbcParameter) {
+
+        Object o = this.context.getFirstParam();
+        if (o == null) {
+
+            this.setValid(false);
+            this.getContext().removeFirstParam();
+
+        }
+    }
+
+    mt.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+    mt.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+
+}
+
+
+public void visit(MinorThanEquals mte) {
+    if (mte.getRightExpression() instanceof JdbcParameter) {
+
+        Object o = this.context.getFirstParam();
+        if (o == null) {
+
+            this.setValid(false);
+            this.getContext().removeFirstParam();
+
+        }
+    }
+
+    mte.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+    mte.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+
+}
+
+
+public void visit(NotEqualsTo neq) {
+    if (neq.getRightExpression() instanceof JdbcParameter) {
+
+        Object o = this.context.getFirstParam();
+        if (o == null) {
+
+            this.setValid(false);
+            this.getContext().removeFirstParam();
+
+            return;
+        }
+
+    }
+    neq.getLeftExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+
+    neq.getRightExpression().accept(new ExpressionVisitorImpl(this.getContext()));
+}
+
+
+public void visit(Column c) {
+
+}
+
+
+public void visit(SubSelect ss) {
+    ss.getSelectBody().accept(new SelectVisitorImpl(context));
+
+}
+
+
+public void visit(CaseExpression ce) {
+}
+
+
+public void visit(WhenClause wc) {
+
+}
+
+
+public void visit(ExistsExpression ee) {
+}
+
+
+public void visit(AllComparisonExpression ace) {
+
+}
+
+
+public void visit(AnyComparisonExpression ace) {
+}
+
+
+public void visit(Concat c) {
+
+}
+
+
+public void visit(Matches m) {
+}
+
+
+public void visit(BitwiseAnd ba) {
+
+}
+
+
+public void visit(BitwiseOr bo) {
+}
+
+
+public void visit(BitwiseXor bx) {
+
+}
+
+
+private EqualsTo createTrueEquals() {
+    EqualsTo eq = new EqualsTo();
+
+    eq.setLeftExpression(new LongValue(&quot;1&quot;));
+    eq.setRightExpression(new LongValue(&quot;1&quot;));
+
+    return eq;
+}
+
+
+private EqualsTo createFalseEquals() {
+
+    EqualsTo eq = new EqualsTo();
+    eq.setLeftExpression(new LongValue(&quot;1&quot;));
+
+    eq.setRightExpression(new LongValue(&quot;0&quot;));
+    return eq;
+
+}
+</code></pre><p>}
+增强后SQL语句的重新生成，根据ORACLE的语法重写了几个生成的方法
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class OracleSelectDeParser extends SelectDeParser {  </li>
+<li></li>
+<li>public OracleSelectDeParser(ExpressionDeParser expressionDeParser, StringBuffer sb) {  </li>
+<li>super(expressionDeParser, sb);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 重写父类方法，去掉父类方法中table前的as </li>
+<li>/*/  </li>
+<li>public void visit(Table tableName) {  </li>
+<li>buffer.append(tableName.getWholeTableName());  </li>
+<li>String alias = tableName.getAlias();  </li>
+<li>if (alias != null &amp;&amp; StringUtil.isNotEmpty(alias)) {  </li>
+<li>buffer.append(&quot; &quot;);  </li>
+<li>buffer.append(alias);  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 重写父类方法，在JOIN之前增加空格 </li>
+<li>/*/  </li>
+<li>@SuppressWarnings(&quot;unchecked&quot;)  </li>
+<li>public void deparseJoin(Join join) {  </li>
+<li>if (join.isSimple()) {  </li>
+<li>buffer.append(&quot;, &quot;);  </li>
+<li>} else {  </li>
+<li>buffer.append(&quot; &quot;);  </li>
+<li>if (join.isRight()) {  </li>
+<li>buffer.append(&quot;RIGHT &quot;);  </li>
+<li>} else if (join.isNatural()) {  </li>
+<li>buffer.append(&quot;NATURAL &quot;);  </li>
+<li>} else if (join.isFull()) {  </li>
+<li>buffer.append(&quot;FULL &quot;);  </li>
+<li>} else if (join.isLeft()) {  </li>
+<li>buffer.append(&quot;LEFT &quot;);  </li>
+<li>}  </li>
+<li>if (join.isOuter()) {  </li>
+<li>buffer.append(&quot;OUTER &quot;);  </li>
+<li>} else if (join.isInner()) {  </li>
+<li>buffer.append(&quot;INNER &quot;);  </li>
+<li>}  </li>
+<li>buffer.append(&quot;JOIN &quot;);  </li>
+<li>}  </li>
+<li></li>
+<li>FromItem fromItem = join.getRightItem();  </li>
+<li>fromItem.accept(this);  </li>
+<li>if (join.getOnExpression() != null) {  </li>
+<li>buffer.append(&quot; ON &quot;);  </li>
+<li>join.getOnExpression().accept(expressionVisitor);  </li>
+<li>}  </li>
+<li>if (join.getUsingColumns() != null) {  </li>
+<li>buffer.append(&quot; USING ( &quot;);  </li>
+<li>for (Iterator<Column> iterator = join.getUsingColumns().iterator(); iterator.hasNext();) {  </li>
+<li>Column column = iterator.next();  </li>
+<li>buffer.append(column.getWholeColumnName());  </li>
+<li>if (iterator.hasNext()) {  </li>
+<li>buffer.append(&quot; ,&quot;);  </li>
+<li>}  </li>
+<li>}  </li>
+<li>buffer.append(&quot;)&quot;);  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>}  </li>
+</ol>
+<p>public class OracleSelectDeParser extends SelectDeParser {</p>
+<pre><code>public OracleSelectDeParser(ExpressionDeParser expressionDeParser, StringBuffer sb) {
+
+    super(expressionDeParser, sb);
+}
+
+
+//*/*
+
+ /* 重写父类方法，去掉父类方法中table前的as
+ /*/
+
+public void visit(Table tableName) {
+    buffer.append(tableName.getWholeTableName());
+
+    String alias = tableName.getAlias();
+    if (alias != null &amp;&amp; StringUtil.isNotEmpty(alias)) {
+
+        buffer.append(&quot; &quot;);
+        buffer.append(alias);
 
     }
 }
-</code></pre>
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/java-com/">java-com</a></li><li><a href="/categories/Java&J2EE/java-com/jacob/">jacob</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/jacob/" class="label label-success">jacob</a><a href="/tags/java-com/" class="label label-info">java-com</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-java-com-jacob--jacob合并几个word文件到一个word文件/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-java-com-jacob--jacob合并几个word文件到一个word文件" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
 
 
+//*/*
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-域--将计算机加入域-菜鸟小飞-51CTO技术博客/">将计算机加入域 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-域--将计算机加入域-菜鸟小飞-51CTO技术博客/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-51cto-">将计算机加入域 - 菜鸟小飞 - 51CTO技术博客</h1>
-<p><strong>博客登录</strong><a href="http://cnxfei.blog.51cto.com/" target="_blank"><img src="" alt=""></a></p>
-<p>用户名：
-密　码：  <a href="http://blog.51cto.com/" title="IT BLOG" target="_blank"><img src="" alt="网络技术博客"></a> <a href="http://ucenter.51cto.com/reg_01.php" target="_blank">注册</a> | <a href="http://blog.51cto.com/login.php" target="_blank">登录</a> <a href="http://ucenter.51cto.com/getpass.php" target="_blank">忘记密码？</a> <a href="http://www.51cto.com/" target="_blank">51cto首页</a> | <a href="http://blog.51cto.com/" target="_blank">博客</a> | <a href="http://bbs.51cto.com/" target="_blank">论坛</a> | <a href="http://job.51cto.com/" target="_blank">招聘</a> <strong>热点文章</strong> <a href="http://wangchunhai.blog.51cto.com/225186/200122" title="ISA Server、IIS多方并举保护网站的安全" target="_blank">ISA Server、IIS多方并..</a> <a href=""></a> <a href="http://51ctoblog.blog.51cto.com/all/26414/4">帮助</a></p>
-<p><a href="http://cnxfei.blog.51cto.com/166422/c" title="察看zr000所有转载文章" target="_blank">转载</a>:6  </p>
-<p><a href="http://cnxfei.blog.51cto.com/166422/t" title="察看zr000所有翻译文章" target="_blank">翻译</a>:1
-<a href="http://cnxfei.blog.51cto.com/166422/o" title="察看zr000所有原创文章" target="_blank">原创</a>:20</p>
-<h1 id="-http-blog-51cto-com-blogcommend-http-cnxfei-blog-51cto-com-http-cnxfei-blog-51cto-com-rss-php-uid-166422-"><a href="http://blog.51cto.com/blogcommend" target="_blank"><img src="" alt="推荐博客"></a> <a href="http://cnxfei.blog.51cto.com/" target="_blank">菜鸟小飞</a>  <a href="http://cnxfei.blog.51cto.com/rss.php?uid=166422" target="_blank"><img src="" alt=""></a></h1>
-<p><a href="http://cnxfei.blog.51cto.com/" target="_blank"><a href="http://cnxfei.blog.51cto.com/">http://cnxfei.blog.51cto.com/</a></a> &gt; <a href="http://cnxfei.blog.51cto.com/" target="_blank">复制链接</a> <a href="http://g.51cto.com/addgroup.php?uid=166422" target="_blank">邀请加入技术圈</a>
-<a href="http://cnxfei.blog.51cto.com/" target="_blank">加友情链接</a></p>
-<p><a href="">发短消息</a>
-<a href="http://cnxfei.blog.51cto.com/pic" target="_blank">相册</a></p>
-<p><a href="http://cnxfei.blog.51cto.com/mygroup.php" target="_blank">技术圈</a>
-<a href="http://cnxfei.blog.51cto.com/" target="_blank">博客</a></p>
-<p><a href="http://www.51cto.com/" target="_blank">51CTO首页</a> | <a href="http://bbs.51cto.com/" target="_blank">技术论坛</a> | <a href="">短消息</a></p>
-<p><img src="" alt=""></p>
-<p><a href="http://blog.51cto.com/" target="_blank">博 客</a></p>
-<ul>
-<li><a href="http://.blog.51cto.com/" target="_blank">我的博客</a></li>
-<li><a href="http://.blog.51cto.com/addblog.php" target="_blank">发表文章</a></li>
-<li><a href="http://blog.51cto.com/user_index.php" target="_blank">管理博客</a></li>
-</ul>
-<p><a href="http://g.51cto.com/" target="_blank">技术圈</a></p>
-<ul>
-<li><a href="http://blog.51cto.com/user_index.php?action=creategroup" target="_blank">创建圈子</a></li>
-<li><a href="http://.blog.51cto.com/mygroup.php" target="_blank">我的圈子</a></li>
-<li><p><a href="http://g.51cto.com/grouptag.php" target="_blank">寻找圈子</a>
-<a href="http://.blog.51cto.com/pic" target="_blank">相 册</a></p>
-</li>
-<li><p><a href="http://.blog.51cto.com/pic" target="_blank">我的相册</a></p>
-</li>
-<li><a href="http://.blog.51cto.com/pic/uploadphoto.php" target="_blank">上传图片</a></li>
-<li><a href="http://.blog.51cto.com/pic/manage_album.php?uid=166422" target="_blank">管理相册</a>
-<a href="http://cnxfei.blog.51cto.com/" target="_blank">首页</a> | <a href="http://cnxfei.blog.51cto.com/166422/d-1" target="_blank">Windows</a> | <a href="http://cnxfei.blog.51cto.com/166422/d-2" target="_blank">Switch &amp; Router</a> | <a href="http://cnxfei.blog.51cto.com/166422/d-3" target="_blank">Linux</a> | <a href="http://cnxfei.blog.51cto.com/166422/d-4" target="_blank">其他</a></li>
-</ul>
-<p><a href="http://blog.51cto.com/active/no1/ing.html" target="_blank">金秋九月，博客No.1的荣誉属于你我</a>  <a href="http://bbs.51cto.com/thread-587776-1.html" target="_blank">51CTO博客急招兼职</a> <a href="http://cnxfei.blog.51cto.com/all/166422" target="_blank">博主的更多文章&gt;&gt;</a></p>
-<h1 id="-"><strong><img src="" alt=""> 将计算机加入域</strong></h1>
-<p>2007-07-15 12:35:40</p>
-<p>标签：<a href="http://blog.51cto.com/tagindex.php?keyword=%BC%D3%C8%EB%D3%F2" target="_blank">加入域</a>　　　[<a href="http://cnxfei.blog.51cto.com/#" target="_blank">推送到技术圈</a>]</p>
-<p><strong>版权声明：</strong>原创作品，如需转载，请与作者联系。否则将追究法律责任。 现在正好也没什么事，把计算机加入域的实验过程写上来</p>
-<p>一般情况下，在从客户计算机上加入域时，会在域中自动创建计算机帐号。不过，用户必须在本地客户计算机上拥有管理权限才能将其加入域中。</p>
-<p>加入域之前，检查客户机的网络配置：</p>
-<p>1。确保网络物理层上连通
-2。设置IP地址</p>
-<p>3。检查客户机到服务器是否连通
-4。配置客户机的首选DNS服务器（通常为第一台DC的IP）</p>
-<p>过程很简单，来看实验过程</p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p>O了。</p>
-<p>本文出自 “<a href="http://cnxfei.blog.51cto.com/" target="_blank">菜鸟小飞</a>” 博客，转载请与作者联系！
-<a href="http://cnxfei.blog.51cto.com/166422/34175" target="_blank">本文出自 51CTO.COM技术博客</a>
-上一篇 <a href="http://cnxfei.blog.51cto.com/166422/34172" title="Windows域的创建" target="_blank">Windows域的创建</a>　　下一篇 <a href="http://cnxfei.blog.51cto.com/166422/34470" title="Windows 开始-运行 命令集锦(个人搜集整理)" target="_blank">Windows 开始-运行 命令集锦(个人搜集整理)</a></p>
-<p><a href="http://cnxfei.blog.51cto.com/166422/d-1" target="_blank">类别：Windows</a> ┆ <a href="http://cnxfei.blog.51cto.com/#" target="_blank">技术圈(  )</a> ┆ 阅读(  ) ┆ 评论(  ) ┆<a href="http://cnxfei.blog.51cto.com/#" target="_blank">推送到技术圈</a> ┆<a href="http://cnxfei.blog.51cto.com/" target="_blank">返回首页</a>  </p>
-<pre><code>**相关文章**
-</code></pre><p><a href="http://bblxlit.blog.51cto.com/151710/24738" title="&quot;加入域,找不到网络路径&quot;的解决办法" target="_blank">&quot;加入域,找不到网络路径&quot;的解决办法</a></p>
-<p><a href="http://will5527.blog.51cto.com/197007/37422" title="新安装系统主机加入域后如何减少第一次登录到域时的等待时间" target="_blank">新安装系统主机加入域后如何减少第一次登录..</a>
-<a href="http://gnaw0725.blog.51cto.com/156601/30589" title="电脑加入域如何直接进入某个OU" target="_blank">电脑加入域如何直接进入某个OU</a></p>
-<p><a href="http://lingping.blog.51cto.com/121716/18738" title="Site to Site VPN的远程客户端加入域有问题" target="_blank">Site to Site VPN的远程客户端加入域有问题</a>
-<a href="http://fbsh.blog.51cto.com/20647/13853" title="让2000/2003/XP实现自动登陆(加入域/未加入域)" target="_blank">让2000/2003/XP实现自动登陆(加入域/未加入域)</a></p>
-<p><a href="http://wukai.blog.51cto.com/170296/27723" title="&quot;加入域,找不到网络路径&quot;的解决办法" target="_blank">&quot;加入域,找不到网络路径&quot;的解决办法</a>
-    <strong>文章评论</strong></p>
-<p>[1楼]    <img src="" alt="">  [匿名]51CTO游客</p>
-<p>2007-07-15 22:06:07
-已加。
-哈哈不错。</p>
-<p>短消息通知评论者
-[2楼]    <img src="" alt="">  [匿名]冲</p>
-<p>2009-01-07 13:55:13
-加了之后可是用域登录说密码说错误的
-怎么回事呢?</p>
-<p>短消息通知评论者
- <a href="http://cnxfei.blog.51cto.com/"></a></p>
-<p><a href=""></a>    <strong>发表评论</strong></p>
-<p><a href=""></a>
-昵   称：验证码：   <img src="" alt="">　点击图片可刷新验证码　　<a href="http://51ctoblog.blog.51cto.com/26414/5591" target="_blank">博客过2级，无需填写验证码</a> 内   容：</p>
-<p><img src="" alt=""> <strong>zr000</strong></p>
-<p><img src="" alt=""> <strong>博客统计信息</strong></p>
-<p><a href="http://blog.51cto.com/blogcommend" target="_blank"><strong>51cto推荐博客</strong></a>
-用户名：zr000
-文章数：27
-评论数：95
-访问量：26363
-无忧币：1021
-<a href="http://51ctoblog.blog.51cto.com/26414/5591" target="_blank">博客积分</a>：618
-博客等级：4
-注册日期：2007-05-17
-<a href="http://blog.51cto.com/active/no1/ing.html" target="_blank">距离博客争夺赛结束还有11 天</a>
-<img src="" alt=""> <strong>热门文章</strong></p>
-<ul>
-<li><a href="http://cnxfei.blog.51cto.com/166422/36269" target="_blank">硬盘重装xp</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/34129" target="_blank">Windows XP中忘记本地用..</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/28729" target="_blank">整理综合布线系统中材料..</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/34175" target="_blank">将计算机加入域</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/34172" target="_blank">Windows域的创建</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/40701" target="_blank">RHEL4的安装</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/44149" target="_blank">15秒恢复root用户密码</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/31189" target="_blank">单臂路由实现不同vlan之..</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/30733" target="_blank">冲突 冲突域 广播 广播域..</a></li>
-<li><a href="http://cnxfei.blog.51cto.com/166422/39632" target="_blank">应该掌握的几个HTML标记..</a></li>
-</ul>
-<p><img src="" alt=""> <strong>搜索本博客内文章</strong>
-<img src="" alt=""> <strong>最新评论</strong></p>
-<p><strong>[</strong>zengchuixin2008<strong>](<a href="http://543925535.blog.51cto.com/)：" target="_blank">http://543925535.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/130716" target="_blank">哈哈，一看就知道是青鸟的啦</a></p>
-<p><strong>[</strong>yuzeying1<strong>](<a href="http://yuzeying.blog.51cto.com/)：" target="_blank">http://yuzeying.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/67853" target="_blank">看来51cto的游客对博主要求很高呀</a>
-<strong>[匿名]www.bearpc.org：</strong><a href="http://cnxfei.blog.51cto.com/166422/34172" target="_blank">2楼那不是人讲的话,是畜生来的! 猪..</a></p>
-<p><strong>[</strong>chendezhi<strong>](<a href="http://chendezhi.blog.51cto.com/)：" target="_blank">http://chendezhi.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/32019" target="_blank">ripv1 在同一主网络中也能发布子网..</a>
-<strong>[匿名]冲：</strong><a href="http://cnxfei.blog.51cto.com/166422/34175" target="_blank">加了之后可是用域登录说密码说错误..</a></p>
-<p><strong>[匿名]小小：</strong><a href="http://cnxfei.blog.51cto.com/166422/28729" target="_blank">有学到实用东西了,谢谢! 请问还..</a>
-<strong>[</strong>51days<strong>](<a href="http://3842211.blog.51cto.com/)：" target="_blank">http://3842211.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/31189" target="_blank">我也是用模拟器做的</a></p>
-<p><strong>[</strong>51days<strong>](<a href="http://3842211.blog.51cto.com/)：" target="_blank">http://3842211.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/31189" target="_blank">怎么会通不了呢?</a>
-<strong>[</strong>低沉者<strong>](<a href="http://397409.blog.51cto.com/)：" target="_blank">http://397409.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/28729" target="_blank">不错，实用，谢谢了</a></p>
-<p><strong>[</strong>server_why<strong>](<a href="http://ciscolj.blog.51cto.com/)：" target="_blank">http://ciscolj.blog.51cto.com/)：</a></strong><a href="http://cnxfei.blog.51cto.com/166422/71744" target="_blank">好的!不错啊!学习了</a></p>
-<p><img src="" alt=""> <a href="http://blog.51cto.com/artcommend" target="_blank"><strong>51CTO推荐博文</strong></a></p>
-<ul>
-<li><a href="http://wangchunhai.blog.51cto.com/225186/200122" title="ISA Server、IIS多方并举保护网站的安全" target="_blank">ISA Server、IIS多方并..</a></li>
-<li><a href="http://angerfire.blog.51cto.com/198455/200130" title="DC的网络连接端口与防火墙设置" target="_blank">DC的网络连接端口与防..</a></li>
-<li><a href="http://didda.blog.51cto.com/812410/199529" title="使用 Exchange 2007 SP2 新增的备份功能" target="_blank">使用 Exchange 2007 SP..</a></li>
-<li><a href="http://newthink.blog.51cto.com/872263/199653" title="ISA+花生壳发布WEB＋Mail+FTP服务器到Internet(单网卡部署WEB＋Mail+FTP+ISA服务之终结）" target="_blank">ISA+花生壳发布WEB＋Ma..</a></li>
-<li><a href="http://maixueshangwang.blog.51cto.com/904841/199793" title="采用预共享密钥的点对点ipsec VPN.docx" target="_blank">采用预共享密钥的点对..</a></li>
-<li><a href="http://yuelei.blog.51cto.com/202879/199170" title="LiveMigration系列之部署Hyper-V角色" target="_blank">LiveMigration系列之部..</a></li>
-<li><a href="http://huqilong.blog.51cto.com/53638/198570" title="ubuntu下使用脚本自动登录远程服务器" target="_blank">ubuntu下使用脚本自动..</a></li>
-<li><a href="http://angerfire.blog.51cto.com/198455/198843" title="强化管理远程分支机构利器之coreRODC[为企业部署Windows Server 2008系列九]" target="_blank">强化管理远程分支机构..</a></li>
-<li><a href="http://9916376.blog.51cto.com/468239/198939" title="【分享】我与网络技术的那些故事" target="_blank">【分享】我与网络技术..</a></li>
-<li><a href="http://liuyuanljy.blog.51cto.com/607434/199073" title="制定移动存储设备的使用策略" target="_blank">制定移动存储设备的使..</a></li>
-<li><p><a href="http://5ydycm.blog.51cto.com/115934/199083" title="网站防御CC攻击的办法" target="_blank">网站防御CC攻击的办法</a>
-<img src="" alt=""> <strong>友情链接</strong></p>
-<p><a href="http://www.8txian.com/" target="_blank">8条线网络技术站</a></p>
-</li>
-</ul>
-<p>Copyright By 51CTO.COM 版权所有
-<a href="http://www.51cto.com/" target="_blank"><img src="" alt=""></a></p>
+ /* 重写父类方法，在JOIN之前增加空格
+ /*/
 
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/域/">域</a></li></span></span> | <span class="tags">Tagged <a href="/tags/域/" class="label label-primary">域</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-域--将计算机加入域-菜鸟小飞-51CTO技术博客/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-域--将计算机加入域-菜鸟小飞-51CTO技术博客" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
+@SuppressWarnings(&quot;unchecked&quot;)
+public void deparseJoin(Join join) {
+
+    if (join.isSimple()) {
+        buffer.append(&quot;, &quot;);
+
+    } else {
+        buffer.append(&quot; &quot;);
+
+        if (join.isRight()) {
+            buffer.append(&quot;RIGHT &quot;);
+
+        } else if (join.isNatural()) {
+            buffer.append(&quot;NATURAL &quot;);
+
+        } else if (join.isFull()) {
+            buffer.append(&quot;FULL &quot;);
+
+        } else if (join.isLeft()) {
+            buffer.append(&quot;LEFT &quot;);
+
+        }
+        if (join.isOuter()) {
+
+            buffer.append(&quot;OUTER &quot;);
+        } else if (join.isInner()) {
+
+            buffer.append(&quot;INNER &quot;);
+        }
+
+        buffer.append(&quot;JOIN &quot;);
+    }
 
 
+    FromItem fromItem = join.getRightItem();
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/">redis源码分析</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="redis-">redis源码分析-多集合求交集算法</h1>
-<p>源码redis源码过程中学习了它内部多个set求交集的算法，觉得挺不错的，实现也相对简单。</p>
-<p>不过要发挥这个算法的效果，前提是保证集合是<strong>散列型</strong>的，比如hash，set。 对链表或者数组等集合求交集方法后面介绍。</p>
-<p>先来看看redis中多个set求交集的主要部分。
-//<em> Sort sets from the smallest to largest, this will improve our     /</em> algorithm&#39;s performace /<em>/    qsort(dv,setsnum,sizeof(dict/</em>),qsortCompareSetsByCardinality);</p>
-<p>di= dictGetIterator(dv[0]); while((de = dictNext(di)) != NULL) {</p>
-<p>robj/<em>ele; for (j = 1; j &lt; setsnum; j++) if (dictFind(dv[j],dictGetEntryKey(de)) == NULL) break; if (j != setsnum) continue; //</em> at least one set does not contain the member /*/</p>
-<p>ele= dictGetEntryKey(de); if (!dstkey) {</p>
-<p>addReplyBulk(c,ele);</p>
-<p>cardinality++; } else {</p>
-<p>dictAdd(dstset-&gt;ptr,ele,NULL);</p>
-<p>incrRefCount(ele); } }</p>
-<p>看代码比较难理解，redis里的set数据结构本质就是个dict(hash表), 所以可以利用本身就做过hash这点，交集算法主要步骤u如下：</p>
-<p>1、对多个set集合根据集合大小排序，最小的排最前面，下标0，</p>
-<p>2、得到最小set集合的迭代器，后面需要</p>
-<p>3、遍历第二步得到的迭代器，本质上就是遍历最小的set集合中所有的元素，然后把每一步遍历得到的元素去其他set集合里查看是否存在，只要发现在一个集合中不存在就直接跳出，因为对其他集合(下标0到N)比较是按前面排序的顺序，即从第二小的集合比较，到最大集合。这样可以最大程度的提前跳出比较。当这个元素在其他集合都存在的时候，说明这个元素是交集中的值。</p>
-<p>redis求交的大致思路如此。但是如果我们的集合是数组类的，那么要使用这种算法，需要先把所有数组集合的元素都计算hash值，这样做根本没必要，反而得不偿失。</p>
-<p>我对这类集合求交算法如下(java代码)：</p>
-<p> Collections.sort(sort_list); //第一步和redis的交集算法一样，也是根据集合大小从小到大的排序</p>
-<p>// hashMap 求交</p>
-<p>HashMap<Long, Integer> hashMap = new HashMap<Long, Integer>();// 我需要再创建一个hashMap</p>
-<p>boolean first = true; //是否是最小集合</p>
-<p>List<Long> list = null;</p>
-<p>for (int i = 0; i &lt; sort_list.size(); i++) {</p>
-<p>int index = sort_list.get(i).getIndex();// 得到集合的下标</p>
-<p>list = values[index].getLongList();//真正的多个集合是通过values[]保存的，这里根据上面的下标就得到了这个集合</p>
-<p>for (int j = 0; j &lt; list.size(); j++) {//遍历这个集合</p>
-<p>if (first) {//如果是最小的集合，直接将元素插入到前面的hashmap中，value值为1，表示出现一次</p>
-<p>hashMap.put(list.get(j), 1);</p>
-<p>} else {//当不是最小集合的时候，取出元素先判断hashmap里是否存在，不存在的话就根本不需要做无谓的插入，这里的插入前提是之前一直有同样的数据存在，但hashmap存在这个值，并不表示是有效值，比如第一次出现了，但是后面的集合没有出现，所以需要一个value的计数器。</p>
-<p>if (hashMap.containsKey(list.get(j))) {</p>
-<p>int temp = hashMap.get(list.get(j));</p>
-<p>hashMap.put(list.get(j), temp + 1);//如果存在这个元素，则给对应的value+1</p>
-<p>}</p>
-<p>}</p>
-<p>}</p>
-<p>first = false;//第一次遍历后，就标记为false</p>
-<p>}</p>
-<p>//<em>/</em></p>
-<p> /* 得到交集后的结果，这个需要遍历之前的hashmap，判断value值等于集合的数量就表示这个是交集中的值</p>
-<p> /*/</p>
-<p>List<String> result = new ArrayList();</p>
-<p>Entry<Long, Integer> entry = null;</p>
-<p>for (Iterator iterator = hashMap.entrySet().iterator(); iterator</p>
-<p>.hasNext();) {</p>
-<p>entry = (Entry<Long, Integer>) iterator.next();</p>
-<p>if (entry.getValue() &gt;= keyN.length) {// 多个集合的交集</p>
-<p>result.add(entry.getKey());//把结果保存到结果集中</p>
-<p>}</p>
-<p>}
-上面的算法其实没有必要对集合做排序，只需要得出最小的集合就可以了。</p>
-<p>两个算法的相似处是对比较都做了优化。redis的交集算法，从最小集合开始比较，使判断提前跳出，不做无谓的比较。</p>
-<p>第二个算法也是做了排序，从最小集合开始，首先就把这个hashmap的大小限制住了，后面不管有多大的集合，都不可能超过hashmap的范围。其次减少了无谓的数据插入，只要在之前有这个元素才做插入。</p>
-<p>用哪种交集算法还要考虑自己的数据特点。单论两种算法，不管是在空间和时间上，前者都比后者强。但是一般的集合并不是散列类型的数据，那么还是用第二种吧，再根据自己的数据特点做优化。
-来源： <a href="[http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/](http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/)">[http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/](http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/)</a> </p>
+    fromItem.accept(this);
+    if (join.getOnExpression() != null) {
 
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
+        buffer.append(&quot; ON &quot;);
+        join.getOnExpression().accept(expressionVisitor);
 
+    }
+    if (join.getUsingColumns() != null) {
 
+        buffer.append(&quot; USING ( &quot;);
+        for (Iterator&lt;Column&gt; iterator = join.getUsingColumns().iterator(); iterator.hasNext();) {
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Java集合框架之小结/">Java集合框架之小结</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Java集合框架之小结/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-">Java集合框架之小结</h1>
-<p>1、Java容器类库的简化图，下面是集合类库更加完备的图。包括抽象类和遗留构件（不包括Queue的实现）：
-<img src="" alt=""></p>
-<p>2、ArrayList初始化时不可指定容量，如果以new ArrayList()方式创建时，初始容量为10个；如果以new ArrayList(Collection c)初始化时，容量为c.size()/*1.1，即增加10%的容量；当向ArrayList中添加一个元素时，先进行容器的容量调整，如果容量不够时，则增加至原来的1.5倍加1，再然后把元素加入到容器中，即以原始容量的0.5倍比率增加。</p>
-<p>3、Vector：初始化时容量可以设定，如果以new Vector()方式创建时，则初始容量为10，超过容量时以2倍容量增加。如果以new Vector(Collection c)方式创建时，初始容量为c.size()/*1.1，超过时以2倍容量增加。如果以new Vector(int initialCapacity, int capacityIncrement)，则以capacityIncrement容量增加。</p>
-<p>4、集合特点：</p>
-<ul>
-<li>List：保证以某种特定插入顺序来维护元素顺序，即保持插入的顺序，另外元素可以重复。</li>
-<li>ArrayList：是用数组实现的，读取速度快，插入与删除速度慢（因为插入与删除时要移动后面的元素），适合于随机访问。</li>
-<li>Vector：功能与ArrayList几乎相同，也是以数组实现，添加，删除，读取，设置都是基于线程同步的。</li>
-<li>LinkedList：双向链表来实现，删除与插入速度快，读取速度较慢，因为它读取时是从头向尾（如果节点在链的前半部分），或尾向头（如果节点在链的后半部分）查找元素。因此适合于元素的插入与删除操作。</li>
-<li>Set：维持它自己的内部排序，随机访问不具有意义。另外元素不可重复。</li>
-<li>HashSet：是最常用的，查询速度最快，因为 内部以HashMap来实现，所以插入元素不能保持插入次序。</li>
-<li>LinkedHashSet：继承了HashSet，保持元素的插入次序，因为内部使用LinkedHashMap实现，所以能保持元素插入次序。</li>
-<li>TreeSet：基于TreeMap，生成一个总是处于排序状态的set，它实现了SortedSet接口，内部以 TreeMap来实现</li>
-<li>TreeMap：键以某种排序规则排序，内部以red-black（红-黑）树数据结构实现，实现了SortedMap接口，具体可参《<a href="http://jiangzhengjun.iteye.com/admin/blogs/562408" target="_blank">RED-BLACK(红黑)树的实现TreeMap源码阅读</a> 》</li>
-<li>HashMap: 以哈希表数据结构实现，查找对象时通过哈希函数计算其位置，它是为快速查询而设计的，其内部定义了一个hash表数组（Entry[] table），元素会通过哈希转换函数将元素的哈希地址转换成数组中存放的索引，如果有冲突，则使用散列链表的形式将所有相同哈希地址的元素串起来，可能通过查看HashMap.Entry的源码它是一个单链表结构。</li>
-<li>Hashtable:也是以哈希表数据结构实现的，解决冲突时与HashMap也一样也是采用了散列链表的形式，不过性能比HashMap要低。</li>
-<li>LinkedHashMap:继承HashMap，内部实体LinkedHashMap.Entry继承自HashMap.Entry，LinkedHashMap.Entry在HashMap.Entry的基础上新增了两个实体引用（Entry before, after），这样实体可以相互串链起来形成链，并且在LinkedHashMap中就定义了一个头节点（Entry header）用来指向循环双向链的第一个元素（通过after指向）与最后一个元素（通过before指向）。在添加一个元素时，先会通过父类HashMap将元素加入到hash表数组里，然后再会在链尾（header.before指向位置）添加（当然这一过程只是调整LinkedHashMap.Entry对象内部的before, after而已，而不是真真创建一个什么新的链表结构向里加那样）；删除先从hash表数组中删除，再将被删除的元素彻底的从双向链中断开。其实在链中添加与删除操作与LinkedList是一样的，可以参考《<a href="http://jiangzhengjun.iteye.com/admin/blogs/553199" target="_blank">Java集合框架之LinkedList及ListIterator实现源码分析</a> 》</li>
-</ul>
-<p>5、Hashtable和HashMap的区别：</p>
-<ul>
-<li><p>Hashtable中的方法是同步的，而HashMap中的方法在缺省情况下是非同步的。在多线程应用程序中，我们应该使用Hashtable；而对于HashMap，则需要额外的同步机制。但HashMap的同步问题可通过Collections的一个静态方法得到解决：Map Collections.synchronizedMap(Map m)，当然与可以自己在使用地方加锁。</p>
-</li>
-<li><p>在HashMap中，可以允许null作为键，且只可以有一个，否则覆盖，但可以有一个或多个值为null。因为当get()方法返回null值时，即可以表示 HashMap中没有该键，也可以表示该键所对应的值为null，所以HashMap不能由get()方法来判断否存在某个键，而应该用containsKey()方法来判断；而Hashtable不允许null键与null值。</p>
-</li>
-<li><p>HashTable使用Enumeration，HashMap使用Iterator。</p>
-</li>
-<li><p>Hashtable是Dictionary的子类，HashMap是Map接口的一个实现类；</p>
-</li>
-<li><p>HashTable中hash table数组默认大小是11，增加的方式是 int newCapacity = oldCapacity /* 2 + 1;,即增加至2倍（而不是2倍加1，因为扩容是在增加元素前进行的，在扩容后会将新增元素放入容器中）。HashMap中hash数组的默认大小是16，而且一定是2的多少次方;另外两者的默认负载因子都是0.75。</p>
-</li>
-<li><p>求哈希地址与哈希地址转hash数组（Entry table[]）索引方法不同：</p>
-</li>
-</ul>
-<p>HashTable直接使用对象的hashCode：
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>int hash = key.hashCode();//直接使用键的hashCode方法求哈希值  </li>
-<li>//哈希地址转hash数组索引，先使用最大正int数与，这样将负转正数，再与数组长度求模得到存入的hash数组索引位置  </li>
-<li>int index = (hash &amp; 0x7FFFFFFF) % tab.length;  </li>
-</ol>
-<p>int hash = key.hashCode();//直接使用键的hashCode方法求哈希值</p>
-<p>//哈希地址转hash数组索引，先使用最大正int数与，这样将负转正数，再与数组长度求模得到存入的hash数组索引位置
-int index = (hash &amp; 0x7FFFFFFF) % tab.length;</p>
-<p>而HashMap重新计算hash值，而且用位运算&amp;代替求模：
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>int hash = hash(k);  </li>
-<li>int i = indexFor(hash, table.length);  </li>
-<li></li>
-<li>static int hash(Object x) {  </li>
-<li>//以键本身的hash码为基础求哈希地址，但看不懂是什么意思  </li>
-<li>int h = x.hashCode();  </li>
-<li>h += ~(h &lt;&lt; 9);  </li>
-<li>h ^= (h &gt;&gt;&gt; 14);  </li>
-<li>h += (h &lt;&lt; 4);  </li>
-<li>h ^= (h &gt;&gt;&gt; 10);  </li>
-<li>return h;  </li>
-<li>}  </li>
-<li>static int indexFor(int h, int length) {  </li>
-<li>return h &amp; (length-1);//将哈希地址转换成哈希数组中存入的索引号  </li>
-<li>}  </li>
-</ol>
-<p>int hash = hash(k);</p>
-<p>int i = indexFor(hash, table.length);</p>
-<p>static int hash(Object x) {
-//以键本身的hash码为基础求哈希地址，但看不懂是什么意思</p>
-<p>int h = x.hashCode();
-h += ~(h &lt;&lt; 9);</p>
-<p>h ^= (h &gt;&gt;&gt; 14);
-h += (h &lt;&lt; 4);</p>
-<p>h ^= (h &gt;&gt;&gt; 10);
-return h;</p>
-<p>}
-static int indexFor(int h, int length) {</p>
-<p>return h &amp; (length-1);//将哈希地址转换成哈希数组中存入的索引号
-}</p>
-<p>  HashMap实现图：</p>
-<p><img src="" alt=""></p>
-<p>6、集合中键值是否允许null小结</p>
-<ul>
-<li>List：可以有多个null，可以有重复值。</li>
-<li>HashSet：能插入一个null（因为内部是以 HashMap实现 ），忽略不插入重复元素。</li>
-<li>TreeSet：不能插入null （因为内部是以 TreeMap 实现 ） ，元素不能重复，如果待插入的元素存在，则忽略不插入，对元素进行排序。</li>
-<li>HashMap：允许一个null键与多个null值，若重复键，则覆盖以前值。</li>
-<li>TreeMap：不允许null键(实际上可以插入一个null键，如果这个Map里只有一个元素是不会报错的，因为一个元素时没有进行排序操作，也就不会报空指针异常，但如果插入第二个时就会立即报错)，但允许多个null值，覆盖已有键值。</li>
-<li>HashTable：不允许null键与null值(否则运行进报空指针异常)。也会覆盖以重复值。基于线程同步。</li>
-</ul>
-<p>7、对List的选择：</p>
-<ul>
-<li>对于随机查询与迭代遍历操作，数组比所有的容器都要快。</li>
-<li>从中间的位置插入和删除元素，LinkedList要比ArrayList快，特别是删除操作。</li>
-<li>Vector通常不如ArrayList快，则且应该避免使用，它目前仍然存在于类库中的原因是为了支持过去的代码。</li>
-<li>最佳实践：将ArrayList作为默认首选，只有当程序的性能因为经常从list中间进行插入和删除而变差的时候，才去选择LinkedList。当然了，如果只是使用固定数量的元素，就应该选择数组了。</li>
-</ul>
-<p>8、对Set的选择：</p>
-<ul>
-<li>HashSet的性能总比TreeSet好(特别是最常用的添加和查找元素操作)。</li>
-<li>TreeSet存在的唯一原因是，它可以维持元素的排序状态，所以只有当你需要一个排好序的Set时，才应该使用TreeSet。</li>
-<li>对于插入操作，LinkedHashSet比HashSet略微慢一点：这是由于维护链表所带来额外开销造成的。不过，因为有了链表，遍历LinkedHashSet会比HashSet更快。</li>
-</ul>
-<p>9、对Map的选择：</p>
-<ul>
-<li>Hashtable和HashMap的效率大致相同(通常HashMap更快一点，所以HashMap有意取代Hashtable)。</li>
-<li>TreeMap通常比HashMap慢，因为要维护排序。</li>
-<li>HashMap正是为快速查询而设计的。</li>
-<li>LinkedHashMap比HashMap慢一点，因为它维护散列数据结构的同时还要维护链表。</li>
-</ul>
-<p>10、Stack基于线程安全，Stack类是用Vector来实现的(public　class Stack extends Vector)，但最好不要用集合API里的这个实现栈，因为它继承于Vector，本就是一个错误的设计，应该是一个组合的设计关系。</p>
-<p>11、Iterator对ArrayList(LinkedList)的操作限制：</p>
-<ul>
-<li>刚实例化的迭代器如果还没有进行后移(next)操作是不能马上进行删除与修改操作的。</li>
-<li>可以用ListIterator对集合连续添加与修改，但不能连续删除。</li>
-<li>进行添加操作后是不能立即进行删除与修改操作的。</li>
-<li>进行删除操作后可以进行添加，但不能进行修改操作。</li>
-<li>进行修改后是可以立即进行删除与添加操作的。</li>
-</ul>
-<p>12、当以自己的对象做为<strong>HashMap、HashTable、LinkedHashMap、HashSet 、LinkedHashSet</strong> 的键时，一定要重写<strong>hashCode</strong> ()与<strong>equals</strong> ()方法，因为Object的hashCode()是返回内存地址，且equals()方法也是比较内存地址，所以当要在这些hash集合中查找时，如果是另外new出的新对象是查不到的，除非重写这两个方法。因为AbstractMap类的containsKey(Object key)方法实现如下：
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>if (e.hash == hash &amp;&amp; eq(k, e.key))//先比对hashcode，再使用equals  </li>
-<li>return true;  </li>
-<li></li>
-<li>static boolean eq(Object x, Object y) {  </li>
-<li>return x == y || x.equals(y);  </li>
-<li>}  </li>
-</ol>
-<p>if (e.hash == hash &amp;&amp; eq(k, e.key))//先比对hashcode，再使用equals</p>
-<pre><code>return true;
-</code></pre><p>static boolean eq(Object x, Object y) {
-    return x == y || x.equals(y);</p>
-<p>}</p>
-<p>String对象是可以准确做为键的，因为已重写了这两个方法。</p>
-<p>因此，Java中的集合框架中的哈希是以一个对象查找另外一个对象，所以重写hasCode与equals方法很重要。
-13、重写hashCode()与equals()这两个方法是针对哈希类，至于其它集合，如果要用public boolean contains(Object o)或containsValue(Object value)查找时，只需要实现equals()方法即可，他们都只使用对象的 equals方法进行比对，没有使用 hashCode方法。
-14、TreeMap/TreeSet：放入其中的元素一定要具有自然比较能力(即要实现java.lang.Comparable接口)或者在构造TreeMap/TreeSet时传入一个比较器(实现java.util.Comparator接口)，如果在创建时没有传入比较器，而放入的元素也没有自然比较能力时，会出现类型转换错误(因为在没有较器时，会试着转成Comparable型)。</p>
-<p>两种比较接口：
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>//自然比较器  </li>
-<li>public interface java.lang.Comparable {  </li>
-<li>public int compareTo(Object o);  </li>
-<li>}  </li>
-<li></li>
-<li>public interface java.util.Comparator {  </li>
-<li>int compare(Object o1, Object o2);  </li>
-<li>boolean equals(Object obj);  </li>
-<li>}  </li>
-</ol>
-<p>//自然比较器</p>
-<p>public interface java.lang.Comparable {
-    public int compareTo(Object o);</p>
-<p>}</p>
-<p>public interface java.util.Comparator {
-    int compare(Object o1, Object o2);</p>
-<pre><code>boolean equals(Object obj);
+            Column column = iterator.next();
+            buffer.append(column.getWholeColumnName());
+
+            if (iterator.hasNext()) {
+                buffer.append(&quot; ,&quot;);
+
+            }
+        }
+
+        buffer.append(&quot;)&quot;);
+    }
+
+}
 </code></pre><p>}</p>
-<p>15、Collection或Map的同步控制：可以使用Collections类的相应静态方法来包装相应的集合类，使他们具线程安全，如<strong>public</strong>static Collection <strong>synchronizedCollection</strong> (Collection c)方法实质返回的是包装后的SynchronizedCollection子类，当然你也可以使用Collections的synchronizedList、synchronizedMap、synchronizedSet方法来获取不同的经过包装了的同步集合，其代码片断：
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/SQL_Java/">SQL_Java</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/SQL_Java/" class="label label-success">SQL_Java</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-SQL_Java--SQL解析Jsqlparser/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-SQL_Java--SQL解析Jsqlparser" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--13_7_5key可以重复的Map集合：IdentityHashMap/">13_7_5 key可以重复的Map集合：IdentityHashMap</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--13_7_5key可以重复的Map集合：IdentityHashMap/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="13_7_5-key-map-identityhashmap">13_7_5 key可以重复的Map集合：IdentityHashMap</h1>
+<p><a href="http://www.51cto.com/" target="_blank">51CTO首页</a> | <a href="http://news.51cto.com/" target="_blank">新闻</a> | <a href="http://www.51cto.com/col/35" target="_blank">专题</a> | <a href="http://bbs.51cto.com/" target="_blank">论坛</a> | <a href="http://blog.51cto.com/" target="_blank">博客</a> | <a href="http://g.51cto.com/" target="_blank">技术圈</a> | <a href="http://book.51cto.com/" target="_blank">读书</a> | <a href="http://www.51cto.com/col/35/" target="_blank">技术频道</a>| <a href="http://www.cioage.com/" target="_blank">CIO</a>| <a href="http://www.watchstor.com/" target="_blank">存储</a>| <a href="http://www.51cto.com/about/map.htm" target="_blank">地图</a> | <a href="http://www.51cto.com/about/aboutus_e.html" target="_blank">English</a></p>
+<ul>
+<li><a href="http://network.51cto.com/" target="_blank">组网建网</a></li>
+<li><a href="http://netsecurity.51cto.com/" target="_blank">网络安全</a></li>
+<li><a href="http://server.51cto.com/" target="_blank">服务器</a></li>
+<li><a href="http://os.51cto.com/" target="_blank">操作系统</a></li>
+<li><a href="http://virtual.51cto.com/" target="_blank">虚拟化</a></li>
+<li><a href="http://developer.51cto.com/" target="_blank">开发</a></li>
+<li><a href="http://www.cioage.com/news" target="_blank">资讯前沿</a></li>
+<li><a href="http://www.cioage.com/insight" target="_blank">业界观察</a></li>
+<li><a href="http://www.cioage.com/exp" target="_blank">应用体验</a></li>
+<li><p><a href="http://www.cioage.com/tech" target="_blank">杀手技术</a></p>
+</li>
+<li><p><a href="http://news.watchstor.com/" target="_blank">新闻资讯</a></p>
+</li>
+<li><a href="http://tech.watchstor.com/" target="_blank">技术中心</a></li>
+<li><a href="http://video.watchstor.com/" target="_blank">互动视频</a></li>
+<li><a href="http://special.watchstor.com/" target="_blank">专题汇聚</a>
+您所在的位置： <a href="http://www.51cto.com/" target="_blank">首页</a> &gt; <a href="http://book.51cto.com/" target="_blank">读书频道</a> &gt; <a href="http://book.51cto.com/col/1221/" target="_blank">设计开发</a> &gt; <a href="http://book.51cto.com/col/1223/" target="_blank">Java系列</a> &gt;</li>
+</ul>
+<h3 id="13-7-5-key-map-identityhashmap">13.7.5 key可以重复的Map集合：IdentityHashMap</h3>
+<p><a href="http://book.51cto.com/" target="_blank"><a href="http://book.51cto.com/">http://book.51cto.com/</a></a>  2009-08-03 09:31  李兴华  清华大学出版社  <a href="http://www.51cto.com/php/feedbackt.php?id=141100" target="_blank">我要评论(0)</a></p>
+<ul>
+<li>摘要：《Java开发实战经典》第13章Java类集，本章将对Java类集进行完整的介绍，针对于一些较为常用的操作也将进行深入的讲解。本节为大家介绍key可以重复的Map集合：IdentityHashMap。</li>
+<li>标签：<a href="http://www.51cto.com/php/search.php?keyword=IdentityHashMap" target="_blank">IdentityHashMap</a>  <a href="http://www.51cto.com/php/search.php?keyword=Java" target="_blank">Java</a>  <a href="http://www.51cto.com/php/search.php?keyword=Java%BF%AA%B7%A2%CA%B5%D5%BD%BE%AD%B5%E4" target="_blank">Java开发实战经典</a>
+*</li>
+</ul>
+<p><strong>13.7.5  key可以重复的Map集合：IdentityHashMap</strong></p>
+<p>之前所讲解的所有Map操作中key的值是不能重复的，例如，HashMap操作时key是不能重复的，如果重复则肯定会覆盖之前的内容，如下代码所示。</p>
+<p>范例：Map中的key不允许重复，重复就是覆盖</p>
 <ol>
-<li>public class Collections {  </li>
-<li></li>
-<li>//...  </li>
-<li></li>
-<li>static Collection synchronizedCollection(Collection c, Object mutex) {  </li>
-<li>return new SynchronizedCollection(c, mutex);  </li>
+<li>package org.lxh.demo13.mapdemo;  </li>
+<li>import java.util.HashMap;  </li>
+<li>import java.util.Iterator;  </li>
+<li>import java.util.Map;  </li>
+<li>import java.util.Set;  </li>
+<li>class Person {<br>// 定义Person类  </li>
+<li>private String name;<br>// 定义name属性  </li>
+<li>private int age;<br>// 定义age属性  </li>
+<li>public Person(String name, int age) {<br>// 通过构造方法为属性赋值  </li>
+<li>this.name = name;<br>// 为name属性赋值  </li>
+<li>this.age = age;<br>// 为age属性赋值  </li>
 <li>}  </li>
-<li></li>
-<li>public static List synchronizedList(List list) {  </li>
-<li>//...  </li>
+<li>public boolean equals(Object obj) {<br>// 覆写equals()方法  </li>
+<li>if (this == obj) {<br>// 判断地址是否相等  </li>
+<li>return true;<br>// 返回true表示同一对象  </li>
 <li>}  </li>
-<li></li>
-<li>static Set synchronizedSet(Set s, Object mutex) {  </li>
-<li>//...  </li>
+<li>if (!(obj instanceof Person)) {<br>// 传递进来的不是本类的对象  </li>
+<li>return false;<br>// 返回false表示不是同一对象  </li>
 <li>}  </li>
-<li></li>
-<li>public static Map synchronizedMap(Map m) {  </li>
-<li>return new SynchronizedMap(m);  </li>
-<li>}  </li>
-<li></li>
-<li>//...  </li>
-<li>static class SynchronizedCollection implements Collection, Serializable {  </li>
-<li></li>
-<li>Collection c; // 对哪个集合进行同步（包装）  </li>
-<li>Object mutex; // 对象锁，可以自己设置  </li>
-<li></li>
-<li>//...  </li>
-<li>SynchronizedCollection(Collection c, Object mutex) {  </li>
-<li>this.c = c;  </li>
-<li>this.mutex = mutex;  </li>
-<li>}  </li>
-<li></li>
-<li>public int size() {  </li>
-<li>synchronized (mutex) {  </li>
-<li>return c.size();  </li>
+<li>Person p = (Person) obj;<br>// 进行向下转型  </li>
+<li>if (this.name.equals(p.name) &amp;&amp;
+this.age == p.age) {  </li>
+<li>return true ;<br>// 属性依次比较，相等返回true  </li>
+<li>}else{  </li>
+<li>return false ;<br>// 属性内容不相等，返回false  </li>
 <li>}  </li>
 <li>}  </li>
-<li></li>
-<li>public boolean isEmpty() {  </li>
-<li>synchronized (mutex) {  </li>
-<li>return c.isEmpty();  </li>
+<li>public int hashCode(){<br>// 覆写hashCode()方法  </li>
+<li>return this.name.hashCode() /* this.age ;<br>// 计算公式  </li>
 <li>}  </li>
-<li>}  </li>
-<li>//...  </li>
-<li>}  </li>
-<li></li>
-<li>static class SynchronizedList extends SynchronizedCollection implements List {  </li>
-<li></li>
-<li>List list;  </li>
-<li></li>
-<li>SynchronizedList(List list, Object mutex) {  </li>
-<li>super(list, mutex);  </li>
-<li>this.list = list;  </li>
-<li>}  </li>
-<li></li>
-<li>public Object get(int index) {  </li>
-<li>synchronized (mutex) {  </li>
-<li>return list.get(index);  </li>
-<li>}  </li>
-<li>}  </li>
-<li>//...  </li>
-<li>}  </li>
-<li></li>
-<li>static class SynchronizedSet extends SynchronizedCollection implements Set {  </li>
-<li>SynchronizedSet(Set s) {  </li>
-<li>super(s);  </li>
-<li>}  </li>
-<li>//...  </li>
-<li>}  </li>
-<li>//...  </li>
-<li>}  </li>
+<li>public String toString() {<br>// 覆写toString()方法  </li>
+<li>return &quot;姓名：&quot; + this.name + &quot;；年龄：&quot; </li>
 </ol>
-<p>public class Collections {</p>
-<pre><code>//...
-
-
-static Collection synchronizedCollection(Collection c, Object mutex) {
-
-    return new SynchronizedCollection(c, mutex);
-}
-
-
-public static List synchronizedList(List list) {
-
-    //...
-}
-
-
-static Set synchronizedSet(Set s, Object mutex) {
-
-    //...
-}
-
-
-public static Map synchronizedMap(Map m) {
-
-    return new SynchronizedMap(m);
-}
-
-
-//...
-
-static class SynchronizedCollection implements Collection, Serializable {
-
-
-    Collection c; // 对哪个集合进行同步（包装）
-    Object mutex; // 对象锁，可以自己设置
-
-
-    //...
-
-    SynchronizedCollection(Collection c, Object mutex) {
-        this.c = c;
-
-        this.mutex = mutex;
-    }
-
-
-    public int size() {
-
-        synchronized (mutex) {
-            return c.size();
-
-        }
-    }
-
-
-    public boolean isEmpty() {
-
-        synchronized (mutex) {
-            return c.isEmpty();
-
-        }
-    }
-
-    //...
-}
-
-
-static class SynchronizedList extends SynchronizedCollection implements List {
-
-
-    List list;
-
-
-    SynchronizedList(List list, Object mutex) {
-
-        super(list, mutex);
-        this.list = list;
-
-    }
-
-
-    public Object get(int index) {
-        synchronized (mutex) {
-
-            return list.get(index);
-        }
-
-    }
-    //...
-
-}
-
-
-static class SynchronizedSet extends SynchronizedCollection implements Set {
-    SynchronizedSet(Set s) {
-
-        super(s);
-    }
-
-    //...
-}
-
-//...
-</code></pre><p>}</p>
-<p>由包装的代码可以看出只是把原集合的相应方法放在同步块里调用罢了。</p>
-<p>16、通过迭代器修改集合结构
-在使用迭代器遍历集合时，我们不能通过集合本身来修改集合的结构（添加、删除），只能通过迭代器来操作，下面是拿对HashMap删除操作的测试，其它集合也是这样：
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ul>
+<li>this.age;   // 返回信息  </li>
+</ul>
 <ol>
+<li>}  </li>
+<li>}   </li>
+<li>public class IdentityHashMapDemo01 {  </li>
 <li>public static void main(String[] args) {  </li>
-<li>Map map = new HashMap();  </li>
-<li>map.put(1, 1);  </li>
-<li>map.put(2, 3);  </li>
-<li>Set entrySet = map.entrySet();  </li>
-<li>Iterator it = entrySet.iterator();  </li>
-<li>while (it.hasNext()) {  </li>
-<li>Entry entry = (Entry) it.next();  </li>
-<li>//* </li>
-<li>/* 可以通过迭代器来修改集合结构，但前提是要在已执行过 next 或 </li>
-<li>/* 前移操作，否则会抛异常：IllegalStateException </li>
-<li>/*/  </li>
-<li>// it.remove();  </li>
-<li>//* </li>
-<li>/* 抛异常：ConcurrentModificationException 因为通过 迭代 器操 </li>
-<li>/* 作时，不能使用集合本身来修 </li>
-<li>/* 改集合的结构 </li>
-<li>/*/  </li>
-<li>// map.remove(entry.getKey());  </li>
+<li>Map<Person, String> map = null;<br>// 声明Map对象，指定  </li>
+<li>泛型类型  </li>
+<li>map = new HashMap<Person, String>();<br>// 实例化Map对象  </li>
+<li>map.put(new Person(&quot;张三&quot;, 30), &quot;zhangsan_1&quot;);<br>// 增加内容  </li>
+<li>map.put(new Person(&quot;张三&quot;, 30), &quot;zhangsan_2&quot;);<br>// 增加内容，key重复  </li>
+<li>map.put(new Person(&quot;李四&quot;, 31), &quot;lisi&quot;);<br>// 增加内容  </li>
+<li>Set<Map.Entry<Person, String>&gt; allSet = null;<br>// 声明一个Set集合  </li>
+<li>allSet = map.entrySet();<br>// 将Map接口实例变为  </li>
+<li>Set接口实例  </li>
+<li>Iterator<Map.Entry<Person, String>&gt; 
+iter = null;    // 声明Iterator  </li>
+<li>对象  </li>
+<li>iter = allSet.iterator();<br>// 实例化Iterator  </li>
+<li>对象  </li>
+<li>while (iter.hasNext()) {<br>// 迭代输出  </li>
+<li>Map.Entry<Person, String> me = 
+iter.next();// 每个对象都是Map.   </li>
+<li>Entry实例  </li>
+<li>System.out.println(me.getKey()   </li>
+<li><ul>
+<li>&quot; --&gt; &quot; + me.getValue());<br>// 输出key和value  </li>
+</ul>
+</li>
 <li>}  </li>
-<li>System.out.println(map);  </li>
 <li>}  </li>
+<li>} </li>
 </ol>
-<p>public static void main(String[] args) {</p>
-<p>Map map = new HashMap();
-map.put(1, 1);</p>
-<p>map.put(2, 3);
-Set entrySet = map.entrySet();</p>
-<p>Iterator it = entrySet.iterator();
-while (it.hasNext()) {</p>
-<p>  Entry entry = (Entry) it.next();
-  //*</p>
-<p>   /<em> 可以通过迭代器来修改集合结构，但前提是要在已执行过 next 或
-   /</em> 前移操作，否则会抛异常：IllegalStateException</p>
-<p>   /*/
-  // it.remove();</p>
-<p>  //<em>
-   /</em> 抛异常：ConcurrentModificationException 因为通过 迭代 器操</p>
-<p>   /<em> 作时，不能使用集合本身来修
-   /</em> 改集合的结构</p>
-<p>   /*/
-  // map.remove(entry.getKey());</p>
-<p>}
-System.out.println(map);</p>
-<p>}</p>
+<p>程序运行结果：</p>
+<ol>
+<li>姓名：李四；年龄：31 --&gt; lisi  </li>
+<li>姓名：张三；年龄：30 --&gt; zhangsan_2 </li>
+</ol>
+<p>从程序的运行结果中可以发现，第二个内容覆盖了第一个内容，所以此时可以使用Identity HashMap。使用此类时只要地址不相等（key1！=key2），就表示不是重复的key，可以添加到集合中。</p>
+<p>范例：使用IdentityHashMap修改程序</p>
+<ol>
+<li>package org.lxh.demo13.mapdemo;  </li>
+<li>import java.util.IdentityHashMap;  </li>
+<li>import java.util.Iterator;  </li>
+<li>import java.util.Map;  </li>
+<li>import java.util.Set;  </li>
+<li>class Person {  </li>
+<li>// 此类与之前定义一样，此处不再列出  </li>
+<li>}  </li>
+<li>public class IdentityHashMapDemo02 {  </li>
+<li>public static void main(String[] args) {  </li>
+<li>Map<Person, String> map = null;<br>// 声明Map对象，指定  </li>
+<li>泛型类型  </li>
+<li>map = new IdentityHashMap<Person, String>(); 
+// 实例化Map对象  </li>
+<li>map.put(new Person(&quot;张三&quot;, 30), &quot;zhangsan_1&quot;); 
+// 增加内容  </li>
+<li>map.put(new Person(&quot;张三&quot;, 30), &quot;zhangsan_2&quot;);<br>// 增加内容，key重复  </li>
+<li>map.put(new Person(&quot;李四&quot;, 31), &quot;lisi&quot;);<br>// 增加内容  </li>
+<li>Set<Map.Entry<Person, String>&gt; allSet = 
+null;   // 声明一个Set集合  </li>
+<li>allSet = map.entrySet();<br>// 将Map接口实例变为  </li>
+<li>Set接口实例  </li>
+<li>Iterator<Map.Entry<Person, String>&gt; 
+iter = null;// 声明Iterator对象  </li>
+<li>iter = allSet.iterator();<br>// 实例化Iterator  </li>
+<li>对象  </li>
+<li>while (iter.hasNext()) {<br>// 迭代输出  </li>
+<li>Map.Entry<Person, String> me = 
+iter.next();// 每个对象都是Map.  </li>
+<li>Entry实例  </li>
+<li>System.out.println(me.getKey()   </li>
+<li><ul>
+<li>&quot; --&gt; &quot; + me.getValue());<br>// 输出key和value  </li>
+</ul>
+</li>
+<li>}  </li>
+<li>}  </li>
+<li>} </li>
+</ol>
+<p>程序运行结果：</p>
+<ol>
+<li>姓名：张三；年龄：30 --&gt; zhangsan_2  </li>
+<li>姓名：张三；年龄：30 --&gt; zhangsan_1  </li>
+<li>姓名：李四；年龄：31 --&gt; lisi </li>
+</ol>
+<p>从程序的运行结果中可以发现，现在的key允许重复，只要两个对象的地址不相等即可。</p>
+<p>【责任编辑：<a href="mailto:limian@51cto.com">云霞</a> TEL：（010）68476606】
+<a href="http://book.51cto.com/art/200907/140657.htm" target="_blank"><strong>回书目</strong></a>   <a href="http://book.51cto.com/art/200908/141099.htm" target="_blank"><strong>上一节</strong></a>   <a href="http://book.51cto.com/art/200908/141101.htm" target="_blank"><strong>下一节</strong></a>
+上一篇： <a href="http://book.51cto.com/art/200908/141099.htm" target="_blank">13.7.4 Map接口的使用注意事项（2）</a> 下一篇： <a href="http://book.51cto.com/art/200908/141101.htm" target="_blank">13.8 SortedMap接口</a></p>
+<h2 id="-http-book-51cto-com-click-1223-"><a href="http://book.51cto.com/click/1223" target="_blank">频道推荐</a></h2>
+<p><a href="http://book.51cto.com/click/1223" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li>·<a href="http://book.51cto.com/art/200910/159525.htm" title="自己动手写搜索引擎" target="_blank">自己动手写搜索引擎</a></li>
+<li>·<a href="http://book.51cto.com/art/200910/159539.htm" title="1.1.2  编写代码（15分钟）" target="_blank">1.1.2 编写代码（15分钟）</a></li>
+<li>·<a href="http://book.51cto.com/art/200910/159538.htm" title="1.1.1  准备工作环境（10分钟）" target="_blank">1.1.1 准备工作环境（10分钟）</a><h2 id="-http-www-51cto-com-"><a href="http://www.51cto.com/" target="_blank">热点标签</a></h2>
+</li>
+</ul>
+<p><a href="http://server.51cto.com/Blade" title="刀片服务器专区" target="_blank">刀片服务器</a>   <a href="http://cloud.51cto.com/" title="云计算频道全新上线" target="_blank">云计算</a>   <a href="http://netsecurity.51cto.com/art/200609/31897.htm" title="ARP攻击与防御" target="_blank">ARP攻防</a>   <a href="http://training.51cto.com/cisco" title="思科培训技术专区" target="_blank">思科培训</a>  </p>
+<h2 id="-http-www-51cto-com-"><a href="http://www.51cto.com/" target="_blank">全站热点</a></h2>
+<p><a href="http://www.51cto.com/" target="_blank">更多&gt;&gt;</a></p>
+<p><a href="http://netsecurity.51cto.com/art/200609/31897.htm" title="ARP攻击防范与解决方案"></a></p>
+<p><a href="http://netsecurity.51cto.com/art/200609/31897.htm" title="ARP攻击防范与解决方案" target="_blank">ARP攻击防范与..</a></p>
+<p><a href="http://training.51cto.com/art/200804/71335.htm" title="2009年下半年软考最新试题与答案"></a></p>
+<p><a href="http://training.51cto.com/art/200804/71335.htm" title="2009年下半年软考最新试题与答案" target="_blank">2009年下半年..</a></p>
+<ul>
+<li>·<a href="http://network.51cto.com/art/200910/159165.htm" title="网络工程师须知：30个经典的路由问题" target="_blank">网络工程师须知：30个经典的路由问题</a></li>
+<li>·<a href="http://server.51cto.com/server-159912.htm" title="图解天河一号 中国最快的计算机" target="_blank">图解天河一号 中国最快的计算机</a></li>
+<li>·<a href="http://os.51cto.com/art/200910/159488.htm" title="Ubuntu 9.10 功能截图" target="_blank">Ubuntu 9.10 功能截图</a></li>
+<li>·<a href="http://developer.51cto.com/art/200910/159138.htm" title="Google网页工具包(GWT)是Web开发的未来？" target="_blank">Google网页工具包(GWT)是Web开发的未来？</a></li>
+<li>·<a href="http://os.51cto.com/art/200910/159486.htm" title="Ubuntu 9.10 桌面版发布 今日开始下载" target="_blank">Ubuntu 9.10 桌面版发布 今日开始下载</a></li>
+</ul>
+<h2 id="-http-fellow-51cto-com-"><a href="http://fellow.51cto.com/" target="_blank">技术人</a></h2>
+<p><a href="http://fellow.51cto.com/" target="_blank">更多&gt;&gt;</a>
+<a href="http://fellow.51cto.com/art/200907/140965.htm" title="IT十大死对头：Linux单挑Windows 谷歌对抗所有人" target="_blank"><img src="" alt=""></a></p>
+<p><a href="http://fellow.51cto.com/art/200907/140965.htm" title="IT十大死对头：Linux单挑Windows 谷歌对抗所有人" target="_blank">IT十大死对头：L..</a></p>
+<p><a href="http://job.51cto.com/art/200907/140484.htm" title="程序员面试技巧：全程大揭秘" target="_blank"><img src="" alt=""></a></p>
+<p><a href="http://job.51cto.com/art/200907/140484.htm" title="程序员面试技巧：全程大揭秘" target="_blank">程序员面试技巧..</a></p>
+<ul>
+<li>·<a href="http://job.51cto.com/art/200910/159867.htm" title="腾讯“小三”事件追踪" target="_blank">腾讯“小三”事件追踪</a></li>
+<li>·<a href="http://job.51cto.com/art/200910/159848.htm" title="反盗版联盟逼宫迅雷:两阵营险些大打出手" target="_blank">反盗版联盟逼宫迅雷:两阵营险些大打出手</a></li>
+<li>·<a href="http://training.51cto.com/art/200911/160298.htm" title="网管技能水平考试教材发布 开启网管人才培养新篇章" target="_blank">网管技能水平考试教材发布 开启网管人才培养新..</a></li>
+<li>·<a href="http://fellow.51cto.com/art/200911/160116.htm" title="没有技术怎么办 任正非的人才技术兼收之道" target="_blank">没有技术怎么办 任正非的人才技术兼收之道</a></li>
+<li>·<a href="http://job.51cto.com/art/200910/159521.htm" title="开心网起诉千橡不正当竞争庭审文字记录" target="_blank">开心网起诉千橡不正当竞争庭审文字记录</a><h2 id="-http-book-51cto-com-"><a href="http://book.51cto.com/" target="_blank">读书</a></h2>
+</li>
+</ul>
+<p><a href="http://book.51cto.com/" target="_blank">更多&gt;&gt;</a></p>
+<ul>
+<li>·<a href="http://book.51cto.com/art/200910/157013.htm" title="监控" target="_blank">监控</a></li>
+<li>·<a href="http://book.51cto.com/art/200910/156835.htm" title="Python在Unix和Linux系统管理中的应用" target="_blank">Python在Unix和Linux系统管理中的应用</a></li>
+<li>·<a href="http://book.51cto.com/art/200910/155790.htm" title="锦绣蓝图：怎样规划令人流连忘返的网站（第2版）" target="_blank">锦绣蓝图：怎样规划令人流连忘返的网站（第2版）</a></li>
+<li>·<a href="http://book.51cto.com/art/200910/156006.htm" title="Scala编程" target="_blank">Scala编程</a><h2 id="-http-blog-51cto-com-"><a href="http://blog.51cto.com/" target="_blank">优秀博文</a></h2>
+</li>
+</ul>
+<p><a href="http://blog.51cto.com/" target="_blank">更多&gt;&gt;</a></p>
+<h2 id="-http-bbs-51cto-com-hotthreads-php-"><a href="http://bbs.51cto.com/hotthreads.php" target="_blank">最新热帖</a></h2>
+<p><a href="http://bbs.51cto.com/hotthreads.php" target="_blank">更多&gt;&gt;</a></p>
+<p>Copyright©2005-2009 51CTO.COM 版权所有</p>
 
       
     </div>
@@ -978,7 +2171,889 @@ System.out.println(map);</p>
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Java集合框架之小结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--Java集合框架之小结" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--13_7_5key可以重复的Map集合：IdentityHashMap/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--13_7_5key可以重复的Map集合：IdentityHashMap" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist/">DWR如何获得返回对象 list Map Set list</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="dwr-list-map-set-list">DWR如何获得返回对象 list Map Set list</h1>
+<p><strong>DWR**</strong>如何获得返回对象<strong>**list Map Set list.add(JavaBean)</strong></p>
+<p><strong>1**</strong>、调用没有返回值和参数的JAVA方法**</p>
+<p>1.1、dwr.xml的配置</p>
+<p><dwr></p>
+<p><allow></p>
+<p><create creator="new" javascript="testClass" ></p>
+<p><param name="class" value="/com.dwr.TestClass" /></p>
+<p><include method="testMethod1"/>
+</create>
+</allow>
+</dwr></p>
+<p><allow>标签中包括可以暴露给javascript访问的东西。</p>
+<p><create>标签中指定javascript中可以访问的java类，并定义DWR应当如何获得要进行远程的类的实例。creator=&quot;new&quot;属性指定java类实例的生成方式，new意味着DWR应当调用类的默认构造函数来获得实例，其他的还有spring方式，通过与IOC容器Spring进行集成来获得实例等等。javascript=&quot; testClass &quot;属性指定javascript代码访问对象时使用的名称。</p>
+<p><param>标签指定要公开给javascript的java类名。</p>
+<p><include>标签指定要公开给javascript的方法。不指定的话就公开所有方法。</p>
+<p><exclude>标签指定要防止被访问的方法。
+1.2、javascript中调用
+首先，引入javascript脚本</p>
+<p><script src='dwr/interface/ testClass.js'></script></p>
+<p><script src="/dwr/engine.js"></script></p>
+<p><script src="/dwr/util.js"></script>
+其中TestClass.js是dwr根据配置文件自动生成的，engine.js和util.js是dwr自带的脚本文件。
+其次，编写调用java方法的javascript函数
+Function callTestMethod1(){
+       testClass.testMethod1();
+}
+<strong>2**</strong>、调用有简单返回值的java方法**</p>
+<p><strong>2.1**</strong>、dwr.xml的配置<strong><em>**</em></strong>配置同1.1</p>
+<p><dwr></p>
+<p><allow></p>
+<p><create creator="new" javascript="testClass" ></p>
+<p><param name="class" value="/com.dwr.TestClass" /></p>
+<p><include method="testMethod2"/>
+</create>
+</allow>
+</dwr>
+2.2、javascript中调用
+首先，引入javascript脚本
+其次，编写调用java方法的javascript函数和接收返回值的回调函数
+Function callTestMethod2(){
+       testClass.testMethod2(callBackFortestMethod2);
+}
+Function callBackFortestMethod2(data){
+      //其中date接收方法的返回值
+      //可以在这里对返回值进行处理和显示等等
+alert(&quot;the return value is &quot; + data);
+}
+其中callBackFortestMethod2是接收返回值的回调函数**</p>
+<p><strong>3**</strong>、调用有简单参数的java方法**</p>
+<p><strong>3.1**</strong>、dwr.xml的配置<strong><em>**</em></strong>配置同1.1</p>
+<p><dwr></p>
+<p><allow></p>
+<p><create creator="new" javascript="testClass" ></p>
+<p><param name="class" value="/com.dwr.TestClass" /></p>
+<p><include method="testMethod3"/>
+</create>
+</allow>
+</dwr>
+3.2、javascript中调用
+首先，引入javascript脚本
+其次，编写调用java方法的javascript函数
+Function callTestMethod3(){
+                  //定义要传到java方法中的参数
+       var data;
+       //构造参数
+       data = “test String”;
+       testClass.testMethod3(data);
+}**</p>
+<p><strong>4**</strong>、调用返回JavaBean的java方法<strong><strong>4.1</strong></strong>、dwr.xml的配置<em>**</em><dwr></p>
+<p><allow></p>
+<p><create creator="new" javascript="testClass" ></p>
+<p><param name="class" value="/com.dwr.TestClass" /></p>
+<p><include method="testMethod4"/>
+</create></p>
+<p>&lt;convert converter=&quot;bean&quot; match=&quot;&quot;com.dwr.TestBean&quot;&gt;
+                   <param name="include" value="username,password" />
+</convert>
+</allow>
+</dwr></p>
+<p><creator><strong>**标签负责公开用于Web远程的类和类的方法，<convertor>标签则负责这些方法的参数和返回类型。convert元素的作用是告诉DWR在服务器端Java 对象表示和序列化的JavaScript之间如何转换数据类型。DWR自动地在Java和JavaScript表示之间调整简单数据类型。这些类型包括Java原生类型和它们各自的封装类表示，还有String、Date、数组和集合类型。DWR也能把JavaBean转换成JavaScript 表示，但是出于安全性的原因，要求显式的配置，<convertor>标签就是完成此功能的。converter=&quot;bean&quot;属性指定转换的方式采用JavaBean命名规范，match=&quot;&quot;com.dwr.TestBean&quot;属性指定要转换的javabean名称，<param>标签指定要转换的JavaBean属性。
+4.2、javascript中调用
+首先，引入javascript脚本
+其次，编写调用java方法的javascript函数和接收返回值的回调函数
+Function callTestMethod4(){
+       testClass.testMethod4(callBackFortestMethod4);
+}
+Function callBackFortestMethod4(data){
+      //其中date接收方法的返回值
+//对于JavaBean返回值，有两种方式处理
+              //不知道属性名称时，使用如下方法
+            for(var property in data){
+               alert(&quot;property:&quot;+property);
+               alert(property+&quot;:&quot;+data[property]);
+            }
+//知道属性名称时，使用如下方法
+            alert(data.username);
+            alert(data.password);
+}
+其中callBackFortestMethod4是接收返回值的回调函数</strong></p>
+<p><strong>5**</strong>、调用有JavaBean参数的java方法<strong><strong>5.1</strong></strong>、dwr.xml的配置
+<em>**</em>配置同4.1</p>
+<p><dwr></p>
+<p><allow></p>
+<p><create creator="new" javascript="testClass" ></p>
+<p><param name="class" value="/com.dwr.TestClass" /></p>
+<p><include method="testMethod5"/>
+</create></p>
+<p><convert converter="bean" match="com.dwr.TestBean">
+                   <param name="include" value="username,password" />
+</convert>
+</allow>
+</dwr>
+5.2、javascript中调用
+首先，引入javascript脚本
+其次，编写调用java方法的javascript函数
+Function callTestMethod5(){
+                  //定义要传到java方法中的参数
+       var data;
+       //构造参数，date实际上是一个object
+       data = { username:&quot;user&quot;, password:&quot;password&quot; }
+       testClass.testMethod5(data);
+}**</p>
+<p><strong>6**</strong>、调用返回List、Set或者Map的java方法<strong><strong>6.1</strong></strong>、dwr.xml的配置<strong><em>**</em></strong>配置同4.1</p>
+<p><dwr></p>
+<p><allow></p>
+<p><create creator="new" javascript="testClass" ></p>
+<p><param name="class" value="/com.dwr.TestClass" /></p>
+<p><include method="testMethod6"/>
+</create></p>
+<p><convert converter="bean" match="com.dwr.TestBean"></p>
+<p><param name="include" value="username,password" />
+</convert>
+</allow>
+</dwr>
+注意：如果List、Set或者Map中的元素均为简单类型（包括其封装类）或String、Date、数组和集合类型，则不需要<convert>标签。
+6.2、javascript中调用(以返回List为例，List的元素为TestBean)
+首先，引入javascript脚本
+其次，编写调用java方法的javascript函数和接收返回值的回调函数
+Function callTestMethod6(){
+       testClass.testMethod6(callBackFortestMethod6);
+}
+Function callBackFortestMethod6(data){
+      //其中date接收方法的返回值
+//对于JavaBean返回值，有两种方式处理
+              //不知道属性名称时，使用如下方法
+            for(var i=0;i&lt;data.length;i++){
+for(var property in data){
+                   alert(&quot;property:&quot;+property);
+                   alert(property+&quot;:&quot;+data[property]);
+                }
+}
+//知道属性名称时，使用如下方法
+for(var i=0;i&lt;data.length;i++){
+                alert(data.username);
+                alert(data.password);
+}
+}**</p>
+<p><strong>7**</strong>、调用有List、Set或者Map参数的java方法**</p>
+<p><strong>7.1**</strong>、dwr.xml的配置<em>**</em><dwr></p>
+<p><allow></p>
+<p><create creator="new" javascript="testClass" ></p>
+<p><param name="class" value="/com.dwr.TestClass" /></p>
+<p><include method="testMethod7"/>
+</create></p>
+<p><convert converter="bean" match="com.dwr.TestBean"></p>
+<p><param name="include" value="username,password" />
+</convert>
+</allow></p>
+<p><signatures>
+&lt;![CDATA[
+import java.util.List;
+import com.dwr.TestClass;
+import com.dwr.TestBean;
+TestClass.testMethod7(List<TestBean>);
+]]&gt;
+</signatures>
+</dwr></p>
+<p><signatures><em>**</em>标签是用来声明java方法中List、Set或者Map参数所包含的确切类，以便java代码作出判断。
+7.2、javascript中调用(以返回List为例，List的元素为TestBean)
+首先，引入javascript脚本
+其次，编写调用java方法的javascript函数
+Function callTestMethod7(){
+//定义要传到java方法中的参数
+       var data;
+       //构造参数，date实际上是一个object数组，即数组的每个元素均为object
+data = [
+                       {
+                          username:&quot;user1&quot;,
+                          password:&quot;password2&quot;
+                       },
+                       {
+                          username:&quot;user2&quot;,
+                          password:&quot; password2&quot;
+                       }
+                   ];
+       testClass.testMethod7(data);
+}
+注意：
+1、对于第6种情况，如果java方法的返回值为Map，则在接收该返回值的javascript回调函数中如下处理：
+function callBackFortestMethod(data){
+            //其中date接收方法的返回值
+            for(var property in data){
+                   var bean = data[property];
+                   alert(bean.username);
+                   alert(bean.password);
+               }
+}
+2、对于第7种情况，如果java的方法的参数为Map（假设其key为String，value为TestBean），则在调用该方法的javascript函数中用如下方法构造要传递的参数：
+function callTestMethod (){
+               //定义要传到java方法中的参数
+               var data;
+               //构造参数，date实际上是一个object，其属性名为Map的key，属性值为Map的value
+               data = {
+                          &quot;key1&quot;:{
+                              username:&quot;user1&quot;,
+                             password:&quot;password2&quot;
+                          },
+                          &quot;key2&quot;:{
+                             username:&quot;user2&quot;,
+                             password:&quot; password2&quot;
+                          }
+                      };
+               testClass.testMethod(data);
+}
+并且在dwr.xml中增加如下的配置段</p>
+<p><signatures>
+&lt;![CDATA[
+import java.util.List;
+import com.dwr.TestClass;
+import com.dwr.TestBean;
+TestClass.testMethod7(Map<String,TestBean>);
+]]&gt;
+</signatures>
+3、由以上可以发现，对于java方法的返回值为List(Set)的情况，DWR将其转化为Object数组，传递个javascript；对于java方法的返回值为Map的情况，DWR将其转化为一个Object，其中Object的属性为原Map的key值，属性值为原Map相应的value值。
+4、如果java方法的参数为List(Set)和Map的情况，javascript中也要根据3种所说，构造相应的javascript数据来传递到java中。**</p>
+<p><strong>======================================================================================</strong></p>
+<p><a href=""></a><strong>Scripting Introduction</strong></p>
+<p><strong>DWR**</strong>根据dwr.xml生成和Java代码类似的Javascript代码。**</p>
+<p><strong>相对而言Java同步调用，创建与Java代码匹配的Ajax远程调用接口的最大挑战来至与实现Ajax的异步调用特性。</strong></p>
+<p><strong>DWR**</strong>通过引入回调函数来解决这个问题，当结果被返回时，DWR会调用这个函数。**</p>
+<p><strong>有两种推荐的方式来使用DWR实现远程方法调用。可以通过把回调函数放在参数列表里，也可以把回调函数放到元数据对象里。</strong></p>
+<p><strong>当然也可以把回调函数做为第一个参数，但是不建议使用这种方法。因为这种方法在处理</strong><a href="http://wiki.javascud.org/display/dwrcn/Accessing+Servlet+Objects" title="Accessing Servlet Objects" target="_blank">自动处理http对象</a><strong>时(查看&quot;Alternative Method&quot;)上会有问题。这个方法主要是为向下兼容而存在的。</strong></p>
+<p><a href=""></a><strong>简单的回调函数</strong></p>
+<p><strong>假设你有一个这样的Java方法：</strong></p>
+<p><strong>public class Remote {    public String getData(int index) { ... }}</strong></p>
+<p><strong>我们可以在Javascript中这样使用：</strong></p>
+<p><strong><script type="text/javascript"    src="[WEBAPP]/dwr/interface/Remote.js"> </script><script type="text/javascript"    src="[WEBAPP]/dwr/engine.js"> </script>...function handleGetData(str) {  alert(str);}Remote.getData(42, handleGetData);</strong></p>
+<p><strong>42**</strong>是Java方法getData()的一个参数。**</p>
+<p><strong>此外你也可以使用这种减缩格式：</strong></p>
+<p><strong>Remote.getData**</strong>(42, function(str) { alert(str); });**</p>
+<p><a href=""></a><strong>调用元数据对象(Meta-Data)</strong></p>
+<p><strong>另外一种语法时使用&quot;调用元数据对象&quot;来指定回调函数和其他的选项。上面的例子可以写成这样：</strong></p>
+<p><strong>Remote.getData**</strong>(42, {  callback:function(str) { alert(str); }});**</p>
+<p><strong>这种方法有很多优点：易于阅读，更重要的指定额外的调用选项。</strong></p>
+<p><a href=""></a><strong>超时和错误处理</strong></p>
+<p><strong>在回调函数的元数据中你可以指定超时和错误的处理方式。例如：</strong></p>
+<p><strong>Remote.getData**</strong>(42, {  callback:function(str) { alert(str); },  timeout:5000,  errorHandler:function(message) { alert(&quot;Oops: &quot; + message); }});**</p>
+<p><a href=""></a><strong>查找回调函数</strong></p>
+<p><strong>有些情况下我们很难区分各种回调选项(记住，Javascript是不支持函数重载的)。例如：</strong></p>
+<p><strong>Remote.method**</strong>({ timeout:3 }, { errorHandler:somefunc });**</p>
+<p><strong>这两个参数之一是bean的参数，另一个是元数据对象，但是我们不能清楚的告诉DWR哪个是哪个。为了可以跨浏览器，我们假定null == undefined。 所以当前的情况，规则是：</strong></p>
+<ul>
+<li><strong>如果第一个或最后一个是一个函数，那么它就是回调函数，没有元数据对象，并且其他参数都是Java的方法参数。</strong></li>
+<li><strong>另外，如果最后一个参数是一个对象，这个对象中有一个callback成员，并且它是个函数，那么这个对象就是元数据对象，其他的都是Java方法参数。</strong></li>
+<li><strong>另外，如果第一个参数是 null ，我们就假设没有回调函数，并且其他的都是Java方法参数。尽管如此，我们会检查最后一个参数是不是null，如果是就发出警告。</strong></li>
+<li><strong>最后如果最后一个参数是null，那么就没有callback函数。</strong></li>
+<li><strong>另外，发出错误信号是个糟糕的请求格式。</strong></li>
+</ul>
+<p><a href=""></a><strong>创造一个与Java对象匹配的Javascript对象</strong></p>
+<p><strong>假设你有这样的Java方法：</strong></p>
+<p><strong>public class Remote {  public void setPerson(Person p) {    this.person = p;  }}</strong></p>
+<p><strong>Person**</strong>对象的结构是这样的：**</p>
+<p><strong>public Person {  private String name;  private int age;  private Date[] appointments;  // getters and setters ...}</strong></p>
+<p><strong>那么你可以在Javascript中这样写：</strong></p>
+<p><strong>var**</strong>p = {  name:&quot;Fred Bloggs&quot;,  age:42,  appointments:[ new Date(), new Date(&quot;1 Jan 2008&quot;) ]};Remote.setPerson(p);**</p>
+<p><strong>在Javascript没有出现的字段，在Java中就不会被设置。</strong></p>
+<p><strong>因为setter都是返回&#39;void&#39;，我们就不需要使用callback函数了。如果你想要一个返回void的服务端方法的完整版，你也可以加上callback函数。很明显DWR不会向它传递任何参数。</strong></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Hash表分析以及Java实现/">Hash表分析以及Java实现</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Hash表分析以及Java实现/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="hash-java-">Hash表分析以及Java实现</h1>
+<p><a href="http://www.iteye.com/" target="_blank">首页</a> <a href="http://www.iteye.com/news" target="_blank">新闻</a> <a href="http://www.iteye.com/forums" target="_blank">论坛</a> <a href="http://www.iteye.com/ask" target="_blank">问答</a> <a href="http://www.iteye.com/blogs" target="_blank">博客</a> <a href="http://www.iteye.com/job" target="_blank">招聘</a> <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">更多 ▼</a></p>
+<p><a href="http://www.iteye.com/wiki" target="_blank">专栏</a>  <a href="http://www.iteye.com/groups" target="_blank">群组</a> <a href="http://www.iteye.com/search" target="_blank">搜索</a></p>
+<p><a href="http://java-mzd.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.iteye.com/all" target="_blank">我的应用</a> <a href="http://java-mzd.iteye.com/login" target="_blank">登录</a> <a href="http://java-mzd.iteye.com/signup" target="_blank">注册</a></p>
+<h1 id="-java-mzd-http-java-mzd-iteye-com-"><a href="http://java-mzd.iteye.com/" target="_blank">java-mzd</a></h1>
+<p>永久域名 <a href="http://java-mzd.iteye.com/" target="_blank"><a href="http://java-mzd.iteye.com">http://java-mzd.iteye.com</a></a></p>
+<p><a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">8顶</a>
+<a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">3踩</a></p>
+<p><a href="http://java-mzd.iteye.com/blog/829890" title="简单Spring容器实现" target="_blank">简单Spring容器实现</a> | <a href="http://java-mzd.iteye.com/blog/826692" title="查找表分析（总论）" target="_blank">查找表分析（总论）</a></p>
+<p>2010-11-29</p>
+<h3 id="-hash-java-"><a href="">Hash表分析以及Java实现</a></h3>
+<p><strong>文章分类:<a href="http://www.iteye.com/blogs/category/tech" target="_blank">综合技术</a></strong>
+       这篇博客主要探讨<strong>Hash表</strong>中的一些原理/概念，及根据这些原理/概念，自己设计一个用来存放/查找数据的Hash表，并且与JDK中的HashMap类进行比较。</p>
+<p>我们分一下七个步骤来进行。 </p>
+<p><strong>一。    **</strong>Hash<strong>**表概念</strong></p>
+<hr>
+<p><strong>二 .      **</strong>Hash<strong>**构造函数的方法，及适用范围</strong></p>
+<hr>
+<p><strong>三.**</strong>      <strong><strong>Hash</strong></strong>处理冲突方法，各自特征**</p>
+<hr>
+<p><strong>四.**</strong>      <strong><strong>Hash</strong></strong>查找过程**</p>
+<hr>
+<p><strong>五.**</strong>      <strong><strong>实现一个使用</strong></strong>Hash<strong><strong>存数据的场景</strong></strong>-------Hash<strong>**查找算法，插入算法</strong></p>
+<hr>
+<p><strong>六.**</strong>      <strong><strong>JDK</strong></strong>中<strong><strong>HashMap</strong></strong>的实现**</p>
+<hr>
+<p><strong>七.**</strong>      <strong><strong>Hash</strong></strong>表与<strong><strong>HashMap</strong></strong>的对比，性能分析**</p>
+<p> <strong>一。    **</strong>Hash<strong>**表概念 </strong></p>
+<pre><code>           在查找表中我们已经说过，在Hash表中，**记录在表中的位置和其关键字之间存在着一种确定的关系**。这样       我们就能预先知道所查关键字在表中的位置，从而直接通过下标找到记录。使ASL趋近与0.
+
+
+
+          1) ** **哈希(Hash)函数是一个映象，即： 将关键字的集合映射到某个地址集合上，它的设置很灵活，只要这个地       址集合的大小不超出允许范围即可；
+
+         2)  由于哈希函数是一个压缩映象，因此，在一般情况下，很容易产生“冲突”现象，即： key1¹ key2，而  f            (key1) = f(key2)。
+
+          3).  只能尽量减少冲突而不能完全避免冲突，这是因为通常关键字集合比较大，其元素包括所有可能的关键字，       而地址集合的元素仅为哈希表中的地址值
+
+
+
+   在构造这种特殊的“查找表” 时，除了需要选择一个**“好”(尽可能少产生冲突)**的哈希函数之外；还需要找到一      种**“处理冲突”** 的方法。
+</code></pre><p><strong>二 .    **</strong>Hash<strong>**构造函数的方法，及适用范围</strong></p>
+<ul>
+<li><strong>直接定址法</strong></li>
+<li><strong>数字分析法</strong></li>
+<li><strong>平方取中法</strong></li>
+<li><strong>折叠法</strong></li>
+<li><strong>除留余数法</strong></li>
+<li><strong>随机数法</strong>      </li>
+</ul>
+<pre><code>  （1）直接定址法：
+
+            哈希函数为关键字的线性函数，H(key) = key 或者 H(key) = a ´ key + b
+
+          **此法仅适合于**：地址集合的大小 = = 关键字集合的大小，其中a和b为常数。
+
+ （2）数字分析法：
+
+         假设关键字集合中的每个关键字都是由 s 位数字组成 (u1, u2, …, us)，分析关键字集中的全体，                  并从中提取分布均匀的若干位或它们的组合作为地址。
+
+         **此法适于:**能预先估计出全体关键字的每一位上各种数字出现的频度。
+
+ （3）平方取中法：
+
+           以关键字的平方值的中间几位作为存储地址。求“关键字的平方值” 的目的是“扩大差别” ，同                    时平方值的中间各位又能受到整个关键字中各位的影响。
+
+         **此法适于:**关键字中的每一位都有某些数字重复出现频度很高的现象。
+
+ （4）折叠法：
+
+        将关键字分割成若干部分，然后取它们的叠加和为哈希地址。两种叠加处理的方法：移位叠加:将分                割后的几部分低位对齐相加；间界叠加:从一端沿分割界来回折叠，然后对齐相加。
+
+        **此法适于：**关键字的数字位数特别多。
+
+ （5）除留余数法：
+
+         设定哈希函数为:H(key) = key MOD p   ( p≤m )，其中， m为表长，p 为不大于 m 的素数，或                 是不含 20 以下的质因子
+
+ （6）随机数法：
+
+       设定哈希函数为:H(key) = Random(key)其中，Random 为伪随机函数
+
+       **此法适于：**对长度不等的关键字构造哈希函数。
+
+
+
+     实际造表时，采用何种构造哈希函数的方法取决于建表的关键字集合的情况(包括关键字的范围和形态)，以及哈希表    长度（哈希地址范围），**总的原则是使产生冲突的可能性降到尽可能地小。**
+</code></pre><p><strong>三.**</strong>      <strong><strong>Hash</strong></strong>处理冲突方法，各自特征**</p>
+<p> <strong>“**</strong>处理冲突”<strong><strong>的实际含义是：</strong></strong>为产生冲突的关键字寻找下一个哈希地址。**</p>
+<ul>
+<li><strong> **</strong>开放定址法**</li>
+<li><strong> **</strong>再哈希法**</li>
+<li><strong> **</strong>链地址法**</li>
+</ul>
+<hr>
+<pre><code>  （1）开放定址法：
+
+           为产生冲突的关键字地址 H(key) 求得一个地址序列： H0, H1, H2, …, Hs  1≤s≤m-1，Hi = ( H(key)                  +di  ) MOD m，其中： i=1, 2, …, s，H(key)为哈希函数;m为哈希表长;
+
+
+
+  （2）链地址法：
+</code></pre><p><img src="" alt=""></p>
+<pre><code>         将所有哈希地址相同的记录都链接在同一链表中。
+
+
+
+  （3）再哈希法：
+
+           方法：构造若干个哈希函数，当发生冲突时，根据另一个哈希函数计算下一个哈希地址，直到冲突不再发                  生。即：Hi=Rhi(key)     i=1,2,……k，其中：Rhi——不同的哈希函数，特点：计算时间增加****
+</code></pre><p> <strong>四.**</strong>      <strong><strong>Hash</strong></strong>查找过程**</p>
+<p><img src="" alt=""></p>
+<p><strong> </strong>      对于给定值 K,计算哈希地址 i = H(K)，若 r[i] = NULL  则查找不成功，若 r[i].key = K  则查找成功， 否则 “求     下一地址 Hi” ，直至r[Hi] = NULL  (查找不成功)  或r[Hi].key = K  (查找成功) 为止。</p>
+<p> <strong>五.**</strong>      <strong><strong>实现一个使用</strong></strong>Hash<strong><strong>存数据的场景</strong></strong>-------Hash<strong>**查找算法，插入算法</strong></p>
+<pre><code>     假设我们要设计的是一个用来保存中南大学所有在校学生个人信息的数据表。因为在校学生数量也不是特别巨大(8W?)，每个学生的学号是唯一的,因此，我们可以简单的应用直接定址法，声明一个10W大小的数组，每个学生的学号作为主键。然后每次要添加或者查找学生，只需要根据需要去操作即可。
+
+  但是，显然这样做是**很脑残**的。这样做系统的可拓展性和复用性就非常差了，比如有一天人数超过10W了？如果是用来保存别的数据呢？或者我只需要保存20条记录呢？声明大小为10W的数组显然是太浪费了的。
+
+
+
+ 如果我们是用来保存大数据量（比如银行的用户数，4大的用户数都应该有3-5亿了吧？），这时候我们计算出来的HashCode就很可能会有冲突了， 我们的系统应该有“处理冲突”的能力，此处我们**通过挂链法“处理冲突”**。
+
+
+
+ 如果我们的数据量非常巨大，并且还持续在增加，如果我们仅仅只是通过挂链法来处理冲突，可能我们的链上挂了上万个数据后，这个时候再通过静态搜索来查找链表，显然性能也是非常低的。所以我们的系统应该还能实现自动扩容，**当容量达到某比例后，即自动扩容，使装载因子保存在一个固定的水平上**。
+</code></pre><p>综上所述，我们对这个Hash容器的基本要求应该有如下几点：</p>
+<pre><code>         **满足Hash表的查找要求（废话）**
+</code></pre><hr>
+<p><strong>             能支持从小数据量到大数据量的自动转变（自动扩容）</strong></p>
+<hr>
+<p><strong>             使用挂链法解决冲突</strong></p>
+<p>好了，既然都分析到这一步了，咱就闲话少叙，直接开始上代码吧。</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>package cn.javamzd.collection.search;  </li>
+<li></li>
+<li>public class MyMap<K, V> {  </li>
+<li>private int size;// 当前容量  </li>
+<li>private static int INIT_CAPACITY = 16;// 默认容量  </li>
+<li>private Entry<K, V>[] container;// 实际存储数据的数组对象  </li>
+<li>private static float LOAD_FACTOR = 0.75f;// 装载因子  </li>
+<li>private int max;// 能存的最大的数=capacity/*factor  </li>
+<li></li>
+<li>// 自己设置容量和装载因子的构造器  </li>
+<li>public MyMap(int init_Capaticy, float load_factor) {  </li>
+<li>if (init_Capaticy &lt; 0)  </li>
+<li>throw new IllegalArgumentException(&quot;Illegal initial capacity: &quot;  </li>
+<li><ul>
+<li>init_Capaticy);  </li>
+</ul>
+</li>
+<li>if (load_factor &lt;= 0 || Float.isNaN(load_factor))  </li>
+<li>throw new IllegalArgumentException(&quot;Illegal load factor: &quot;  </li>
+<li><ul>
+<li>load_factor);  </li>
+</ul>
+</li>
+<li>this.LOAD_FACTOR = load_factor;  </li>
+<li>max = (int) (init_Capaticy /* load_factor);  </li>
+<li>container = new Entry[init_Capaticy];  </li>
+<li>}  </li>
+<li></li>
+<li>// 使用默认参数的构造器  </li>
+<li>public MyMap() {  </li>
+<li>this(INIT_CAPACITY, LOAD_FACTOR);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 存 </li>
+<li>/*  </li>
+<li>/* @param k </li>
+<li>/* @param v </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>public boolean put(K k, V v) {  </li>
+<li>// 1.计算K的hash值  </li>
+<li>// 因为自己很难写出对不同的类型都适用的Hash算法，故调用JDK给出的hashCode()方法来计算hash值  </li>
+<li>int hash = k.hashCode();  </li>
+<li>//将所有信息封装为一个Entry  </li>
+<li>Entry<K,V> temp=new Entry(k,v,hash);  </li>
+<li>if(setEntry(temp, container)){  </li>
+<li>// 大小加一  </li>
+<li>size++;  </li>
+<li>return true;  </li>
+<li>}  </li>
+<li>return false;  </li>
+<li>}  </li>
+<li></li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 扩容的方法 </li>
+<li>/*  </li>
+<li>/* @param newSize </li>
+<li>/*            新的容器大小 </li>
+<li>/*/  </li>
+<li>private void reSize(int newSize) {  </li>
+<li>// 1.声明新数组  </li>
+<li>Entry<K, V>[] newTable = new Entry[newSize];  </li>
+<li>max = (int) (newSize /* LOAD_FACTOR);  </li>
+<li>// 2.复制已有元素,即遍历所有元素，每个元素再存一遍  </li>
+<li>for (int j = 0; j &lt; container.length; j++) {  </li>
+<li>Entry<K, V> entry = container[j];  </li>
+<li>//因为每个数组元素其实为链表，所以…………  </li>
+<li>while (null != entry) {  </li>
+<li>setEntry(entry, newTable);  </li>
+<li>entry = entry.next;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>// 3.改变指向  </li>
+<li>container = newTable;  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/*将指定的结点temp添加到指定的hash表table当中 </li>
+<li>/* 添加时判断该结点是否已经存在 </li>
+<li>/* 如果已经存在，返回false </li>
+<li>/* 添加成功返回true </li>
+<li>/* @param temp </li>
+<li>/* @param table </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>private boolean setEntry(Entry<K,V> temp,Entry[] table){  </li>
+<li>// 根据hash值找到下标  </li>
+<li>int index = indexFor(temp.hash, table.length);  </li>
+<li>//根据下标找到对应元素  </li>
+<li>Entry<K, V> entry = table[index];  </li>
+<li>// 3.若存在  </li>
+<li>if (null != entry) {  </li>
+<li>// 3.1遍历整个链表，判断是否相等  </li>
+<li>while (null != entry) {  </li>
+<li>//判断相等的条件时应该注意，除了比较地址相同外，引用传递的相等用equals()方法比较  </li>
+<li>//相等则不存，返回false  </li>
+<li>if ((temp.key == entry.key||temp.key.equals(entry.key)) &amp;&amp; temp.hash == entry.hash&amp;&amp;(temp.value==entry.value||temp.value.equals(entry.value))) {  </li>
+<li>return false;  </li>
+<li>}  </li>
+<li>//不相等则比较下一个元素  </li>
+<li>else if (temp.key != entry.key &amp;&amp; temp.value != entry.value) {  </li>
+<li>//到达队尾，中断循环  </li>
+<li>if(null==entry.next){  </li>
+<li>break;  </li>
+<li>}  </li>
+<li>// 没有到达队尾，继续遍历下一个元素  </li>
+<li>entry = entry.next;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>// 3.2当遍历到了队尾，如果都没有相同的元素，则将该元素挂在队尾  </li>
+<li>addEntry2Last(entry,temp);  </li>
+<li></li>
+<li>}  </li>
+<li>// 4.若不存在,直接设置初始化元素  </li>
+<li>setFirstEntry(temp,index,table);  </li>
+<li>return true;  </li>
+<li>}  </li>
+<li></li>
+<li>private void addEntry2Last(Entry<K, V> entry, Entry<K, V> temp) {  </li>
+<li>if (size &gt; max) {  </li>
+<li>reSize(container.length /* 4);  </li>
+<li>}  </li>
+<li>entry.next=temp;  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 将指定结点temp，添加到指定的hash表table的指定下标index中 </li>
+<li>/* @param temp </li>
+<li>/* @param index </li>
+<li>/* @param table </li>
+<li>/*/  </li>
+<li>private void setFirstEntry(Entry<K, V> temp, int index, Entry[] table) {  </li>
+<li>// 1.判断当前容量是否超标，如果超标，调用扩容方法  </li>
+<li>if (size &gt; max) {  </li>
+<li>reSize(table.length /* 4);  </li>
+<li>}  </li>
+<li>// 2.不超标，或者扩容以后，设置元素  </li>
+<li>table[index] = temp;  </li>
+<li>//！！！！！！！！！！！！！！！  </li>
+<li>//因为每次设置后都是新的链表，需要将其后接的结点都去掉  </li>
+<li>//NND，少这一行代码卡了哥哥7个小时（代码重构）  </li>
+<li>temp.next=null;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 取 </li>
+<li>/*  </li>
+<li>/* @param k </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>public V get(K k) {  </li>
+<li>Entry<K, V> entry = null;  </li>
+<li>// 1.计算K的hash值  </li>
+<li>int hash = k.hashCode();  </li>
+<li>// 2.根据hash值找到下标  </li>
+<li>int index = indexFor(hash, container.length);  </li>
+<li>// 3。根据index找到链表  </li>
+<li>entry = container[index];  </li>
+<li>// 3。若链表为空，返回null  </li>
+<li>if (null == entry) {  </li>
+<li>return null;  </li>
+<li>}  </li>
+<li>// 4。若不为空，遍历链表，比较k是否相等,如果k相等，则返回该value  </li>
+<li>while (null != entry) {  </li>
+<li>if (k == entry.key||entry.key.equals(k)) {  </li>
+<li>return entry.value;  </li>
+<li>}  </li>
+<li>entry = entry.next;  </li>
+<li>}  </li>
+<li>// 如果遍历完了不相等，则返回空  </li>
+<li>return null;  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 根据hash码，容器数组的长度,计算该哈希码在容器数组中的下标值 </li>
+<li>/*  </li>
+<li>/* @param hashcode </li>
+<li>/* @param containerLength </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>public int indexFor(int hashcode, int containerLength) {  </li>
+<li>return hashcode &amp; (containerLength - 1);  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 用来实际保存数据的内部类,因为采用挂链法解决冲突，此内部类设计为链表形式 </li>
+<li>/*  </li>
+<li>/* @param <K>key </li>
+<li>/* @param <V> </li>
+<li>/*            value </li>
+<li>/*/  </li>
+<li>class Entry<K, V> {  </li>
+<li>Entry<K, V> next;// 下一个结点  </li>
+<li>K key;// key  </li>
+<li>V value;// value  </li>
+<li>int hash;// 这个key对应的hash码，作为一个成员变量，当下次需要用的时候可以不用重新计算  </li>
+<li></li>
+<li>// 构造方法  </li>
+<li>Entry(K k, V v, int hash) {  </li>
+<li>this.key = k;  </li>
+<li>this.value = v;  </li>
+<li>this.hash = hash;  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//相应的getter()方法  </li>
+<li></li>
+<li>}  </li>
+<li>}<br>package cn.javamzd.collection.search; public class MyMap<K, V> { private int size;// 当前容量 private static int INIT_CAPACITY = 16;// 默认容量 private Entry<K, V>[] container;// 实际存储数据的数组对象 private static float LOAD_FACTOR = 0.75f;// 装载因子 private int max;// 能存的最大的数=capacity/<em>factor // 自己设置容量和装载因子的构造器 public MyMap(int init_Capaticy, float load_factor) { if (init_Capaticy &lt; 0) throw new IllegalArgumentException(&quot;Illegal initial capacity: &quot; + init_Capaticy); if (load_factor &lt;= 0 || Float.isNaN(load_factor)) throw new IllegalArgumentException(&quot;Illegal load factor: &quot; + load_factor); this.LOAD_FACTOR = load_factor; max = (int) (init_Capaticy /</em> load_factor); container = new Entry[init_Capaticy]; } // 使用默认参数的构造器 public MyMap() { this(INIT_CAPACITY, LOAD_FACTOR); } //<em>/</em> /<em> 存 /</em> /<em> @param k /</em> @param v /<em> @return /</em>/ public boolean put(K k, V v) { // 1.计算K的hash值 // 因为自己很难写出对不同的类型都适用的Hash算法，故调用JDK给出的hashCode()方法来计算hash值 int hash = k.hashCode(); //将所有信息封装为一个Entry Entry<K,V> temp=new Entry(k,v,hash); if(setEntry(temp, container)){ // 大小加一 size++; return true; } return false; } //<em>/</em> /<em> 扩容的方法 /</em> /<em> @param newSize /</em> 新的容器大小 /<em>/ private void reSize(int newSize) { // 1.声明新数组 Entry<K, V>[] newTable = new Entry[newSize]; max = (int) (newSize /</em> LOAD_FACTOR); // 2.复制已有元素,即遍历所有元素，每个元素再存一遍 for (int j = 0; j &lt; container.length; j++) { Entry<K, V> entry = container[j]; //因为每个数组元素其实为链表，所以………… while (null != entry) { setEntry(entry, newTable); entry = entry.next; } } // 3.改变指向 container = newTable; } //<em>/</em> /<em>将指定的结点temp添加到指定的hash表table当中 /</em> 添加时判断该结点是否已经存在 /<em> 如果已经存在，返回false /</em> 添加成功返回true /<em> @param temp /</em> @param table /<em> @return /</em>/ private boolean setEntry(Entry<K,V> temp,Entry[] table){ // 根据hash值找到下标 int index = indexFor(temp.hash, table.length); //根据下标找到对应元素 Entry<K, V> entry = table[index]; // 3.若存在 if (null != entry) { // 3.1遍历整个链表，判断是否相等 while (null != entry) { //判断相等的条件时应该注意，除了比较地址相同外，引用传递的相等用equals()方法比较 //相等则不存，返回false if ((temp.key == entry.key||temp.key.equals(entry.key)) &amp;&amp; temp.hash == entry.hash&amp;&amp;(temp.value==entry.value||temp.value.equals(entry.value))) { return false; } //不相等则比较下一个元素 else if (temp.key != entry.key &amp;&amp; temp.value != entry.value) { //到达队尾，中断循环 if(null==entry.next){ break; } // 没有到达队尾，继续遍历下一个元素 entry = entry.next; } } // 3.2当遍历到了队尾，如果都没有相同的元素，则将该元素挂在队尾 addEntry2Last(entry,temp); } // 4.若不存在,直接设置初始化元素 setFirstEntry(temp,index,table); return true; } private void addEntry2Last(Entry<K, V> entry, Entry<K, V> temp) { if (size &gt; max) { reSize(container.length /<em> 4); } entry.next=temp; } //</em>/<em> /</em> 将指定结点temp，添加到指定的hash表table的指定下标index中 /<em> @param temp /</em> @param index /<em> @param table /</em>/ private void setFirstEntry(Entry<K, V> temp, int index, Entry[] table) { // 1.判断当前容量是否超标，如果超标，调用扩容方法 if (size &gt; max) { reSize(table.length /<em> 4); } // 2.不超标，或者扩容以后，设置元素 table[index] = temp; //！！！！！！！！！！！！！！！ //因为每次设置后都是新的链表，需要将其后接的结点都去掉 //NND，少这一行代码卡了哥哥7个小时（代码重构） temp.next=null; } //</em>/<em> /</em> 取 /<em> /</em> @param k /<em> @return /</em>/ public V get(K k) { Entry<K, V> entry = null; // 1.计算K的hash值 int hash = k.hashCode(); // 2.根据hash值找到下标 int index = indexFor(hash, container.length); // 3。根据index找到链表 entry = container[index]; // 3。若链表为空，返回null if (null == entry) { return null; } // 4。若不为空，遍历链表，比较k是否相等,如果k相等，则返回该value while (null != entry) { if (k == entry.key||entry.key.equals(k)) { return entry.value; } entry = entry.next; } // 如果遍历完了不相等，则返回空 return null; } //<em>/</em> /<em> 根据hash码，容器数组的长度,计算该哈希码在容器数组中的下标值 /</em> /<em> @param hashcode /</em> @param containerLength /<em> @return /</em>/ public int indexFor(int hashcode, int containerLength) { return hashcode &amp; (containerLength - 1); } //<em>/</em> /<em> 用来实际保存数据的内部类,因为采用挂链法解决冲突，此内部类设计为链表形式 /</em> /<em> @param <K>key /</em> @param <V> /<em> value /</em>/ class Entry<K, V> { Entry<K, V> next;// 下一个结点 K key;// key V value;// value int hash;// 这个key对应的hash码，作为一个成员变量，当下次需要用的时候可以不用重新计算 // 构造方法 Entry(K k, V v, int hash) { this.key = k; this.value = v; this.hash = hash; } //相应的getter()方法 } }</li>
+</ol>
+<p> 代码中有相当清楚的注释了</p>
+<p>在文章的最后这里，我要强烈的宣泄下感情</p>
+<p>MLGBD，本来以为分析的挺到位了，写出这个东西也就最多需要个把小时吧</p>
+<p>结果因为通宵作业，脑袋运转不灵</p>
+<p>硬是花了哥三个小时才写出了</p>
+<p>好不容易些出来了</p>
+<p>我日</p>
+<p>看着代码比较混乱</p>
+<p>然后就对代码重构了下</p>
+<p>把逻辑抽象清楚，进行重构就花了个多小时</p>
+<p>好不容易构造好了</p>
+<p>就开始了TMD的一直报错了----------大数据量测试时到大概5000就死循环了</p>
+<p>各种调试，各种分析都觉得没错误</p>
+<p> 最后花了哥7个小时终于找出来了</p>
+<p>我擦</p>
+<p>第一次初始化加的时候，因为每个元素的next都是空的</p>
+<p>而扩充容量resize()时，因为冲突处理是链式结构的</p>
+<p>当将他们重新hash添加的时候，重复的这些鸟元素的next是有元素的</p>
+<p>一定要设置为null</p>
+<p><strong>七.性能分析：</strong></p>
+<pre><code>  1.因为冲突的存在，其查找长度不可能达到O(1)
+
+  2哈希表的平均查找长度是装载因子a 的函数，而不是 n 的函数。
+
+  3.用哈希表构造查找表时，可以选择一个适当的装填因子  ，使得平均查找长度限定在某个范围内。
+</code></pre><p>   最后给出我们这个HashMap的性能</p>
+<p>  测试代码
+Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>public class Test {  </li>
+<li></li>
+<li>public static void main(String[] args) {  </li>
+<li>MyMap<String, String> mm = new MyMap<String, String>();   </li>
+<li>Long aBeginTime=System.currentTimeMillis();//记录BeginTime  </li>
+<li>for(int i=0;i&lt;1000000;i++){  </li>
+<li>mm.put(&quot;&quot;+i, &quot;&quot;+i/*100);  </li>
+<li>}  </li>
+<li>Long aEndTime=System.currentTimeMillis();//记录EndTime  </li>
+<li>System.out.println(&quot;insert time--&gt;&quot;+(aEndTime-aBeginTime));  </li>
+<li></li>
+<li>Long lBeginTime=System.currentTimeMillis();//记录BeginTime  </li>
+<li>mm.get(&quot;&quot;+100000);  </li>
+<li>Long lEndTime=System.currentTimeMillis();//记录EndTime  </li>
+<li>System.out.println(&quot;seach time---&gt;&quot;+(lEndTime-lBeginTime));  </li>
+<li>}  </li>
+<li><p>}<br>public class Test { public static void main(String[] args) { MyMap<String, String> mm = new MyMap<String, String>(); Long aBeginTime=System.currentTimeMillis();//记录BeginTime for(int i=0;i&lt;1000000;i++){ mm.put(&quot;&quot;+i, &quot;&quot;+i/*100); } Long aEndTime=System.currentTimeMillis();//记录EndTime System.out.println(&quot;insert time--&gt;&quot;+(aEndTime-aBeginTime)); Long lBeginTime=System.currentTimeMillis();//记录BeginTime mm.get(&quot;&quot;+100000); Long lEndTime=System.currentTimeMillis();//记录EndTime System.out.println(&quot;seach time---&gt;&quot;+(lEndTime-lBeginTime)); } }</p>
+<p>100W个数据时，全部存储时间为1S多一点，而<strong>搜寻时间为0 </strong></p>
+</li>
+</ol>
+<p>insert time--&gt;1536
+seach time---&gt;0</p>
+<p>好了，牢骚发完了</p>
+<p>本来今天想写个<strong>有关大访问量处理的一些基本概念</strong>的文章</p>
+<p>全泡汤了,明天写吧</p>
+<p><a href="http://java-mzd.iteye.com/blog/827523#"><strong>8</strong>
+顶</a><a href="http://java-mzd.iteye.com/blog/827523#"><strong>3</strong>
+踩</a>
+<a href="http://java-mzd.iteye.com/blog/829890" title="简单Spring容器实现" target="_blank">简单Spring容器实现</a> | <a href="http://java-mzd.iteye.com/blog/826692" title="查找表分析（总论）" target="_blank">查找表分析（总论）</a></p>
+<ul>
+<li>01:46</li>
+<li>浏览 (854)</li>
+<li><a href="http://java-mzd.iteye.com/blog/827523#comments" target="_blank">评论</a> (8)</li>
+<li>分类: <a href="http://java-mzd.iteye.com/category/133623" target="_blank">数据结构----------JAVA类集</a></li>
+<li><a href="http://www.iteye.com/wiki/topic/827523" target="_blank">相关推荐</a><h3 id="-">评论</h3>
+</li>
+</ul>
+<p><a href=""></a></p>
+<p>8 楼 <a href="http://dengyi04405.iteye.com/" target="_blank">dengyi04405</a> 2010-12-16   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
+<p>错了...是mm.get(&quot;&quot;+36309) 为null，在最后resize的时候挂在9的一起，然后丢失了。
+setEntry(entry, newTable);   ----entry在first时next=null
+entry = entry.next;---永远是null
+7 楼 <a href="http://dengyi04405.iteye.com/" target="_blank">dengyi04405</a> 2010-12-16   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
+<p>resize()好像还是有bug，挂在一个链地址下的数据resize时只能取出第一个，后面的数据就丢失了。
+for(int i=0;i&lt;90000;i++) 循环后mm.get(&quot;&quot;+100000)   是null
+不知道是不是，楼主看看<img src="" alt="">  </p>
+<p>6 楼 <a href="http://java-mzd.iteye.com/" target="_blank">java_mzd</a> 2010-12-01   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
+<p>heng_aa 写道</p>
+<p>无聊又测了一下，死循环是因为while没有这种情况的判断，我是加上这些代码的：
+else if(temp.key == entry.key &amp;&amp; temp.value != entry.value) {
+entry.value = temp.value;
+return true;
+}
+还有我查找不到数据，应该是在109行那里少加了这句吧，return true;因为没有这句下面的setFirstEntry(temp,index,table); 还会执行。<br>看看是不是这样！！！
+恩~~确实需要加上这个判断~
+不然当传入相同的key不同的value的时候，不会覆盖掉原理的value
+这时候linked里面就会有相同的key，不同的value，后面那个value就没意义了。
+  只是，这样还是没有死循环吖。。囧
+恩，无论如何，这个BUG是确实需要改进的。
+5 楼 <a href="http://heng-aa.iteye.com/" target="_blank">heng_aa</a> 2010-11-30   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
+<p>无聊又测了一下，死循环是因为while没有这种情况的判断，我是加上这些代码的：
+else if(temp.key == entry.key &amp;&amp; temp.value != entry.value) {
+entry.value = temp.value;
+return true;
+}
+还有我查找不到数据，应该是在109行那里少加了这句吧，return true;因为没有这句下面的setFirstEntry(temp,index,table); 还会执行。<br>看看是不是这样！！！</p>
+<p>4 楼 <a href="http://java-mzd.iteye.com/" target="_blank">java_mzd</a> 2010-11-30   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
+<p>heng_aa 写道</p>
+<p>我测试了一下，发现几个问题。如果放入相同的key不同的value,程序就死循环了！还有扩容后，indexFor（）的算值就不同了，也就是说通过这个算法查找不到值了。无聊试一下而已，不过我也学到了不少东西，看这些问题能不能改进？？
+谢谢提醒哦
+分几点分析吧
+扩容后，通过indexFor()计算的值肯定是需要变化的啊，因为这个时候计算规则变了啊
+需要把每个元素重新散列到数组里去啊，这时候通过get()再取的时候，计算的时候，indexFor()是按照新的数组大小来的，所以肯定还是能找到的啊
+至于死循环的问题，在重构代码前我测试是正常的，重构后忘了测试这个问题了。。
+囧。。。等晚上再测试下再回答你吧。
+3 楼 <a href="http://heng-aa.iteye.com/" target="_blank">heng_aa</a> 2010-11-30   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
+<p>我测试了一下，发现几个问题。如果放入相同的key不同的value,程序就死循环了！还有扩容后，indexFor（）的算值就不同了，也就是说通过这个算法查找不到值了。无聊试一下而已，不过我也学到了不少东西，看这些问题能不能改进？？</p>
+<p>2 楼 <a href="http://java-mzd.iteye.com/" target="_blank">java_mzd</a> 2010-11-29   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
+<p>smithfox 写道</p>
+<p>好文，对动态大数据量的Hash处理很有用.
+幸苦了，注意身体呀!
+多谢关照~~
+1 楼 <a href="http://smithfox.iteye.com/" target="_blank">smithfox</a> 2010-11-29   <a href="http://java-mzd.iteye.com/blog/827523#" target="_blank">引用</a></p>
+<p>好文，对动态大数据量的Hash处理很有用.
+幸苦了，注意身体呀!</p>
+<h3 id="-">发表评论</h3>
+<h3 id="-">表情图标</h3>
+<p><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""></p>
+<p>字体颜色: 标准深红红色橙色棕色黄色绿色橄榄青色蓝色深蓝靛蓝紫色灰色白色黑色 字体大小: 标准1 (xx-small)2 (x-small)3 (small)4 (medium)5 (large)6 (x-large)7 (xx-large) 对齐: 标准居左居中居右</p>
+<p>提示：选择您需要装饰的文字, 按上列按钮即可添加上相应的标签</p>
+<p>您还没有登录，请<a href="http://java-mzd.iteye.com/login" target="_blank">登录</a>后发表评论(快捷键 Alt+S / Ctrl+Enter)</p>
+<p><a href="http://java-mzd.iteye.com/" target="_blank"><img src="&quot;java_mzd的博客: &quot;" alt="java_mzd的博客"></a></p>
+<p>java_mzd</p>
+<ul>
+<li>浏览: 70475 次</li>
+<li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
+<li>来自: 长沙</li>
+<li><img src="" alt=""></li>
+<li><a href="http://java-mzd.iteye.com/blog/profile" target="_blank">详细资料</a> <a href="http://java-mzd.iteye.com/blog/guest_book" target="_blank">留言簿</a></li>
+</ul>
+<h3 id="-">搜索本博客</h3>
+<h3 id="-http-java-mzd-iteye-com-blog-user_visits-">最近访客 <a href="http://java-mzd.iteye.com/blog/user_visits" target="_blank">&gt;&gt;更多访客</a></h3>
+<p><a href="http://msnvip.iteye.com/" target="_blank"><img src="&quot;msnvip的博客: msnvip&quot;" alt="msnvip的博客"></a></p>
+<p><a href="http://msnvip.iteye.com/" target="_blank">msnvip</a></p>
+<p><a href="http://kai2008.iteye.com/" target="_blank"><img src="&quot;qinjingkai的博客: 开门见山&quot;" alt="qinjingkai的博客"></a></p>
+<p><a href="http://kai2008.iteye.com/" target="_blank">qinjingkai</a>
+<a href="http://yanxd.iteye.com/" target="_blank"><img src="&quot;yanxd的博客: &quot;" alt="yanxd的博客"></a></p>
+<p><a href="http://yanxd.iteye.com/" target="_blank">yanxd</a></p>
+<p><a href="http://luwei-yinzhijie-com.iteye.com/" target="_blank"><img src="&quot;_bulrush的博客: &quot;" alt="_bulrush的博客"></a></p>
+<p><a href="http://luwei-yinzhijie-com.iteye.com/" target="_blank">_bulrush</a></p>
+<h3 id="-">博客分类</h3>
+<ul>
+<li><a href="http://java-mzd.iteye.com/" target="_blank">全部博客 (43)</a></li>
+<li><a href="http://java-mzd.iteye.com/category/133623" target="_blank">数据结构----------JAVA类集 (5)</a></li>
+<li><p><a href="http://java-mzd.iteye.com/category/153171" target="_blank">TCP/IP (7)</a></p>
+<h3 id="-http-java-mzd-iteye-com-blog-guest_book-">我的留言簿 <a href="http://java-mzd.iteye.com/blog/guest_book" target="_blank">&gt;&gt;更多留言</a></h3>
+</li>
+<li><p>楼主 你工作多久了。。。。
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39913" target="_blank">fanmingxing</a></p>
+</li>
+<li>写的不错，学习，谢谢！
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39693" target="_blank">chenge2k</a></li>
+<li>看了LZ的文章，发现工作快两年的我，就像是一块浮起来的木头，真的很惭愧！也不怪我拿 ...
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39618" target="_blank">GoTiger</a></li>
+</ul>
+<h3 id="-">其他分类</h3>
+<ul>
+<li><a href="http://java-mzd.iteye.com/blog/favorite" target="_blank">我的收藏</a> (23)</li>
+<li><a href="http://java-mzd.iteye.com/blog/code_favorite" target="_blank">我的代码</a> (0)</li>
+<li><a href="http://java-mzd.iteye.com/blog/topic" target="_blank">我的论坛主题帖</a> (3)</li>
+<li><a href="http://java-mzd.iteye.com/blog/post" target="_blank">我的所有论坛帖</a> (34)</li>
+<li><p><a href="http://java-mzd.iteye.com/blog/article" target="_blank">我的精华良好帖</a> (0)</p>
+<h3 id="-">最近加入群组</h3>
+</li>
+<li><p><a href="http://android.group.iteye.com/" target="_blank">Android</a></p>
+</li>
+</ul>
+<h3 id="-">存档</h3>
+<ul>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-05" target="_blank">2011-05</a> (2)</li>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-04" target="_blank">2011-04</a> (7)</li>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-03" target="_blank">2011-03</a> (2)</li>
+<li><p><a href="http://java-mzd.iteye.com/blog/monthblog_more" target="_blank">更多存档...</a></p>
+<h3 id="-">评论排行榜</h3>
+</li>
+<li><p><a href="http://java-mzd.iteye.com/blog/1050043" title="腾讯、淘宝、金山网络，实习生我该何去何从" target="_blank">腾讯、淘宝、金山网络，实习生我该何去何从</a></p>
+</li>
+<li><a href="http://java-mzd.iteye.com/blog/1007577" title="TCP/IP传输层，你懂多少？" target="_blank">TCP/IP传输层，你懂多少？</a></li>
+<li><a href="http://java-mzd.iteye.com/blog/1004784" title="淘宝武汉*面试归来" target="_blank">淘宝武汉/*面试归来</a></li>
+<li><a href="http://java-mzd.iteye.com/blog/1050926" title="淘宝、金山网络，百感交集" target="_blank">淘宝、金山网络，百感交集</a></li>
+<li><p><a href="http://java-mzd.iteye.com/blog/862787" title="开源软件？自由软件？免费软件？你了解多少？" target="_blank">开源软件？自由软件？免费软件？你了解多少 ...</a></p>
+</li>
+<li><p><a href="http://java-mzd.iteye.com/rss" target="_blank"><img src="" alt="Rss"></a></p>
+</li>
+<li><a href="http://fusion.google.com/add?feedurl=http://java-mzd.iteye.com/rss" target="_blank"><img src="" alt="Rss_google"></a>
+声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
+© 2003-2011 ITeye.com. All rights reserved. [ 京ICP证110151号 ]
+<img src="" alt=""></li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Hash表分析以及Java实现/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--Hash表分析以及Java实现" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1058,7 +3133,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-25 18:15:42</em></span></div>
+  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-26 21:21:33</em></span></div>
 </div>
 <div class="clearfix"></div>
 
