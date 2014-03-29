@@ -110,571 +110,354 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/">haproxy 解决 多主机session共享问题 的三种方法</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-集群--LINUX下使用apachetomcat构建WEB集群系统/">最新分享_分享_百度空间</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-集群--LINUX下使用apachetomcat构建WEB集群系统/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="haproxy-session-">haproxy 解决 多主机session共享问题 的三种方法</h1>
-<p>haproxy 解决 多主机session共享问题 的三种方法</p>
-<p>1 session知识储备
-2 haproxy三种方法保持客户端session一致
-3 实验环境及结构
-4 安装配置及管理
-5 本实验中使用到相同的index.php代码
-6 联系方法及扩展阅读
-感谢 不就是要我命 QQ 47034839 提供测试主机 
-1 session知识储备
-Session是由应用服务器维持的一个服务器端的存储空间，用户在连接服务器时，会由服务器生成一个唯一的SessionID,用该SessionID 为标识符来存取服务器端的Session存储空间。
-而SessionID这一数据则是保存到客户端，用Cookie保存的，用户提交页面时，会将这一 SessionID提交到服务器端，来存取Session数据。
-服务器也通过URL重写的方式来传递SessionID的值，因此不是完全依赖Cookie。如果客户端Cookie禁用，则服务器可以自动通过重写URL的方式来保存Session的值，并且这个过程对程序员透明。
-php.ini 里几个session相关值的 其它的值请参考《PHP与Mysql5程序设计》
-session.use_cookies = 1  /#表示 服务端和客户端交互session是通过cookie的方式 默认值
-session.name = 9ai9     /#默认值是PHPSESSID 我这里改成9ai9是为了和默认值区别
-session.cache_limiter = nocache /#此设置确保对每个请求，在可能提供缓存的版本前，先请求发送到最初的服务器。这个值联系到下文中 cookie识别中的相关参数
-2 haproxy三种方法保持客户端session一致
-  2.1 用户IP 识别 </p>
-<p>haroxy 将用户IP经过hash计算后 指定到固定的真实服务器上（类似于nginx 的IP hash 指令）
-配置指令        balance source
-实例访问<a href="http://sourceip.9ai9.net:8080/" target="_blank"><a href="http://sourceip.9ai9.net:8080">http://sourceip.9ai9.net:8080</a></a>
-  2.2 cookie 识别<br>haproxy 将WEB服务端发送给客户端的cookie中插入(或添加加前缀)haproxy定义的后端的服务器COOKIE ID。
-配置指令例举  cookie  SESSION_COOKIE  insert indirect nocache
-<a href="http://cookie.9ai9.net:8080/" target="_blank"><a href="http://cookie.9ai9.net:8080">http://cookie.9ai9.net:8080</a></a>
-用firebug可以观察到用户的请求头的cookie里 有类似&quot; Cookie 9ai9=0bc588656ca05ecf7588c65f9be214f5; SESSION_COOKIE=12&quot; SESSION_COOKIE=12就是haproxy添加的内容
-  2.3 session 识别<br>haproxy 将后端服务器产生的session和后端服务器标识存在haproxy中的一张表里。客户端请求时先查询这张表。
-配置指令例举 appsession 9ai9 len 64 timeout 5h request-learn 
-注意 9ai9 这个值替换成 你的php.ini 里session.name的值。
-实例访问 <a href="http://appsession.9ai9.net:8080/" target="_blank"><a href="http://appsession.9ai9.net:8080">http://appsession.9ai9.net:8080</a></a>
-  2.4 只做简单轮询对比 
-实例访问 <a href="http://nosession.9ai9.net:8080/" target="_blank"><a href="http://nosession.9ai9.net:8080">http://nosession.9ai9.net:8080</a></a>
-3 实验环境及结构
-CentOS 5.3 64
-haproxy  113.106.185.245
-WEB1 REALsrv_70  184.82.239.70
-WEB2  REALsrv_120 220.162.237.120<br>4 安装配置及管理
-useradd -M -s /sbin/nologin haproxy
-wget <a href="http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz" target="_blank"><a href="http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz">http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz</a></a>
-tar zxvf haproxy-1.4.13.tar.gz 
-cd haproxy-1.4.13
-make TARGET=linux26 PREFIX=/usr/local/haproxy install
-mkdir /usr/local/haproxy/conf
-vim /usr/local/haproxy/conf/haproxy.cfg</p>
-<ol>
-<li>global</li>
-<li>log     127.0.0.1 local0 info </li>
-<li>maxconn 4096</li>
-<li>user    haproxy</li>
-<li>group   haproxy</li>
-<li>daemon</li>
-<li>nbproc  1</li>
-<li>pidfile /var/run/haproxy.pid</li>
-<li>defaults</li>
-<li>mode    http</li>
-<li>maxconn         2000</li>
-<li>contimeout      5000</li>
-<li>clitimeout      30000</li>
-<li>srvtimeout      30000</li>
-<li>option          httplog</li>
-<li>option          redispatch</li>
-<li>option          abortonclose</li>
-<li>retries         3</li>
-<li>listen admin_stats</li>
-<li>bind 113.106.185.245:443</li>
-<li>mode http</li>
-<li>log 127.0.0.1 local0 err</li>
-<li>stats   uri     /qhappy_stats</li>
-<li>stats   realm   9ai9.net\ Qhappy</li>
-<li>stats   auth    qhappy:qhappy</li>
-<li>stats   refresh   5s </li>
-<li>listen site_status</li>
-<li>bind 113.106.185.245:445</li>
-<li>mode http</li>
-<li>log  127.0.0.1 local0 err</li>
-<li>monitor-uri     /site_status</li>
-<li>frontend  WEB_SITE</li>
-<li>bind    0.0.0.0:8080</li>
-<li>mode    http</li>
-<li>log     global</li>
-<li>option  httplog</li>
-<li>option  httpclose</li>
-<li>option  forwardfor</li>
-<li>acl     COOKIE          hdr_reg(host)   -i ^(cookie.9ai9.net)</li>
-<li>acl     SOURCE          hdr_reg(host)   -i ^(sourceip.9ai9.net)</li>
-<li>acl     APPSESSION      hdr_reg(host)   -i ^(appsession.9ai9.net)</li>
-<li>acl     NOSESSION       hdr_reg(host)   -i ^(nosession.9ai9.net)</li>
-<li>use_backend COOKIE_srv          if COOKIE</li>
-<li>use_backend SOURCE_srv          if SOURCE</li>
-<li>use_backend APPSESSION_srv      if APPSESSION</li>
-<li>use_backend NOSESSION_srv       if NOSESSION</li>
-<li>/#        default_backend ai_server</li>
-<li>backend COOKIE_srv</li>
-<li>mode    http</li>
-<li>cookie  SESSION_COOKIE  insert indirect nocache</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend SOURCE_srv</li>
-<li>mode    http</li>
-<li>balance source</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend APPSESSION_srv</li>
-<li>mode    http</li>
-<li>appsession 9ai9 len 64 timeout 5h request-learn</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1
-1.</li>
-<li>backend NOSESSION_srv</li>
-<li>mode    http</li>
-<li>balance roundrobin</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend ai_server</li>
-<li>mode    http</li>
-<li>balance roundrobin</li>
-<li>cookie  SERVERID</li>
-<li>server REALsrv_70 184.82.239.70:80 cookie 2 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120 220.162.237.120:80 cookie 1 check inter 1500 rise 3 fall 3 weight 1
-<em>复制代码</em>
-haproxy 启动重启等管理脚本
-cd /etc/init.d/
-wget <a href="http://www.9ai9.net/download/shell/haproxy" target="_blank"><a href="http://www.9ai9.net/download/shell/haproxy">http://www.9ai9.net/download/shell/haproxy</a></a>
-chmod 755 haproxy
-chkconfig --add haproxy
-使用方法 你懂的
-/etc/init.d/haproxy {start|stop|status|checkconfig|restart|try-restart|reload|force-reload}
-5 本实验中使用到相同的index.php代码 如下</li>
-<li>&lt;?php</li>
-<li>session_start();</li>
-<li>$_SESSION[&#39;time&#39;] =date(&quot;Y:m:d:H:s&quot;,time());</li>
-<li>echo &quot;本次访问时间&quot;.&quot;<font color=red>&quot;.$_SESSION[&#39;time&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;访问的服务器地址是&quot;.&quot;<font color=red>&quot;.$_SERVER[&#39;SERVER_ADDR&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;访问的服务器域名是&quot;.&quot;<font color=red>&quot;.$_SERVER[&#39;SERVER_NAME&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;SESSIONNAME是&quot;.&quot;<font color=red>&quot;.session_name().&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;SESSIONID是&quot;.&quot;<font color=red>&quot;.session_id().&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>?&gt;
-<em>复制代码</em>6 联系方法及扩展阅读
-笔者 水煮鱼@溢  微博 <a href="http://t.qq.com/cllxy1234" target="_blank"><a href="http://t.qq.com/cllxy1234">http://t.qq.com/cllxy1234</a></a> 欢迎收听
-haproxy 官网 <a href="http://haproxy.1wt.eu/download/1.4/doc/configuration.txt" target="_blank"><a href="http://haproxy.1wt.eu/download/1.4/doc/configuration.txt">http://haproxy.1wt.eu/download/1.4/doc/configuration.txt</a></a>
-董旗宇  <a href="http://www.9ai9.net/download/art/HAProxy" target="_blank"><a href="http://www.9ai9.net/download/art/HAProxy">http://www.9ai9.net/download/art/HAProxy</a></a>配置使用说明.pdf<br>刘天斯  <a href="http://blog.liuts.com/post/223/" target="_blank"><a href="http://blog.liuts.com/post/223/">http://blog.liuts.com/post/223/</a></a>
-linuxtone <a href="http://bbs.linuxtone.org/thread-73-1-1.html" target="_blank"><a href="http://bbs.linuxtone.org/thread-73-1-1.html">http://bbs.linuxtone.org/thread-73-1-1.html</a></a></li>
-</ol>
-<p>来源： <a href="[http://bbs.linuxtone.org/thread-9526-1-1.html](http://bbs.linuxtone.org/thread-9526-1-1.html)">[http://bbs.linuxtone.org/thread-9526-1-1.html](http://bbs.linuxtone.org/thread-9526-1-1.html)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">How Does Google Work  Learn How Google Works  Sear</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="how-does-google-work-learn-how-google-works-search-engine-adwords">How Does Google Work Learn How Google Works Search Engine + AdWords</h1>
+        <h1 id="-_-_-">最新分享<em>分享</em>百度空间</h1>
+<p><a href="http://hi.baidu.com/index.htm" target="_blank"><img src="" alt="百度空间Logo"></a></p>
 <ul>
-<li><a href="http://ppcblog.com/blog" target="_blank">Blog</a></li>
-<li><a href="http://ppcblog.com/ppc-assets" target="_blank">Free PPC Assets</a></li>
-<li><a href="http://ppcblog.com/about" target="_blank">About Us</a></li>
-<li><a href="http://ppcblog.com/member-tour-new-users-1" target="_blank">PPC Training Tour</a></li>
-<li><a href="https://ppcblog.com/amember/member.php" target="_blank">Member Login »</a></li>
+<li><p><a href="http://apps.hi.baidu.com/" target="_blank">应用</a>
+<a href="http://hi.baidu.com/reg/new" target="_blank">注册</a>用户名:   密码:</p>
+</li>
+<li><p><a href="http://apps.hi.baidu.com/hoho" target="_blank">HOHO</a></p>
+</li>
+<li><a href="http://apps.hi.baidu.com/share" target="_blank">分享</a></li>
+<li><a href="http://apps.hi.baidu.com/vote" target="_blank">投票</a></li>
+<li><a href="http://apps.hi.baidu.com/test" target="_blank">测试</a></li>
+<li><a href="http://apps.hi.baidu.com/gift" target="_blank">礼物</a></li>
 </ul>
-<h1 id="-ppc-blog-http-ppcblog-com-"><a href="http://ppcblog.com/" target="_blank">PPC Blog</a></h1>
-<h1 id="learn-how-google-works-in-gory-detail">Learn How Google Works: in Gory Detail</h1>
-<p><a href="http://pinterest.com/pin/create/button/?url=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2F&amp;media=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2Fhow-google-works.jpg&amp;description=How%20Google%20Works" target="_blank">888</a>  <a href="http://twitter.com/share" target="_blank">Tweet</a> 388
-<a href="">inShare</a>  <a href="">digg</a></p>
-<p><img src="" alt="How Google Works."></p>
-<p><a href="http://news.ycombinator.com/item?id=1472981" target="_blank">Vote on Hacker News</a>, or <img src="http://static.delicious.com/img/delicious.small.gif" alt="Delicious"> <a href="http://delicious.com/save" target="_blank">Bookmark this on Delicious</a></p>
-<h2 id="free-add-this-infographic-to-your-website-">FREE: add this infographic to your website!</h2>
-<h3 id="600-pixel-wide-version">600 Pixel Wide Version</h3>
-<p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/600.jpg" border="0" alt="How Google Works." /></a></p><p>Infographic by the <a href="http://ppcblog.com/" target="_blank">Pay Per Click Blog</a></p>
-
-<h3 id="large-version">Large Version</h3>
-<p><p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/how-google-works.jpg" border="0" alt="How Does Google Work?" /></a></p><p>Infographic by <a href="http://ppcblog.com/" target="_blank">PPCBlog</a></p>
-Copyright 2011 - 2013 PPC Training Inc. - All Rights Reserved</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava/">tomcat中的context.xml元素详解 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="tomcat-context-xml-pasha-blogjava">tomcat中的context.xml元素详解 - pasha - BlogJava</h1>
-<h1 id="-pasha-http-www-blogjava-net-pasha-"><a href="http://www.blogjava.net/pasha/" target="_blank">pasha</a></h1>
-<h2 id="-tomcat-context-xml-"><a href="">tomcat中的context.xml元素详解</a></h2>
-<p><strong>tomcat中的context.xml元素详解小人物，大博客 Q&#39;e ^ L0J/*J4h
-</strong> <strong>元素名</strong> <strong>属性</strong> <strong>解释</strong> server port 指定一个端口，这个端口负责监听关闭tomcat的请求 shutdown 指定向端口发送的命令字符串 service name 指定service的名字 Connector(表示客户端和service之间的连接) port 指定服务器端要创建的端口号，并在这个端口监听来自客户端的请求 minProcessors 服务器启动时创建的处理请求的线程数 maxProcessors 最大可以创建的处理请求的线程数 enableLookups 如果为true，则可以通过调用request.getRemoteHost()进行DNS查询来得到远程客户端的实际主机名，若为false则不进行DNS查询，而是返回其ip地址 redirectPort 指定服务器正在处理http请求时收到了一个SSL传输请求后重定向的端口号 acceptCount 指定当所有可以使用的处理请求的线程数都被使用时，可以放到处理队列中的请求数，超过这个数的请求将不予处理 connectionTimeout 指定超时的时间数(以毫秒为单位) Engine(表示指定service中的请求处理机，接收和处理来自Connector的请求) defaultHost 指定缺省的处理请求的主机名，它至少与其中的一个host元素的name属性值是一样的 Context(表示一个web应用程序，通常为WAR文件，关于WAR的具体信息见servlet规范) docBase 应用程序的路径或者是WAR文件存放的路径 path 表示此web应用程序的url的前缀，这样请求的url为<a href="http://localhost:8080/path//*/*/*/*" target="_blank">http://localhost:8080/path//*/*/*/*</a> reloadable 这个属性非常重要，如果为true，则tomcat会自动检测应用程序的/WEB-INF/lib 和/WEB-INF/classes目录的变化，自动装载新的应用程序，我们可以在不重起tomcat的情况下改变应用程序 host(表示一个虚拟主机) name 指定主机名 appBase 应用程序基本目录，即存放应用程序的目录 unpackWARs 如果为true，则tomcat会自动将WAR文件解压，否则不解压，直接从WAR文件中运行应用程序 Logger(表示日志，调试和错误信息) className 指定logger使用的类名，此类必须实现org.apache.catalina.Logger 接口 prefix 指定log文件的前缀 suffix 指定log文件的后缀 timestamp 如果为true，则log文件名中要加入时间，如下例:localhost_log.2001-10-04.txt Realm(表示存放用户名，密码及role的数据库) className 指定Realm使用的类名，此类必须实现org.apache.catalina.Realm接口 Valve(功能与Logger差不多，其prefix和suffix属性解释和Logger 中的一样) className 指定Valve使用的类名，如用org.apache.catalina.valves.AccessLogValve类可以记录应用程序的访问信息 directory 指定log文件存放的位置 pattern 有两个值，common方式记录远程主机名或ip地址，用户名，日期，第一行请求的字符串，HTTP响应代码，发送的字节数。combined方式比common方式记录的值更多</p>
-<p>posted on 2008-09-21 11:14 <a href="http://www.blogjava.net/pasha/" target="_blank">pasha</a> 阅读(2524) <a href="http://www.blogjava.net/pasha/articles/230241.html#Post" target="_blank">评论(0)</a>  <a href="http://www.blogjava.net/pasha/admin/EditArticles.aspx?postid=230241" target="_blank">编辑</a>  <a href="http://www.blogjava.net/pasha/AddToFavorite.aspx?id=230241" target="_blank">收藏</a></p>
-<p> <img src="" alt=""></p>
-<p><a href="http://www.blogjava.net/RequireRegister.aspx" target="_blank">新用户注册</a>  <a href="">刷新评论列表</a>  </p>
-<p><a href=""></a> <a href="http://www.cnblogs.com/cmt/archive/2012/10/31/vmware_vforum_2012.html">开发者的云计算盛会，期待您的参与（11月20日~21日，北京，免费）</a>   <a href="http://www.cnblogs.com/" target="_blank">博客园</a>  <a href="http://q.cnblogs.com/" target="_blank">博问</a>  <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://job.cnblogs.com/cate-java_programmer/" target="_blank">Java程序员招聘</a> 标题  请输入标题 姓名  请输入你的姓名 主页 请输入验证码 验证码 /*  <img src="" alt=""> 内容(请不要发表任何与政治相关的内容) 请输入评论内容 Remember Me?   <a href="http://www.blogjava.net/login.aspx?ReturnURL=http://www.blogjava.net/pasha/articles/230241.html&amp;SourceURL=/pasha/articles/230241.html" target="_blank">登录</a>       [使用Ctrl+Enter键可以直接提交]    IT新闻：
-· <a href="http://news.cnblogs.com/n/163329/" target="_blank">让你的iPhone 5变身小电视</a>
-· <a href="http://news.cnblogs.com/n/163348/" target="_blank">流言终结者 /#19 –「我只要专心把产品做好…」</a>
-· <a href="http://news.cnblogs.com/n/163347/" target="_blank">来看看1399元的Lumia究竟如何</a>
-· <a href="http://news.cnblogs.com/n/163346/" target="_blank">周鸿祎给李彦宏一个支点</a>
-· <a href="http://news.cnblogs.com/n/163345/" target="_blank">Twitter HOLD 住大选：少点 Ruby，多些 Java</a></p>
-<p>博客园首页随笔：
-· <a href="http://www.cnblogs.com/bjzhanghao/archive/2012/11/09/2762550.html" target="_blank">[Android问答] 如何实现“退出应用”功能？</a>
-· <a href="http://www.cnblogs.com/vamei/archive/2012/11/09/2762224.html" target="_blank">Python内置函数清单</a>
-· <a href="http://www.cnblogs.com/manuosex/archive/2012/11/09/2762405.html" target="_blank">C/#数据结构与算法揭秘13</a>
-· <a href="http://www.cnblogs.com/ldcsaa/archive/2012/11/09/2762373.html" target="_blank">Portal-Basic Java Web 应用开发框架：应用篇（八） —— Freemarker 整合</a>
-· <a href="http://www.cnblogs.com/nnhy/archive/2012/11/09/Money.html" target="_blank">如何找到并完成兼职项目</a>
-知识库：
-· <a href="http://kb.cnblogs.com/page/157087/" target="_blank">项目管理心得：一个项目经理的个人体会、经验总结</a>
-· <a href="http://kb.cnblogs.com/page/162480/" target="_blank">十天内掌握线性代数：惊人的超速学习实验</a>
-· <a href="http://kb.cnblogs.com/page/157745/" target="_blank">可伸缩性最佳实践：来自eBay的经验</a>
-· <a href="http://kb.cnblogs.com/page/160526/" target="_blank">一堂如何提高代码质量的培训课</a>
-· <a href="http://kb.cnblogs.com/page/161182/" target="_blank">程序江湖</a>  网站导航:</p>
-<p><a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园</a>   <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>   <a href="http://kb.cnblogs.com/" target="_blank">知识库</a>   <a href="http://www.cppblog.com/" target="_blank">C++博客</a>   <a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a>   <a href="http://www.blogjava.net/pasha/articles/230241.html?opt=admin" target="_blank">管理</a>   </p>
-<h3 id="-">导航</h3>
+<h3 id="-http-hi-baidu-com-ihome-square-"><a href="http://hi.baidu.com//ihome/square" target="_blank">交友中心</a></h3>
 <ul>
-<li><a href="http://www.blogjava.net/" target="_blank">BlogJava</a></li>
-<li><a href="http://www.blogjava.net/pasha/" target="_blank">首页</a></li>
-<li><a href="http://www.blogjava.net/pasha/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a></li>
-<li><a href="http://www.blogjava.net/pasha/contact.aspx?id=1" target="_blank">联系</a></li>
-<li><a href="http://www.blogjava.net/pasha/rss" target="_blank">聚合</a><a href="http://www.blogjava.net/pasha/rss" target="_blank"><img src="" alt=""></a></li>
-<li><a href="http://www.blogjava.net/pasha/admin/EditPosts.aspx" target="_blank">管理</a></li>
+<li><a href="http://apps.hi.baidu.com/dashan" target="_blank">搭讪</a></li>
+<li><a href="http://apps.hi.baidu.com/duiwei" target="_blank">对味测试</a></li>
+<li><a href="http://apps.hi.baidu.com/suliao" target="_blank">闪电速聊</a></li>
+<li><p><a href="http://hi.baidu.com//ihome/square" target="_blank">找朋友</a></p>
+<h3 id="-http-apps-hi-baidu-com-apps-"><a href="http://apps.hi.baidu.com/apps" target="_blank">应用大厅</a></h3>
+</li>
+<li><p><a href="http://apps.hi.baidu.com/kaixinbuluo" target="_blank">开心部落</a></p>
+</li>
+<li><a href="http://apps.hi.baidu.com/rongcar" target="_blank">汽车工厂</a></li>
+<li><p><a href="http://apps.hi.baidu.com/paopaoyu" target="_blank">泡泡鱼</a></p>
+</li>
+<li><p><a href="http://youxi.baidu.com/prom.xhtml?code=G-%D7%8E%81%B2%29%FF%8AR%BC%8B%EE%85%1C%E5" target="_blank">网页游戏</a></p>
+</li>
 </ul>
-<h3 id="-">统计</h3>
+<h2 id="-">分享</h2>
 <ul>
-<li>随笔 - 7</li>
-<li>文章 - 10</li>
-<li>评论 - 1</li>
-<li>引用 - 0</li>
+<li><a href="http://apps.hi.baidu.com/share/" target="_blank">热门分享</a></li>
+<li><a href="http://apps.hi.baidu.com/share/latest/?type=video" target="_blank">最新分享</a></li>
+<li><a href="http://apps.hi.baidu.com/share/detail/14955683#" target="_blank">好友的分享</a></li>
+<li><a href="http://apps.hi.baidu.com/share/detail/14955683#" target="_blank">我的分享</a>
+<a href="http://apps.hi.baidu.com/share/detail/14955683#" target="_blank">如何分享?</a> <a href="http://tieba.baidu.com/f?kw=%B0%D9%B6%C8%BF%D5%BC%E4" target="_blank">问题反馈</a></li>
 </ul>
-<h3 id="-">常用链接</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/MyPosts.html" target="_blank">我的随笔</a></li>
-<li><a href="http://www.blogjava.net/pasha/MyArticles.html" target="_blank">我的文章</a></li>
-<li><a href="http://www.blogjava.net/pasha/MyComments.html" target="_blank">我的评论</a></li>
-<li><a href="http://www.blogjava.net/pasha/OtherPosts.html" target="_blank">我的参与</a></li>
-<li><a href="http://www.blogjava.net/pasha/RecentComments.html" target="_blank">最新评论</a></li>
-</ul>
-<h3 id="-2-">留言簿(2)</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/Contact.aspx?id=1" target="_blank">给我留言</a></li>
-<li><a href="http://www.blogjava.net/pasha/default.aspx?opt=msg" target="_blank">查看公开留言</a></li>
-<li><a href="http://www.blogjava.net/pasha/admin/MyMessages.aspx" target="_blank">查看私人留言</a></li>
-</ul>
-<h3 id="-">随笔分类</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/category/33818.html" target="_blank">ajax</a> <a href="http://www.blogjava.net/pasha/category/33818.html/rss" title="Subscribe to ajax" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/34754.html" target="_blank">database</a> <a href="http://www.blogjava.net/pasha/category/34754.html/rss" title="Subscribe to database" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/33817.html" target="_blank">struts2(1)</a> <a href="http://www.blogjava.net/pasha/category/33817.html/rss" title="Subscribe to struts2(1)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/34753.html" target="_blank">tomcat(2)</a> <a href="http://www.blogjava.net/pasha/category/34753.html/rss" title="Subscribe to tomcat(2)" target="_blank">(rss)</a></li>
-<li><a href="http://www.blogjava.net/pasha/category/35370.html" target="_blank">其他(2)</a> <a href="http://www.blogjava.net/pasha/category/35370.html/rss" title="Subscribe to 其他(2)" target="_blank">(rss)</a></li>
-</ul>
-<h3 id="-">随笔档案</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10.html" target="_blank">2008年10月 (2)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09.html" target="_blank">2008年9月 (3)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/06.html" target="_blank">2008年6月 (1)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/04.html" target="_blank">2008年4月 (1)</a></li>
-</ul>
-<h3 id="-">文章分类</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/category/35369.html" target="_blank">其它</a> <a href="http://www.blogjava.net/pasha/category/35369.html/rss" title="Subscribe to 其它" target="_blank">(rss)</a></li>
-</ul>
-<h3 id="-">文章档案</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/09.html" target="_blank">2008年9月 (4)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/08.html" target="_blank">2008年8月 (2)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/07.html" target="_blank">2008年7月 (1)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archives/2008/06.html" target="_blank">2008年6月 (2)</a></li>
-</ul>
-<h3 id="-css-">最常用和实用的CSS技巧</h3>
-<h3 id="-">最新随笔</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235638.html" target="_blank">1. Ubuntu Linux与Windows系统多启动的配置(Webmaster )</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235617.html" target="_blank">2. Bcdedit命令详解</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/230555.html" target="_blank">3. JQuery Ajax 方法说明</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/230458.html" target="_blank">4. EditPlus技巧(Liangjhrn)</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/230372.html" target="_blank">5. 转载：《关于JSP页面中的pageEncoding和contentType两种属性的区别》</a></li>
-<li><a href="">6. tomcat中的context.xml元素详解</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230237.html" target="_blank">7. Tomcat6数据源配置（转）</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230227.html" target="_blank">8. tomcat 6.18 设置</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/09/227881.html" target="_blank">9. struts2UI td 的问题</a></li>
-<li><a href="http://www.blogjava.net/pasha/articles/222926.html" target="_blank">10. 几款MYSQL管理工具</a></li>
-</ul>
-<h3 id="-">搜索</h3>
-<p>*</p>
-<ul>
-<li></li>
-</ul>
-<h3 id="-http-www-blogjava-net-pasha-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/pasha/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/24/208536.html#230938" target="_blank">1. re: SESSION</a></li>
-<li>啊！！原来是这样啊 终于明白了 谢了！！</li>
-<li>--ndj</li>
-</ul>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230227.html" target="_blank">1. tomcat 6.18 设置(711)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/04/08/191507.html" target="_blank">2. SSO (转)(613)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235617.html" target="_blank">3. Bcdedit命令详解(407)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230237.html" target="_blank">4. Tomcat6数据源配置（转）(338)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/06/17/208536.html" target="_blank">5. SESSION(181)</a></li>
-</ul>
-<h3 id="-">评论排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/06/17/208536.html" target="_blank">1. SESSION(1)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/04/08/191507.html" target="_blank">2. SSO (转)(0)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235638.html" target="_blank">3. Ubuntu Linux与Windows系统多启动的配置(Webmaster )(0)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/10/21/235617.html" target="_blank">4. Bcdedit命令详解(0)</a></li>
-<li><a href="http://www.blogjava.net/pasha/archive/2008/09/21/230237.html" target="_blank">5. Tomcat6数据源配置（转）(0)</a></li>
-</ul>
-<p>Powered by:
-<a href="http://www.blogjava.net/" target="_blank">BlogJava</a>
-Copyright © pasha</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--tomcat中的contextxml元素详解-pasha-BlogJava" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/">基于tomcat7 web开发中的一点小东西</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-tomcat7-web-">基于tomcat7 web开发中的一点小东西</h1>
-<p><a href="http://blog.csdn.net/benyuxy/article/details/7568386" target="_blank">基于tomcat7 web开发中的一点小东西</a></p>
-<h3 id="-">控制台：</h3>
-<p>org.apache.jasper.compiler.TldLocationsCache tldScanJar</p>
-<p>信息: At least one JAR was scanned for TLDs yet contained no TLDs. Enable debug logging for this logger for a complete list of JARs that were scanned but no TLDs were found in them. Skipping unneeded JARs during scanning can improve startup time and JSP compilation time.
-这样的问题是你的页面中含有<!---->的注释 去掉就好了，tomcat7.0.20.</p>
-<p>tomcat 7对EL表达式的语法要求比较严格，例如&quot;${owner.new}&quot;因包含关键字new就会导致解析出错。 
-问题是出来了，怎么解决呢？有三种，如下： 
-第一种：严格遵守java规范，修改对象的属性名称，要求不包含java关键字; 
-第二种：修改EL表达式，例如&quot;${owner.new}&quot;可以修改为&quot;${owner[&#39;new&#39;]}&quot;; 
-第三种：修改tomcat属性，忽略对EL表达式的关键字检查。修改$CATALINA_BASE/conf/catalina.properties文件，添加org.apache.el.parser.SKIP_IDENTIFIER_CHECK=true选项。</p>
-<p>来源： <a href="[http://blog.csdn.net/benyuxy/article/details/7568386](http://blog.csdn.net/benyuxy/article/details/7568386)">[http://blog.csdn.net/benyuxy/article/details/7568386](http://blog.csdn.net/benyuxy/article/details/7568386)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--基于tomcat7web开发中的一点小东西" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-gitgithub--git-thesimpleguide-nodeepshit/">git </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-gitgithub--git-thesimpleguide-nodeepshit/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="git-the-simple-guide-no-deep-shit-">git - the simple guide - no deep shit!</h1>
-<h1 id="git-">git - 简易指南</h1>
-<p>助你开始使用 git 的简易指南，木有高深内容，;)。
-<a href="https://twitter.com/share" target="_blank">Tweet</a></p>
-<p>作者：<a href="http://www.twitter.com/rogerdudler" target="_blank">罗杰·杜德勒</a>
-感谢：<a href="http://www.twitter.com/tfnico" target="_blank">@tfnico</a>, <a href="http://www.twitter.com/fhd" target="_blank">@fhd</a> and <a href="http://www.namics.com/" target="_blank">Namics</a>
-其他语言 <a href="http://rogerdudler.github.com/git-guide/index.html" target="_blank">english</a>, <a href="http://rogerdudler.github.com/git-guide/index.de.html" target="_blank">deutsch</a>, <a href="http://rogerdudler.github.com/git-guide/index.es.html" target="_blank">español</a>, <a href="http://rogerdudler.github.com/git-guide/index.fr.html" target="_blank">français</a>, <a href="http://rogerdudler.github.com/git-guide/index.it.html" target="_blank">italiano</a>, <a href="http://rogerdudler.github.com/git-guide/index.nl.html" target="_blank">nederlands</a>, <a href="http://rogerdudler.github.com/git-guide/index.pt_BR.html" target="_blank">português</a>, <a href="http://rogerdudler.github.com/git-guide/index.ru.html" target="_blank">русский</a>, <a href="http://rogerdudler.github.com/git-guide/index.tr.html" target="_blank">türkçe</a>,
-<a href="http://rogerdudler.github.com/git-guide/index.my.html" target="_blank">မြန်မာ</a>, <a href="http://rogerdudler.github.com/git-guide/index.ja.html" target="_blank">日本語</a>, <a href="http://rogerdudler.github.com/git-guide/index.ko.html" target="_blank">한국어</a>
-如有纰漏，请到 <a href="https://github.com/rogerdudler/git-guide/issues" target="_blank">github</a> 填报</p>
-<p><img src="" alt="">  <a href=""></a></p>
-<h2 id="-">安装</h2>
-<p><a href="http://code.google.com/p/git-osx-installer/downloads/list?can=3" target="_blank">下载 git OSX 版</a></p>
-<p><a href="http://code.google.com/p/msysgit/downloads/list?can=3" target="_blank">下载 git Windows 版</a></p>
-<p><a href="http://book.git-scm.com/2_installing_git.html" target="_blank">下载 git Linux 版</a>
-<a href=""></a></p>
-<h2 id="-">创建新仓库</h2>
-<p>创建新文件夹，打开，然后执行</p>
-<p>git init
-以创建新的 git 仓库。
-<a href=""></a></p>
-<h2 id="-">检出仓库</h2>
-<p>执行如下命令以创建一个本地仓库的克隆版本：</p>
-<p>git clone /path/to/repository
-如果是远端服务器上的仓库，你的命令会是这个样子：</p>
-<p>git clone username@host:/path/to/repository
-<a href=""></a></p>
-<h2 id="-">工作流</h2>
-<p>你的本地仓库由 git 维护的三棵“树”组成。第一个是你的</p>
-<p>工作目录
-，它持有实际文件；第二个是</p>
-<p>缓存区（Index）
-，它像个缓存区域，临时保存你的改动；最后是</p>
-<p>HEAD
-，指向你最近一次提交后的结果。
+<p><a href=""></a></p>
+<p><a href="http://hi.baidu.com/sys/checkuser/lpwok/3" target="_blank"><img src="" alt=""></a></p>
+<p>   <a href="http://apps.hi.baidu.com/share/user/68db6c70776f6bd905" target="_blank">lpwok的分享</a></p>
+<p>分享</p>
+<p><a href="http://apps.hi.baidu.com/share/detail/14959808#content" target="_blank"></a>  <a href="http://apps.hi.baidu.com/share/detail/14797932#content"></a>
+LINUX下使用apache+tomcat构建WEB集群系统</p>
+<p><strong>一、集群的基本知识</strong>
+        集群技术是目前非 常流行的提高系统服务能力与高可靠性（ HA- High Availability ）的手段，通过把多个独立的服务器组成一个集群可以实现失效无缝转移。也就是说当有某一台集群中的服务器当机后，其上的用户状态数据可以无缝迁移到集群中 的其他服务器上。这样，正在使用应用的客户可以完全感觉不到影响，大大提供了系统的可靠性。</p>
+<p>集群有很多种类和层次，例如：操作系统集群（如 Linux 、 Solaris 等），数据库集群（如 DB2 、 Oracle 等），应用服务器集群（如 GlassFish 、 WebLogic 等） ,Web 集群（如 Tomcat 等）。本教程将向读者介绍由 Tomcat 搭建的 Web 集群。</p>
+<p>不管是由什么技术搭建的集群，其基本组成由下图所示：
 <img src="" alt="">
-<a href=""></a></p>
-<h2 id="-">添加与提交</h2>
-<p>你可以计划改动（把它们添加到缓存区），使用如下命令：</p>
-<p>git add <filename></p>
-<p>git add /*
-这是 git 基本工作流程的第一步；使用如下命令以实际提交改动：</p>
-<p>git commit -m &quot;代码提交信息&quot;
-现在，你的改动已经提交到了 <strong>HEAD</strong>，但是还没到你的远端仓库。
-<a href=""></a></p>
-<h2 id="-">推送改动</h2>
-<p>你的改动现在已经在本地仓库的 <strong>HEAD</strong> 中了。执行如下命令以将这些改动提交到远端仓库：</p>
-<p>git push origin master
-可以把 master 换成你想要推送的任何分支。
-如果你还没有克隆现有仓库，并欲将你的仓库连接到某个远程服务器，你可以使用如下命令添加：</p>
-<p>git remote add origin <server>
-如此你就能够将你的改动推送到所添加的服务器上去了。
-<a href=""></a></p>
-<h2 id="-">分支</h2>
-<p>分支是用来将特性开发绝缘开来的。在你创建仓库的时候，master 是“默认的”。在其他分支上进行开发，完成后再将它们合并到主分支上。
-<img src="" alt=""></p>
-<p>创建一个叫做“feature_x”的分支，并切换过去：</p>
-<p>git checkout -b feature_x
-切换回主分支：</p>
-<p>git checkout master
-再把新建的分支删掉：</p>
-<p>git branch -d feature_x
-除非你将分支推送到远端仓库，不然该分支就是 不为他人所见的：</p>
-<p>git push origin <branch>
-<a href=""></a></p>
-<h2 id="-">更新与合并</h2>
-<p>要更新你的本地仓库至最新改动，执行：</p>
-<p>git pull
-以在你的工作目录中 获取（fetch） 并 合并（merge） 远端的改动。
-要合并其他分支到你的当前分支（例如 master），执行：</p>
-<p>git merge <branch>
-两种情况下，git 都会尝试去自动合并改动。不幸的是，自动合并并非次次都能成功，并可能导致 冲突（conflicts）。 这时候就需要你修改这些文件来人肉合并这些 冲突（conflicts） 了。改完之后，你需要执行如下命令以将它们标记为合并成功：</p>
-<p>git add <filename>
-在合并改动之前，也可以使用如下命令查看：</p>
-<p>git diff <source_branch> <target_branch>
-<a href=""></a></p>
-<h2 id="-">标签</h2>
-<p>在软件发布时创建标签，是被推荐的。这是个旧有概念，在 SVN 中也有。可以执行如下命令以创建一个叫做 1.0.0 的标签：</p>
-<p>git tag 1.0.0 1b2e1d63ff
-1b2e1d63ff 是你想要标记的提交 ID 的前 10 位字符。使用如下命令获取提交 ID：</p>
-<p>git log
-你也可以用该提交 ID 的少一些的前几位，只要它是唯一的。
-<a href=""></a></p>
-<h2 id="-">替换本地改动</h2>
-<p>假如你做错事（自然，这是不可能的），你可以使用如下命令替换掉本地改动：</p>
-<p>git checkout -- <filename>
-此命令会使用 HEAD 中的最新内容替换掉你的工作目录中的文件。已添加到缓存区的改动，以及新文件，都不受影响。</p>
-<p>假如你想要丢弃你所有的本地改动与提交，可以到服务器上获取最新的版本并将你本地主分支指向到它：</p>
-<p>git fetch origin</p>
-<p>git reset --hard origin/master
-<a href=""></a></p>
-<h2 id="-">有用的贴士</h2>
-<p>内建的图形化 git：</p>
-<p>gitk
-彩色的 git 输出：</p>
-<p>git config color.ui true
-显示历史记录时，只显示一行注释信息：</p>
-<p>git config format.pretty oneline
-交互地添加文件至缓存区：</p>
-<p>git add -i
-<a href=""></a></p>
-<h2 id="-">链接与资源</h2>
-<h3 id="-">图形化界面</h3>
+图 1-1</p>
+<p>从图中可以看出，每个集群都需要一个负载均衡器，其负责根据一定的算法将外界发送到集群的请求尽量均匀地分配到集群中的每个服务器，使得集群中所有 服务器的负载尽量平衡。对外界的客户端而言其并不知道具体访问了集群中的哪台服务器，多台服务器从逻辑上对外界而言可以看作一台&quot;大&quot;服务器。这样，当集 群的服务能力不能满足当前的需要时，可以非常方便地再向集群中添加新的服务器来满足需要。可以看出，使用了集群之后，系统具有非常好的可扩展性。</p>
+<p>当不幸集群中有某台服务器突然当机时，其用户状态数据可以迁移到其他服务器上，不影响在线用户的使用。这样，通过使用集群技术可以方便地实现系统的高可靠性。</p>
+<p>本教程中将介绍的使用 Tomcat 搭建的 Web 集群结构如图 1-2 所示：</p>
+<p><img src="" alt="">
+图 1-2</p>
+<p>从图中可以看出集群的负载均衡器由开源的 Apache 服务器担任，集群中的 Web 服务器由两个 Tomcat 服务器分别担任，后台的数据库服务器由一个 MySQL 服务器担任。</p>
+<p>提示：本教程中介绍的是 Web 集群，因此数据库服务器只有一个，并没有搭建集群。在需要的情况下，多台数据库服务器也可以组成集群以提高服务能力与可靠性。</p>
+<p><strong>二、安装JDK</strong></p>
+<p><strong>三、安装TOMCAT</strong></p>
+<ol>
+<li>下载tomcat，可以通过下面的命令下载：</li>
+</ol>
+<p>/#wget <a href="http://apache.mirror.phpchina.com/tomcat/tomcat-6/v6.0.18/bin/apache-tomcat-6.0.18.tar.gz" target="_blank">http://apache.mirror.phpchina.com/tomcat/tomcat-6/v6.0.18/bin/apache-tomcat-6.0.18.tar.gz</a></p>
+<ol>
+<li>解压启动测试：</li>
+</ol>
+<p>/#tar -zxvf apache-tomcat-6.0.18.tar.gz
+/#./apache-tomcat-6.0.18/bin/startup.sh</p>
+<p>在浏览器中输入：<a href=""><a href="http://localhost:8080">http://localhost:8080</a></a>,看是否启动正常，若正常进行第三步。</p>
+<ol>
+<li>下面通过一个简单的&quot; Test.jsp &quot;程序进一步验证 Tomcat 是否安装成功，新建名称为&quot; Test.jsp &quot;的 Jsp 源文件并在其中输入如下代码。</li>
+</ol>
+<p>&lt;%@ page contentType=&quot;text/html;charset=GBK&quot;%&gt;</p>
+<p><html></p>
+<p><head></p>
+<p><title> Tomcat<em> </em>测试 </title>
+</head></p>
+<p><body></p>
+<p><font color = "red" size = "20" >
+&lt;% out.print( &quot;<em> </em>恭喜您，成功的安装并启动了 Tomcat<em> </em>！！！ &quot; ); %&gt;
+</font>
+</body>
+</html></p>
+<ol>
+<li>重启（命令如下），然后输入：<a href=""><a href="http://localhost:8080/Test.jsp">http://localhost:8080/Test.jsp</a></a> 看是否正常。</li>
+</ol>
+<p>/#./apache-tomcat-6.0.18/bin/shutdown.sh
+/#./apache-tomcat-6.0.18/bin/startup.sh</p>
+<p><strong>四：TOMCAT集群的搭建</strong></p>
+<ol>
+<li>安装两个或以上tomcat</li>
+</ol>
+<p>/#./apache-tomcat-6.0.18/bin/shutdown.sh
+/#mv apache-tomcat-6.0.18 /usr/local/TC6_A
+/#cd /usr/local
+/#cp -a TC6_A TC6_B</p>
+<p>提示：进行上述步骤操作的原因是，本案例中集群的各个 Tomcat 服务器实例运行在同一个物理服务器上，因此集群中有几个 Tomcat 实例一般就需要几个 Tomcat 的安装。另外，由于集群中的各个 Tomcat 实例位于同一个物理服务器上的一个操作系统下，因此各个实例占用的各种网络端口不能相同，否则集群中的多个 Tomcat 实例不能同时正常启动，下面的步骤将介绍如何修改 Tomcat 实例需要使用的各个网络端口。</p>
+<ol>
+<li>修改 Tomcat 实例需要使用的各个网络端口</li>
+</ol>
 <ul>
-<li><a href="http://gitx.laullon.com/" target="_blank">GitX (L) (OSX, open source)</a></li>
-<li><a href="http://www.git-tower.com/" target="_blank">Tower (OSX)</a></li>
-<li><a href="http://www.sourcetreeapp.com/" target="_blank">Source Tree (OSX, free)</a></li>
-<li><a href="http://mac.github.com/" target="_blank">GitHub for Mac (OSX, free)</a></li>
-<li><a href="https://itunes.apple.com/gb/app/gitbox/id403388357?mt=12" target="_blank">GitBox (OSX)</a></li>
+<li>找到 server.xml 配置文件中的&quot; Server &quot;配置项目，并进行修改。
+<Server port="8005" shutdown="SHUTDOWN">
+<Server port="10005" shutdown="SHUTDOWN"><Server port="20005" shutdown="SHUTDOWN">
+
+</li>
 </ul>
-<h3 id="-">指南与手册</h3>
+<p>说明：第一行为两个 Tomcat 修改前的情况，第二行为 TC6_A Tomcat 修改后的情况，第三行为 TC6_B Tomcat 修改后的情况。</p>
 <ul>
-<li><a href="http://book.git-scm.com/" target="_blank">Git 社区参考书</a></li>
-<li><a href="http://progit.org/book/" target="_blank">专业 Git</a></li>
-<li><a href="http://think-like-a-git.net/" target="_blank">如 git 思考</a></li>
-<li><a href="http://help.github.com/" target="_blank">GitHub 帮助</a></li>
-<li><a href="http://marklodato.github.com/visual-git-guide/index-en.html" target="_blank">图形化的 Git 指南一则</a>
-<a href=""></a></li>
+<li><p>找到 server.xml 配置文件中的相应&quot; Connector &quot;配置项目，并进行修改。</p>
+</li>
+<li><p>修改前内容如下：</p>
+</li>
 </ul>
-<h2 id="-">评论</h2>
-<p>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript" target="_blank">comments powered by Disqus.</a>
-<a href="http://www.git-tower.com/?source=rd" target="_blank"></a> <a href="http://rogerdudler.github.com/git-guide/files/git_cheat_sheet.pdf"></a></p>
+<p><!-- Define an AJP 1.3 Connector on port 8009 --></p>
+<p><Connector port = "8009" protocol = "AJP/1.3" redirectPort = "8443" /></p>
+<ul>
+<li>TC6_A 中修改后内容如下：</li>
+</ul>
+<p><!-- Define an AJP 1.3 Connector on port 8009 --></p>
+<p><Connector port = " 10009 " protocol = "AJP/1.3" redirectPort = " 10043 " /></p>
+<ul>
+<li>TC6_B 中修改后内容如下：</li>
+</ul>
+<p><!-- Define an AJP 1.3 Connector on port 8009 --></p>
+<Connector port = " 20009 " protocol = "AJP/1.3" redirectPort = " 20043 " />
+
+<p>提示：此步骤目的是修改 AJP Connector 端口。</p>
+<ul>
+<li><p>找到 server.xml 配置文件中的另一个相应&quot; Connector &quot;配置项目，并进行修改。</p>
+</li>
+<li><p>修改前内容如下：</p>
+</li>
+</ul>
+<p><Connector port = "8080" protocol = "HTTP/1.1" connectionTimeout = "20000"
+redirectPort = "8443" /></p>
+<ul>
+<li>TC6_A 中修改后内容如下：</li>
+</ul>
+<p><Connector port = "10001" protocol = "HTTP/1.1" connectionTimeout = "20000"
+redirectPort = "10043" /></p>
+<ul>
+<li>TC6_B 中修改后内容如下：</li>
+</ul>
+<Connector port = "20001" protocol = "HTTP/1.1" connectionTimeout = "20000"
+redirectPort = "20043" />
+
+<p>提示：此步骤目的是修改 HTTP Connector 端口，其中的&quot; 10001 &quot;与&quot; 20001 &quot;是未来通过浏览器访问集群中各个 Tomcat 实例的 HTTP 端口。</p>
+<ul>
+<li><p>通过修改 Engine 配置选项，配置集群中每个 Tomcat 实例的名称。</p>
+</li>
+<li><p>修改前内容如下：</p>
+</li>
+</ul>
+<p>&lt;!-- You should set jvmRoute to support load-balancing via AJP ie :</p>
+<p><Engine name = "Standalone" defaultHost = "localhost" jvmRoute = "jvm1"></p>
+<p><Engine name = "Catalina" defaultHost = "localhost">
+--&gt;</p>
+<ul>
+<li>TC6_A 中修改后内容如下：</li>
+</ul>
+<p><Engine name = "Standalone" defaultHost = "localhost" jvmRoute = " Tomcat1"></p>
+<ul>
+<li>TC6_B 中修改后内容如下：</li>
+</ul>
+<Engine name = "Standalone" defaultHost = "localhost" jvmRoute = " Tomcat2">
+
+<p>提示：请读者注意在修改过程中要注释掉原来 name 为 Catalina 的 Engine 配置项目，将 name 为 Standalone 的 Engine 配置项目的注释去掉并修改 jvmRoute 属性。</p>
+<ul>
+<li><p>修改配置文件中的 Cluster 配置项目，对集群的各项参数进行设置。</p>
+</li>
+<li><p>修改前内容如下：</p>
+</li>
+</ul>
+<Cluster className="org.apache.catalina.ha.tcp.SimpleTcpCluster" />
+<em> TC6_A 中修改后内容如下：
+
+<Cluster className = "org.apache.catalina.ha.tcp.SimpleTcpCluster" channelSendOptions = "8">
+<Manager className = "org.apache.catalina.ha.session.DeltaManager"
+expireSessionsOnShutdown = "false"
+notifyListenersOnReplication = "true" />
+<Channel className = "org.apache.catalina.tribes.group.GroupChannel" >
+<Membership className = "org.apache.catalina.tribes.membership.McastService"
+address = "228.0.0.4"
+port = "45564"
+frequency = "500"
+dropTime = "3000"/>
+<Receiver className = "org.apache.catalina.tribes.transport.nio.NioReceiver"
+address = "auto"
+port = "4000"
+autoBind = "100"
+selectorTimeout = "5000"
+maxThreads = "6" />
+<Sender className = "org.apache.catalina.tribes.transport.ReplicationTransmitter" >
+<Transport className = "org.apache.catalina.tribes.transport.nio.PooledParallelSender" />
+</Sender>
+<Interceptor
+className = "org.apache.catalina.tribes.group.interceptors.TcpFailureDetector" />
+<Interceptor className="org.apache.catalina.tribes.group.interceptors.MessageDispatch15Interceptor" />
+</Channel>
+<Valve className = "org.apache.catalina.ha.tcp.ReplicationValve" filter="" />
+<Valve className = "org.apache.catalina.ha.session.JvmRouteBinderValve" />
+<Deployer className = "org.apache.catalina.ha.deploy.FarmWarDeployer"
+tempDir = "/tmp/war-temp/"
+deployDir = "/tmp/war-deploy/"
+watchDir = "/tmp/war-listen/"
+watchEnabled = "false"/>
+<ClusterListener className = "org.apache.catalina.ha.session.JvmRouteSessionIDBinderListener" />
+<ClusterListener className = "org.apache.catalina.ha.session.ClusterSessionListener" />
+</Cluster>
+</em> TC6_B 中修改后内容如下：
+
+<Cluster
+className = "org.apache.catalina.ha.tcp.SimpleTcpCluster"
+channelSendOptions = "8"
+>
+<Manager className = "org.apache.catalina.ha.session.DeltaManager"
+expireSessionsOnShutdown = "false"
+notifyListenersOnReplication = "true" />
+<Channel className = "org.apache.catalina.tribes.group.GroupChannel">
+<Membership className = "org.apache.catalina.tribes.membership.McastService"
+address = "228.0.0.4"
+port = "45564"
+frequency = "500"
+dropTime = "3000" />
+<Receiver className = "org.apache.catalina.tribes.transport.nio.NioReceiver"
+address = "auto"
+port = "4000"
+autoBind = "100"
+selectorTimeout = "5000"
+maxThreads = "6" />
+<Sender className = "org.apache.catalina.tribes.transport.ReplicationTransmitter">
+<Transport className = "org.apache.catalina.tribes.transport.nio.PooledParallelSender" />
+</Sender>
+<Interceptor className = "org.apache.catalina.tribes.group.interceptors.TcpFailureDetector" />
+<Interceptor className="org.apache.catalina.tribes.group.interceptors.MessageDispatch15Interceptor" />
+</Channel>
+<Valve className = "org.apache.catalina.ha.tcp.ReplicationValve"
+filter = ""/>
+<Valve className = "org.apache.catalina.ha.session.JvmRouteBinderValve" />
+<Deployer className = "org.apache.catalina.ha.deploy.FarmWarDeployer"
+tempDir = "/tmp/war-temp/"
+deployDir = "/tmp/war-deploy/"
+watchDir = "/tmp/war-listen/"
+watchEnabled = "false" />
+<ClusterListener className = "org.apache.catalina.ha.session.JvmRouteSessionIDBinderListener" />
+<ClusterListener className = "org.apache.catalina.ha.session.ClusterSessionListener" />
+</Cluster>
+
+<p>提示：上述配置内容主要是对集群中各个 Tomcat 实例间进行通信的方式、端口以及 Session 共享算法的设置。本教程由于篇幅所限，不能一一详细介绍，有兴趣的读者可以参看 Tomcat 的官方文档，其中有非常详细的说明。</p>
+<p>3、测试搭建，分别启动两个tomcat，看是否正常，若正常进行第四步。
+<a href=""><a href="http://localhost:10001">http://localhost:10001</a></a>
+<a href=""><a href="http://localhost:20001">http://localhost:20001</a></a></p>
+<p>4、简单的 JSP 来进一步测试对&quot; TC6_A &quot;和&quot; TC6_B &quot;的设置是否成功,分别建立两个文件：Hello.jsp。
+&lt;%@ page contentType=&quot;text/html;charset=GBK&quot;%&gt;</p>
+<p><html></p>
+<p><head></p>
+<p><title>Tomcat 测试 </title>
+</head></p>
+<p><body></p>
+<p><font color="red" size="20">
+&lt;!— 使用 out 内建对象打印一条消息到输出页面 --&gt;
+&lt;% out.print( &quot;Tomcat 集群测试 A ！！！ &quot; ); %&gt;
+</font>
+</body>
+</html>
+TC6_B的改一行输出：
+&lt;% out.print( &quot;Tomcat 集群测试 B ！！！ &quot; ); %&gt;</p>
+<p>如果能顺利地在浏览器中见到上述两个页面，则说明集群中的两个 Tomcat 实例工作完全正常。下面就可以为集群安装、设置 Apache 负载均衡器了。</p>
+<p><strong>五、Apache负载均衡器的安装与配置</strong></p>
+<ol>
+<li>下载安装</li>
+</ol>
+<p>/# wget <a href="http://www.apache.org/dist/httpd/httpd-2.2.9.tar.gz" target="_blank">http://www.apache.org/dist/httpd/httpd-2.2.9.tar.gz</a>
+/# tar -zxvf httpd-2.2.9.tar.gz
+/# cd httpd-2.2.9
+/# ./configure --prefix=/usr/local/httpd --enable-mods-shared=&#39;proxy proxy_ajp proxy_balancer&#39;
+/# make
+/# make install</p>
+<ol>
+<li>配置Apache 为 Tomcat 集群的负载均衡器</li>
+</ol>
+<p>ProxyRequests Off
+ProxyPass / balancer://myCluster/</p>
+<Proxy balancer://myCluster/>
+BalancerMember ajp://localhost:10009 route=Tomcat1
+BalancerMember ajp://localhost:20009 route=Tomcat2
+</Proxy>
+
+<p>说明：其中&quot; myCluster &quot;是集群的名称，&quot; ajp://localhost:10009 route=Tomcat1 &quot; 对应 Tomcat 集群中的 TC6_A 实例，&quot; ajp://localhost:20009 route=Tomcat2 &quot; 对应 Tomcat 集群中的 TC6_B 实例。经过上述配置后， Apache 就可以成为前面搭建的 Tomcat 集群的负载均衡器了。</p>
+<p><strong>六、感受成果</strong></p>
+<ol>
+<li>重启apache httpd后，访问：<a href=""><a href="http://localhost/Hello.jsp">http://localhost/Hello.jsp</a></a>。</li>
+<li><p>由 于 Apache 作为 Tomcat 集群的负载均衡器，使用的是轮换算法，其均匀地将请求发送到集群中的各个 Tomcat 实例。因此，从1的测试中可以看出，是轮换访问两个不同 Tomcat 实例中的 Hello.jsp 页面的。当然，看到轮换的情况也就说明 Apache 负载均衡器正常工作了。
+<strong>七、补充重要细节</strong></p>
+<p> 1、在应用时候，工程的web.xml里面要加上这么一个属性，实现Session共享：
+……<em><distributable/></em></p>
+</li>
+</ol>
+<p><em></web-app>
+</em></p>
+<pre><code>文件中的“ *&lt;distributable/&gt;*”项，是由于本案例将部署到集群中的多个服务器上。如果在配置文件中没 有此项，则应用在集群中不能实现分布式 Session 共享，也就是说当机后用户状态数据（存放在 Session 中的）无法无缝迁移到 Tomcat 集群中的其他服务器上。此项非常重要，请读者多加留心。
+
+然后在依次启动TC6_A,TC6_B,你会在TC6_A的日志里面看到他们的通信日志，不然就是没有成功。
+
+2、Tomcat6 集群要求负载均衡器工作在“ sticky session ”模式下，否则集群可能工作不正常。
+</code></pre><p>对“ <strong><em>ProxyPass</em></strong>”项目进行如下修改。</p>
+<ul>
+<li>修改前</li>
+</ul>
+<p><strong><em>ProxyPass / balancer://myCluster/</em></strong></p>
+<ul>
+<li>修改后</li>
+</ul>
+<p><strong><em>ProxyPass / balancer://myCluster/ lbmethod=byrequests stickysession=JSESSIONID nofailover=Off</em></strong></p>
+<p>提示： 修改后添加的“ stickysession=JSESSIONID ”项就是让 Apache 负载均衡器工作在“ sticky session ”模式下。所谓“ sticky session ”模式就是对于使用到同一个 Session 的请求绑定到集群中的特定服务器上，而不是轮换访问各个服务器，这样 Session 就不会工作不正常了。当然，对于使用不同 Session 的请求，还是进行负载均衡轮换的。</p>
+<p>本文参照：<a href="http://www.unix-center.net" target="_blank">http://www.unix-center.net</a>
+为了您的安全，请只打开来源可靠的网址</p>
+<p><a href="http://hi.baidu.com/iammonster/blog/item/84710cdbb1b9f660d1164e60.html" target="_blank">打开网站</a>    <a href="http://apps.hi.baidu.com/share/detail/14955683#" target="_blank">取消</a></p>
+<p> 来自: <a href="http://hi.baidu.com/iammonster/blog/item/84710cdbb1b9f660d1164e60.html" target="_blank"><a href="http://hi.baidu.com/iammonster/blog/item/84710cdbb1b9f660d1164e60.html">http://hi.baidu.com/iammonster/blog/item/84710cdbb1b9f660d1164e60.html</a></a></p>
+<p><a href=""></a></p>
+<p><a href="http://apps.hi.baidu.com/share/detail/14959808#content" target="_blank"></a>  <a href="http://apps.hi.baidu.com/share/detail/14797932#content"></a>
+来自: <a href="http://hi.baidu.com/sys/checkuser/iammonster007/3" target="_blank"><img src="" alt=""></a> <a href="http://hi.baidu.com/sys/checkuser/iammonster007/3" target="_blank">iammonster007</a> 第一分享: <a href="http://hi.baidu.com/sys/checkuser/lpwok/3" target="_blank"><img src="" alt=""></a> <a href="http://hi.baidu.com/sys/checkuser/lpwok/3" target="_blank">lpwok</a>  时间: 2010-07-20 16:58 评论: 1条 投票: 1次 本贴分享: 5 累计分享: 6</p>
+<h3 id="-1-">共有1人发表观点</h3>
+<ul>
+<li><p>色妹Q:2372819618
+...或者输入其他标签词：
+lpwok的 博客 相关分享:</p>
+</li>
+<li><p><a href="http://apps.hi.baidu.com/share/detail/6723926" title="经典智力挑战游戏——【密室逃脱】全集！！！" target="_blank">经典智力挑战游戏——【密室逃脱】全集！！...</a></p>
+</li>
+<li><a href="http://apps.hi.baidu.com/share/detail/2863700" title="Ubuntu Linux下Apache的配置文件" target="_blank">Ubuntu Linux下Apache的配置文件</a></li>
+<li><a href="http://apps.hi.baidu.com/share/detail/2863689" title="ubuntu中tar.gz/tar.bz2/rar等压缩包软件安装教程" target="_blank">ubuntu中tar.gz/tar.bz2/rar等压缩包软件安...</a></li>
+<li><a href="http://apps.hi.baidu.com/share/detail/2327312" title="SEO工具大集合" target="_blank">SEO工具大集合</a></li>
+</ul>
+<h3 id="-1-">评论(1)</h3>
+<p><a href="http://hi.baidu.com/sys/checkuser/784633420/3" target="_blank"><img src="" alt=""></a></p>
+<p>2011年12月21日 16:48 <a href="http://hi.baidu.com/sys/checkuser/784633420/3" target="_blank">784633420</a></p>
+<p>非常准确</p>
+<p><a href="http://help.baidu.com/question?prod_en=space" target="_blank">帮助中心</a> | <a href="http://tieba.baidu.com/f?kw=%B0%D9%B6%C8%BF%D5%BC%E4&amp;fr=wwwt" target="_blank">空间客服</a> | <a href="http://tousu.baidu.com/hi/add" target="_blank">投诉中心</a> | <a href="http://www.baidu.com/search/hi_contract.html" target="_blank">空间协议</a></p>
+<p>©2012 Baidu</p>
 
       
     </div>
@@ -684,8 +467,590 @@ Copyright © pasha</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/git&github/">git&github</a></li></span></span> | <span class="tags">Tagged <a href="/tags/git&github/" class="label label-primary">git&github</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-gitgithub--git-thesimpleguide-nodeepshit/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-gitgithub--git-thesimpleguide-nodeepshit" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/集群/">集群</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a><a href="/tags/集群/" class="label label-success">集群</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-集群--LINUX下使用apachetomcat构建WEB集群系统/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-集群--LINUX下使用apachetomcat构建WEB集群系统" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--EightCoins/">EightCoins</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--EightCoins/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="eightcoins">EightCoins</h1>
+<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 八枚银币</a></h1>
+<h2 id="-">说明</h2>
+<p>现有八枚银币a b c d e f g h，已知其中一枚是假币，其重量不同于真币，但不知是较轻或较重，如何使用天平以最少的比较次数，决定出哪枚是假币，并得知假币比真币较轻或较重。</p>
+<h2 id="-">解法</h2>
+<p>单就求假币的问题是不难，但问题限制使用最少的比较次数，所以我们不能以单纯的回圈比较来求解，我们可以使用决策树（decision tree），使用分析与树状图来协助求解。
+一个简单的状况是这样的，我们比较a+b+c与d+e+f ，如果相等，则假币必是g或h，我们先比较g或h哪个较重，如果g较重，再与a比较（a是真币），如果g等于a，则g为真币，则h为假币，由于h比g轻而 g是真币，则h假币的重量比真币轻。
+完整的比较决策树如下图所示：
+<img src="&quot;八枚银币&quot;" alt="八枚银币">
+ 为了方便使用回圈，使用号码0至7表示银币，范例程式可以让您输入假币重量，但您无法事先得知假币是哪一枚，程式可得知假币是哪一枚，且它比真币轻或重。</p>
+<h2 id="-">实作</h2>
+<ul>
+<li><p>C
+/#include <stdio.h>
+/#include <stdlib.h>
+/#include <time.h>
+void compare(int[], int, int, int);
+void eightcoins(int[]);
+int main(void) {
+int coins[8] = {0};
+int i;
+srand(time(NULL));
+for(i = 0; i &lt; 8; i++)
+coins[i] = 10;
+printf(&quot;\n输入假币重量(比10大或小)：&quot;);
+scanf(&quot;%d&quot;, &amp;i);
+coins[rand() % 8] = i;
+eightcoins(coins);
+printf(&quot;\n\n列出所有钱币重量：&quot;);
+for(i = 0; i &lt; 8; i++)
+printf(&quot;%d &quot;, coins[i]);
+printf(&quot;\n&quot;);
+return 0;
+}
+void compare(int coins[], int i, int j, int k) {
+if(coins[i] &gt; coins[k])
+printf(&quot;\n假币 %d 较重&quot;, i+1);
+else
+printf(&quot;\n假币 %d 较轻&quot;, j+1);
+}
+void eightcoins(int coins[]) {
+if(coins[0]+coins[1]+coins[2] ==
+coins[3]+coins[4]+coins[5]) {
+if(coins[6] &gt; coins[7])
+compare(coins, 6, 7, 0);
+else
+compare(coins, 7, 6, 0);
+}
+else if(coins[0]+coins[1]+coins[2] &gt;
+coins[3]+coins[4]+coins[5]) {
+if(coins[0]+coins[3] == coins[1]+coins[4])
+compare(coins, 2, 5, 0);
+else if(coins[0]+coins[3] &gt; coins[1]+coins[4])
+compare(coins, 0, 4, 1);
+if(coins[0]+coins[3] &lt; coins[1]+coins[4])
+compare(coins, 1, 3, 0);
+}
+else if(coins[0]+coins[1]+coins[2] &lt;
+coins[3]+coins[4]+coins[5]) {
+if(coins[0]+coins[3] == coins[1]+coins[4])
+compare(coins, 5, 2, 0);
+else if(coins[0]+coins[3] &gt; coins[1]+coins[4])
+compare(coins, 3, 1, 0);
+if(coins[0]+coins[3] &lt; coins[1]+coins[4])
+compare(coins, 4, 0, 1);
+}
+}</p>
+</li>
+<li><p>Java
+public class Coins {
+private int[] coins;
+public Coins() {
+coins = new int[8];
+for(int i = 0; i &lt; 8; i++)
+coins[i] = 10;
+}
+public void setFake(int weight) {
+coins[(int) (Math.random() /* 7)] = weight;
+}
+public void fake() {
+if(coins[0]+coins[1]+coins[2] ==
+coins[3]+coins[4]+coins[5]) {
+if(coins[6] &gt; coins[7])
+compare(6, 7, 0);
+else
+compare(7, 6, 0);
+}
+else if(coins[0]+coins[1]+coins[2] &gt;
+coins[3]+coins[4]+coins[5]) {
+if(coins[0]+coins[3] == coins[1]+coins[4])
+compare(2, 5, 0);
+else if(coins[0]+coins[3] &gt; coins[1]+coins[4])
+compare(0, 4, 1);
+if(coins[0]+coins[3] &lt; coins[1]+coins[4])
+compare(1, 3, 0);
+}
+else if(coins[0]+coins[1]+coins[2] &lt;
+coins[3]+coins[4]+coins[5]) {
+if(coins[0]+coins[3] == coins[1]+coins[4])
+compare(5, 2, 0);
+else if(coins[0]+coins[3] &gt; coins[1]+coins[4])
+compare(3, 1, 0);
+if(coins[0]+coins[3] &lt; coins[1]+coins[4])
+compare(4, 0, 1);
+}
+}
+protected void compare(int i, int j, int k) {
+if(coins[i] &gt; coins[k])
+System.out.print(&quot;\n假币 &quot; + (i+1) + &quot; 较重&quot;);
+else
+System.out.print(&quot;\n假币 &quot; + (j+1) + &quot; 较轻&quot;);
+}
+public static void main(String[] args) {
+if(args.length == 0) {
+System.out.println(&quot;输入假币重量（比10大或小）&quot;);
+System.out.println(&quot;ex. java Coins 5&quot;);
+return;
+}
+Coins eightCoins = new Coins();
+eightCoins.setFake(Integer.parseInt(args[0]));
+eightCoins.fake();
+}
+}</p>
+</li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:38:16"datetime="2014-03-07 10:38:16"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--EightCoins/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--EightCoins" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-集群--Linux下Apache与Tomcat整合的简单方法-LinuxSirOrg/">Linux下Apache与Tomcat整合的简单方法 </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-集群--Linux下Apache与Tomcat整合的简单方法-LinuxSirOrg/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="linux-apache-tomcat-linuxsir-org">Linux下Apache与Tomcat整合的简单方法 - LinuxSir.Org</h1>
+<p><a href=""></a> <a href="http://www.linuxsir.org/bbs/index.php?s=b91078e77de0bd2a626708973b8082ac"><img src="&quot;LinuxSir.Org&quot;" alt="LinuxSir.Org"></a>   用户名  密码   记住信息</p>
+<p>| <a href="http://www.linuxsir.org/" target="_blank">网站首页</a> |   <a href="http://www.linuxsir.org/bbs/faq.php?s=b91078e77de0bd2a626708973b8082ac" target="_blank">论坛帮助</a> |
+欢迎来到<strong>LinuxSir.Org</strong>! 您还未登录，请登录后查看论坛，或者点击论坛上方的注册链接注册新账号。
+<a href="http://www.linuxsir.org/bbs/showthread.php?t=236915#" target="_blank"><img src="&quot;返回&quot;" alt="返回"></a>   <a href="http://www.linuxsir.org/bbs/index.php?s=b91078e77de0bd2a626708973b8082ac" target="_blank">LinuxSir.Org</a> &gt; <a href="http://www.linuxsir.org/bbs/forumdisplay.php?s=b91078e77de0bd2a626708973b8082ac&amp;f=39" target="_blank">Linux 发行版讨论区 —— LinuxSir.Org</a> &gt; <a href="http://www.linuxsir.org/bbs/forumdisplay.php?s=b91078e77de0bd2a626708973b8082ac&amp;f=49" target="_blank">Linux 发行版Debian专题</a> &gt; Linux下Apache与Tomcat整合的简单方法
+转到页面...  <a href=""></a>  <a href="http://www.linuxsir.org/bbs/newthread.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newthread&amp;f=49"><img src="&quot;发表新主题&quot;" alt="发表新主题"></a>  <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;noquote=1&amp;p=1354073" target="_blank"><img src="&quot;回复&quot;" alt="回复"></a>     <a href="http://www.linuxsir.org/bbs/showthread.php?t=236915&amp;nojs=1#goto_threadtools" target="_blank">主题工具</a>  <img src="" alt=""></p>
+<p><a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-23, 20:51 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1354073&amp;postcount=1" target="_blank"><strong>第 1 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank"><strong>Kilin</strong></a></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank"><img src="&quot;Kilin 的头像&quot;" alt="Kilin 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Jun 2004</p>
+<p>  帖子: 321
+  <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;goodnees=1&amp;u=45616" target="_blank">精华</a>: 1        <strong>标题: Linux下Apache与Tomcat整合的简单方法</strong>
+1、准备，下载需要的文件。这里假定你已经正确安装配置好了JDK。
+到Apache官方网站下载所需要的文件：
+httpd-2.2.0.tar.gz
+apache-tomcat-5.5.12.tar.gz
+jakarta-tomcat-connectors-1.2.15-src.tar.gz
+其中httpd和jakarta-tomcat-connectors为源码包，apache-tomcat为二进制包。
+2、安装Apache。
+代码: /# tar xzvf httpd-2.2.0.tar.gz /# cd httpd-2.2.0 /# ./configure --prefix=/usr/local/apache2 --enable-so /# make /# make install3、安装Tomcat。
+代码: /# cp apache-tomcat-5.5.12.tar.gz /usr/local/ /# cd /usr/local /# tar xzvf apache-tomcat-5.5.12.tar.gz /# ln -s apache-tomcat-5.5.12 tomcat4、编译生成mod_jk。
+代码: /# tar xzvf jakarta-tomcat-connectors-1.2.15-src.tar.gz /# cd jakarta-tomcat-connectors-1.2.15-src/jk/native /# ./configure --with-apxs=/usr/local/apache2/bin/apxs /# make /# cp ./apache-2.0/mod_jk.so /usr/local/apache2/modules/5、配置。
+在/usr/local/apache2/conf/下面建立两个配置文件mod_jk.conf和workers.properties。
+/# vi mod_jk.conf
+添加以下内容：
+代码: /# 指出mod_jk模块工作所需要的工作文件workers.properties的位置 JkWorkersFile /usr/local/apache2/conf/workers.properties /# Where to put jk logs JkLogFile /usr/local/apache2/logs/mod_jk.log /# Set the jk log level [debug/error/info] JkLogLevel info /# Select the log format JkLogStampFormat &quot;[%a %b %d %H:%M:%S %Y]&quot; /# JkOptions indicate to send SSL KEY SIZE, JkOptions +ForwardKeySize +ForwardURICompat -ForwardDirectories /# JkRequestLogFormat set the request format JkRequestLogFormat &quot;%w %V %T&quot; /# 将所有servlet 和jsp请求通过ajp13的协议送给Tomcat，让Tomcat来处理 JkMount /servlet//<em> worker1 JkMount //</em>.jsp worker1/# vi workers.properties
+添加以下内容：
+代码: /# Defining a worker named worker1 and of type ajp13 worker.list=worker1 /# Set properties for worker1 worker.worker1.type=ajp13 worker.worker1.host=localhost worker.worker1.port=8009 worker.worker1.lbfactor=50 worker.worker1.cachesize=10 worker.worker1.cache_timeout=600 worker.worker1.socket_keepalive=1 worker.worker1.socket_timeout=300再配置httpd.conf，作以下修改：
+将Listen 80 修改为 Listen 127.0.0.1:80
+将ServerName 修改为 ServerName LocalHost:80
+在DirectoryIndex中添加 index.jsp
+我的网页放在/var/wwwroot下，所以要修改DocumentRoot
+代码: DocumentRoot &quot;/var/wwwroot&quot; <Directory "/var/wwwroot"> Options Includes FollowSymLinks AllowOverride None Order deny,allow Allow from all XBitHack on </Directory> <Directory "/var/wwwroot/WEB-INF"> Order deny,allow Deny from all </Directory>增加关于加载mod_jk的语句：
+代码: LoadModule jk_module modules/mod_jk.so Include /usr/local/apache2/conf/mod_jk.conf最后编辑Tomcat的配置文件server.xml，在HOST段中加入：
+代码: <Context path="" docBase="/var/wwwroot" debug="0" reloadable="true" crossContext="true"/>在/var/wwwroot下建立一个index.jsp，启动Apache和Tomcat，用浏览器访问<a href="http://localhost/，应该可以看到正确的页面了。" target="_blank">http://localhost/，应该可以看到正确的页面了。</a></p>
+<hr>
+<p>Only the strong survive.
+Blog:<a href="http://www.ylxiong.cn/" target="_blank">http://www.ylxiong.cn/</a>
+Linux 2.6</p>
+<p><em>此帖于 05-12-23 20:55 被 Kilin 编辑.</em>   <img src="&quot;Kilin 当前离线&quot;" alt="Kilin 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1354073" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>Kilin <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=45616" target="_blank">查找 Kilin 发表的更多帖子</a></p>
+<p><a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-24, 19:59 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1354576&amp;postcount=2" target="_blank"><strong>第 2 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><strong>lyingjie</strong></a>  <img src="&quot;帅哥&quot;" alt="帅哥"></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><img src="&quot;lyingjie 的头像&quot;" alt="lyingjie 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Aug 2005</p>
+<p>  帖子: 284
+  精华: 0        问一下老兄，Apache2不能用apt进行安装吗</p>
+<hr>
+<p>Debian Linux学习基地
+<a href="http://www.debian.ha.cn" target="_blank">http://www.debian.ha.cn</a>   <img src="&quot;lyingjie 当前离线&quot;" alt="lyingjie 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1354576" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>lyingjie <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=89579" target="_blank">查找 lyingjie 发表的更多帖子</a>
+<a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-24, 20:58 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1354612&amp;postcount=3" target="_blank"><strong>第 3 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><strong>lyingjie</strong></a>  <img src="&quot;帅哥&quot;" alt="帅哥"></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><img src="&quot;lyingjie 的头像&quot;" alt="lyingjie 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Aug 2005</p>
+<p>  帖子: 284
+  精华: 0        我用apt安装时进入apache2目录后没有conf这个子目录   <img src="&quot;lyingjie 当前离线&quot;" alt="lyingjie 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1354612" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>lyingjie <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=89579" target="_blank">查找 lyingjie 发表的更多帖子</a></p>
+<p><a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-24, 21:35 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1354644&amp;postcount=4" target="_blank"><strong>第 4 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank"><strong>Kilin</strong></a></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank"><img src="&quot;Kilin 的头像&quot;" alt="Kilin 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Jun 2004</p>
+<p>  帖子: 321
+  <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;goodnees=1&amp;u=45616" target="_blank">精华</a>: 1        可以吧 应该在/etc/local/etc/目录下吧.......
+或者在/etc/local/share/etc/下
+如果做服务器用的话 建议安装基本系统 然后再自己安装需要的Server端软件。   <img src="&quot;Kilin 当前离线&quot;" alt="Kilin 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1354644" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>Kilin <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=45616" target="_blank">查找 Kilin 发表的更多帖子</a>
+<a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-25, 11:35 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1354810&amp;postcount=5" target="_blank"><strong>第 5 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><strong>lyingjie</strong></a>  <img src="&quot;帅哥&quot;" alt="帅哥"></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><img src="&quot;lyingjie 的头像&quot;" alt="lyingjie 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Aug 2005</p>
+<p>  帖子: 284
+  精华: 0        谢了我在试试   <img src="&quot;lyingjie 当前离线&quot;" alt="lyingjie 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1354810" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>lyingjie <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=89579" target="_blank">查找 lyingjie 发表的更多帖子</a></p>
+<p><a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-25, 11:58 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1354826&amp;postcount=6" target="_blank"><strong>第 6 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank"><strong>Kilin</strong></a></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank"><img src="&quot;Kilin 的头像&quot;" alt="Kilin 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Jun 2004</p>
+<p>  帖子: 321
+  <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;goodnees=1&amp;u=45616" target="_blank">精华</a>: 1        汗.....昨天喝高了 把路径打得一塌糊涂.....
+应该是/etc
+或者是/usr/etc
+或者是/usr/local/etc
+猜的~   <img src="&quot;Kilin 当前离线&quot;" alt="Kilin 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1354826" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>Kilin <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=45616" target="_blank">查找 Kilin 发表的更多帖子</a>
+<a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-25, 14:24 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1354897&amp;postcount=7" target="_blank"><strong>第 7 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><strong>lyingjie</strong></a>  <img src="&quot;帅哥&quot;" alt="帅哥"></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><img src="&quot;lyingjie 的头像&quot;" alt="lyingjie 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Aug 2005</p>
+<p>  帖子: 284
+  精华: 0        好的，那在问你一个问题我现在按照你所讲的我已经配成了JSP可以为什么我打开静态页是打不开呀？
+提示你无权查看该页   <img src="&quot;lyingjie 当前离线&quot;" alt="lyingjie 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1354897" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>lyingjie <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=89579" target="_blank">查找 lyingjie 发表的更多帖子</a></p>
+<p><a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-25, 17:38 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1354988&amp;postcount=8" target="_blank"><strong>第 8 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank"><strong>Kilin</strong></a></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank"><img src="&quot;Kilin 的头像&quot;" alt="Kilin 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Jun 2004</p>
+<p>  帖子: 321
+  <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;goodnees=1&amp;u=45616" target="_blank">精华</a>: 1        httpd.conf里的权限设置.....   <img src="&quot;Kilin 当前离线&quot;" alt="Kilin 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1354988" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>Kilin <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=45616" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=45616" target="_blank">查找 Kilin 发表的更多帖子</a>
+<a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-25, 17:43 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1354995&amp;postcount=9" target="_blank"><strong>第 9 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><strong>lyingjie</strong></a>  <img src="&quot;帅哥&quot;" alt="帅哥"></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><img src="&quot;lyingjie 的头像&quot;" alt="lyingjie 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Aug 2005</p>
+<p>  帖子: 284
+  精华: 0        能不能说的在明白点呀，我以前做LAMP时有时也会出现这样子的问题   <img src="&quot;lyingjie 当前离线&quot;" alt="lyingjie 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1354995" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>lyingjie <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=89579" target="_blank">查找 lyingjie 发表的更多帖子</a></p>
+<p><a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-26, 09:59 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1355323&amp;postcount=10" target="_blank"><strong>第 10 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><strong>lyingjie</strong></a>  <img src="&quot;帅哥&quot;" alt="帅哥"></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><img src="&quot;lyingjie 的头像&quot;" alt="lyingjie 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Aug 2005</p>
+<p>  帖子: 284
+  精华: 0        还有我如果用Apt安装的话那不能给讲讲如何做呀   <img src="&quot;lyingjie 当前离线&quot;" alt="lyingjie 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1355323" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>lyingjie <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=89579" target="_blank">查找 lyingjie 发表的更多帖子</a>
+<a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-27, 22:02 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1356579&amp;postcount=11" target="_blank"><strong>第 11 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=55742" target="_blank"><strong>marvel</strong></a></p>
+<p><img src="" alt=""></p>
+<p>注册会员<br>  注册日期: Oct 2004</p>
+<p>  帖子: 489
+  精华: 0        apache配置文件的默认路径应该是/etc/apache/httpd.conf吧</p>
+<hr>
+<p>Thinkpad T60
+酷睿 1.83GHz+512Mb DDR+80Gb+ATI(64Mb)
+Debian unstable   <img src="&quot;marvel 当前离线&quot;" alt="marvel 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1356579" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>marvel <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=55742" target="_blank">查看公开信息</a> <a href="http://marvel.hit.edu.cn/" target="_blank">访问 marvel 的个人网站</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=55742" target="_blank">查找 marvel 发表的更多帖子</a></p>
+<p><a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-28, 03:25 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1356702&amp;postcount=12" target="_blank"><strong>第 12 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=27503" target="_blank"><strong>wjl</strong></a></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=27503" target="_blank"><img src="&quot;wjl 的头像&quot;" alt="wjl 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Nov 2003</p>
+<p>  我的住址: 北京
+  帖子: 90</p>
+<p>  精华: 0
+  good谢谢</p>
+<hr>
+<p>FreeBSD
+RHEL AS</p>
+<h2 id="windows-xp">Windows XP</h2>
+<p>借我一生,好好爱你   <img src="&quot;wjl 当前离线&quot;" alt="wjl 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1356702" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>wjl <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=27503" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=27503" target="_blank">查找 wjl 发表的更多帖子</a>
+<a href=""><img src="&quot;旧&quot;" alt="旧"></a> 05-12-28, 10:35 <a href="http://www.linuxsir.org/bbs/showpost.php?s=b91078e77de0bd2a626708973b8082ac&amp;p=1356852&amp;postcount=13" target="_blank"><strong>第 13 帖</strong></a> <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><strong>lyingjie</strong></a>  <img src="&quot;帅哥&quot;" alt="帅哥"></p>
+<p><img src="" alt=""></p>
+<p><a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank"><img src="&quot;lyingjie 的头像&quot;" alt="lyingjie 的头像"></a>  </p>
+<p>注册会员<br>  注册日期: Aug 2005</p>
+<p>  帖子: 284
+  精华: 0        你说的是Apache1.3的位置   <img src="&quot;lyingjie 当前离线&quot;" alt="lyingjie 当前离线">   <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;p=1356852" target="_blank"><img src="&quot;回复时引用此帖&quot;" alt="回复时引用此帖"></a></p>
+<p>lyingjie <a href="http://www.linuxsir.org/bbs/member.php?s=b91078e77de0bd2a626708973b8082ac&amp;u=89579" target="_blank">查看公开信息</a> <a href="http://www.linuxsir.org/bbs/search.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=finduser&amp;u=89579" target="_blank">查找 lyingjie 发表的更多帖子</a>
+<a href="http://www.linuxsir.org/bbs/newthread.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newthread&amp;f=49" target="_blank"><img src="&quot;发表新主题&quot;" alt="发表新主题"></a>  <a href="http://www.linuxsir.org/bbs/newreply.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=newreply&amp;noquote=1&amp;p=1356852" target="_blank"><img src="&quot;回复&quot;" alt="回复"></a>
+<strong>«</strong> <a href="http://www.linuxsir.org/bbs/showthread.php?s=b91078e77de0bd2a626708973b8082ac&amp;t=236915&amp;goto=nextoldest" target="_blank">上一主题</a> | <a href="http://www.linuxsir.org/bbs/showthread.php?s=b91078e77de0bd2a626708973b8082ac&amp;t=236915&amp;goto=nextnewest" target="_blank">下一主题</a> <strong>»</strong>
+主题工具<a href=""></a> <img src="&quot;显示可打印版本&quot;" alt="显示可打印版本"> <a href="http://www.linuxsir.org/bbs/printthread.php?s=b91078e77de0bd2a626708973b8082ac&amp;t=236915">显示可打印版本</a> <img src="&quot;邮寄本页给好友&quot;" alt="邮寄本页给好友"> <a href="http://www.linuxsir.org/bbs/sendmessage.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=sendtofriend&amp;t=236915" target="_blank">邮寄本页给好友</a>      <a href="http://www.linuxsir.org/bbs/showthread.php?t=236915#top" target="_blank"><img src="" alt=""></a> 发帖规则 您 [不可以] 发表新主题</p>
+<p>您 [不可以] 回复主题
+您 [不可以] 上传附件</p>
+<p>您 [不可以] 编辑您的帖子
+已 [启用] <a href="http://www.linuxsir.org/bbs/misc.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=bbcode" target="_blank">BB 代码</a></p>
+<p>已 [启用] <a href="http://www.linuxsir.org/bbs/misc.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=showsmilies" target="_blank">表情符号</a>
+已 [启用] <a href="http://www.linuxsir.org/bbs/misc.php?s=b91078e77de0bd2a626708973b8082ac&amp;do=bbcode#imgcode" target="_blank">IMG 代码</a></p>
+<p>已 [禁用] HTML 代码 [论坛跳转…]
+用户控制面板 悄悄话 收藏夹 会员在线状态 搜索论坛 论坛首页    Linux 综合讨论区 —— LinuxSir.Org     Linux 基础建设讨论专版     Linux shell进阶应用与shell编程     Linux 专业英文精品技术文档专题         Gas中文小组讨论区     Linux 硬件及周边设备     Linux 网络与服务器架设     Linux 系统及网络安全讨论专版     Linux及计算机学科基础理论版  Linux 发行版讨论区 —— LinuxSir.Org     Linux 发行版SuSE专题     Linux 发行版Archlinux讨论区     Linux 发行版Debian专题     Ubuntu Linux 专题讨论     Linux 发行版Slackware专题     Linux 发行版 LFS 讨论区         Olive讨论区 （实验版）     Linux 发行版Mandriva专题     Linux 发行版Redhat/Fedora/CentOS专题     Linux 发行版Gentoo讨论区     Mini Linux 及准系统研究     Linux 发行版红旗专题     LoongSon-龙芯讨论区     Linux 发行版其他专题         Linux发行版 Turbolinux专题         PowerPC Linux 讨论区  Google 产品讨论区 —— LinuxSir.Org     Android  Linux 软件应用讨论区 —— LinuxSir.Org     Linux 输入开发与研究     Linux 软件专题讨论         软件下载讨论区         即时通讯  Linux 高级应用讨论区 —— LinuxSir.Org     Linux 数据库专题讨论     Linux 认证考试学习与经验交流     Linux 内核研究小组     Linux 企业级应用专题讨论  编程开发讨论区 —— LinuxSir.Org     Linux 程序设计专题讨论     Java 程序设计开发讨论     Perl | PHP | Python 脚本程序开发     嵌入式Linux讨论区──实验田版  Unix 技术讨论区 —— LinuxSir.Org     BSD 讨论专题         BSD 新闻安全观察         RelaxBSD 讨论区     Solaris 讨论专题     MacOSX &amp; Darwin 讨论专题  社区中心 —— LinuxSir.Org     LinuxSir 论坛管理         LinuxSir 论坛临时存放区     LinuxSir 文章管理系统和BBS程序研究小组     小企鹅新闻图书馆     LinuxSir.Org 同城行 ── 我的城市
+所有时间均为[北京时间]。现在的时间是 21:28。
+<strong><a href="http://www.linuxsir.org/" target="_blank">网站首页</a> - <a href="mailto:kevin@linuxsir.org">联系我们</a> - <a href="http://www.linuxsir.org/bbs/showthread.php?t=236915#top" target="_blank">返回顶端</a></strong>
+Powered by vBulletin 版本 3.6.8
+版权所有 ©2000 - 2012, Jelsoft Enterprises Ltd.
+官方中文技术支持: <a href="http://www.vbulletin-china.cn/" target="_blank">vBulletin 中文</a></p>
+<p>版权所有 ©2002 - 2011, LinuxSir.Org</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/集群/">集群</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a><a href="/tags/集群/" class="label label-success">集群</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-集群--Linux下Apache与Tomcat整合的简单方法-LinuxSirOrg/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-集群--Linux下Apache与Tomcat整合的简单方法-LinuxSirOrg" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-集群--apachetomcat整合LINUX/">apache+tomcat整合(LINUX) </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-集群--apachetomcat整合LINUX/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="apache-tomcat-linux-linux-linux-">apache+tomcat整合(LINUX) - 技术文档 - 网络技术 Linux时代 - 开源、自由、共享 - 中国最大的Linux技术社区</h1>
+<p>·<a href="http://www.chinaunix.net/" target="_blank">ChinaUnix首页</a> ·<a href="http://bbs.chinaunix.net/" target="_blank">论坛</a> ·<a href="http://blog.chinaunix.net/" target="_blank">博客</a>   <img src="" alt=""> <img src="" alt=""> <a href="http://linux.chinaunix.net/" target="_blank">Linux首页</a> | <a href="http://linux.chinaunix.net/news/" target="_blank">Linux新闻</a> | <a href="http://linux.chinaunix.net/bbs" target="_blank"><strong>Linux论坛</strong></a> | <a href="http://linux.chinaunix.net/techdoc/" target="_blank">Linux文档</a> | <a href="http://download.chinaunix.net/disc/linux/" target="_blank">Linux下载</a> | <a href="http://blog.chinaunix.net/techart.php?frmid=6" target="_blank">Linux博客</a> | <a href="http://search.chinaunix.net/" target="_blank">Linux搜索</a> | <a href="http://linux.chinaunix.net/bbs/index.php?gid=68" target="_blank">开源项目孵化平台</a> | <a href="http://linux.chinaunix.net/ebook/" target="_blank">《开源时代》</a> <img src="" alt=""> <a href="http://linux.chinaunix.net/techdoc/beginner/" target="_blank">新手入门</a> |  <a href="http://linux.chinaunix.net/techdoc/install/" target="_blank">安装启动</a> |  <a href="http://linux.chinaunix.net/techdoc/system/" target="_blank">管理员指南</a> | <a href="http://man.chinaunix.net/" target="_blank">开发手册</a> | <a href="http://linux.chinaunix.net/techdoc/desktop/" target="_blank">桌面应用</a> | <a href="http://linux.chinaunix.net/techdoc/develop/" target="_blank">程序开发</a> | <a href="http://linux.chinaunix.net/techdoc/database/" target="_blank">数据库</a> |  <a href="http://linux.chinaunix.net/techdoc/net/" target="_blank">网络技术</a>| <a href="http://linux.chinaunix.net/topics/2007-01-25/15/index.shtml" target="_blank">CentOS</a> | <a href="http://linux.chinaunix.net/search2.php?key=fedora&amp;id=0" target="_blank">Fedora</a> |  <a href="http://linux.chinaunix.net/search2.php?key=mysql&amp;id=0" target="_blank">MySQL</a> |  <a href="http://linux.chinaunix.net/search2.php?key=apache&amp;id=0" target="_blank">Apache</a> |  <a href="http://linux.chinaunix.net/search2.php?key=ubuntu&amp;id=0" target="_blank">Ubuntu</a> |  <a href="http://linux.chinaunix.net/topics/2008-07-10/18/index.shtml" target="_blank">Gentoo</a>| <strong><a href="http://linux.chinaunix.net/topics/2008-07-30/19/index.shtml" target="_blank">OSCON08</a></strong>    <a href="http://linux.chinaunix.net/" target="_blank">Linux时代</a> &gt;&gt; <a href="http://linux.chinaunix.net/techdoc/" target="_blank">技术文档</a> &gt;&gt; <a href="http://linux.chinaunix.net/techdoc/net/" target="_blank">网络技术</a>  apache+tomcat整合(LINUX)  来源: ChinaUnix博客 　日期： 2007.12.28 13:38　(共有条评论) <a href="http://linux.chinaunix.net/bbs/thread-975323-1-1.html" target="_blank">我要评论</a>   这里介绍两类方法：
+    这里假设你已安装并且配置好了JDK
+                           一：用apt-get 安装
+apt-get install apache2 tomcat5.5 libapache2-mod-jk
+设置Tomcat管理员帐号
+Tomcat的用户帐号信息都保存在tomcat-users.xml的文件中，运行
+sudo gedit /usr/share/tomcat6/conf/tomcat-users.xml在的标签前添加一行
+保存并关闭。重新运行tomcat即可输入该用户名和密码，登录Tomcat的管理页面。
+确认一下在apache2的启动模块中是否有jk.load
+/#sudo ls /etc/apache2/mods-enabled/
+/#sudo vi /etc/libapache2-mod-jk/workers.properties
+workers.tomcat_home=/usr/share/tomcat6
+workers.java_home=/usr/lib/jvm/java-6-sun
+/#sudo vi /usr/share/doc/libapache2-mod-jk/httpd_example_apache2.conf
+复制里面的内容到apache2.conf
+最后重启apache tomcat上传jsp文件到usr/share/tomcat6/webapps/ROOT
+                               二:手动下载安装
+1.安装jdk
+2.安装tomcat
+3.编译安装apache2
+4.停止以上两个启动的服务:tomcat,apache
+5.编译安装jk-connector
+6.编辑配置文件
+7.看结果吧
+详细流程：
+1.安装jdk
+1.1
+下载jdk包，可以是rpm包或者tar包，解压缩到某目录，然后
+ln -s /usr/local/src/jdk-1.6./<em> /usr/local/java
+1.2
+设置环境变量
+vi /etc/profile
+export JAVA_HOME=/usr/local/java/
+export PATH=$PATH:$JAVA_HOME/bin
+export CLASSPATH=.:$CLASSPATH:$JAVA_HOME/lib/dt.jar:$JAVA_HOME/lib/tools.jar
+export JRE_HOME=$JAVA_HOME/jre
+1.3
+启用环境变量
+source /etc/profile
+1.4
+检验成功否
+java -version 或 javac -v
+2.安装tomcat
+tar zxvf /mnt/hgfs/Untitled-1/apache-tomcat-5.5.12.tar.gz -C /usr/local/src/
+ln -s /usr/local/src/apache-tomcat-5.5.12 /usr/local/tomcat
+/usr/local/tomcat/bin/startup.sh
+在浏览器中输入<a href="http://IP地址:8080" target="_blank">http://IP地址:8080</a>
+可以看到大花猫了。
+3.编译安装apache2
+tar zxvf /mnt/hgfs/Untitled-1/httpd-2.2.4.tar.gz  -C /usr/local/src/
+cd /usr/local/src/httpd-2.2.4
+在进行编译之前要确保系统中没有apr或者apr-util的rpm包或者deb包。下面一下子编译安装了apr，apr-util，httpd
+cd srclib/apr &amp;&amp; ./configure --prefix=/usr/local/apr &amp;&amp; make &amp;&amp; make install &amp;&amp; cd ../apr-util &amp;&amp; ./configure --prefix=/usr/local/apr-util --with-apr=/usr/local/apr &amp;&amp; make &amp;&amp; make install &amp;&amp; cd ../.. &amp;&amp; ./configure --prefix=/usr/local/httpd --with-apr=/usr/local/apr --with-apr-util=/usr/local/apr-util --enable-so &amp;&amp; make &amp;&amp; make install
+下面编辑httpd.conf文件中ServerName字段的注释符，可以换成你的IP地址，或者什么都不换。
+下面启动apache看看效果
+/usr/local/httpd/bin/apachectl -k start
+看到了It Works就对了。
+4.停止以上两个启动的服务:tomcat,apache。
+/usr/local/tomcat/bin/shutdown.sh
+/usr/local/httpd/bin/apachectl stop
+5.编译安装jk-connector
+tar zxvf /mnt/hgfs/Untitled-1/tomcat-connectors-1.2.21-src.tar.gz -C /usr/local/src/
+cd /usr/local/src/tomcat-connectors-1.2.21-src/native/
+编译安装jk-connector，带上apxs的地址，会在安装的时候自动把mod_jk.so放到/usr/local/httpd/modules里面
+./configure --with-apxs=/usr/local/httpd/bin/apxs &amp;&amp; make &amp;&amp; make install
+ls /usr/local/httpd/modules
+看到mod_jk.so表示成功
+6.编辑配置文件
+6.1编辑/usr/local/httpd/conf/mod_jk.conf
+/# 指出mod_jk模块工作所需要的工作文件workers.properties的位置
+JkWorkersFile /usr/local/httpd/conf/workers.properties
+/# Where to put jk logs
+JkLogFile /var/log/apache2/mod_jk.log
+/# Set the jk log level [debug/error/info]
+JkLogLevel info
+/# Select the log format
+JkLogStampFormat &quot;[%a %b %d %H:%M:%S %Y]&quot;
+/# JkOptions indicate to send SSL KEY SIZE,
+JkOptions  +ForwardKeySize +ForwardURICompat -ForwardDirectories
+/# JkRequestLogFormat set the request format
+JkRequestLogFormat &quot;%w %V %T&quot;
+/# 将所有servlet 和jsp请求通过ajp13的协议送给Tomcat，让Tomcat来处理
+JkMount /servlet//</em>  worker1
+JkMount //*.jsp worker1
+6.2编辑/usr/local/httpd/conf/workers.properties
+/# Defining a worker named worker1 and of type ajp13
+worker.list=worker1
+/# Set properties for worker1
+worker.worker1.type=ajp13<br>worker.worker1.host=localhost<br>worker.worker1.port=8009
+worker.worker1.lbfactor=50<br>worker.worker1.cachesize=10<br>worker.worker1.cache_timeout=600<br>worker.worker1.socket_keepalive=1<br>worker.worker1.socket_timeout=300
+6.3编辑httpd.conf文件
+加入如下：
+LoadModule jk_module modules/mod_jk.so
+Include /usr/local/httpd/conf/mod_jk.conf
+修改htdoc的默认地址为/usr/local/tomcat/webapps
+修改htdoc的参数，也就是给原来htdoc的目录参数给webapps
+修改DirectoryIndex index.html index.htm index.jsp
+7.看结果吧
+<a href="http://IP地址" target="_blank">http://IP地址</a>
+可以看到一只大花猫。ok，成功了。
+如何修改tomcat单独启动时候的端口为80？</p>
+<p>里面的Connector port=&quot;8080&quot;改为Connector port=&quot;80&quot;</p>
+<p><strong>本文来自ChinaUnix博客，如果查看原文请点：</strong><a href="http://blog.chinaunix.net/u1/51404/showart_452032.html" target="_blank"><a href="http://blog.chinaunix.net/u1/51404/showart_452032.html">http://blog.chinaunix.net/u1/51404/showart_452032.html</a></a> <a href="http://linux.chinaunix.net/bbs/thread-975323-1-1.html" target="_blank">发表评论</a> <a href="http://linux.chinaunix.net/bbs/thread-975323-1-1.html" target="_blank">查看评论</a>(共有条评论) <a href="http://linux.chinaunix.net/bbs/forum-4-1.html" target="_blank">我要提问</a>     最新资讯<a href="http://linux.chinaunix.net/news" target="_blank">更多&gt;&gt;</a>  · <a href="http://linux.chinaunix.net/news/2010/12/10/1175490.shtml" title="金山卫士开源计划首周源码下载突破两万" target="_blank">金山卫士开源计划首周源码下载..</a>
+· <a href="http://linux.chinaunix.net/news/2010/12/10/1175491.shtml" title="谷歌劝说诺基亚采用Android操作系统" target="_blank">谷歌劝说诺基亚采用Android操作..</a>
+· <a href="http://linux.chinaunix.net/news/2010/12/10/1175492.shtml" title="11月份Linux市场占有率升至5%" target="_blank">11月份Linux市场占有率升至5%</a>
+· <a href="http://linux.chinaunix.net/news/2010/12/10/1175493.shtml" title="Apache 基金会确认退出 JCP 执行委员会" target="_blank">Apache 基金会确认退出 JCP 执..</a>
+· <a href="http://linux.chinaunix.net/news/2010/12/07/1175306.shtml" title="Chrome 10 新功能探秘：新增GPU混合加速功能" target="_blank">Chrome 10 新功能探秘：新增GP..</a>
+· <a href="http://linux.chinaunix.net/news/2010/12/07/1175307.shtml" title="金山宣布开源其安全软件" target="_blank">金山宣布开源其安全软件</a>
+· <a href="http://linux.chinaunix.net/news/2010/12/07/1175308.shtml" title="开源FTP服务器ProFTPD发现后门" target="_blank">开源FTP服务器ProFTPD发现后门</a>
+· <a href="http://linux.chinaunix.net/news/2010/12/07/1175309.shtml" title="女黑客在开源会议上抱受骚扰" target="_blank">女黑客在开源会议上抱受骚扰</a>
+· <a href="http://linux.chinaunix.net/news/2010/12/07/1175310.shtml" title="21款值得关注的Linux游戏" target="_blank">21款值得关注的Linux游戏</a>
+· <a href="http://linux.chinaunix.net/news/2010/12/07/1175311.shtml" title="马化腾：腾讯半年后彻底转型，开放和分享" target="_blank">马化腾：腾讯半年后彻底转型，..</a> 论坛热点<a href="http://linux.chinaunix.net/bbs" target="_blank">更多&gt;&gt;</a>  · <a href="http://linux.chinaunix.net/bbs/thread-1177273-1-1.html" title="Linux系统移植从零开始！参与讨论即有机会获得图书一本！" target="_blank">Linux系统移植从零开始！参与..</a>
+· <a href="http://linux.chinaunix.net/bbs/thread-1177271-1-1.html" title="学习linux的意义在哪里" target="_blank">学习linux的意义在哪里</a>
+· <a href="http://linux.chinaunix.net/bbs/thread-1177409-1-1.html" title="使用netfilter在哪能获取到原始以太包" target="_blank">使用netfilter在哪能获取到原..</a>
+· <a href="http://linux.chinaunix.net/bbs/thread-1177298-1-1.html" title="哥纠结了" target="_blank">哥纠结了</a>
+· <a href="http://linux.chinaunix.net/bbs/thread-1177227-1-1.html" title="一个在线读开源代码的工具，希望版主能保留几天，谢谢！" target="_blank">一个在线读开源代码的工具，..</a>
+· <a href="http://linux.chinaunix.net/bbs/thread-1177374-1-1.html" title="为什么我的目录下没有.cshrc文件？" target="_blank">为什么我的目录下没有.cshrc..</a>
+· <a href="http://linux.chinaunix.net/bbs/thread-1177344-1-1.html" title="初学linux从哪里开始" target="_blank">初学linux从哪里开始</a>
+· <a href="http://linux.chinaunix.net/bbs/thread-1177382-1-1.html" title="linux 系统无法上网" target="_blank">linux 系统无法上网</a>
+· <a href="http://linux.chinaunix.net/bbs/thread-1177380-1-1.html" title="新手安装UCenter 时总是出错。望高手指点" target="_blank">新手安装UCenter 时总是出错..</a>
+· <a href="http://linux.chinaunix.net/bbs/thread-1177274-1-1.html" title="cacti添加主机显示的状态都是unknow，不能进行资源绘图" target="_blank">cacti添加主机显示的状态都是..</a> 文档更新<a href="http://linux.chinaunix.net/techdoc" target="_blank">更多&gt;&gt;</a>  · <a href="http://linux.chinaunix.net/techdoc/beginner/2010/11/17/1174196.shtml" title="菜鸟入门三星ARM11嵌入式系统，是否困难？" target="_blank">菜鸟入门三星ARM11嵌入式系统，是..</a>
+· <a href="http://linux.chinaunix.net/techdoc/beginner/2010/09/16/1171153.shtml" title="寻redhat 5.3 的中文手册 for ia64" target="_blank">寻redhat 5.3 的中文手册 for ia64</a>
+· <a href="http://linux.chinaunix.net/techdoc/beginner/2010/09/06/1170624.shtml" title="请问redhat 5.3 企业版的用户手册去哪里下载？" target="_blank">请问redhat 5.3 企业版的用户手册..</a>
+· <a href="http://linux.chinaunix.net/techdoc/beginner/2010/08/18/1169548.shtml" title="LINUX与UNIX SHELL编程指南(中文)" target="_blank">LINUX与UNIX SHELL编程指南(中文)</a>
+· <a href="http://linux.chinaunix.net/techdoc/beginner/2010/03/24/1160550.shtml" title="一些基本用户管理以及基本安装方法" target="_blank">一些基本用户管理以及基本安装方法</a>
+· <a href="http://linux.chinaunix.net/techdoc/beginner/2010/03/23/1160525.shtml" title="菜鸟学习linux笔记与练习-----第二天。一些基本命令以及初级网络配置" target="_blank">菜鸟学习linux笔记与练习-----第..</a>
+· <a href="http://linux.chinaunix.net/techdoc/beginner/2010/03/23/1160523.shtml" title="菜鸟学习linux笔记与练习-----第一天。一些初级命令以及基本用户管理" target="_blank">菜鸟学习linux笔记与练习-----第..</a>
+· <a href="http://linux.chinaunix.net/techdoc/beginner/2010/03/22/1160427.shtml" title="服务器配置：Squid配置详解" target="_blank">服务器配置：Squid配置详解</a>
+· <a href="http://linux.chinaunix.net/techdoc/install/2010/01/29/1156159.shtml" title="linux下u盘使用" target="_blank">linux下u盘使用</a>
+· <a href="http://linux.chinaunix.net/techdoc/install/2010/01/29/1156155.shtml" title="ubuntu dynamips 绑定网卡到虚拟机" target="_blank">ubuntu dynamips 绑定网卡到虚拟机</a>    <a href="http://www.chinaunix.net/about/index.shtml" target="_blank">关于我们</a> | <a href="http://www.chinaunix.net/about/connect.html" target="_blank">联系方式</a> | <a href="http://www.chinaunix.net/about/service.html" target="_blank">广告合作</a> | <a href="http://www.chinaunix.net/about/hr.html" target="_blank">诚聘英才</a> | <a href="http://www.chinaunix.net/about/channel.html" target="_blank">网站地图</a> | <a href="http://www.chinaunix.net/about/friend.html" target="_blank">友情链接</a> | <a href="http://linux.chinaunix.net/bbs/register.php" target="_blank">免费注册</a>  Copyright © 2001-2009 ChinaUnix.net All Rights Reserved</p>
+<p>感谢所有关心和支持过ChinaUnix的朋友们</p>
+<p><a href="http://www.it168.com/images/icp.jpg" target="_blank">京ICP证:060528号</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/集群/">集群</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a><a href="/tags/集群/" class="label label-success">集群</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-集群--apachetomcat整合LINUX/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-集群--apachetomcat整合LINUX" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-敏捷开发--结对编程（Pairprogramming）/">结对编程（Pair programming）</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-敏捷开发--结对编程（Pairprogramming）/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-pair-programming-">结对编程（Pair programming）</h1>
+<p>在敏捷软件开发的各种实践中，结对编程（Pair Programming，下文简称Pair）是特别有争议的。Pair有一个特点，那就是还没有进行过任何Pair实践前，你很可能对它已经有了“喜欢” 或者是“讨厌”的印象。如果有人问你，你喜欢持续集成吗？你多半会回答：不是很肯定，需要试试看。但如果有人问你，你喜欢Pair吗？我猜你会马上给予明 确的肯定或否定的回答。喜欢它的人会觉得好处多多而成本低低，不喜欢它的人会觉得讨厌得难以想象。喜欢与不喜欢都可以形成强大的阵营，两边都不乏重量级的 高手。Pair的优点说起来都很明显，比如：快速反馈，更好的设计，甚至更高的效率等等。但据我了解，不喜欢Pair的人基本上都承认Pair有优点，只 是他们通常会提出反对意见，比如：Pair要求两个人协调一致，每个人的作息时间需要同步，如果一个人请假，那另一个人怎么办？等待就太浪费时间了，如果 自己一个人做那就不是Pair了；或者也有很多人感觉到Pair的时候特别累，不像一个人工作那样自主，写一小时程序，上十分钟微博，两个人同一台电脑工 作自由就小多了。</p>
+<p>我所在的公司是Pair的实践者，对于喜欢Pair或者不喜欢Pair的各种原因和心态我都有切身的体 会。在实践中，我们并没有完全一成不变地照搬Kent Beck在《Extreme Programming Explained》书中所定义的Pair模式（Driver Observer模式）。因为，Pair毕竟是一种实践方法，可以供我们在软件开发中参考，而不必像对待科学理论一样教条。另外，我认为要让这种实践方法 发挥它的威力，消除人们心中的讨厌甚至是恐惧情绪是首先要解决的问题，甚至我们可以为此修改一些Pair的传统做法。下面我先来大致描述一下我们的实践模 式（<strong>Owner Supporter模式</strong>）：</p>
+<p><strong>&lt;阶段1-Pair形成&gt;</strong></p>
+<p>Team 在接到一个大的Story后经过讨论并分解任务形成一个个粒度适中的Task。Task的粒度一般在几小时到一两天这种级别，涉及的代码规模大约是几行到 几个类/函数。每一个Task，都有一个Owner作为责任人，这是和传统单兵开发模式相同的。不过，Owner的产生一般不是由ScrumMaster 来分配指定，而是Team成员自发地去协商选择适当的任务。Owner拿到Task以后会从Team中找一个Supporter，形成Pair。这也是一 个自发协商过程，没有强制指定，也没有固定的搭档，这样形成的Pair一般会是配合最默契也最适合相应Task的。</p>
+<p><strong>&lt;阶段2-初始讨论&gt;</strong></p>
+<p>Pair 形成以后， 一般是由Owner先分析需求，设计测试，并初步分析思考得出初步的设计思路。这时，Supporter可以暂时先不了解需求。然后Owner邀请 Supporter一起，向Supporter介绍需求和自己的设计思路。Supporter这时需要帮助Owner理解需求，设计测试，对设计方案提出 反馈意见，或者提出新的设计。讨论的理想结果是两人达成一致形成最终的设计方案，如果两人分歧严重不能达成一致则需要更多的人参与，比如：可以举行一个小 型的技术讨论会议把讨论扩大到整个Team。</p>
+<p><strong>&lt;阶段3-具体实现&gt;</strong></p>
+<p>这一阶段是根据讨论得出的设计方案开始编程实现。在经典Pair Programming中，两个人是在同一台电脑前一起工作，并不时地交换；但我们的实践发现这一点是特别容易让人疲倦，感觉不自在，从而抵触Pair的 最大因素。所以，我们在实践过程中，除了少数情况，基本上没有采用全程Pair工作，而是由Owner一个人完成。当然，如果Owner遇到了一些设计中 考虑不完善的地方，他可以随时再和Supporter讨论。</p>
+<p><strong>&lt;阶段4-Review&gt;</strong></p>
+<p>具 体实现完成以后，Owner又会邀请Supporter来review自己的工作。这个过程一般是借助版本控制工具对比代码改动，Supporter从实 现的角度来审查实现是否符合设计，有没有可以直接观察到的bug和潜在的问题。如果发现问题并讨论确认，Owner再做相应的改动，再Review。最终 Supporter不能review出问题了，Owner提交代码。</p>
+<p><strong>&lt;阶段5-维护&gt;</strong></p>
+<p>虽 然经过了讨论和review， 但在后续的测试或者上线后仍然会陆续发现问题，这时就涉及到维护工作。维护工作依然是由Owner牵头，分析log，看代码，重现，修正；但 是，Owner也可以随时邀请Supporter参与分析讨论，至少在Owner准备修改原先的代码时应该要告诉Supporter“原先我们某个地方没 有考虑周全，有什么什么问题，我打算怎么怎么改动”。这个过程好像又回到了阶段2，然后阶段3，阶段4 ... 开发中还有一种可能是，原先的Supporter或Owner已经不在Team内了，这时就需要加入一个新人形成Pair，有经验的人应该向自己的新搭档 介绍Task的相关背景。当然，还很有可能碰到根本没有熟悉该模块的人了，这时就必须形成一个新的Pair，把维护作为一项新Task。</p>
+<p>上面基本上就是我们的Pair实践模式了。这种模式基本上还是保留了大部分经典Pair模式的要点，主要的区别在于：</p>
+<p><strong>1. 把Pair的形成纳入Scrum框架的任务划分过程。</strong>Scrum通常会在Sprint的计划会议中将大的User Story拆分成许多小的Task，每个Task一般对应几小时到一两天的工作量。Task列表出来以后，Team自发协商每个Task形成一个 Pair，整个过程一般没有管理者的直接干预。Story的背景需要Team中的每个人都了解，Task的细节由Pair负责。Pair的效果通常也依赖 于Task的合理划分。</p>
+<p><strong>2. 避免全程Pair。</strong>因为，全程Pair在实践和心理上会遇到很多问题，比如：时间同步问题，并行工作问题，不自在感问题。避免全程Pair可以使得 Owner和Supporter的时间安排更加灵活，增加并行性，减少不自在感。大部分不喜欢Pair的人基本上都是尤其不喜欢全程Pair，所以这项改 动对于吸引更多的人采用Pair具有重要的意义。</p>
+<p><strong>3. 区分Owner和Supporter的职责。</strong>经典Pair模式中Driver和Observer角色是随时交换的，也就是说对于一个Task来讲两个人的 职责是相同的，这样可以减小每一个人的压力，但又容易造成缺乏责任感。Owner Supporter模式是单兵模式和经典Pair模式之间的一种妥协，试图在责任和压力之间找到一种平衡。Owner是驱动整个过程的主导，并且是主要的 具体实现者；Supporter以辅助为主，在讨论和review的时候可以站在不同的角度帮助Owner。<strong>Supporter并非没有责任，熟悉Task的所有细节是Supporter的责任。</strong>当Owner由于请假或忙于其他事物时，Supporter应该立即可以代替Owner处理Task的实现或维护。如果Supporter做不到完全的backup，这就是Supporter的失职，在整个Team和领导的心中应该有这样的认识。</p>
+<p>最后，除了显而易见的“引入反馈，提高质量”等很“官方”的优点外，我从管理者和开发人员的角度分别总结一下Owner Supporter模式的“不为人知”却真正很有价值的优点。</p>
+<p><strong>管理者角度：</strong></p>
+<p><strong>1. 应对人员变动：</strong>每个模块至少两个人熟悉，这样在有人请假的时候都有backup，不会造成严重的耽误工作进度。如果有人要离职，交接工作通常也会非常轻 松，几乎没有什么需要特别交接的。很多项目都缺乏文档，只有实现的人知道怎么回事，而即使有文档也总有不清楚的地方，所以留住熟悉的人就是留下了活文档。</p>
+<p><strong>2. 增加对质量的信心：</strong>相比单兵作战模式，即使是不懂技术的管理者，Pair也可以自然地增加他们对于软件质量的信心，毕竟“三个臭皮匠顶个诸葛亮”。另外， 需要特别提到的是安全性问题。我曾经听说过一个电信计费项目，一个开发人员故意留了一个漏洞，把钱自动打入自己的银行卡，最终为公司带来了麻烦。如果采用 Pair方式，这种情况就不那么容易发生。</p>
+<p><strong>3. 增加反馈：</strong>对于同一个事物，不同的人也会有不同的看法，这是很正常的现象。比如，在对问题进行估计时一个人乐观，一个人悲观，这时管理层可以同时参考他们的意见，对问题掌握得更加全面。</p>
+<p><strong>4. 代替培训：</strong>相比传统课程或讲座式培训，Pair能让新员工更快地适应项目。Pair方法也和一些公司采用的导师制有明显的区别。导师制更强调师傅带徒弟， 而Pair则不然。在实践中，我们更鼓励基础比较好的新员工多做Owner，老员工作为Supporter支持；只对基础比较差的新员工先从 Supporter做起，然后逐步过渡到Owner。这样做是因为新员工一般积极性比较高，适合承担更多的具体工作，而老员工则应该避免重复劳动，而是以 辅助和指导为主。另外，新员工也可能带来一些新的思想、方法和技能，这些反而是老员工应该学习的。<em>**</em></p>
+<p><strong>开发人员角度：</strong></p>
+<p><strong>1. 分担压力，增加默契：</strong>Task依然具有明确的责任人，但Supporter可以分担Owner的压力，即使是Team内的技术高手有一个人做backup也是有益的。有人讨论有人支持更容易达到良好的工作效果，而大家相互Support也可以让团队更加默契。</p>
+<p><strong>2. 消除经典Pair的不自在感：</strong> Owner Supporter模式与经典Pair的Driver Observer模式相比更少存在不自在感，因为整个过程是Owner主导的，他有更多的自由安排什么时候讨论，什么时候独立工作。</p>
+<p><strong>3. 分享知识和技能：</strong>在Pair的过程中Owner和Supporter会自然地相互传播和分享知识和技能，有助于学习提高。</p>
+<p><strong>4. 培养组织能力和表达能力：</strong> Owner相当于一个微型团队的leader，在Pair过程中可以锻炼组织能力和表达能力。这个过程可以让一些不善于交流和组织的技术人员逐渐改善交流和组织能力。</p>
+<p>Owner Supporter模式在我们的实践中收到了良好的效果，而且成本很低，值得推荐！
+来源： <a href="[http://blog.csdn.net/chjttony/article/details/6203522](http://blog.csdn.net/chjttony/article/details/6203522)">[http://blog.csdn.net/chjttony/article/details/6203522](http://blog.csdn.net/chjttony/article/details/6203522)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/敏捷开发/">敏捷开发</a></li></span></span> | <span class="tags">Tagged <a href="/tags/敏捷开发/" class="label label-primary">敏捷开发</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-敏捷开发--结对编程（Pairprogramming）/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-敏捷开发--结对编程（Pairprogramming）" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -698,7 +1063,7 @@ Copyright © pasha</p>
 
 
 <ul id="pagination" class="pagination pagination-lg">
-  <li><a class="extend prev" href="/page/30/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/28/">28</a></li><li><a class="page-number" href="/page/29/">29</a></li><li><a class="page-number" href="/page/30/">30</a></li><li class="active"><li><span class="page-number current">31</span></li><li><a class="page-number" href="/page/32/">32</a></li><li><a class="page-number" href="/page/33/">33</a></li><li><a class="page-number" href="/page/34/">34</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/164/">164</a></li><li><a class="page-number" href="/page/165/">165</a></li><li><a class="extend next" href="/page/32/">&raquo;</a></li>
+  <li><a class="extend prev" href="/page/30/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/28/">28</a></li><li><a class="page-number" href="/page/29/">29</a></li><li><a class="page-number" href="/page/30/">30</a></li><li class="active"><li><span class="page-number current">31</span></li><li><a class="page-number" href="/page/32/">32</a></li><li><a class="page-number" href="/page/33/">33</a></li><li><a class="page-number" href="/page/34/">34</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="page-number" href="/page/164/">164</a></li><li><a class="extend next" href="/page/32/">&raquo;</a></li>
   <div class="clearfix"></div>
 </ul></div><!--wapper-->
        </div><!-- ID main-col END -->
@@ -765,7 +1130,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-26 21:21:32</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-29 22:06:56</em></span></div>
 </div>
 <div class="clearfix"></div>
 

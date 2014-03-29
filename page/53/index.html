@@ -110,6 +110,398 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/">记录帖：碰到的一些Java问题（更新于2013</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-java-2013-03-06-">记录帖：碰到的一些Java问题（更新于2013-03-06）</h1>
+<h1 id="-bluedavy-blog-https-blog-bluedavy-com-"><a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a></h1>
+<p>{互联网，OSGi，Java, High Scalability, High Performance,HA}</p>
+<ul>
+<li><a href="https://blog.bluedavy.com/" target="_blank">Home</a></li>
+<li><a href="https://blog.bluedavy.com/?page_id=2" target="_blank">About</a></li>
+<li><a href="https://blog.bluedavy.com/?page_id=81" target="_blank">Photos</a></li>
+</ul>
+<h2 id="-java-2013-03-06-https-blog-bluedavy-com-p-300-java-2013-03-06-"><a href="https://blog.bluedavy.com/?p=300" title="记录帖：碰到的一些Java问题（更新于2013-03-06）" target="_blank">记录帖：碰到的一些Java问题（更新于2013-03-06）</a></h2>
+<p>Aug 09</p>
+<p><a href="http://bluedavy.com/" title="Visit bluedavy’s website" target="_blank">bluedavy</a><a href="https://blog.bluedavy.com/?cat=63" title="View all posts in Java" target="_blank">Java</a>, <a href="https://blog.bluedavy.com/?cat=13" title="View all posts in jvm" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=btrace" target="_blank">btrace</a>, <a href="https://blog.bluedavy.com/?tag=java-cases" target="_blank">Java Cases</a>, <a href="https://blog.bluedavy.com/?tag=java-troubleshooting" target="_blank">Java Troubleshooting</a>, <a href="https://blog.bluedavy.com/?tag=java%e9%97%ae%e9%a2%98" target="_blank">Java问题</a> <a href="&quot;Comment on 记录帖：碰到的一些Java问题（更新于2013-03-06）&quot;">11 Comments</a>
+这个贴用于记录自己碰到过的一些Java问题，会根据经验不断增加，以便总结，:)</p>
+<p>case: 一次非常诡异的CMS GC频繁问题的排查
+详细见此贴：<a href="https://bluedavy.com/?p=424" target="_blank"><a href="https://bluedavy.com/?p=424">https://bluedavy.com/?p=424</a></a></p>
+<p>case: 某应用在压测一台物理机上的多台虚拟机时不能保持线性增长的案例
+现象描述：
+一台16 core（HT）的物理机上，创建了8个虚拟机，每个虚拟机独占两个core，每个虚拟机里部署的都是同样的应用，按道理来说，在应用没有瓶颈的情况下，每增加一台虚拟机，tps应该可以保持线性增长，不过在压测的时候发现，在增加到第四台的时候（每次4台挑选的都是不同的机器），有些时候能线性增长，有些时候不能。
+解决过程：
+1、经过手工调整其中某台虚拟机的cpu，发现在12/13 cpu加入时，整个tps就会下降，于是猜想莫非和这两个核还有关系；
+2、猜测是和中断处理有关系，发现core 12处理的中断确实比较其他的多一些，于是把irqbalance关了，调整了中断的绑定，还是一样的现象；
+3、看了下四台虚拟机绑定的cpu的分布状况，发现12/13刚好和其中一台虚拟机绑定的4/5是同样的两个core，4/12其实是同一个core HT的，5/13是另一个core HT的，而这个应用是很耗cpu的，单压某个虚拟机cpu us就可以到90%左右，所以如果压测的4台如果有CPU刚好是同一个Core HT的，性能自然是上不去的。
+总结：
+和各种文章中讲的一样，CPU HT只有在理论的某些场景能达到2个真实core的性能，但多数情况都达不到，貌似很多场景的经验值是2 core(HT) = 1.3 Core。</p>
+<p>case: 一个Java应用频繁抛异常导致cpu us诡异现象的案例
+详细见此贴：<a href="http://blog.bluedavy.com/?p=409" target="_blank"><a href="http://blog.bluedavy.com/?p=409">http://blog.bluedavy.com/?p=409</a></a></p>
+<p>case: 某应用在运行个一两天后就会把物理内存耗光
+解决过程：
+1、先按经验查了下有没有错误使用Inflater和Deflater，没有，于是继续；
+2、继续上perftools，看看到底什么原因造成的，结果在6u21版本上看到的很诡异，是JVM_handle_linux_signal占了最多，觉得不靠谱，于是先升级成了6u26；
+3、再分析，看到os::malloc占用了最多，但其他的就完全没头绪了；
+4、在@JosephWang_CN的帮助下，图形分析下了perftools的stack trace，才发现还是unsafe_allocate的地方，但这次现象和上个case不同，不同点在于这次是由于cms gc的bug造成的，bug id为7112034，这个bug会造成即使direct bytebuffer已经无引用了，但在cms gc时其并不会被清除掉，而要等到full gc才会清除，官方版本在6u32中修复此bug（这个很容易验证，如果没开启ExplicitGCInvokesConcurrent，用jmap -histo:live强制触发下）；
+5、在fix了这个bug的前提下，还需要限制-XX:MaxDirectMemorySize的大小才行，否则可能会出现还没到触发cms gc时，物理内存就用完了的现象。
+总结：
+根据多次排查Java Heap外内存泄露的问题，目前的经验为：
+1、先查查看有没有错误使用Inflater和Deflater，如有则基本就搞定了；
+2、多执行几次jmap -histo:live，看看内存会不会下降，如果会的话，多数和GC的bug有关；
+3、perftools，对调用次数的那列进行排序(pprof –text … | sort -n -r -k4)，如果看到是Unsafe_Allocate比较多，且为server端应用，则通常说明是哪个地方分配了Direct ByteBuffer，但来不及释放引用，然后嘛，就是用btrace跟踪下看看谁干的，分析原因。</p>
+<p>case: 某应用在压测一段时间后就会把物理内存耗光
+解决过程：
+1、从gc log以及jstat信息来看，java heap内的内存消耗并不多，但堆外消耗非常严重，导致了物理内存被耗光；
+2、于是装上google perftools，看看堆外到底是什么原因造成的消耗；
+3、分析了下google perftools的内存malloc消耗，主要是调用Unsafe.allocate造成的；
+4、通常调用Unsafe.allocateMemory来分配内存的，只有Direct ByteBuffer和AWT，这应用是没用AWT的，Direct ByteBuffer倒是用到了；
+5、网上google了一会，找到一个貌似和这个应用的场景很像的内存泄露的现象，具体信息请见：<a href="http://t.co/S9jvDt8O" title="SocketChannel.write Direct ByteBuffer memory leak" target="_blank"><a href="http://t.co/S9jvDt8O">http://t.co/S9jvDt8O</a></a>，号称是SocketChannel.write的时候，如果是Direct ByteBuffer会导致memory leak，而且Trustin Lee(Mina/Netty的作者)也这么说的：”it’s a known bug”;
+6、于是建议应用的同学将ByteBuffer的地方改成不用direct方式；
+7、改完后，重新压测，物理内存消耗是没那么严重了，但java heap用满了后回收不了了；
+8、于是dump内存，用mat分析后发现是由于这个应用本身处理上的一些缺失造成的，简单说下，这个应用是一个基于mina的应用，而应用没有对session上的发送请求做限流，而mina来不及发送，导致积压了很多WriteRequest，从而内存被耗光了；
+9、对这个问题的解决方法是：限流，当未发送的字节数到达某个比率后，就暂时先不发送了，或者报错等等，用netty能对这个现象有一定的缓解，但限流动作还是要做，否则可能会出现接收方处理慢，从而导致发送方内存用完的现象。</p>
+<p>case: 某应用在压测时很容易出现promotion failed的现象
+解决过程：
+1、从promotion failed时的gc日志来看，状况为新生代中有1.5g的对象存活，旧生代此时的空余空间为4g，足以放下新生代存活的这些对象，于是只能猜测可能是cms gc的情况下旧生代的碎片问题导致的，其实心里是不太相信的，因为这空间空闲了如此的多呀；
+2、首先增加-XX:+PrintPromotionFailure看看Promotion Failed的时候是不是有很大的对象要晋升到旧生代，结果打出来的日志显示在晋升的时候失败的竟然只是申请262146个block的空间而已，这是在开启了压缩指针的情况，因此每个block为4个字节；
+3、还是不能确定，于是增加-XX:+CMSDumpAtPromotionFailure，看看OLD Gen的碎片状况；
+4、打出来的信息显示old gen拥有最多free block的chunk也只有99977个而已，有53w+个chunk，里面大部分都只有999个free block，可见碎片相当严重；
+5、到这步只是确定了碎片很严重，暂时能想到的只有每天半夜的时候主动执行下jmap -histo:live，尽可能减少碎片吧，如果后续有什么改进的动作，再来记录。</p>
+<p>case: 某应用在发布的过程中突然crash了几台
+解决过程：
+1、应用crash后hs_err/*.log以及core.[pid]文件都没生成；
+2、先打开core dump;
+3、crash后gdb core dump看：
+<a href="">?</a>1</p>
+<p>2
+3</p>
+<p>4
+(gdb) bt</p>
+<p>/#0  0x00002ba466f82971 in ?? () from /opt/jdk-1.6.0_26/jre/lib/amd64/server/libjvm.so
+/#1  0x00002aab78a7e20d in Java_java_net_SocketOutputStream_socketWrite0 ()</p>
+<p>from /opt/jdk-1.6.0_26/jre/lib/amd64/libnet.so</p>
+<p>4、看到上面的core dump完全木有头绪，后来@rednaxelafx 介入处理，才知道原来jstack是可以跟core dump文件提取出当时java程序的状况的；
+5、jstack出来一看，发现程序里有个地方无限递归…so…
+总结：
+@rednaxelafx接着又进一步分析了为什么没有生成hs_err/<em>.log，是因为从jdk 5.0以后的版本，hs_err/</em>.log就是在crash的那个线程来生成，而这个案例中crash时的那个线程无限递归，而且正在native栈上，栈空间被消耗光了，所以hs_err/*.log文件就没生成出来。</p>
+<p>Case: 某应用偶尔会出现极为频繁的Promotion failed，导致cms gc切换为串行full gc，从而响应变得超级慢
+解决过程：
+1、从promotion failed的日志来看，应该是在那段时间内内存被消耗光了造成的，因此在promotion failed的时候dump了内存；
+2、可惜dump出来的那个内存文件打不开，几次都是如此；
+3、还好我们自己定制的jdk版本这个时候发挥了作用，这个版本中有个功能是如果代码中有地方分配了超级大的数组，会打印出堆栈；
+4、在某次出问题的时候，我们看到了这样的堆栈信息：
+<a href="">?</a>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13==WARNNING==  allocating large array: thread_id[0x00002aaac2d85800], thread_name[ajp-0.0.0.0-8009-48], array_size[782611408 bytes], array_length[195652847 el</p>
+<p>ememts]</p>
+<p>at java.util.Arrays.copyOf(Arrays.java:2734)</p>
+<p>at java.util.ArrayList.ensureCapacity(ArrayList.java:167)</p>
+<p>at java.util.ArrayList.add(ArrayList.java:351)</p>
+<p>at net.sf.json.JSONArray._fromJSONTokener(JSONArray.java:1154)</p>
+<p>at net.sf.json.JSONArray.fromObject(JSONArray.java:147)</p>
+<p>at net.sf.json.util.JSONTokener.nextValue(JSONTokener.java:358)</p>
+<p>at net.sf.json.JSONObject._fromJSONTokener(JSONObject.java:1128)</p>
+<p>at net.sf.json.JSONObject._fromString(JSONObject.java:1317)</p>
+<p>at net.sf.json.JSONObject.fromObject(JSONObject.java:185)</p>
+<p>at net.sf.json.JSONObject.fromObject(JSONObject.java:154)</p>
+<p>at 我们自己的代码...</p>
+<p>5、有这个堆栈后就可以知道是由于自己的代码这个地方触发了json创建了一个巨大的array；
+6、于是怀疑是我们传给了json一个很大的String，就先在应用层做了个保护，超过一定大小的String就直接抛错；
+7、加上了这个保护后还是出问题了；
+8、因此怀疑是json内部有bug，导致传了某种格式的String后就会出现死循环什么的；
+9、“神”看代码后，构造了一个这样的String s = “{tag:[0,1,”;然后调用JSONObject.fromObject(s)，就会OOM；
+10、于是修改了json的代码，修复此bug…</p>
+<p>Case: 某应用cms gc时concurrent-mark阶段应用竟然没有响应…
+解决过程：
+1、在cms gc进行的过程中用pstack采集目前java进程正在做什么；
+2、从日志分析来看貌似是在concurrent-mark时，很多的java线程在分配内存的时候被锁住了…
+3、将相关信息发给官方的gc dev maillist，只是得到了升级到6u28试试的建议…
+目前问题尚未解决，先在此mark下，和这个url提到的问题基本一致：<a href="http://t.co/EU92I8nN" target="_blank"><a href="http://t.co/EU92I8nN">http://t.co/EU92I8nN</a></a></p>
+<p>Case: 某应用cms gc非常频繁，并且很容易出现concurrent mode failure造成Full GC
+解决过程：
+1、从gc日志来看，cms gc每次在旧生代使用才到18%左右的时候就触发了，而设置的触发比率是80%，并且不允许JVM自行触发；
+2、每几次cms gc还会偶尔出现concurrent mode failure的现象，看了下，这时旧生代的空间是非常充足的；
+3、根据cms gc的触发机制，猜测是permGen的问题造成的，于是通过jstat -gcutil看了下permGen的占用比例，果然过一会就超过下92%（不过这里有个问题，就是permGen其实是还没达到MaxPermSize的，看来在cms gc的情况下，maxPermSize要采用不同策略）；
+4、于是适当的调大permGen，不过仍然没有解决，原因是permGen增长实在太快了；
+5、应用方发现有地方会不断的创建classLoader，加载class，因此导致了permGen的增长，修改后问题解决。
+总结：
+CMS GC的日志其实打的有些问题，应该把cms gc触发时的原因输出下；
+另外就是在大部分情况下，只要不是cms gc触发的比例设置的太有问题，如果cms gc频繁或full gc频繁都是应用本身的问题造成的。</p>
+<p>Case: 某应用出现启动后集群中部分node成功，部分node失败
+解决过程：
+1、失败的node抛出的是NoClassDefFoundError，这些node在环境上和应用包上是完全一致的，因此猜想是classloader装载class时出现了什么问题；
+2、在启动参数上增加了-XX:+TraceClassLoading，想看看成功的node和失败的node是不是从第一个地方加载的相应的类，悲催的是成功的node加上了这参数后启动超慢，于是只好放弃；
+3、由于不能用TraceClassLoading，只好从ClassLoader方面来跟踪这个类的加载，于是从应用层上做了相应的分析，找出了相应的classloader，然后用btrace相应的进行了跟踪，才终于发现成功的node和失败的node装载此类时不是从同一地方装载的，而其中有一个地方的这个类引用了一个不存在的类，于是就出现了NoClassDefFoundError。
+总结：
+在经过分析后，猜想是在这两个不同的node上classloader在list一个目录下的文件时，出现了顺序不同的现象，于是后来写了一个简单的程序在两个node上list那个目录的文件，发现返回的顺序果然不同，这个具体的原因为File.listFiles最后会调用到readdir函数，而这个函数返回的文件列表是按inode number排序的，因此在每台linux机器上确实有可能不同，当一个目录下有两个jar中有相同名字但不同内容的class时（话说这也是java应用中比较麻烦的问题，这个专门写篇blog来说下，java 8的模块化真的非常重要），就悲催了，一个保护做法是在实现classloader时，最好是先对listFiles排下序，避免集群中node出现表现不一致的问题。</p>
+<p>Case: 某应用GC频繁但不一直不抛OOM的问题
+解决过程：
+这个应用是期待在内存不够的情况下快速抛出OOM的，但在执行中却发现执行了4个多小时的Full GC，就是没有抛OOM，导致应用出现了问题，从GC代码来看，目前要比较快的触发OOM，只能是调整GCTimeLimit和GCHeapFreeLimit，不过都不好调，后来暂时是靠调整了GCHeapFreeLimit来帮助快速抛出OOM。</p>
+<p>Case: 某应用堆外内存泄露的bug
+具体解决过程可参考这篇blog：<a href="http://blog.bluedavy.com/?p=205" title="两个OOM Cases" target="_blank"><a href="http://blog.bluedavy.com/?p=205">http://blog.bluedavy.com/?p=205</a></a>和<a href="http://goo.gl/mYsV5" title="里面有关于google perftools安装的说明" target="_blank">这篇blog</a>。
+总结：
+堆外内存泄露基本就是靠google perf-tools来查找了，目前来看堆外内存泄露基本都是使用Deflater，却没有显式调用end造成的。</p>
+<p>Case: 某应用压测时压力上不去的问题
+解决过程：
+1、查看压测的目标服务器的cpu、网卡流量，发现都没到瓶颈；
+2、继续查看压测的目标Server的线程状况，发现Server的线程数也没到瓶颈，有个诡异的现象是随着客户端施加的压力上升，服务器端线程数也没上升，而且网卡流量也没上升；
+3、于是猜测是客户端本身的问题，客户端的CPU、网卡流量也没到瓶颈，但发现客户端的线程数随着施加的请求数增加，也没上升，因此猜想是客户端这个地方的线程数已经达到了最大值；
+4、由于代码是第三方的，于是用btrace写了个脚本，跟踪查找了该线程池的最大线程数，发现果然是这个最大线程数比较小，因此做了相应的修改，放大最大线程数，继续压测就OK了。
+ps: 这个Case还出现了一个状况，就是客户端的网卡流量随着施加的压力上升，却没发生变化，因此猜测是网络上有流量限制…
+总结：
+从查这次的问题来看，在压测时压力上不去时，需要查看从请求发起到响应返回的整个过程，资源的消耗状况，是否某个地方资源消耗到极限了，如果硬件资源未到极限，通常会是线程blocked或线程被消耗完了。</p>
+<p>Case: 某应用GC频繁的问题
+这个专门写了一篇blog来描述，具体请见：<a href="http://blog.bluedavy.com/?p=290" title="一个GC频繁的Case" target="_blank"><a href="http://blog.bluedavy.com/?p=290">http://blog.bluedavy.com/?p=290</a></a></p>
+<p>Case: 某应用一直没响应。
+解决过程：
+1、jstack多次后分析，很多的线程都在Blocked状态，等待一把锁，而持有这把锁的线程一直停在了Log4j的ConsoleLog的write上；
+2、于是问题就集中到为什么ConsoleLog write的时候竟然会停住，最早猜测的原因是console是不是也输出到了一个文件，而这个文件出问题了，但经过检查发现一切正常；
+3、通过ps auxf查看脚本看看console有没有输出到文件，发现这个脚本嵌套了好几层，但都输出到了外部的文件，而外部这个文件是没什么问题的；
+4、仔细查看发现这个Java进程是在代码里通过调用脚本启动的，猜想是不是没有正确处理标准输出流和错误流造成的，于是翻看代码，发现代码只处理了输出流，但没处理错误流，并且在处理输出流时只处理了10000行，超过10000的时候就没再去读了，对于这种未将console重定向到外部文件的场景，linux会将其写到一个缓冲区，缓冲区写满后就会导致应用程序阻塞住，这个在Java的API上也有说明：
+The parent process uses these streams(Process.getOutputStream(), Process.getInputStream(), Process.getErrorStream()) to feed input to and get output from the subprocess. Because some native platforms only provide limited buffer size for standard input and output streams, failure to promptly write the input stream or read the output stream of the subprocess may cause the subprocess to block, and even deadlock.
+5、到这步后就可以确认问题的原因了。
+解决方法：
+1、把输出到Console的Logger方式去掉了，这样自然就没问题了；
+2、程序上修改，不是读到1w行就不读了，而是一直读到没有输出流和错误流了才结束，通常来说比较正确的做法请见这篇贴：<a href="http://goo.gl/sllmv" target="_blank">http://goo.gl/sllmv</a>
+总结：
+在Java中启动外部程序时一定要注意正确处理输出流和错误流。</p>
+<p><a href="https://blog.bluedavy.com/?p=290" target="_blank">一个GC频繁的Case</a> <a href="https://blog.bluedavy.com/?p=309" target="_blank">HBase随机写以及随机读性能测试</a></p>
+<h3 id="11-comments-add-yours-">11 Comments <em>(<a href="">+add yours?</a>)</em></h3>
+<ol>
+<li><img src="https://secure.gravatar.com/avatar/dbaac4591255b0c52e86868bcabc6bd9?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> nova
+<strong>Aug 29, 2011</strong> @ 13:20:16
+你好，看了你的blog，觉得你在jvm方面研究很深。</li>
+</ol>
+<p>想问你一个jvm方面的问题，我目前在用一个hudson的服务器，跑在tomcat上，不知道为什么，总是jvm崩溃，然后生成一个 pidXXXX.log的文件，里面的内容不知所云。</p>
+<p>请问如何分析这种jvm crash产生的 pidXXX.log文件啊？</p>
+<ol>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Aug 29, 2011</strong> @ 16:32:39
+只能看看这个日志里的内容是什么了，然后相应的解决。</li>
+<li><img src="https://secure.gravatar.com/avatar/17dce1595a6c2594969d8fb9ee332df8?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> blueswind
+<strong>Sep 16, 2011</strong> @ 11:36:40
+毕玄大牛好！
+请教一下，在一个应用中，我发现会偶尔出现Full GC，但是这个应用是不允许Full GC出现的，观察gc.log感觉很奇怪：
+553887.031: [GC 553887.031: [ParNew: 6448271K-&gt;69532K(7188480K), 0.0676760 secs] 10144883K-&gt;3766882K(12513280K), 0.0679280 secs] [Times: user=0.46 sys=0.01, real=0.07 secs]
+553891.774: [GC 553891.774: [ParNew: 6459292K-&gt;75749K(7188480K), 0.1285440 secs] 10156642K-&gt;3774046K(12513280K), 0.1288140 secs] [Times: user=0.92 sys=0.00, real=0.13 secs]
+553896.757: [GC 553896.757: [ParNew (promotion failed): 6465509K-&gt;6485588K(7188480K), 2.1091440 secs]553898.866: [CMS: 3699438K-&gt;1483627K(5324800K), 17.0428180 secs] 10163806K-&gt;1483627K(12513280K), [CMS Perm : 95598K-&gt;52896K(131072K)], 19.1523340 secs] [Times: user=19.27 sys=0.02, real=19.16 secs]
+553943.432: [GC 553943.432: [ParNew: 6389760K-&gt;113975K(7188480K), 0.0698770 secs] 7873387K-&gt;1597603K(12513280K), 0.0700800 secs] [Times: user=0.47 sys=0.00, real=0.07 secs]
+553948.178: [GC 553948.178: [ParNew: 6503735K-&gt;90637K(7188480K), 0.0667370 secs] 7987363K-&gt;1574265K(12513280K), 0.0669710 secs] [Times: user=0.42 sys=0.01, real=0.07 secs]</li>
+</ol>
+<p>导致promotion failed的那个时刻似乎并没有进行MinorGC，而OldGen又没有到达我设置的80%，我的jvm参数如下：
+-Xmx13000m -Xms13000m -Xmn7800m -Xss256k -XX:PermSize=64m -XX:MaxPermSize=128m -XX:ParallelGCThreads=20 -XX:+UseConcMarkSweepGC -XX:+UseParNewGC -XX:SurvivorRatio=8 -XX:TargetSurvivorRatio=100 -XX:MaxTenuringThreshold=15 -XX:CMSInitiatingOccupancyFraction=80 -XX:SoftRefLRUPolicyMSPerMB=0 -XX:+UseCMSCompactAtFullCollection -XX:CMSMaxAbortablePrecleanTime=30000 -XX:CMSScheduleRemarkEdenPenetration=1 -server -XX:+PrintGCDetails -Xloggc:./log/gc.log</p>
+<p>由于这个Full GC出现的很少，所以很难重现，如果遇到这种问题，应该如何追查呢？请教毕玄大牛哈~~</p>
+<ol>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Sep 16, 2011</strong> @ 17:33:47
+@blueswind
+promotion failed就是minor gc进行的时候出现的，so…
+至于这个时候为什么产生了full gc，原因就是因为promotion failed了…
+promotion failed的原因主要是旧生代装不下要晋升到old中的对象，建议调整下参数…把新生代放小点吧，或者把cms的触发比率降低点吧。</li>
+<li><img src="https://secure.gravatar.com/avatar/17dce1595a6c2594969d8fb9ee332df8?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> blueswind
+<strong>Sep 29, 2011</strong> @ 19:06:16
+毕玄你好~
+上次的那个promotion failed的问题仔细分析了一下，怀疑可能是由于CMSGC时的内存碎片导致的，以下是我的分析和解决过程，请拍砖！
+发生promotion failed时，OldGen还有1.6G的空间，同时使用gcLogViewer查看平均新生代晋升大小（AVG PTOS），只有几十K。所以怀疑是由于OldGen在距离上次CMSGC后，经过一段时间又产生了大量内存碎片，当某个时间点在OldGen中的连续空间没有一块足够58K的话，就会导致的promotion failed。
+这种情况下的解决方法难道只有调小CMS触发比率或缩小新生代吗？因为这样的话必然会导致系统吞吐量的下降，难道没有很好的解决内存碎片的方法吗？</li>
+<li><img src="https://secure.gravatar.com/avatar/0af46e7838cb5c6bed0d132b865d6ead?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> Edward Lee
+<strong>Oct 27, 2011</strong> @ 10:00:01
+毕玄，首先非常感谢你与我们分享工作中的经验，真得非常感谢！</li>
+</ol>
+<p>对于你的 Case 1 情况，你在文中说道“一个保护做法是在实现classloader时，最好是先对listFiles排下序”。我感觉用处不大。</p>
+<p>比如，App 中至少有 3 个 jar 包出现 3 个同样的 class 类型，而正确的那个类处于中间位置（不管你升序，还是降序），还是一样会抛出NoClassDefFoundError异常。</p>
+<p>我觉得合理的做法：在自定义classloader装载类时，若发生异常，则继续尝试加载下一个符合的class类型，直到装载成功为止。</p>
+<p>不知你是如何看待这个问题的？</p>
+<ol>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Oct 27, 2011</strong> @ 10:56:34
+@Edward Lee
+排序的意思是为了避免集群中各node出现不一致的表现，至少保持一致，冲突的问题这个最好不要智能解决，因为很难说应用到底想加载哪个…</li>
+<li><img src="https://secure.gravatar.com/avatar/0af46e7838cb5c6bed0d132b865d6ead?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> Edward Lee
+<strong>Oct 27, 2011</strong> @ 15:17:06
+@bluedavy
+“冲突的问题这个最好不要智能解决，因为很难说应用到底想加载哪个…”
+呵呵，对，多谢提醒啊！</li>
+<li><img src="https://secure.gravatar.com/avatar/1ddf3edd708b8f29b60ccfa68d855fd3?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> 震子
+<strong>Dec 13, 2011</strong> @ 16:18:02
+对于permGen的问题造成的的full gc貌似gc日志里面可以指示出来的，从《java_performance》这本书里面看到
+在304页
+Concurrent Permanent Generation Garbage Collection
+Full garbage collections may also occur as a result of a full permanent generation
+space. Monitoring the garbage collection data looking for full garbage collections and
+then observing the occupancy of the permanent generation space identifies whether
+they occur as a result of permanent generation space filling up. Here is an example
+full garbage collection initiated by permanent generation space filling up:
+2010-12-16T17:14:32.533-0600: [Full GC
+[CMS: 95401K-&gt;287072K(1048576K), 0.5317934 secs]
+482111K-&gt;287072K(5190464K),
+[CMS Perm : 65534K-&gt;58281K(65536K)], 0.5319635</li>
+<li><img src="https://secure.gravatar.com/avatar/1ddf3edd708b8f29b60ccfa68d855fd3?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> 震子
+<strong>Dec 13, 2011</strong> @ 16:23:48
+Case: 某应用压测时压力上不去的问题
+对于这个case，我也分享一下，呵呵，如果用的loadrunner的话，一定要注意loadrunner的内存使用，如果内存使用一直涨，那么肯定loadrunner的压力上不去，典型的是：我这边在使用loadrunner的Parameter List的时候就出现了这种情况，loadrunner使用的内存一直在涨。</li>
+<li><img src="https://secure.gravatar.com/avatar/5267242305332fe1affd9c4788191e1d?s=48&amp;d=&lt;path_to_url&gt;&amp;r=G" alt=""> <a href="http://bluedavy.com/" target="_blank">bluedavy</a>
+<strong>Dec 16, 2011</strong> @ 20:43:52
+@震子
+还是jstat比较容易判断。<h3 id="leave-a-reply">Leave a Reply</h3>
+</li>
+</ol>
+<p><a href="">Cancel</a></p>
+<p>Name (required)</p>
+<p>Mail (required)</p>
+<p>Website</p>
+<p><img src="https://blog.bluedavy.com/wp-content/plugins/si-captcha-for-wordpress/captcha/securimage_show.php?si_form_id=com&amp;prefix=K89yTXStz1vAkC0u" alt="CAPTCHA Image" title="CAPTCHA Image"></p>
+<p><a href="&quot;Refresh Image&quot;"><img src="" alt="Refresh Image"></a></p>
+<p>CAPTCHA Code /*</p>
+<p><style type='text/css'>/#submit {display:none;}</style><br /> <input name="submit" type="submit" id="submit-alt" tabindex="6" value="Submit Comment" /></p>
+<p>July 2013 M T W T F S S <a href="https://blog.bluedavy.com/?m=201303" title="View posts for March 2013" target="_blank">« Mar</a>     1234567 891011121314 15161718192021 22232425262728 293031  </p>
+<h3 id="categories">Categories</h3>
+<ul>
+<li><a href="https://blog.bluedavy.com/?cat=63" title="View all posts filed under Java" target="_blank">Java</a> (10)</li>
+<li><a href="https://blog.bluedavy.com/?cat=13" title="View all posts filed under jvm" target="_blank">jvm</a> (19)</li>
+<li><a href="https://blog.bluedavy.com/?cat=56" title="View all posts filed under NoSQL" target="_blank">NoSQL</a> (7)</li>
+<li><a href="https://blog.bluedavy.com/?cat=4" title="View all posts filed under SOA" target="_blank">SOA</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=11" title="关于《分布式Java应用：基础与实践》书部分章节的公开、书内容的纠错以及补充完善。" target="_blank">书:分布式Java应用</a> (5)</li>
+<li><a href="https://blog.bluedavy.com/?cat=6" title="View all posts filed under 互联网" target="_blank">互联网</a> (5)</li>
+<li><a href="https://blog.bluedavy.com/?cat=46" title="View all posts filed under 产品总结" target="_blank">产品总结</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=18" title="View all posts filed under 优化案例" target="_blank">优化案例</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=12" title="View all posts filed under 圆桌交流" target="_blank">圆桌交流</a> (2)</li>
+<li><a href="https://blog.bluedavy.com/?cat=8" title="View all posts filed under 容量规划" target="_blank">容量规划</a> (2)</li>
+<li><a href="https://blog.bluedavy.com/?cat=97" title="View all posts filed under 迁户口" target="_blank">迁户口</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=52" title="View all posts filed under 高可用" target="_blank">高可用</a> (1)</li>
+<li><a href="https://blog.bluedavy.com/?cat=3" title="View all posts filed under 高并发" target="_blank">高并发</a> (3)</li>
+<li><p><a href="https://blog.bluedavy.com/?cat=1" title="关于性能优化方面的一些东西。" target="_blank">高性能</a> (2)</p>
+<h3 id="recent-comments">Recent Comments</h3>
+</li>
+<li><p><a href="http://code1.riaos.com/?p=5030138" target="_blank">JVM调优 | code1（code1.riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16520" target="_blank">说说MaxTenuringThreshold这个参数</a></p>
+</li>
+<li><a href="http://architecture1.riaos.com/?p=3063358" target="_blank">JVM调优 | architecture（riaos.com）</a> on <a href="https://blog.bluedavy.com/?p=70&amp;cpage=1#comment-16519" target="_blank">说说MaxTenuringThreshold这个参数</a></li>
+<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16462" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+<li>xiaobo on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16460" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+<li><a href="http://bluedavy.com/" target="_blank">bluedavy</a> on <a href="https://blog.bluedavy.com/?p=409&amp;cpage=1#comment-16459" target="_blank">一个Java应用频繁抛异常导致cpu us诡异现象的案例</a></li>
+</ul>
+<h3 id="tags">Tags</h3>
+<p><a href="https://blog.bluedavy.com/?tag=btrace" title="2 topics" target="_blank">btrace</a> <a href="https://blog.bluedavy.com/?tag=c1" title="1 topic" target="_blank">c1</a> <a href="https://blog.bluedavy.com/?tag=c2" title="1 topic" target="_blank">c2</a> <a href="https://blog.bluedavy.com/?tag=deflater" title="1 topic" target="_blank">Deflater</a> <a href="https://blog.bluedavy.com/?tag=facebook" title="2 topics" target="_blank">facebook</a> <a href="https://blog.bluedavy.com/?tag=gc" title="4 topics" target="_blank">gc</a> <a href="https://blog.bluedavy.com/?tag=gc-tuning" title="2 topics" target="_blank">gc tuning</a> <a href="https://blog.bluedavy.com/?tag=grizzly" title="2 topics" target="_blank">Grizzly</a> <a href="https://blog.bluedavy.com/?tag=hbase" title="6 topics" target="_blank">HBase</a> <a href="https://blog.bluedavy.com/?tag=hotspot" title="1 topic" target="_blank">hotspot</a> <a href="https://blog.bluedavy.com/?tag=inflater" title="1 topic" target="_blank">Inflater</a> <a href="https://blog.bluedavy.com/?tag=interpreter" title="1 topic" target="_blank">interpreter</a> <a href="https://blog.bluedavy.com/?tag=javac" title="1 topic" target="_blank">javac</a> <a href="https://blog.bluedavy.com/?tag=java-code-generation" title="1 topic" target="_blank">java code generation</a> <a href="https://blog.bluedavy.com/?tag=javaone" title="4 topics" target="_blank">JavaOne</a> <a href="https://blog.bluedavy.com/?tag=javaone-general-technical-session" title="1 topic" target="_blank">javaone general technical session</a> <a href="https://blog.bluedavy.com/?tag=java%e4%bb%a3%e7%a0%81%e6%89%a7%e8%a1%8c" title="1 topic" target="_blank">java代码执行</a> <a href="https://blog.bluedavy.com/?tag=java-%e5%b9%b6%e5%8f%91" title="1 topic" target="_blank">Java 并发</a> <a href="https://blog.bluedavy.com/?tag=jit" title="1 topic" target="_blank">jit</a> <a href="https://blog.bluedavy.com/?tag=jvm" title="12 topics" target="_blank">jvm</a> <a href="https://blog.bluedavy.com/?tag=memory-management" title="1 topic" target="_blank">memory management</a> <a href="https://blog.bluedavy.com/?tag=native-memory-leak" title="1 topic" target="_blank">Native Memory Leak</a> <a href="https://blog.bluedavy.com/?tag=nosql" title="2 topics" target="_blank">NoSQL</a> <a href="https://blog.bluedavy.com/?tag=oom" title="1 topic" target="_blank">oom</a> <a href="https://blog.bluedavy.com/?tag=oracle-keynote" title="1 topic" target="_blank">oracle keynote</a> <a href="https://blog.bluedavy.com/?tag=pessimism-policy" title="1 topic" target="_blank">pessimism policy</a> <a href="https://blog.bluedavy.com/?tag=references" title="1 topic" target="_blank">references</a> <a href="https://blog.bluedavy.com/?tag=rpc" title="2 topics" target="_blank">RPC</a> <a href="https://blog.bluedavy.com/?tag=serial-gc" title="1 topic" target="_blank">serial gc</a> <a href="https://blog.bluedavy.com/?tag=soa" title="2 topics" target="_blank">SOA</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk" title="1 topic" target="_blank">sun jdk</a> <a href="https://blog.bluedavy.com/?tag=sun-jdk-oom" title="1 topic" target="_blank">sun jdk oom</a> <a href="https://blog.bluedavy.com/?tag=web%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92%e7%9a%84%e8%89%ba%e6%9c%af" title="1 topic" target="_blank">Web容量规划的艺术</a> <a href="https://blog.bluedavy.com/?tag=yuanzhuo" title="1 topic" target="_blank">yuanzhuo</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6" title="1 topic" target="_blank">书:分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e4%b9%a6%e8%af%84" title="1 topic" target="_blank">书评</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%92%e8%81%94%e7%bd%91%e6%8a%80%e6%9c%af" title="1 topic" target="_blank">互联网技术</a> <a href="https://blog.bluedavy.com/?tag=%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86" title="1 topic" target="_blank">内存管理</a> <a href="https://blog.bluedavy.com/?tag=%e5%88%86%e5%b8%83%e5%bc%8fjava%e5%ba%94%e7%94%a8" title="2 topics" target="_blank">分布式Java应用</a> <a href="https://blog.bluedavy.com/?tag=%e5%9c%86%e6%a1%8c%e4%ba%a4%e6%b5%81" title="1 topic" target="_blank">圆桌交流</a> <a href="https://blog.bluedavy.com/?tag=%e5%ae%b9%e9%87%8f%e8%a7%84%e5%88%92" title="2 topics" target="_blank">容量规划</a> <a href="https://blog.bluedavy.com/?tag=%e6%82%b2%e8%a7%82%e7%ad%96%e7%95%a5" title="3 topics" target="_blank">悲观策略</a> <a href="https://blog.bluedavy.com/?tag=%e6%9c%8d%e5%8a%a1%e6%a1%86%e6%9e%b6" title="1 topic" target="_blank">服务框架</a> <a href="https://blog.bluedavy.com/?tag=%e7%a1%85%e8%b0%b7%e5%85%ac%e5%8f%b8" title="1 topic" target="_blank">硅谷公司</a></p>
+<h3 id="-">订阅</h3>
+<h3 id="-">推荐书籍</h3>
+<h3 id="my-book">My Book</h3>
+<p><a href="http://book.douban.com/subject/4848587/" title="分布式Java应用：基础与实践" target="_blank"><img src="" alt=""></a> <a href="http://book.douban.com/subject/3843896/" title="OSGi原理与最佳实践" target="_blank"><img src="" alt=""></a>
+© <a href="https://blog.bluedavy.com/" target="_blank">BlueDavy之技术blog</a> 2013</p>
+<p><a href="http://icondock.com/" target="_blank">Icons</a> &amp; <a href="http://www.ndesign-studio.com/wp-themes" target="_blank">Wordpress Theme</a> by <a href="http://www.ndesign-studio.com/" target="_blank">N.Design</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--记录帖：碰到的一些Java问题（更新于2013-03-06）" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/">豆列：从表到里学习JVM实现</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-jvm-">豆列：从表到里学习JVM实现</h1>
+<p>刚写了个学习JVM用的豆列跟大家分享。
+豆列地址：<a href="http://book.douban.com/doulist/2545443/" target="_blank"><a href="http://book.douban.com/doulist/2545443/">http://book.douban.com/doulist/2545443/</a></a>
+下面把豆列的介绍贴过来。具体书单请到上面的豆列地址那边去看。
+在社会化分工、软件行业细分专业化的趋势下，会真的参与到底层系统实现的人肯定是越来越少（比例上说）。真的会参与到JVM实现的人肯定是少数。
+但如果您对JVM是如何实现的有兴趣、充满好奇，却苦于没有足够系统的知识去深入，那么这个豆列就是为您打好基础而准备的。
+如果只想用用Java用用JVM，对深入到实现细节无甚兴趣的话，这个豆列就请不必参考了，免得浪费钱浪费时间精力，呵呵 :-)
+本豆列的脉络是：</p>
+<ol>
+<li>JVM与Java语言规范
+要了解JVM是如何实现的，首先必须要知道JVM到底是什么、不是什么，表面上应该提供怎样的功能。为此，JVM规范必读，而且应该时常放在手边参考。
+而JVM的主要服务对象是Java编程语言。虽然JVM也可以支持众多其它语言，但JVM里的“J”仍然最重要，Java的语言特性影响了JVM的原始设计，所以Java语言规范也应该阅读。特别是，JVM关于线程和同步相关的规定都是交由Java语言规范的相关章节定义的。</li>
+<li>虚拟机概论
+这里选取《Virtual Machines: Versatile Platforms for Systems and Processes》，帮助您了解“虚拟机”一词到底指代什么，有什么不同类型，大概有哪些实现方法，等等。读完这本书有助获得一个清晰的大局观。</li>
+<li>为Java程序员从用户的角度介绍JVM的使用经验的几本书
+虽然这几本并没有深入到JVM实现的非常细节的角落，但对已经习惯用Java语言编程的程序员来说，有这么几本书带领自己从熟悉的领域进入不熟悉的领域总是件好事。
+这几本书中，最深入JVM内部的是《Oracle JRockit: The Definitive Guide》；有丰富调优建议的是《Java Performance》；结合实现大概介绍JVM的抽象概念的是周志明的《深入理解Java虚拟机》。</li>
+<li>虚拟机的入门级实现
+先通过《Language Implementation Patterns》了解编程语言的一些入门级实现方式，把高级语言编译器与虚拟机两个概念联系起来。
+然后通过《プログラミング言語を作る》了解非常简易的、用树遍历式以及字节码式解释器实现虚拟机大概是个怎么回事。虽然这本书没有实现JVM，但它介绍的Diksam与早期JVM的实现颇有相似之处，可参考。
+接下来《深入嵌入式Java虚拟机》介绍了一种实际的JVM——KVM的实现细节。KVM是CLDC的参考实现（RI）里的JVM，结构简单，资源消耗小，适合入门阅读。
+这部分最后是《The School of Niklaus Wirth》，里面有一章介绍了HotSpot Client Compiler (C1)的原始设计思路。这是个非常简单、但相对来说性能还不错的JIT编译器，可用于对JIT编译器的基本了解。这本书本身就很赞，不为学习虚拟机也可以一读。
+需要注意的是从“简易的JVM实现”到“高性能、复杂的JVM实现”跨度非常大；前者的许多部分的实现方式与后者相当不同。先从简易的实现开始入手主要是为了对JVM里大概都有些什么组件有所了解。但如果目标是了解高性能JVM的实现，那就必须在GC、编译原理方面打下更好的基础，重新洗一次脑。</li>
+<li>C++基础书
+下面要开始逐渐深入JVM的内部实现，如果没有良好的C或（与？）C++基础会比较吃力。虽然也有几乎完全用Java语言实现的高性能JVM，例如Maxine VM与Jikes RVM，但它们都是研究性质的；商用JVM实现仍然是C与C++的天下。
+这里我先推荐C++之父自己写的那本书来入门。虽然BS巨巨后来还出过本新书，而近来也渐渐开始有介绍C++11的入门书，但实际上现在多数JVM实现用的还是C99或非常古老的C++（连C++03都不一定用到了），所以用这本老书应该就够了。
+然后通过《深度探索C++对象模型》来学习C++对象模型的常见实现方式。这对后面理解Java对象模型的实现很有帮助。</li>
+<li>GC与编译原理的入门书
+GC书总共就那么几本，倒也没啥可挑的。《The Garbage Collection Handbook》是绝对必读。
+编译原理的书就稍微尴尬些。现有的编译原理书大都针对静态编译器、针对像C或C++那样的偏静态、偏native的语言。我还没读到过什么编译原理书是专门介绍JIT编译器或者说动态编译器的。静态与动态编译器会有些取舍上、实现策略上的差异，不过还好其核心的原理都是一样的，所以还是可以推荐几本书。龙书用来最初入门，鲸书用来补充一些优化相关的知识，EAC第二版用来学习编译器一种比较良好的逻辑组织方式，最后学一下针对现代机器的优化。</li>
+<li>介绍计算机体系结构的书
+实际JVM实现里，如果有JIT编译器或者动态编译器那它们的编译目标多半是底层机器的机器码。这就涉及到计算机体系结构了。
+如果您只对Java语言和抽象的JVM有一定了解，那可以用《计算机组成及汇编语言原理》来入门。这本书比较奇葩，用JVM的字节码指令集来当作真实机器介绍体系结构的概念。我并不太喜欢这本书，但感觉它对有Java背景的初学者来说应该有点用。要注意的是千万别只读这本书来入门，请结合下面要介绍的一本书来重新洗一次脑。
+如果对C或C++已经有所了解，那《深入理解计算机系统》（CSAPP）是计算机体系结构入门的最适合的书了。</li>
+<li>进一步阅读
+到此为止各种抽象概念应该都了解得差不多了。那么要在真实的机器上实现高性能JVM，就必须要对真实机器的指令集细节有所了解。x86/x86-64、SPARC、ARM、MIPS，要在哪个平台上做高性能实现就要学习哪个平台的指令集及指令级别优化技巧。这里就不具体推荐书了。
+操作系统层面的知识同样重要。像是说JVM要实现线程、内存分配啥的，都可能要跟系统调用或CRT对系统调用的包装打交道。这部分也需要另外找书来读。我回头再考虑下要不要加几本道这个豆列里来。
+另外，从80年代开始高级语言虚拟机的实现技术有了突飞猛进的发展，但却没有专门的书对这个领域做综述和导读。多数有用的资料其实还是在论文里。光靠读书是远远不够用的，论文这块也请关注。<h1 id="-http-rednaxelafx-iteye-com-blog-362738-http-rednaxelafx-iteye-com-blog-362738-">顺便广告一下：我的博客里关于虚拟机的文章也推荐给大家参考：<a href="http://rednaxelafx.iteye.com/blog/362738" target="_blank"><a href="http://rednaxelafx.iteye.com/blog/362738">http://rednaxelafx.iteye.com/blog/362738</a></a></h1>
+这个豆列没有漏掉 <a href="http://book.douban.com/subject/1788390/" target="_blank">《Inside the Java Virtual Machine, Second Edition》</a> ，中文版<a href="http://book.douban.com/subject/1138768/" target="_blank">《深入Java虚拟机(原书第2版)》</a>，只是我现在已经不再推荐它。这本书刚出版的时候确实引起了一番学习Java虚拟机的热潮，但其部分内容从现在的角度看已经过时，特别是涉及JVM实现的部分。像火车算法什么的现在已经没有JVM实现使用。不过话说回来，了解了解这些过时的信息也没什么不好，前提是能自己分辨清楚哪些信息是适用于现在的JVM的，而哪些已经成为了历史。</li>
+</ol>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--通过Java-JMX得到fullGC次数？-高级语言虚拟机/">通过Java</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--通过Java-JMX得到fullGC次数？-高级语言虚拟机/">feb. 2 2014</a></time></span>      
@@ -424,54 +816,218 @@ Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代�
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/">豆列：从表到里学习JVM实现</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Ubuntu下经典JAVA开发环境搭建-itstartingIT进行时-BlogJava/">Ubuntu下经典JAVA开发环境搭建 </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Ubuntu下经典JAVA开发环境搭建-itstartingIT进行时-BlogJava/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-jvm-">豆列：从表到里学习JVM实现</h1>
-<p>刚写了个学习JVM用的豆列跟大家分享。
-豆列地址：<a href="http://book.douban.com/doulist/2545443/" target="_blank"><a href="http://book.douban.com/doulist/2545443/">http://book.douban.com/doulist/2545443/</a></a>
-下面把豆列的介绍贴过来。具体书单请到上面的豆列地址那边去看。
-在社会化分工、软件行业细分专业化的趋势下，会真的参与到底层系统实现的人肯定是越来越少（比例上说）。真的会参与到JVM实现的人肯定是少数。
-但如果您对JVM是如何实现的有兴趣、充满好奇，却苦于没有足够系统的知识去深入，那么这个豆列就是为您打好基础而准备的。
-如果只想用用Java用用JVM，对深入到实现细节无甚兴趣的话，这个豆列就请不必参考了，免得浪费钱浪费时间精力，呵呵 :-)
-本豆列的脉络是：</p>
-<ol>
-<li>JVM与Java语言规范
-要了解JVM是如何实现的，首先必须要知道JVM到底是什么、不是什么，表面上应该提供怎样的功能。为此，JVM规范必读，而且应该时常放在手边参考。
-而JVM的主要服务对象是Java编程语言。虽然JVM也可以支持众多其它语言，但JVM里的“J”仍然最重要，Java的语言特性影响了JVM的原始设计，所以Java语言规范也应该阅读。特别是，JVM关于线程和同步相关的规定都是交由Java语言规范的相关章节定义的。</li>
-<li>虚拟机概论
-这里选取《Virtual Machines: Versatile Platforms for Systems and Processes》，帮助您了解“虚拟机”一词到底指代什么，有什么不同类型，大概有哪些实现方法，等等。读完这本书有助获得一个清晰的大局观。</li>
-<li>为Java程序员从用户的角度介绍JVM的使用经验的几本书
-虽然这几本并没有深入到JVM实现的非常细节的角落，但对已经习惯用Java语言编程的程序员来说，有这么几本书带领自己从熟悉的领域进入不熟悉的领域总是件好事。
-这几本书中，最深入JVM内部的是《Oracle JRockit: The Definitive Guide》；有丰富调优建议的是《Java Performance》；结合实现大概介绍JVM的抽象概念的是周志明的《深入理解Java虚拟机》。</li>
-<li>虚拟机的入门级实现
-先通过《Language Implementation Patterns》了解编程语言的一些入门级实现方式，把高级语言编译器与虚拟机两个概念联系起来。
-然后通过《プログラミング言語を作る》了解非常简易的、用树遍历式以及字节码式解释器实现虚拟机大概是个怎么回事。虽然这本书没有实现JVM，但它介绍的Diksam与早期JVM的实现颇有相似之处，可参考。
-接下来《深入嵌入式Java虚拟机》介绍了一种实际的JVM——KVM的实现细节。KVM是CLDC的参考实现（RI）里的JVM，结构简单，资源消耗小，适合入门阅读。
-这部分最后是《The School of Niklaus Wirth》，里面有一章介绍了HotSpot Client Compiler (C1)的原始设计思路。这是个非常简单、但相对来说性能还不错的JIT编译器，可用于对JIT编译器的基本了解。这本书本身就很赞，不为学习虚拟机也可以一读。
-需要注意的是从“简易的JVM实现”到“高性能、复杂的JVM实现”跨度非常大；前者的许多部分的实现方式与后者相当不同。先从简易的实现开始入手主要是为了对JVM里大概都有些什么组件有所了解。但如果目标是了解高性能JVM的实现，那就必须在GC、编译原理方面打下更好的基础，重新洗一次脑。</li>
-<li>C++基础书
-下面要开始逐渐深入JVM的内部实现，如果没有良好的C或（与？）C++基础会比较吃力。虽然也有几乎完全用Java语言实现的高性能JVM，例如Maxine VM与Jikes RVM，但它们都是研究性质的；商用JVM实现仍然是C与C++的天下。
-这里我先推荐C++之父自己写的那本书来入门。虽然BS巨巨后来还出过本新书，而近来也渐渐开始有介绍C++11的入门书，但实际上现在多数JVM实现用的还是C99或非常古老的C++（连C++03都不一定用到了），所以用这本老书应该就够了。
-然后通过《深度探索C++对象模型》来学习C++对象模型的常见实现方式。这对后面理解Java对象模型的实现很有帮助。</li>
-<li>GC与编译原理的入门书
-GC书总共就那么几本，倒也没啥可挑的。《The Garbage Collection Handbook》是绝对必读。
-编译原理的书就稍微尴尬些。现有的编译原理书大都针对静态编译器、针对像C或C++那样的偏静态、偏native的语言。我还没读到过什么编译原理书是专门介绍JIT编译器或者说动态编译器的。静态与动态编译器会有些取舍上、实现策略上的差异，不过还好其核心的原理都是一样的，所以还是可以推荐几本书。龙书用来最初入门，鲸书用来补充一些优化相关的知识，EAC第二版用来学习编译器一种比较良好的逻辑组织方式，最后学一下针对现代机器的优化。</li>
-<li>介绍计算机体系结构的书
-实际JVM实现里，如果有JIT编译器或者动态编译器那它们的编译目标多半是底层机器的机器码。这就涉及到计算机体系结构了。
-如果您只对Java语言和抽象的JVM有一定了解，那可以用《计算机组成及汇编语言原理》来入门。这本书比较奇葩，用JVM的字节码指令集来当作真实机器介绍体系结构的概念。我并不太喜欢这本书，但感觉它对有Java背景的初学者来说应该有点用。要注意的是千万别只读这本书来入门，请结合下面要介绍的一本书来重新洗一次脑。
-如果对C或C++已经有所了解，那《深入理解计算机系统》（CSAPP）是计算机体系结构入门的最适合的书了。</li>
-<li>进一步阅读
-到此为止各种抽象概念应该都了解得差不多了。那么要在真实的机器上实现高性能JVM，就必须要对真实机器的指令集细节有所了解。x86/x86-64、SPARC、ARM、MIPS，要在哪个平台上做高性能实现就要学习哪个平台的指令集及指令级别优化技巧。这里就不具体推荐书了。
-操作系统层面的知识同样重要。像是说JVM要实现线程、内存分配啥的，都可能要跟系统调用或CRT对系统调用的包装打交道。这部分也需要另外找书来读。我回头再考虑下要不要加几本道这个豆列里来。
-另外，从80年代开始高级语言虚拟机的实现技术有了突飞猛进的发展，但却没有专门的书对这个领域做综述和导读。多数有用的资料其实还是在论文里。光靠读书是远远不够用的，论文这块也请关注。<h1 id="-http-rednaxelafx-iteye-com-blog-362738-http-rednaxelafx-iteye-com-blog-362738-">顺便广告一下：我的博客里关于虚拟机的文章也推荐给大家参考：<a href="http://rednaxelafx.iteye.com/blog/362738" target="_blank"><a href="http://rednaxelafx.iteye.com/blog/362738">http://rednaxelafx.iteye.com/blog/362738</a></a></h1>
-这个豆列没有漏掉 <a href="http://book.douban.com/subject/1788390/" target="_blank">《Inside the Java Virtual Machine, Second Edition》</a> ，中文版<a href="http://book.douban.com/subject/1138768/" target="_blank">《深入Java虚拟机(原书第2版)》</a>，只是我现在已经不再推荐它。这本书刚出版的时候确实引起了一番学习Java虚拟机的热潮，但其部分内容从现在的角度看已经过时，特别是涉及JVM实现的部分。像火车算法什么的现在已经没有JVM实现使用。不过话说回来，了解了解这些过时的信息也没什么不好，前提是能自己分辨清楚哪些信息是适用于现在的JVM的，而哪些已经成为了历史。</li>
-</ol>
+        <h1 id="ubuntu-java-itstartingit-blogjava">Ubuntu下经典JAVA开发环境搭建 - itstartingIT进行时 - BlogJava</h1>
+<h1 id="-itstarting-it-http-www-blogjava-net-itstarting-"><a href="http://www.blogjava.net/itstarting/" target="_blank">itstarting:IT进行时</a></h1>
+<p>想自己所想，做自己所爱</p>
+<p>posts(26) comments(45) trackbacks(0)</p>
+<ul>
+<li><a href="http://www.blogjava.net/" target="_blank">BlogJava</a></li>
+<li><a href="http://www.blogjava.net/itstarting/contact.aspx?id=1" target="_blank">联系</a></li>
+<li><a href="http://www.blogjava.net/itstarting/rss" target="_blank"><img src="" alt="RSS 2.0 Feed"></a> <a href="http://www.blogjava.net/itstarting/rss" target="_blank">聚合</a></li>
+<li><a href="http://www.blogjava.net/itstarting/admin/EditPosts.aspx" target="_blank">管理</a></li>
+</ul>
+<h3 id="-">常用链接</h3>
+<ul>
+<li><a href="http://www.blogjava.net/itstarting/MyPosts.html" target="_blank">我的随笔</a></li>
+<li><a href="http://www.blogjava.net/itstarting/MyComments.html" target="_blank">我的评论</a></li>
+<li><a href="http://www.blogjava.net/itstarting/OtherPosts.html" target="_blank">我的参与</a></li>
+<li><p><a href="http://www.blogjava.net/itstarting/RecentComments.html" target="_blank">最新评论</a></p>
+<h3 id="-">留言簿</h3>
+</li>
+<li><p><a href="">给我留言</a></p>
+</li>
+<li><a href="">查看公开留言</a></li>
+<li><a href="">查看私人留言</a></li>
+</ul>
+<h3 id="-">随笔分类</h3>
+<ul>
+<li><a href="http://www.blogjava.net/itstarting/category/43133.html/rss" title="Subscribe to hadoop及云计算(2)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/43133.html" target="_blank">hadoop及云计算(2)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/category/16182.html/rss" title="Subscribe to Java Tips(6)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/16182.html" target="_blank">Java Tips(6)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/category/16183.html/rss" title="Subscribe to JetSpeed 2(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/16183.html" target="_blank">JetSpeed 2(1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/category/16184.html/rss" title="Subscribe to SOA/ESB" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/16184.html" target="_blank">SOA/ESB</a></li>
+<li><a href="http://www.blogjava.net/itstarting/category/43132.html/rss" title="Subscribe to ubuntu(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/43132.html" target="_blank">ubuntu(1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/category/43134.html/rss" title="Subscribe to Workflow(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/43134.html" target="_blank">Workflow(1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/category/16185.html/rss" title="Subscribe to XML(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/16185.html" target="_blank">XML(1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/category/37774.html/rss" title="Subscribe to 技术杂谈" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/37774.html" target="_blank">技术杂谈</a></li>
+<li><p><a href="http://www.blogjava.net/itstarting/category/39000.html/rss" title="Subscribe to 经验百宝箱(2)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/39000.html" target="_blank">经验百宝箱(2)</a></p>
+<h3 id="-">随笔档案</h3>
+</li>
+<li><p><a href="http://www.blogjava.net/itstarting/archive/2009/12.html" target="_blank">2009年12月 (4)</a></p>
+</li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2009/08.html" target="_blank">2009年8月 (1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2009/04.html" target="_blank">2009年4月 (2)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2009/02.html" target="_blank">2009年2月 (1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2008/11.html" target="_blank">2008年11月 (1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2008/01.html" target="_blank">2008年1月 (1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2007/08.html" target="_blank">2007年8月 (1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2007/07.html" target="_blank">2007年7月 (1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2007/06.html" target="_blank">2007年6月 (1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2007/03.html" target="_blank">2007年3月 (2)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2006/10.html" target="_blank">2006年10月 (2)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2006/08.html" target="_blank">2006年8月 (2)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2006/06.html" target="_blank">2006年6月 (3)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2006/05.html" target="_blank">2006年5月 (4)</a></li>
+</ul>
+<h3 id="-">文章分类</h3>
+<ul>
+<li><a href="http://www.blogjava.net/itstarting/category/11638.html/rss" title="Subscribe to Java Tips(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/11638.html" target="_blank">Java Tips(1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/category/11639.html/rss" title="Subscribe to JetSpeed 2(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/11639.html" target="_blank">JetSpeed 2(1)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/category/11640.html/rss" title="Subscribe to SOA/ESB(1)" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/11640.html" target="_blank">SOA/ESB(1)</a></li>
+<li><p><a href="http://www.blogjava.net/itstarting/category/16181.html/rss" title="Subscribe to XML" target="_blank"> </a><a href="http://www.blogjava.net/itstarting/category/16181.html" target="_blank">XML</a></p>
+<h3 id="-">文章档案</h3>
+</li>
+<li><p><a href="http://www.blogjava.net/itstarting/archives/2006/06.html" target="_blank">2006年6月 (1)</a></p>
+</li>
+<li><a href="http://www.blogjava.net/itstarting/archives/2006/05.html" target="_blank">2006年5月 (2)</a></li>
+</ul>
+<h3 id="-">搜索</h3>
+<p>*</p>
+<ul>
+<li><h3 id="-http-www-blogjava-net-itstarting-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/itstarting/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
+</li>
+<li><p><a href="http://www.blogjava.net/itstarting/archive/2009/12/16/255638.html#306091" target="_blank">1. re: AIX下用nmon进行监控和分析实战</a></p>
+</li>
+<li>应该也能在Linux上玩，装个ubuntu吧，感觉跟windows超级像，门槛较低
+有时间自己也试一下：）</li>
+<li>--IT进行时</li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2009/12/16/306076.html#306084" target="_blank">2. re: Hadoop-0.20.1+Ubuntu9.10实战</a></li>
+<li>顶你！ 技术很牛叉！</li>
+<li>--超级大亨</li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2009/12/15/102335.html#306077" target="_blank">3. re: 关于Apache+Tomcat的Cluster的郁闷问题，终于得到解决</a></li>
+<li>可以测试一下广播，应该是配置问题或是受到了干扰</li>
+<li>--IT进行时</li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2009/12/14/102335.html#305976" target="_blank">4. re: 关于Apache+Tomcat的Cluster的郁闷问题，终于得到解决</a></li>
+<li>评论内容较长,点击标题查看</li>
+<li>--xie</li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2009/06/29/255638.html#284604" target="_blank">5. re: AIX下用nmon进行监控和分析实战</a></li>
+<li>一直很想玩，就是没有权限。客户很抠门～～～</li>
+<li>--ly</li>
+</ul>
+<h3 id="-">阅读排行榜</h3>
+<ul>
+<li><a href="http://www.blogjava.net/itstarting/archive/2007/08/31/141614.html" target="_blank">1. ORA-00600的问题解决方案(8941)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2007/03/11/103142.html" target="_blank">2. FCKeditor的几点重要改进和使用心得，值得分享(4685)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2006/06/30/56043.html" target="_blank">3. ESB Framework:Mule vs. ServiceMix(3297)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2007/07/26/132499.html" target="_blank">4. Jmagick的安装和使用(2554)</a></li>
+<li><p><a href="http://www.blogjava.net/itstarting/archive/2007/03/07/102335.html" target="_blank">5. 关于Apache+Tomcat的Cluster的郁闷问题，终于得到解决(2455)</a></p>
+<h3 id="-">评论排行榜</h3>
+</li>
+<li><p><a href="http://www.blogjava.net/itstarting/archive/2007/03/11/103142.html" target="_blank">1. FCKeditor的几点重要改进和使用心得，值得分享(8)</a></p>
+</li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2007/03/07/102335.html" target="_blank">2. 关于Apache+Tomcat的Cluster的郁闷问题，终于得到解决(5)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2007/07/26/132499.html" target="_blank">3. Jmagick的安装和使用(4)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2007/06/13/123890.html" target="_blank">4. Tips:如何远程调试Tomcat或者Weblogic，解放我们脆弱的笔记本(4)</a></li>
+<li><a href="http://www.blogjava.net/itstarting/archive/2009/02/19/255638.html" target="_blank">5. AIX下用nmon进行监控和分析实战(4)</a></li>
+</ul>
+<h3 id="view-post">View Post</h3>
+<h2 id="-ubuntu-java-http-www-blogjava-net-itstarting-archive-2009-12-15-306075-html-"><a href="http://www.blogjava.net/itstarting/archive/2009/12/15/306075.html" target="_blank">Ubuntu下经典JAVA开发环境搭建</a></h2>
+<h1 id="1-jdk-">1、JDK安装配置</h1>
+<pre><code>选用最新的版本6.0.
+
+打开终端，执行以下命令：
+
+    sudo apt-get install sun-java6-jdk
+
+按照提示做就是了。
+
+**配置JAVA****环境变量:**
+
+    sudo gedit /etc/environment
+
+   在其中添加如下两行：
+
+    CLASSPATH=.:/usr/lib/jvm/java-6-sun/lib
+
+    JAVA_HOME=/usr/lib/jvm/java-6-sun
+
+执行命令：sudo gedit /etc/jvm，在最前面加入：
+
+   /usr/lib/jvm/java-6-sun
+</code></pre><h1 id="2-tomcat-">2、Tomcat安装配置</h1>
+<pre><code>还是喜欢经典的Tomcat5.5,到http://tomcat.apache.org去下载。
+
+文件为：apache-tomcat-5.5.28.zip
+
+解压缩：
+
+unzip /home/zhengxq/下载/apache-tomcat-5.5.28.zip -d $HOME/java
+</code></pre><h1 id="3-eclipse-">3、Eclipse安装配置</h1>
+<pre><code>下载最新的版本，并解压缩：
+
+zhengxq@zhengxq-desktop:~$ tar zxf $HOME/下载/eclipse-java-galileo-SR1-linux-gtk.tar.gz -C $HOME/java
+
+此时直接通过$HOME/java/eclipse/eclipse即可启动。
+
+Tomcat插件是必须的，下载并解压缩到eclipse/plugins下，重启eclipse即可。
+
+下面是“高级篇“：）。为了建立更方便的导航，可以这样：
+
+1、在/usr/bin目录下创建一个启动脚本eclipse：
+sudo gedit /usr/bin/eclipse
+然后在该文件中添加以下内容：
+/#!/bin/sh
+export MOZILLA_FIVE_HOME=&quot;/usr/lib/mozilla/&quot;
+export ECLIPSE_HOME=&quot;/home/zhengxq/java/eclipse&quot;
+$ECLIPSE_HOME/eclipse $/*
+2、让修改该脚本的权限，让它变成可执行：
+sudo chmod +x /usr/bin/eclipse
+3、在桌面或者gnome菜单中添加eclipse启动图标
+（1）在桌面或者启动面板上添加图标：
+在桌面（右键单击桌面-&gt;创建启动器）或面板（右键单击面板-&gt;添加到面板 -&gt;定制应用程序启动器）上创建一个新的启动器，然后添加下列数据：
+名称：Eclipse Platform
+命令：eclipse
+图标： /home/zhengxq/java/eclipse/icon.xpm
+（2）在Applications（应用程序）菜单上添加一个图标
+用文本编辑器在/usr/share/applications目录里新建一个名为eclipse.desktop的启动器，如下面的命令:
+sudo gedit /usr/share/applications/eclipse.desktop
+然后在文件中添加下列内容：
+</code></pre><p>[Desktop Entry]
+Encoding=UTF-8
+Name=Eclipse Platform
+Comment=Eclipse IDE
+Exec=eclipse
+Icon=/home/zhengxq/java/eclipse/icon.xpm
+Terminal=false
+StartupNotify=true
+Type=Application
+Categories=Application;Development;</p>
+<pre><code>保存文件，此时即可通过双击桌面eclipse的图标来运行eclipse。
+
+注意： Type=Application后面绝对不能有空格，否则出不来可别抓狂。
+</code></pre><p>posted on 2009-12-15 22:44 <a href="http://www.blogjava.net/itstarting/" target="_blank">IT进行时</a> 阅读(770) <a href="http://www.blogjava.net/itstarting/archive/2009/12/15/306075.html#Post" target="_blank">评论(1)</a>  <a href="http://www.blogjava.net/itstarting/admin/EditPosts.aspx?postid=306075" target="_blank">编辑</a>  <a href="http://www.blogjava.net/itstarting/AddToFavorite.aspx?id=306075" target="_blank">收藏</a> 所属分类: <a href="http://www.blogjava.net/itstarting/category/43132.html" target="_blank">ubuntu</a>
+<img src="" alt=""></p>
+<p><a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://www.blogjava.net/RequireRegister.aspx" target="_blank">新用户注册</a>  <a href="">刷新评论列表</a>  </p>
+<p><a href=""></a> <a href="http://job.cnblogs.com/offer/3846/">盛大网络诚聘产品技术经理</a> 标题  请输入标题 姓名  请输入你的姓名 主页 请输入验证码 验证码 /*  <img src="" alt=""> 内容(请不要发表任何与政治相关的内容) 请输入评论内容 Remember Me?   <a href="http://www.blogjava.net/login.aspx?ReturnURL=http://www.blogjava.net/itstarting/archive/2009/12/15/306075.html&amp;SourceURL=/itstarting/archive/2009/12/15/306075.html" target="_blank">登录</a>       [使用Ctrl+Enter键可以直接提交] <a href="http://kb.cnblogs.com/zt/windows7/" target="_blank">Windows 7专题</a>  IT新闻：
+· <a href="http://news.cnblogs.com/n/53267/" target="_blank">操作微软文档的JAVA API项目：Apache POI 3.6发布</a>
+· <a href="http://news.cnblogs.com/n/53266/" target="_blank">微软欧盟互相妥协 11年反垄断纠纷终划句号</a>
+· <a href="http://news.cnblogs.com/n/53265/" target="_blank">CNNIC：百度有啊平台忠诚度达55% 位居第二名</a>
+· <a href="http://news.cnblogs.com/n/53264/" target="_blank">缝缝补补又一年 Adobe计划明年1月修复Reader 0day漏洞</a>
+· <a href="http://news.cnblogs.com/n/53263/" target="_blank">CBSi王路否认要收购京东商城:平台公司都偏贵</a></p>
+<p>博客园首页随笔：
+· <a href="http://www.cnblogs.com/procoder/archive/2009/12/17/Windows-Mobile-Silverlight-WPF.html" target="_blank">Silverlight for Windows Mobile非官方预览</a>
+· <a href="http://www.cnblogs.com/sukyboor/archive/2009/12/17/1626274.html" target="_blank">人肉搜索、人肉语言及人肉程序设计</a>
+· <a href="http://www.cnblogs.com/homezzm/archive/2009/12/17/1626264.html" target="_blank">Silverlight4中用net.tcp双工方式与进行通信</a>
+· <a href="http://www.cnblogs.com/n216/archive/2009/12/17/1626254.html" target="_blank">《如何学习一门新的语言（新手篇）》（2009/12/15）</a>
+· <a href="http://www.cnblogs.com/geniusvczh/archive/2009/12/17/1626184.html" target="_blank">看到哪里排序到哪里的ListView</a>
+招聘信息：
+· <a href="http://job.cnblogs.com/offer/3273/" target="_blank">系统工程师(上海微享网络科技有限公司)</a>
+· <a href="http://job.cnblogs.com/offer/3798/" target="_blank">DBA工程师(首都信息发展股份有限公司 CAPINFO)</a>
+· <a href="http://job.cnblogs.com/offer/2506/" target="_blank">高级程序员(融金赢领(北京)网络科技有限公司)</a>
+· <a href="http://job.cnblogs.com/offer/3748/" target="_blank">C/#开发工程师(美屋得信息技术（上海）有限公司)</a>
+· <a href="http://job.cnblogs.com/offer/3577/" target="_blank">.NET 开发工程师(格林豪泰酒店（中国）有限公司)</a> 在知识库中查看：
+<a href="http://kb.cnblogs.com/b/306075/" target="_blank">Ubuntu下经典JAVA开发环境搭建</a> 网站导航:</p>
+<p><a href="http://www.cnblogs.com/" target="_blank">博客园</a>   <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>   <a href="http://home.cnblogs.com/" target="_blank">个人主页</a>   <a href="http://www.cnweblog.com/" target="_blank">博客生活</a>   <a href="http://www.cnitblog.com/" target="_blank">IT博客网</a>   <a href="http://www.cppblog.com/" target="_blank">C++博客</a>   <a href="http://space.cnblogs.com/" target="_blank">博客园社区</a> <a href="http://www.blogjava.net/itstarting/archive/2009/12/15/306075.html?opt=admin" target="_blank">管理</a>   </p>
+<p>Powered by:
+<a href="http://scottwater.com/blog" target="_blank"><img src="" alt=""></a> <a href="http://www.blogjava.net/" target="_blank">BlogJava</a>
+Copyright © IT进行时</p>
 
       
     </div>
@@ -481,8 +1037,8 @@ GC书总共就那么几本，倒也没啥可挑的。《The Garbage Collection H
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_总结类/">Java_总结类</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_总结类/" class="label label-success">Java_总结类</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_总结类--Ubuntu下经典JAVA开发环境搭建-itstartingIT进行时-BlogJava/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_总结类--Ubuntu下经典JAVA开发环境搭建-itstartingIT进行时-BlogJava" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -497,388 +1053,597 @@ GC书总共就那么几本，倒也没啥可挑的。《The Garbage Collection H
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩/">虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--Hash表分析以及Java实现/">Hash表分析以及Java实现</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--Hash表分析以及Java实现/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-">虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩</h1>
-<p>（Disclaimer：如果需要转载请先与我联系；文中图片请不要直接链接
-作者：<a href="http://weibo.com/rednaxelafx" target="_blank">@RednaxelaFX</a> -&gt; <a href="http://rednaxelafx.iteye.com/" target="_blank"><a href="http://rednaxelafx.iteye.com">http://rednaxelafx.iteye.com</a></a>）
-大前天收到一条PM：
-引用</p>
-<p>你好，很冒昧的向你发短消息，我现在在看JS引擎，能过看博客发现你对js engine很了解，我想请教一下你 基于栈的解析器与基于寄存器的解析器有什么同，javascriptcore是基于寄存器的，V8是基于栈的，能不能说一下这两者有什么一样吗？能推荐一点资料吗？谢谢。
-我刚收到的时候很兴奋，就开始写回复。写啊写发觉已经比我平时发的帖还要长了，想着干脆把回复直接发出来好了。于是下面就是回复：
-你好 ^ ^ 很抱歉拖了这么久才回复。码字和画图太耗时间了。
-别说冒昧了，我只是个普通的刚毕业的学生而已，担当不起啊 =<em>=||||
-而且我也不敢说“很”了解，只是有所接触而已。很高兴有人来一起讨论JavaScript引擎的设计与实现，总觉得身边对这个有兴趣的人不多，或者是很少冒出来讨论。如果你发个帖或者blog来讨论这方面的内容我也会很感兴趣的～
-想拿出几点来讨论一下。上面提出的问题我希望能够一一给予回答，不过首先得做些铺垫。
-另外先提一点：JavaScriptCore从SquirrelFish版开始是“基于寄存器”的，V8则不适合用“基于栈”或者“基于寄存器”的说法来描述。
-<strong>1、解析器与解释器</strong>
-解析器是parser，而解释器是interpreter。两者不是同一样东西，不应该混用。
-前者是编译器/解释器的重要组成部分，也可以用在IDE之类的地方；其主要作用是进行语法分析，提取出句子的结构。广义来说输入一般是程序的源码，输出一般是语法树（syntax tree，也叫parse tree等）或抽象语法树（abstract syntax tree，AST）。进一步剥开来，广义的解析器里一般会有扫描器（scanner，也叫tokenizer或者lexical analyzer，词法分析器），以及狭义的解析器（parser，也叫syntax analyzer，语法分析器）。扫描器的输入一般是文本，经过词法分析，输出是将文本切割为单词的流。狭义的解析器输入是单词的流，经过语法分析，输出是语法树或者精简过的AST。
-（在一些编译器/解释器中，解析也可能与后续的语义分析、代码生成或解释执行等步骤融合在一起，不一定真的会构造出完整的语法树。但概念上说解析器就是用来抽取句子结构用的，而语法树就是表示句子结构的方式。关于边解析边解释执行的例子，可以看看<a href="http://rednaxelafx.iteye.com/blog/472113" target="_blank">这帖</a>的计算器。）
-举例：将i = a + b /* c作为源代码输入到解析器里，则广义上的解析器的工作流程如下图：
-<img src="" alt="">
-其中词法分析由扫描器完成，语法分析由狭义的解析器完成。
-（嗯，说来其实“解析器”这词还是按狭义用法比较准确。把扫描器和解析器合起来叫解析器总觉得怪怪的，但不少人这么用，这里就将就下吧 =</em>=
-不过近来“<a href="http://en.wikipedia.org/wiki/Scannerless_parsing" target="_blank">scannerless parsing</a>”也挺流行的：不区分词法分析与语法分析，没有单独的扫描器，直接用解析器从源码生成语法树。这倒整个就是解析器了，没狭不狭义的问题）
-后者则是实现程序执行的一种实现方式，与编译器相对。它直接实现程序源码的语义，输入是程序源码，输出则是执行源码得到的计算结果；编译器的输入与解释器相同，而输出是用别的语言实现了输入源码的语义的程序。通常编译器的输入语言比输出语言高级，但不一定；也有输入输出是同种语言的情况，此时编译器很可能主要用于优化代码。
-举例：把同样的源码分别输入到编译器与解释器中，得到的输出不同：
-<img src="" alt="">
-值得留意的是，编译器生成出来的代码执行后的结果应该跟解释器输出的结果一样——它们都应该实现源码所指定的语义。
-在很多地方都看到解析器与解释器两个不同的东西被混为一谈，感到十分无奈。
-最近某本引起很多关注的书便在开篇给读者们当头一棒，介绍了“<a href="http://www.fecit.com.cn/%E7%AC%AC1%E7%AB%A0_%E4%B8%8E%E5%88%9D%E5%AD%A6%E8%80%85%E8%B0%88%E8%B0%88JavaScript%E5%AD%A6%E4%B9%A0.pdf" target="_blank">JavaScript解析机制</a>”。“编译”和“预处理”也顺带混为一谈了，还有“预编译” 0_0
-我一直以为“预编译”应该是<a href="http://en.wikipedia.org/wiki/AOT_compiler" target="_blank">ahead-of-time compilation</a>的翻译，是与“即时编译”（just-in-time compilation，JIT）相对的概念。另外就是PCH（precompile header）这种用法，把以前的编译结果缓存下来称为“预编译”。把AOT、PCH跟“预处理”（<a href="http://en.wikipedia.org/wiki/Preprocessor" target="_blank">preprocess</a>）混为一谈真是诡异。算了，我还是不要淌这浑水的好……打住。
-<strong>2、“解释器”到底是什么？“解释型语言”呢？</strong>
-很多资料会说，Python、Ruby、JavaScript都是“解释型语言”，是通过解释器来实现的。这么说其实很容易引起误解：语言一般只会定义其抽象语义，而不会强制性要求采用某种实现方式。
-例如说C一般被认为是“编译型语言”，但C的解释器也是存在的，例如<a href="http://www.softintegration.com/" target="_blank">Ch</a>。同样，C++也有解释器版本的实现，例如<a href="http://root.cern.ch/drupal/content/cint" target="_blank">Cint</a>。
-一般被称为“解释型语言”的是主流实现为解释器的语言，但并不是说它就无法编译。例如说经常被认为是“解释型语言”的<a href="http://schemers.org/" target="_blank">Scheme</a>就有好几种编译器实现，其中率先支持<a href="http://www.r6rs.org/" target="_blank">R6RS</a>规范的大部分内容的是<a href="http://ikarus-scheme.org/" target="_blank">Ikarus</a>，支持在x86上编译Scheme；它最终不是生成某种虚拟机的字节码，而是直接生成x86机器码。
-解释器就是个黑箱，输入是源码，输出就是输入程序的执行结果，对用户来说中间没有独立的“编译”步骤。这非常抽象，内部是怎么实现的都没关系，只要能实现语义就行。你可以写一个C语言的解释器，里面只是先用普通的C编译器把源码编译为in-memory image，然后直接调用那个image去得到运行结果；用户拿过去，发现直接输入源码可以得到源程序对应的运行结果就满足需求了，无需在意解释器这个“黑箱子”里到底是什么。
-实际上很多解释器内部是以“编译器+虚拟机”的方式来实现的，先通过编译器将源码转换为AST或者字节码，然后由虚拟机去完成实际的执行。所谓“解释型语言”并不是不用编译，而只是不需要用户显式去使用编译器得到可执行代码而已。
-那么虚拟机（<a href="http://en.wikipedia.org/wiki/Virtual_machine" target="_blank">virtual machine</a>，VM）又是什么？在许多不同的场合，VM有着不同的意义。如果上下文是Java、Python这类语言，那么一般指的是高级语言虚拟机（high-level language virtual machine，HLL VM），其意义是实现高级语言的语义。VM既然被称为“机器”，一般认为输入是满足某种指令集架构（<a href="http://en.wikipedia.org/wiki/Instruction_set" target="_blank">instruction set architecture</a>，ISA）的指令序列，中间转换为目标ISA的指令序列并加以执行，输出为程序的执行结果的，就是VM。源与目标ISA可以是同一种，这是所谓same-ISA VM。
-前面提到解释器中的编译器的输出可能是AST，也可能是字节码之类的指令序列；一般会把执行后者的程序称为VM，而执行前者的还是笼统称为解释器或者树遍历式解释器（tree-walking interpreter）。这只是种习惯而已，并没有多少确凿的依据。只不过线性（相对于树形）的指令序列看起来更像一般真正机器会执行的指令序列而已。
-其实我觉得把执行AST的也叫VM也没啥大问题。如果认同这个观点，那么把<a href="http://rednaxelafx.iteye.com/blog/241430" target="_blank">DLR</a>看作一种VM也就可以接受了——它的“指令集”就是树形的Expression Tree。
-VM并不是神奇的就能执行代码了，它也得采用某种方式去实现输入程序的语义，并且同样有几种选择：“编译”，例如微软的.NET中的CLR；“解释”，例如CPython、CRuby 1.9，许多老的JavaScript引擎等；也有介于两者之间的混合式，例如Sun的JVM，<a href="http://en.wikipedia.org/wiki/HotSpot" target="_blank">HotSpot</a>。如果采用编译方式，VM会把输入的指令先转换为某种能被底下的系统直接执行的形式（一般就是native code），然后再执行之；如果采用解释方式，则VM会把输入的指令逐条直接执行。
-换个角度说，我觉得采用编译和解释方式实现虚拟机最大的区别就在于是否存下目标代码：编译的话会把输入的源程序以某种单位（例如<a href="http://en.wikipedia.org/wiki/Basic_block" target="_blank">基本块</a>/函数/方法/trace等）翻译生成为目标代码，并存下来（无论是存在内存中还是磁盘上，无所谓），后续执行可以复用之；解释的话则是把源程序中的指令逐条解释，不生成也不存下目标代码，后续执行没有多少可复用的信息。有些稍微先进一点的解释器可能会优化输入的源程序，把满足某些模式的指令序列合并为“超级指令”；这么做就是朝着编译的方向推进。后面讲到解释器的演化时再讨论超级指令吧。
-如果一种语言的主流实现是解释器，其内部是编译器+虚拟机，而虚拟机又是采用解释方式实现的，或者内部实现是编译器+树遍历解释器，那它就是名副其实的“解释型语言”。如果内部用的虚拟机是用编译方式实现的，其实跟普遍印象中的“解释器”还是挺不同的……
-可以举这样一个例子：ActionScript 3，一般都被认为是“解释型语言”对吧？但这种观点到底是把FlashPlayer整体看成一个解释器，因而AS3是“解释型语言”呢？还是认为FlashPlayer中的虚拟机采用解释执行方案，因而AS3是“解释型语言”呢？
-其实Flash或Flex等从AS3生成出来的SWF文件里就包含有AS字节码（ActionScript Byte Code，ABC）。等到FlashPlayer去执行SWF文件，或者说等到AVM2（ActionScript Virtual Machine 2）去执行ABC时，又有解释器和JIT编译器两种实现。这种需要让用户显式进行编译步骤的语言，到底是不是“解释型语言”呢？呵呵。所以我一直觉得“编译型语言”跟“解释型语言”的说法太模糊，不太好。
-有兴趣想体验一下从命令行编译“裸”的AS3文件得到ABC文件，再从命令行调用AVM2去执行ABC文件的同学，可以从<a href="http://rednaxelafx.iteye.com/blog/196278" target="_blank">这帖</a>下载我之前从源码编译出来的AVM2，自己玩玩看。例如说要编译一个名为test.as的文件，用下列命令：
-Command prompt代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>java -jar asc.jar -import builtin.abc -import toplevel.abc test.as  </li>
-</ol>
-<p>java -jar asc.jar -import builtin.abc -import toplevel.abc test.as
-就是用ASC将test.as编译，得到test.abc。接着用：
-Command prompt代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>avmplus test.abc  </li>
-</ol>
-<p>avmplus test.abc
-就是用AVM2去执行程序了。很生动的体现出“编译器+虚拟机”的实现方式。
-这个“裸”的AVM2没有带Flash或Flex的类库，能用的函数和类都有限。不过AS3语言实现是完整的。可以用print()函数来向标准输出流写东西。
-Well……其实写Java程序不也是这样么？现在也确实还有很多人把Java称为“解释型语言”，完全无视Java代码通常是经过显式编译步骤才得到.class文件，而有些JVM是采用纯JIT编译方式实现的，内部没解释器，例如JRockit、<a href="https://wikis.oracle.com/display/MaxineVM/Home" target="_blank">Maxine VM</a>和<a href="http://jikesrvm.org/" target="_blank">Jikes RVM</a>。我愈发感到“解释型语言”是个应该避开的用语 =_=
-关于虚拟机，有本很好的书绝对值得一读，《虚拟机——系统与进程的通用平台》（Virtual Machines: Versatile Platforms for Systems and Processes）。国内有影印版也有中文版，我是读了影印版，不太清楚中文版的翻译质量如何。据说翻译得还行，我无法印证。
-<strong>3、基于栈与基于寄存器的指令集架构</strong>
-用C的语法来写这么一个语句：
-C代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>a = b + c;  </li>
-</ol>
-<p>a = b + c;
-如果把它变成这种形式：
-add a, b, c
-那看起来就更像机器指令了，对吧？这种就是所谓“三地址指令”（3-address instruction），一般形式为：
-op dest, src1, src2
-许多操作都是二元运算+赋值。三地址指令正好可以指定两个源和一个目标，能非常灵活的支持二元操作与赋值的组合。ARM处理器的主要指令集就是三地址形式的。
-C里要是这样写的话：
-C代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>a += b;  </li>
-</ol>
-<p>a += b;
-变成:
-add a, b
-这就是所谓“二地址指令”，一般形式为：
-op dest, src
-它要支持二元操作，就只能把其中一个源同时也作为目标。上面的add a, b在执行过后，就会破坏a原有的值，而b的值保持不变。x86系列的处理器就是二地址形式的。
-上面提到的三地址与二地址形式的指令集，一般就是通过“基于寄存器的架构”来实现的。例如典型的RISC架构会要求除load和store以外，其它用于运算的指令的源与目标都要是寄存器。
-显然，指令集可以是任意“n地址”的，n属于自然数。那么一地址形式的指令集是怎样的呢？
-想像一下这样一组指令序列：
-add 5
-sub 3
-这只指定了操作的源，那目标是什么？一般来说，这种运算的目标是被称为“累加器”（accumulator）的专用寄存器，所有运算都靠更新累加器的状态来完成。那么上面两条指令用C来写就类似：
-C代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>acc += 5;  </li>
-<li>acc -= 3;  </li>
-</ol>
-<p>acc += 5;</p>
-<p>acc -= 3;
-只不过acc是“隐藏”的目标。基于累加器的架构近来比较少见了，在很老的机器上繁荣过一段时间。
-那“n地址”的n如果是0的话呢？
-看这样一段Java字节码：
-Java bytecode代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>iconst_1  </li>
-<li>iconst_2  </li>
-<li>iadd  </li>
-<li>istore_0  </li>
-</ol>
-<p>iconst_1</p>
-<p>iconst_2
-iadd</p>
-<p>istore_0
-注意那个iadd（表示整型加法）指令并没有任何参数。连源都无法指定了，零地址指令有什么用？？
-零地址意味着源与目标都是隐含参数，其实现依赖于一种常见的数据结构——没错，就是栈。上面的iconst_1、iconst_2两条指令，分别向一个叫做“求值栈”（evaluation stack，也叫做operand stack“操作数栈”或者expression stack“表达式栈”）的地方压入整型常量1、2。iadd指令则从求值栈顶弹出2个值，将值相加，然后把结果压回到栈顶。istore_0指令从求值栈顶弹出一个值，并将值保存到局部变量区的第一个位置（slot 0）。
-零地址形式的指令集一般就是通过“基于栈的架构”来实现的。请一定要注意，这个栈是指“求值栈”，而不是与系统调用栈（system call stack，或者就叫system stack）。千万别弄混了。有些虚拟机把求值栈实现在系统调用栈上，但两者概念上不是一个东西。
-由于指令的源与目标都是隐含的，零地址指令的“密度”可以非常高——可以用更少空间放下更多条指令。因此在空间紧缺的环境中，零地址指令是种可取的设计。但零地址指令要完成一件事情，一般会比二地址或者三地址指令许多更多条指令。上面Java字节码做的加法，如果用x86指令两条就能完成了：
-X86 asm代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>mov  eax, 1  </li>
-<li>add  eax, 2  </li>
-</ol>
-<p>mov  eax, 1</p>
-<p>add  eax, 2
-（好吧我犯规了，istore<em>0对应的保存我没写。但假如局部变量比较少的话也不必把EAX的值保存（“溢出”，register spilling）到调用栈上，就这样吧 =</em>=
-其实就算把结果保存到栈上也就是多一条指令而已……）
-一些比较老的解释器，例如<a href="http://www.ruby-lang.org/" target="_blank">CRuby</a>在1.9引入<a href="http://www.atdot.net/yarv/" target="_blank">YARV</a>作为新的VM之前的解释器，还有SquirrleFish之前的老JavaScriptCore以及它的前身KJS，它们内部是树遍历式解释器；解释器递归遍历树，树的每个节点的操作依赖于解释其各个子节点返回的值。这种解释器里没有所谓的求值栈，也没有所谓的虚拟寄存器，所以不适合以“基于栈”或“基于寄存器”去描述。
-而像V8那样直接编译JavaScript生成机器码，而不通过中间的字节码的中间表示的JavaScript引擎，它内部有虚拟寄存器的概念，但那只是普通native编译器的正常组成部分。我觉得也不应该用“基于栈”或“基于寄存器”去描述它。
-V8在内部也用了“求值栈”（在V8里具体叫“表达式栈”）的概念来简化生成代码的过程，在编译过程中进行“抽象解释”，使用所谓“虚拟栈帧”来记录局部变量与求值栈的状态；但在真正生成代码的时候会做窥孔优化，消除冗余的push/pop，将许多对求值栈的操作转变为对寄存器的操作，以此提高代码质量。于是最终生成出来的代码看起来就不像是基于栈的代码了。
-关于JavaScript引擎的实现方式，下文会再提到。
-<strong>4、基于栈与基于寄存器架构的VM，用哪个好？</strong>
-如果是要模拟现有的处理器，那没什么可选的，原本处理器采用了什么架构就只能以它为源。但HLL VM的架构通常可以自由构造，有很大的选择余地。为什么许多主流HLL VM，诸如JVM、CLI、CPython、CRuby 1.9等，都采用了基于栈的架构呢？我觉得这有三个主要原因：
-·实现简单
-由于指令中不必显式指定源与目标，VM可以设计得很简单，不必考虑为临时变量分配空间的问题，求值过程中的临时数据存储都让求值栈包办就行。
-更新：回帖中cscript指出了这句不太准确，应该是针对基于栈架构的指令集生成代码的编译器更容易实现，而不是VM更容易实现。
-·该VM是为某类资源非常匮乏的硬件而设计的
-这类硬件的存储器可能很小，每一字节的资源都要节省。零地址指令比其它形式的指令更紧凑，所以是个自然的选择。
-·考虑到可移植性
-处理器的特性各个不同：典型的CISC处理器的通用寄存器数量很少，例如32位的<a href="http://en.wikipedia.org/wiki/X86" target="_blank">x86</a>就只有8个32位通用寄存器（如果不算EBP和ESP那就是6个，现在一般都算上）；典型的RISC处理器的各种寄存器数量多一些，例如<a href="http://en.wikipedia.org/wiki/ARM_architecture" target="_blank">ARM</a>有16个32位通用寄存器，Sun的<a href="http://en.wikipedia.org/wiki/SPARC" target="_blank">SPARC</a>在一个寄存器窗口里则有24个通用寄存器（8 in，8 local，8 out）。
-假如一个VM采用基于寄存器的架构（它接受的指令集大概就是二地址或者三地址形式的），为了高效执行，一般会希望能把源架构中的寄存器映射到实际机器上寄存器上。但是VM里有些很重要的辅助数据会经常被访问，例如一些VM会保存源指令序列的程序计数器（program counter，PC），为了效率，这些数据也得放在实际机器的寄存器里。如果源架构中寄存器的数量跟实际机器的一样，或者前者比后者更多，那源架构的寄存器就没办法都映射到实际机器的寄存器上；这样VM实现起来比较麻烦，与能够全部映射相比效率也会大打折扣。像Dalvik VM的解释器实现，就是把虚拟寄存器全部映射到栈帧（内存）里的，这跟把局部变量区与操作数栈都映射到内存里的JVM解释器实现相比实际区别不太大。
-如果一个VM采用基于栈的架构，则无论在怎样的实际机器上，都很好实现——它的源架构里没有任何通用寄存器，所以实现VM时可以比较自由的分配实际机器的寄存器。于是这样的VM可移植性就比较高。作为优化，基于栈的VM可以用编译方式实现，“求值栈”实际上也可以由编译器映射到寄存器上，减轻数据移动的开销。
-回到主题，基于栈与基于寄存器的架构，谁更快？看看现在的实际处理器，大多都是基于寄存器的架构，从侧面反映出它比基于栈的架构更优秀。
-而对于VM来说，源架构的求值栈或者寄存器都可能是用实际机器的内存来模拟的，所以性能特性与实际硬件又有点不同。一般认为基于寄存器的架构对VM来说也是更快的，原因是：虽然零地址指令更紧凑，但完成操作需要更多的load/store指令，也意味着更多的指令分派（instruction dispatch）次数与内存访问次数；访问内存是执行速度的一个重要瓶颈，二地址或三地址指令虽然每条指令占的空间较多，但总体来说可以用更少的指令完成操作，指令分派与内存访问次数都较少。
-这方面有篇被引用得很多的论文讲得比较清楚，<a href="http://www.usenix.org/events/vee05/full_papers/p153-yunhe.pdf" target="_blank">Virtual Machine Showdown: Stack Versus Registers</a>，是在VEE 2005发表的。VEE是Virtual Execution Environment的缩写，是ACM下SIGPLAN组织的一个会议，专门研讨虚拟机的设计与实现的。可以去找找这个会议往年的论文，很多都值得读。
-<strong>5、树遍历解释器图解</strong>
-在演示基于栈与基于寄存器的VM的例子前，先回头看看更原始的解释器形式。
-前面提到解析器的时候用了i = a + b /<em> c的例子，现在让我们来看看由解析器生成的AST要是交给一个树遍历解释器，会如何被解释执行呢？
-用文字说不够形象，还是看图吧：
-<img src="" alt="">
-这是对AST的后序遍历：假设有一个eval(Node n)函数，用于解释AST上的每个节点；在解释一个节点时如果依赖于子树的操作，则对子节点递归调用eval(Node n)，从这些递归调用的返回值获取需要的值（或副作用）——也就是说子节点都eval好了之后，父节点才能进行自己的eval——典型的后序遍历。
-（话说，上图中节点左下角有蓝色标记的说明那是节点的“内在属性”。从<a href="http://en.wikipedia.org/wiki/Attribute_grammar" target="_blank">属性语法</a>的角度看，如果一个节点的某个属性的值只依赖于自身或子节点，则该属性被称为“综合属性”（synthesized attribute）；如果一个节点的某个属性只依赖于自身、父节点和兄弟节点，则该属性被称为“继承属性”（inherited attribute）。上图中节点右下角的红色标记都只依赖子节点来计算，显然是综合属性。）
-SquirrelFish之前的JavaScriptCore、CRuby 1.9之前的CRuby就都是采用这种方式来解释执行的。
-可能需要说明的：
-·左值与右值
-在源代码i = a + b /</em> c中，赋值符号左侧的i是一个标识符，表示一个变量，取的是变量的“左值”（也就是与变量i绑定的存储单元）；右侧的a、b、c虽然也是变量，但取的是它们的右值（也就是与变量绑定的存储单元内的值）。在许多编程语言中，左值与右值在语法上没有区别，它们实质的差异容易被忽视。一般来说左值可以作为右值使用，反之则不一定。例如数字1，它自身有值就是1，可以作为右值使用；但它没有与可赋值的存储单元相绑定，所以无法作为左值使用。
-左值不一定只是简单的变量，还可以是数组元素或者结构体的域之类，可能由复杂的表达式所描述。因此左值也是需要计算的。
-·优先级、结合性与求值顺序
-这三个是不同的概念，却经常被混淆。通过AST来看就很容易理解：（假设源码是从左到右输入的）
-所谓<strong>优先级</strong>，就是不同操作相邻出现时，AST节点与根的距离的关系。优先级高的操作会更远离根，优先级低的操作会更接近根。为什么？因为整棵AST是以后序遍历求值的，显然节点离根越远就越早被求值。
-所谓<strong>结合性</strong>，就是当同类操作相邻出现时，操作的先后顺序同AST节点与根的距离的关系。如果是左结合，则先出现的操作对应的AST节点比后出现的操作的节点离根更远；换句话说，先出现的节点会是后出现节点的子节点。
-所谓<strong>求值顺序</strong>，就是在遍历子节点时的顺序。对二元运算对应的节点来说，先遍历左子节点再遍历右子节点就是左结合，反之则是右结合。
-这三个概念与运算的联系都很紧密，但实际描述的是不同的关系。前两者是解析器根据语法生成AST时就已经决定好的，后者则是解释执行或者生成代码而去遍历AST时决定的。
-在没有副作用的环境中，给定优先级与结合性，则无论求值顺序是怎样的都能得到同样的结果；而在有副作用的环境中，求值顺序会影响结果。
-赋值运算虽然是右结合的，但仍然可以用从左到右的求值顺序；事实上Java、C/#等许多语言都在规范里写明表达式的求值顺序是从左到右的。上面的例子中就先遍历的=的左侧，求得i的左值；再遍历=的右侧，得到表达式的值23；最后执行=自身，完成对i的赋值。
-所以如果你要问：赋值在类似C的语言里明明是右结合的运算，为什么你先遍历左子树再遍历右子树？上面的说明应该能让你发现你把结合性与求值顺序混为一谈了。
-看看Java从左到右求值顺序的例子：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public class EvalOrderDemo {  </li>
-<li>public static void main(String[] args) {  </li>
-<li>int[] arr = new int[1];  </li>
-<li>int a = 1;  </li>
-<li>int b = 2;  </li>
-<li>arr[0] = a + b;  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>public class EvalOrderDemo {</p>
-<pre><code>public static void main(String[] args) {
-    int[] arr = new int[1];
+        <h1 id="hash-java-">Hash表分析以及Java实现</h1>
+<p><strong><a href="http://java-mzd.iteye.com/blog/827523" target="_blank">Hash表分析以及Java实现</a></strong></p>
+<p><strong>文章分类**</strong>:<a href="http://www.iteye.com/blogs/category/tech" target="_blank">综合技术</a>**</p>
+<pre><code>   这篇博客主要探讨**Hash****表**中的一些原理/概念，及根据这些原理/概念，自己设计一个用来存放/查找数据的Hash表，并且与JDK中的HashMap类进行比较。
+</code></pre><p>我们分一下七个步骤来进行。 </p>
+<p><strong>一。**</strong>   Hash<strong>**表概念</strong></p>
+<p><strong>二**</strong>.      Hash<strong>**构造函数的方法，及适用范围</strong></p>
+<p><strong>三**</strong>.       Hash<strong>**处理冲突方法，各自特征</strong></p>
+<p><strong>四**</strong>.       Hash<strong>**查找过程</strong></p>
+<p><strong>五**</strong>.       <strong><strong>实现一个使用</strong></strong>Hash<strong><strong>存数据的场景</strong></strong>-------Hash<strong>**查找算法，插入算法</strong></p>
+<p><strong>六**</strong>.       JDK<strong><strong>中</strong></strong>HashMap<strong>**的实现</strong></p>
+<p><strong>七**</strong>.       Hash<strong><strong>表与</strong></strong>HashMap<strong>**的对比，性能分析</strong></p>
+<p> <strong>一。**</strong>   Hash<strong><strong>表概念</strong></strong> **</p>
+<pre><code>           在查找表中我们已经说过，在Hash表中，**记录在表中的位置和其关键字之间存在着一种确定的关系**。这样       我们就能预先知道所查关键字在表中的位置，从而直接通过下标找到记录。使ASL趋近与0.
 
-    int a = 1;
-    int b = 2;
 
-    arr[0] = a + b;
-}
-</code></pre><p>}
-由javac编译，得到arr[0] = a + b对应的字节码是：
-Java bytecode代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+
+          1) **  **哈希(Hash)函数是一个映象，即： 将关键字的集合映射到某个地址集合上，它的设置很灵活，只要这个地       址集合的大小不超出允许范围即可；
+
+         2)  由于哈希函数是一个压缩映象，因此，在一般情况下，很容易产生“冲突”现象，即： key1¹ key2，而  f            (key1) = f(key2)。
+
+          3).  只能尽量减少冲突而不能完全避免冲突，这是因为通常关键字集合比较大，其元素包括所有可能的关键字，       而地址集合的元素仅为哈希表中的地址值
+
+
+
+   在构造这种特殊的“查找表” 时，除了需要选择一个**“****好****”(****尽可能少产生冲突****)**的哈希函数之外；还需要找到一      种**“****处理冲突****”** 的方法。
+</code></pre><p><strong>二**</strong>.     Hash<strong>**构造函数的方法，及适用范围</strong></p>
+<p>§    <strong>直接定址法</strong></p>
+<p>§    <strong>数字分析法</strong></p>
+<p>§    <strong>平方取中法</strong></p>
+<p>§    <strong>折叠法</strong></p>
+<p>§    <strong>除留余数法</strong></p>
+<p>§    <strong>随机数法</strong>      </p>
+<pre><code>  （1）直接定址法：
+
+            哈希函数为关键字的线性函数，H(key) = key 或者 H(key) = a ´ key + b
+
+          **此法仅适合于**：地址集合的大小 = = 关键字集合的大小，其中a和b为常数。
+
+ （2）数字分析法：
+
+         假设关键字集合中的每个关键字都是由 s 位数字组成 (u1, u2, …, us)，分析关键字集中的全体，                  并从中提取分布均匀的若干位或它们的组合作为地址。
+
+         **此法适于:**能预先估计出全体关键字的每一位上各种数字出现的频度。
+
+ （3）平方取中法：
+
+           以关键字的平方值的中间几位作为存储地址。求“关键字的平方值” 的目的是“扩大差别” ，同                    时平方值的中间各位又能受到整个关键字中各位的影响。
+
+         **此法适于:**关键字中的每一位都有某些数字重复出现频度很高的现象。
+
+ （4）折叠法：
+
+        将关键字分割成若干部分，然后取它们的叠加和为哈希地址。两种叠加处理的方法：移位叠加:将分                割后的几部分低位对齐相加；间界叠加:从一端沿分割界来回折叠，然后对齐相加。
+
+        **此法适于：**关键字的数字位数特别多。
+
+ （5）除留余数法：
+
+         设定哈希函数为:H(key) = key MOD p   ( p≤m )，其中， m为表长，p 为不大于 m 的素数，或                 是不含 20 以下的质因子
+
+ （6）随机数法：
+
+       设定哈希函数为:H(key) = Random(key)其中，Random 为伪随机函数
+
+       **此法适于：**对长度不等的关键字构造哈希函数。
+
+
+
+     实际造表时，采用何种构造哈希函数的方法取决于建表的关键字集合的情况(包括关键字的范围和形态)，以及哈希表    长度（哈希地址范围），**总的原则是使产生冲突的可能性降到尽可能地小。**
+</code></pre><p><strong>三**</strong>.       Hash<strong>**处理冲突方法，各自特征</strong></p>
+<p> <strong>“**</strong>处理冲突” 的实际含义是：为产生冲突的关键字寻找下一个哈希地址。**</p>
+<p>§    <strong>  **</strong>开放定址法**</p>
+<p>§    <strong>  **</strong>再哈希法**</p>
+<p>§    <strong>  **</strong>链地址法**</p>
+<pre><code>  （1）开放定址法：
+
+           为产生冲突的关键字地址 H(key) 求得一个地址序列： H0, H1, H2, …, Hs  1≤s≤m-1，Hi = ( H(key)                 +di  ) MOD m，其中： i=1, 2, …, s，H(key)为哈希函数;m为哈希表长;
+
+
+
+  （2）链地址法：
+</code></pre><p><img src="" alt="http://dl.iteye.com/upload/attachment/355453/2a1ac1de-80ef-33d5-a120-9a8f07dbf3e9.jpg"></p>
+<pre><code>         将所有哈希地址相同的记录都链接在同一链表中。
+
+
+
+  （3）再哈希法：
+
+           方法：构造若干个哈希函数，当发生冲突时，根据另一个哈希函数计算下一个哈希地址，直到冲突不再发                  生。即：Hi=Rhi(key)     i=1,2,……k，其中：Rhi——不同的哈希函数，特点：计算时间增加
+</code></pre><p> <strong>四**</strong>.       Hash<strong>**查找过程</strong></p>
+<p><img src="" alt="http://dl.iteye.com/upload/attachment/355455/a946abd8-ba7b-3e4e-b5a5-b94059e086ac.png"></p>
+<p><strong>  </strong>      对于给定值 K,计算哈希地址 i = H(K)，若 r[i] = NULL  则查找不成功，若 r[i].key = K  则查找成功， 否则 “求     下一地址 Hi” ，直至r[Hi] = NULL  (查找不成功)  或r[Hi].key = K  (查找成功) 为止。</p>
+<p> <strong>五**</strong>.       <strong><strong>实现一个使用</strong></strong>Hash<strong><strong>存数据的场景</strong></strong>-------Hash<strong>**查找算法，插入算法</strong></p>
+<pre><code>     假设我们要设计的是一个用来保存中南大学所有在校学生个人信息的数据表。因为在校学生数量也不是特别巨大(8W?)，每个学生的学号是唯一的,因此，我们可以简单的应用直接定址法，声明一个10W大小的数组，每个学生的学号作为主键。然后每次要添加或者查找学生，只需要根据需要去操作即可。
+
+  但是，显然这样做是**很脑残**的。这样做系统的可拓展性和复用性就非常差了，比如有一天人数超过10W了？如果是用来保存别的数据呢？或者我只需要保存20条记录呢？声明大小为10W的数组显然是太浪费了的。
+
+
+
+ 如果我们是用来保存大数据量（比如银行的用户数，4大的用户数都应该有3-5亿了吧？），这时候我们计算出来的HashCode就很可能会有冲突了， 我们的系统应该有“处理冲突”的能力，此处我们**通过挂链法****“****处理冲突****”**。
+
+
+
+ 如果我们的数据量非常巨大，并且还持续在增加，如果我们仅仅只是通过挂链法来处理冲突，可能我们的链上挂了上万个数据后，这个时候再通过静态搜索来查找链表，显然性能也是非常低的。所以我们的系统应该还能实现自动扩容，**当容量达到某比例后，即自动扩容，使装载因子保存在一个固定的水平上**。
+</code></pre><p>综上所述，我们对这个Hash容器的基本要求应该有如下几点：</p>
+<pre><code>         **满足****Hash****表的查找要求（废话）**
+</code></pre><p><strong>             **</strong>能支持从小数据量到大数据量的自动转变（自动扩容）**</p>
+<p><strong>             **</strong>使用挂链法解决冲突**</p>
+<p>好了，既然都分析到这一步了，咱就闲话少叙，直接开始上代码吧。</p>
+<p><strong>Java**</strong>代码<strong><strong> </strong></strong> <strong>[</strong><img src="&quot;&quot;收藏这段代码&quot; &quot;" alt="收藏代码]()**"><em>**</em></p>
 <ol>
-<li>// 左子树：数组下标  </li>
-<li>// a[0]  </li>
-<li>aload_1  </li>
-<li>iconst_0  </li>
+<li><p><strong>package</strong> cn.javamzd.collection.search;  </p>
+</li>
 <li></li>
-<li>// 右子树：加法  </li>
-<li>// a  </li>
-<li>iload_2  </li>
-<li>// b  </li>
-<li>iload_3  </li>
-<li>// +  </li>
-<li>iadd  </li>
+<li><p><strong>public</strong> <strong>class</strong> MyMap<K, V> {  </p>
+</li>
+<li><p><strong>private</strong> <strong>int</strong> size;// 当前容量  </p>
+</li>
+<li><p><strong>private</strong> <strong>static</strong> <strong>int</strong> INIT_CAPACITY = 16;// 默认容量  </p>
+</li>
+<li><p><strong>private</strong> Entry<K, V>[] container;// 实际存储数据的数组对象  </p>
+</li>
+<li><p><strong>private</strong> <strong>static</strong> <strong>float</strong> LOAD_FACTOR = 0.75f;// 装载因子  </p>
+</li>
+<li><p><strong>private</strong> <strong>int</strong> max;// 能存的最大的数=capacity/*factor  </p>
+</li>
 <li></li>
-<li>// 根节点：赋值  </li>
-<li>iastore  </li>
-</ol>
-<p>// 左子树：数组下标</p>
-<p>// a[0]
-aload_1</p>
-<p>iconst_0</p>
-<p>// 右子树：加法
-// a</p>
-<p>iload_2
-// b</p>
-<p>iload_3
-// +</p>
-<p>iadd</p>
-<p>// 根节点：赋值
-iastore
-<strong>6、从树遍历解释器进化为基于栈的字节码解释器的前端</strong>
-如果你看到树形结构与后序遍历，并且知道后缀记法（或者逆波兰记法，<a href="http://en.wikipedia.org/wiki/Reverse_Polish_notation" target="_blank">reverse Polish notation</a>）的话，那敏锐的你或许已经察觉了：要解释执行AST，可以先通过后序遍历AST生成对应的后缀记法的操作序列，然后再解释执行该操作序列。这样就把树形结构压扁，成为了线性结构。
-树遍历解释器对AST的求值其实隐式依赖于调用栈：eval(Node n)的递归调用关系是靠调用栈来维护的。后缀表达式的求值则通常显式依赖于一个栈，在遇到操作数时将其压入栈中，遇到运算时将合适数量的值从栈顶弹出进行运算，再将结果压回到栈上。这种描述看起来眼熟么？没错，后缀记法的求值中的核心数据结构就是前文提到过的“求值栈”（或者叫操作数栈，现在应该更好理解了）。后缀记法也就与基于栈的架构联系了起来：后者可以很方便的执行前者。同理，零地址指令也与树形结构联系了起来：可以通过一个栈方便的把零地址指令序列再转换回到树的形式。
-Java字节码与Java源码联系紧密，前者可以看成后者的后缀记法。如果想在JVM上开发一种语义能直接映射到Java上的语言，那么编译器很好写：秘诀就是后序遍历AST。
-那么让我们再来看看，同样是i = a + b /<em> c这段源码对应的AST，生成Java字节码的例子：
-<img src="" alt="">
-（假设a、b、c、i分别被分配到局部变量区的slot 0到slot 3）
-能看出Java字节码与源码间的对应关系了么？
-一个Java编译器的输入是Java源代码，输出是含有Java字节码的.class文件。它里面主要包含扫描器与解析器，语义分析器（包括类型检查器/类型推导器等），代码生成器等几大部分。上图所展示的就是代码生成器的工作。对Java编译器来说，代码生成就到字节码的层次就结束了；而对native编译器来说，这里刚到生成中间表示的部分，接下去是优化与最终的代码生成。
-如果你对<a href="http://rednaxelafx.iteye.com/blog/382412" target="_blank">Python</a>、<a href="http://lifegoo.pluskid.org/upload/doc/yarv/yarv_iset.html" target="_blank">CRuby 1.9</a>之类有所了解，会发现它们的字节码跟Java字节码在“基于栈”的这一特征上非常相似。其实它们都是由“编译器+VM”构成的，概念上就像是Java编译器与JVM融为一体一般。
-从这点看，Java与Python和Ruby可以说是一条船上的。虽说内部具体实现的显著差异使得先进的JVM比简单的JVM快很多，而JVM又普遍比Python和Ruby快很多。
-当解释器中用于解释执行的中间代码是树形时，其中能被称为“编译器”的部分基本上就是解析器；中间代码是线性形式（如字节码）时，其中能被称为编译器的部分就包括上述的代码生成器部分，更接近于所谓“完整的编译器”；如果虚拟机是基于寄存器架构的，那么编译器里至少还得有虚拟寄存器分配器，又更接近“完整的编译器”了。
-<em>*7、基于栈与基于寄存器架构的VM的一组图解</em></em>
-要是拿两个分别实现了基于栈与基于寄存器架构、但没有直接联系的VM来对比，效果或许不会太好。现在恰巧有两者有紧密联系的例子——JVM与Dalvik VM。JVM的字节码主要是零地址形式的，概念上说JVM是基于栈的架构。Google Android平台上的应用程序的主要开发语言是Java，通过其中的<a href="http://en.wikipedia.org/wiki/Dalvik_virtual_machine" target="_blank">Dalvik VM</a>来运行Java程序。为了能正确实现语义，Dalvik VM的许多设计都考虑到与JVM的兼容性；但它却采用了基于寄存器的架构，其字节码主要是二地址/三地址混合形式的，乍一看可能让人纳闷。考虑到Android有明确的目标：面向移动设备，特别是最初要对ARM提供良好的支持。ARM9有16个32位通用寄存器，Dalvik VM的架构也常用16个虚拟寄存器（一样多……没办法把虚拟寄存器全部直接映射到硬件寄存器上了）；这样Dalvik VM就不用太顾虑可移植性的问题，优先考虑在ARM9上以高效的方式实现，发挥基于寄存器架构的优势。
-Dalvik VM的主要设计者<a href="http://www.milk.com/home/danfuzz/" target="_blank">Dan Bornstein</a>在Google I/O 2008上做过一个<a href="http://sites.google.com/site/io/dalvik-vm-internals" target="_blank">关于Dalvik内部实现</a>的演讲；同一演讲也在Google Developer Day 2008 China和Japan等会议上重复过。这个演讲中Dan特别提到了Dalvik VM与JVM在字节码设计上的区别，指出Dalvik VM的字节码可以用更少指令条数、更少内存访问次数来完成操作。（看不到YouTube的请自行想办法）
-眼见为实。要自己动手感受一下该例子，请先确保已经正确安装JDK 6，并从<a href="http://developer.android.com/sdk/" target="_blank">官网</a>获取Android SDK 1.6R1。连不上官网的也请自己想办法。
-创建Demo.java文件，内容为：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public class Demo {  </li>
-<li>public static void foo() {  </li>
-<li>int a = 1;  </li>
-<li>int b = 2;  </li>
-<li>int c = (a + b) /* 5;  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>public class Demo {</p>
-<pre><code>public static void foo() {
-    int a = 1;
-
-    int b = 2;
-    int c = (a + b) /* 5;
-
-}
-</code></pre><p>}
-通过javac编译，得到Demo.class。通过javap可以看到foo()方法的字节码是：
-Java bytecode代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>0:  iconst_1  </li>
-<li>1:  istore_0  </li>
-<li>2:  iconst_2  </li>
-<li>3:  istore_1  </li>
-<li>4:  iload_0  </li>
-<li>5:  iload_1  </li>
-<li>6:  iadd  </li>
-<li>7:  iconst_5  </li>
-<li>8:  imul  </li>
-<li>9:  istore_2  </li>
-<li>10: return  </li>
-</ol>
-<p>0:  iconst_1</p>
-<p>1:  istore_0
-2:  iconst_2</p>
-<p>3:  istore_1
-4:  iload_0</p>
-<p>5:  iload_1
-6:  iadd</p>
-<p>7:  iconst_5
-8:  imul</p>
-<p>9:  istore_2
-10: return
-接着用Android SDK里platforms\android-1.6\tools目录中的dx工具将Demo.class转换为dex格式。转换时可以直接以文本形式dump出dex文件的内容。使用下面的命令：
-Command prompt代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>dx --dex --verbose --dump-to=Demo.dex.txt --dump-method=Demo.foo --verbose-dump Demo.class  </li>
-</ol>
-<p>dx --dex --verbose --dump-to=Demo.dex.txt --dump-method=Demo.foo --verbose-dump Demo.class
-可以看到foo()方法的字节码是：
-Dalvik bytecode代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>0000: const/4       v0, /#int 1 // /#1  </li>
-<li>0001: const/4       v1, /#int 2 // /#2  </li>
-<li>0002: add-int/2addr v0, v1  </li>
-<li>0003: mul-int/lit8  v0, v0, /#int 5 // /#05  </li>
-<li>0005: return-void  </li>
-</ol>
-<p>0000: const/4       v0, /#int 1 // /#1</p>
-<p>0001: const/4       v1, /#int 2 // /#2
-0002: add-int/2addr v0, v1</p>
-<p>0003: mul-int/lit8  v0, v0, /#int 5 // /#05
-0005: return-void
-（原本的输出里还有些code-address、local-snapshot等，那些不是字节码的部分，可以忽略。）
-让我们看看两个版本在概念上是如何工作的。
-JVM：
-<img src="" alt="">
-（图中数字均以十六进制表示。其中字节码的一列表示的是字节码指令的实际数值，后面跟着的助记符则是其对应的文字形式。标记为红色的值是相对上一条指令的执行状态有所更新的值。下同）
-说明：Java字节码以1字节为单元。上面代码中有11条指令，每条都只占1单元，共11单元==11字节。
-程序计数器是用于记录程序当前执行的位置用的。对Java程序来说，每个线程都有自己的PC。PC以字节为单位记录当前运行位置里方法开头的偏移量。
-每个线程都有一个Java栈，用于记录Java方法调用的“活动记录”（activation record）。Java栈以帧（frame）为单位线程的运行状态，每调用一个方法就会分配一个新的栈帧压入Java栈上，每从一个方法返回则弹出并撤销相应的栈帧。
-每个栈帧包括局部变量区、求值栈（JVM规范中将其称为“操作数栈”）和其它一些信息。局部变量区用于存储方法的参数与局部变量，其中参数按源码中从左到右顺序保存在局部变量区开头的几个slot。求值栈用于保存求值的中间结果和调用别的方法的参数等。两者都以字长（32位的字）为单位，每个slot可以保存byte、short、char、int、float、reference和returnAddress等长度小于或等于32位的类型的数据；相邻两项可用于保存long和double类型的数据。每个方法所需要的局部变量区与求值栈大小都能够在编译时确定，并且记录在.class文件里。
-在上面的例子中，Demo.foo()方法所需要的局部变量区大小为3个slot，需要的求值栈大小为2个slot。Java源码的a、b、c分别被分配到局部变量区的slot 0、slot 1和slot 2。可以观察到Java字节码是如何指示JVM将数据压入或弹出栈，以及数据是如何在栈与局部变量区之前流动的；可以看到数据移动的次数特别多。动画里可能不太明显，iadd和imul指令都是要从求值栈弹出两个值运算，再把结果压回到栈上的；光这样一条指令就有3次概念上的数据移动了。
-对了，想提醒一下：Java的局部变量区并不需要把某个局部变量固定分配在某个slot里；不仅如此，在一个方法内某个slot甚至可能保存不同类型的数据。如何分配slot是编译器的自由。从类型安全的角度看，只要对某个slot的一次load的类型与最近一次对它的store的类型匹配，JVM的字节码校验器就不会抱怨。以后再找时间写写这方面。
-Dalvik VM：
-<img src="" alt="">
-说明：Dalvik字节码以16位为单元（或许叫“双字节码”更准确 =_=|||）。上面代码中有5条指令，其中mul-int/lit8指令占2单元，其余每条都只占1单元，共6单元==12字节。
-与JVM相似，在Dalvik VM中每个线程都有自己的PC和调用栈，方法调用的活动记录以帧为单位保存在调用栈上。PC记录的是以16位为单位的偏移量而不是以字节为单位的。
-与JVM不同的是，Dalvik VM的栈帧中没有局部变量区与求值栈，取而代之的是一组虚拟寄存器。每个方法被调用时都会得到自己的一组虚拟寄存器。常用v0-v15这16个，也有少数指令可以访问v0-v255范围内的256个虚拟寄存器。与JVM相同的是，每个方法所需要的虚拟寄存器个数都能够在编译时确定，并且记录在.dex文件里；每个寄存器都是字长（32位），相邻的一对寄存器可用于保存64位数据。方法的参数按源码中从左到右的顺序保存在末尾的几个虚拟寄存器里。
-与JVM版相比，可以发现Dalvik版程序的指令数明显减少了，数据移动次数也明显减少了，用于保存临时结果的存储单元也减少了。
-你可能会抱怨：上面两个版本的代码明明不对应：JVM版到return前完好持有a、b、c三个变量的值；而Dalvik版到return-void前只持有b与c的值（分别位于v0与v1），a的值被刷掉了。
-但注意到a与b的特征：它们都只在声明时接受过一次赋值，赋值的源是常量。这样就可以对它们应用<a href="http://en.wikipedia.org/wiki/Constant_folding" target="_blank">常量传播</a>，将
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>int c = (a + b) /* 5;  </li>
-</ol>
-<p>int c = (a + b) /* 5;
-替换为
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>int c = (1 + 2) /* 5;  </li>
-</ol>
-<p>int c = (1 + 2) /* 5;
-然后可以再对c的初始化表达式应用常量折叠，进一步替换为：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>int c = 15;  </li>
-</ol>
-<p>int c = 15;
-把变量的每次状态更新（包括初始赋值在内）称为变量的一次“定义”（definition），把每次访问变量（从变量读取值）称为变量的一次“使用”（use），则可以把代码整理为“使用-定义链”（简称UD链，<a href="http://en.wikipedia.org/wiki/Use-define_chain" target="_blank">use-define chain</a>）。显然，一个变量的某次定义要被使用过才有意义。上面的例子经过常量传播与折叠后，我们可以分析得知变量a、b、c都只被定义而没有被使用。于是它们的定义就成为了无用代码（dead code），可以安全的被消除。
-上面一段的分析用一句话描述就是：由于foo()里没有产生外部可见的副作用，所以foo()的整个方法体都可以被优化为空。经过dx工具处理后，Dalvik版程序相对JVM版确实是稍微优化了一些，不过没有影响程序的语义，程序的正确性是没问题的。这是其一。
-其二是Dalvik版代码只要多分配一个虚拟寄存器就能在return-void前同时持有a、b、c三个变量的值，指令几乎没有变化：
-Dalvik bytecode代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>0000: const/4      v0, /#int 1 // /#1  </li>
-<li>0001: const/4      v1, /#int 2 // /#2  </li>
-<li>0002: add-int      v2, v0, v1  </li>
-<li>0004: mul-int/lit8 v2, v2, /#int 5 // /#05  </li>
-<li>0006: return-void  </li>
-</ol>
-<p>0000: const/4      v0, /#int 1 // /#1</p>
-<p>0001: const/4      v1, /#int 2 // /#2
-0002: add-int      v2, v0, v1</p>
-<p>0004: mul-int/lit8 v2, v2, /#int 5 // /#05
-0006: return-void
-这样比原先的版本多使用了一个虚拟寄存器，指令方面也多用了一个单元（add-int指令占2单元）；但指令的条数没变，仍然是5条，数据移动的次数也没变。
-题外话1：Dalvik VM是基于寄存器的，x86也是基于寄存器的，但两者的“寄存器”却相当不同：前者的寄存器是每个方法被调用时都有自己一组私有的，后者的寄存器则是全局的。也就是说，概念上Dalvik VM字节码中不用担心保护寄存器的问题，某个方法在调用了别的方法返回过来后自己的寄存器的值肯定跟调用前一样。而x86程序在调用函数时要考虑清楚<a href="http://en.wikipedia.org/wiki/Calling_convention" target="_blank">calling convention</a>，调用方在调用前要不要保护某些寄存器的当前状态，还是说被调用方会处理好这些问题，麻烦事不少。Dalvik VM这种虚拟寄存器让人想起一些实际处理器的“寄存器窗口”，例如SPARC的<a href="http://www.usenix.org/events/sec01/full_papers/frantzen/frantzen_html/node5.html" target="_blank">Register Windows</a>也是保证每个函数都觉得自己有“私有的一组寄存器”，减轻了在代码里处理寄存器保护的麻烦——扔给硬件和操作系统解决了。<a href="http://en.wikipedia.org/wiki/Itanium" target="_blank">IA-64</a>也有寄存器窗口的概念。
-（当然，Dalvik VM与x86的“寄存器”一个是虚拟寄存器一个是真实硬件的ISA提供的寄存器，本来也不在一个级别上…上面这段只是讨论寄存器的语义。）
-题外话2：Dalvik的.dex文件在未压缩状态下的体积通常比同等内容的.jar文件在deflate压缩后还要小。但光从字节码看，Java字节码几乎总是比Dalvik的小，那.dex文件的体积是从哪里来减出来的呢？这主要得益与.dex文件对常量池的压缩，一个.dex文件中所有类都共享常量池，使得相同的字符串、相同的数字常量等都只出现一次，自然能大大减小体积。相比之下，.jar文件中每个类都持有自己的常量池，诸如&quot;Ljava/lang/Object;&quot;这种常见的字符串会被重复多次。Sun自己也有进一步压缩JAR的工具，Pack200，对应的标准是<a href="http://jcp.org/en/jsr/detail?id=200" target="_blank">JSR 200</a>。它的主要应用场景是作为JAR的网络传输格式，以更高的压缩比来减少文件传输时间。在<a href="http://java.sun.com/j2se/1.5.0/docs/guide/deployment/deployment-guide/pack200.html" target="_blank">官方文档</a>提到了Pack200所用到的压缩技巧，
-JDK 5.0 Documentation 写道</p>
-<p>Pack200 works most efficiently on Java class files. It uses several techniques to efficiently reduce the size of JAR files:</p>
-<ul>
-<li>It merges and sorts the constant-pool data in the class files and co-locates them in the archive.</li>
-<li>It removes redundant class attributes.</li>
-<li>It stores internal data structures.</li>
-<li>It use delta and variable length encoding.</li>
-<li>It chooses optimum coding types for secondary compression.
-可见.dex文件与Pack200采用了一些相似的减小体积的方法。很可惜目前还没有正式发布的JVM支持直接加载Pack200格式的归档，毕竟网络传输才是Pack200最初构想的应用场景。<h1 id="-jvm-dalvik-vm-vm-vm-">再次提醒注意，<strong>上面的描述是针对概念上的JVM与Dalvik VM，而不是针对它们的具体实现</strong>。实现VM时可以采用许多优化技巧去减少性能损失，使得实际的运行方式与概念中的不完全相符，只要最终的运行结果满足原本概念上的VM所实现的语义就行。</h1>
-上面“简单”的提了些讨论点，不过还没具体到JavaScript引擎，抱歉。弄得太长了，只好在这里先拆分一次……有些东西想写的，洗个澡又忘记了。等想起来再补充 orz
-“简单”是相对于实际应该掌握的信息量而言。上面写的都还没挠上痒痒，心虚。
-Anyway。根据拆分的现状，下一篇应该是讨论动态语言与编译的问题，然后再下一篇会看看解释器的演化方法，再接着会看看JavaScript引擎的状况（主要针对V8和Nitro，也会谈谈Tamarin。就不讨论JScript了）。
-关于推荐资料，在<a href="http://rednaxelafx.iteye.com/link?tag=virtual+machine" target="_blank">“我的收藏”的virtual machine标签</a>里就有不少值得一读的资料。如果只是对JavaScript引擎相关感兴趣的话也可以选着读些。我的收藏里还有v8和tamarin等标签的，资料有的是 ^ ^
-能有耐心读到结尾的同学们，欢迎提出意见和建议，以及指出文中的错漏 ^<em>^
-不像抓到虫就给美分的大师，我没那种信心……错漏难免，我也需要进一步学习。拜托大家了～
-P.S. 画图真的很辛苦，加上JavaEye的带宽也不是无限的……所以拜托不要直接链接这帖里的图 &lt;(</em> _)&gt;
-有需要原始图片的可以跟我联系。我是画成多帧PNG然后转换为GIF发出来的。上面的PNG图片都还保留有原始的图层信息，要拿去再编辑也很方便 ^ ^
-更新1：
-原本在树遍历解释器图解的小节中，我用的是这幅图：
-<img src="" alt="">
-其实上图画得不准确，a、b、c的右值不应该画在节点上的；节点应该只保存了它们的左值才对，要获取对应的右值就要查询变量表。我修改了图更新到正文了。原本的图里对i的赋值看起来很奇怪，就像是遍历过程经过了两次i节点一般，而事实不是那样的。</li>
+<li><p>// 自己设置容量和装载因子的构造器  </p>
+</li>
+<li><p><strong>public</strong> MyMap(<strong>int</strong> init_Capaticy, <strong>float</strong> load_factor) {  </p>
+</li>
+<li><p><strong>if</strong> (init_Capaticy &lt; 0)  </p>
+</li>
+<li><p><strong>throw</strong> <strong>new</strong> IllegalArgumentException(&quot;Illegal initial capacity: &quot;  </p>
+</li>
+<li><ul>
+<li>init_Capaticy);  </li>
 </ul>
+</li>
+<li><p><strong>if</strong> (load_factor &lt;= 0 || Float.isNaN(load_factor))  </p>
+</li>
+<li><p><strong>throw</strong> <strong>new</strong> IllegalArgumentException(&quot;Illegal load factor: &quot;  </p>
+</li>
+<li><ul>
+<li>load_factor);  </li>
+</ul>
+</li>
+<li><p><strong>this</strong>.LOAD_FACTOR = load_factor;  </p>
+</li>
+<li><p>max = (<strong>int</strong>) (init_Capaticy /* load_factor);  </p>
+</li>
+<li><p>container = <strong>new</strong> Entry[init_Capaticy];  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li><p>// 使用默认参数的构造器  </p>
+</li>
+<li><p><strong>public</strong> MyMap() {  </p>
+</li>
+<li><p><strong>this</strong>(INIT_CAPACITY, LOAD_FACTOR);  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li><p>//<em>/</em> </p>
+</li>
+<li><p>/* 存 </p>
+</li>
+<li><p>/*  </p>
+</li>
+<li><p>/* @param k </p>
+</li>
+<li><p>/* @param v </p>
+</li>
+<li><p>/* @return </p>
+</li>
+<li><p>/*/  </p>
+</li>
+<li><p><strong>public</strong> <strong>boolean</strong> put(K k, V v) {  </p>
+</li>
+<li><p>// 1.计算K的hash值  </p>
+</li>
+<li><p>// 因为自己很难写出对不同的类型都适用的Hash算法，故调用JDK给出的hashCode()方法来计算hash值  </p>
+</li>
+<li><p><strong>int</strong> hash = k.hashCode();  </p>
+</li>
+<li><p>//将所有信息封装为一个Entry  </p>
+</li>
+<li><p>Entry<K,V> temp=<strong>new</strong> Entry(k,v,hash);  </p>
+</li>
+<li><p><strong>if</strong>(setEntry(temp, container)){  </p>
+</li>
+<li><p>// 大小加一  </p>
+</li>
+<li><p>size++;  </p>
+</li>
+<li><p><strong>return</strong> <strong>true</strong>;  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p><strong>return</strong> <strong>false</strong>;  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li></li>
+<li><p>//<em>/</em> </p>
+</li>
+<li><p>/* 扩容的方法 </p>
+</li>
+<li><p>/*  </p>
+</li>
+<li><p>/* @param newSize </p>
+</li>
+<li><p>/*            新的容器大小 </p>
+</li>
+<li><p>/*/  </p>
+</li>
+<li><p><strong>private</strong> <strong>void</strong> reSize(<strong>int</strong> newSize) {  </p>
+</li>
+<li><p>// 1.声明新数组  </p>
+</li>
+<li><p>Entry<K, V>[] newTable = <strong>new</strong> Entry[newSize];  </p>
+</li>
+<li><p>max = (<strong>int</strong>) (newSize /* LOAD_FACTOR);  </p>
+</li>
+<li><p>// 2.复制已有元素,即遍历所有元素，每个元素再存一遍  </p>
+</li>
+<li><p><strong>for</strong> (<strong>int</strong> j = 0; j &lt; container.length; j++) {  </p>
+</li>
+<li><p>Entry<K, V> entry = container[j];  </p>
+</li>
+<li><p>//因为每个数组元素其实为链表，所以…………  </p>
+</li>
+<li><p><strong>while</strong> (<strong>null</strong> != entry) {  </p>
+</li>
+<li><p>setEntry(entry, newTable);  </p>
+</li>
+<li><p>entry = entry.next;  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>// 3.改变指向  </p>
+</li>
+<li><p>container = newTable;  </p>
+</li>
+<li></li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li><p>//<em>/</em> </p>
+</li>
+<li><p>/*将指定的结点temp添加到指定的hash表table当中 </p>
+</li>
+<li><p>/* 添加时判断该结点是否已经存在 </p>
+</li>
+<li><p>/* 如果已经存在，返回false </p>
+</li>
+<li><p>/* 添加成功返回true </p>
+</li>
+<li><p>/* @param temp </p>
+</li>
+<li><p>/* @param table </p>
+</li>
+<li><p>/* @return </p>
+</li>
+<li><p>/*/  </p>
+</li>
+<li><p><strong>private</strong> <strong>boolean</strong> setEntry(Entry<K,V> temp,Entry[] table){  </p>
+</li>
+<li><p>// 根据hash值找到下标  </p>
+</li>
+<li><p><strong>int</strong> index = indexFor(temp.hash, table.length);  </p>
+</li>
+<li><p>//根据下标找到对应元素  </p>
+</li>
+<li><p>Entry<K, V> entry = table[index];  </p>
+</li>
+<li><p>// 3.若存在  </p>
+</li>
+<li><p><strong>if</strong> (<strong>null</strong> != entry) {  </p>
+</li>
+<li><p>// 3.1遍历整个链表，判断是否相等  </p>
+</li>
+<li><p><strong>while</strong> (<strong>null</strong> != entry) {  </p>
+</li>
+<li><p>//判断相等的条件时应该注意，除了比较地址相同外，引用传递的相等用equals()方法比较  </p>
+</li>
+<li><p>//相等则不存，返回false  </p>
+</li>
+<li><p><strong>if</strong> ((temp.key == entry.key||temp.key.equals(entry.key)) &amp;&amp; temp.hash == entry.hash&amp;&amp;(temp.value==entry.value||temp.value.equals(entry.value))) {  </p>
+</li>
+<li><p><strong>return</strong> <strong>false</strong>;  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>//不相等则比较下一个元素  </p>
+</li>
+<li><p><strong>else</strong> <strong>if</strong> (temp.key != entry.key &amp;&amp; temp.value != entry.value) {  </p>
+</li>
+<li><p>//到达队尾，中断循环  </p>
+</li>
+<li><p><strong>if</strong>(<strong>null</strong>==entry.next){  </p>
+</li>
+<li><p><strong>break</strong>;  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>// 没有到达队尾，继续遍历下一个元素  </p>
+</li>
+<li><p>entry = entry.next;  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>// 3.2当遍历到了队尾，如果都没有相同的元素，则将该元素挂在队尾  </p>
+</li>
+<li><p>addEntry2Last(entry,temp);  </p>
+</li>
+<li></li>
+<li><p>}  </p>
+</li>
+<li><p>// 4.若不存在,直接设置初始化元素  </p>
+</li>
+<li><p>setFirstEntry(temp,index,table);  </p>
+</li>
+<li><p><strong>return</strong> <strong>true</strong>;  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li><p><strong>private</strong> <strong>void</strong> addEntry2Last(Entry<K, V> entry, Entry<K, V> temp) {  </p>
+</li>
+<li><p><strong>if</strong> (size &gt; max) {  </p>
+</li>
+<li><p>reSize(container.length /* 4);  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>entry.next=temp;  </p>
+</li>
+<li></li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li><p>//<em>/</em> </p>
+</li>
+<li><p>/* 将指定结点temp，添加到指定的hash表table的指定下标index中 </p>
+</li>
+<li><p>/* @param temp </p>
+</li>
+<li><p>/* @param index </p>
+</li>
+<li><p>/* @param table </p>
+</li>
+<li><p>/*/  </p>
+</li>
+<li><p><strong>private</strong> <strong>void</strong> setFirstEntry(Entry<K, V> temp, <strong>int</strong> index, Entry[] table) {  </p>
+</li>
+<li><p>// 1.判断当前容量是否超标，如果超标，调用扩容方法  </p>
+</li>
+<li><p><strong>if</strong> (size &gt; max) {  </p>
+</li>
+<li><p>reSize(table.length /* 4);  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>// 2.不超标，或者扩容以后，设置元素  </p>
+</li>
+<li><p>table[index] = temp;  </p>
+</li>
+<li><p>//！！！！！！！！！！！！！！！  </p>
+</li>
+<li><p>//因为每次设置后都是新的链表，需要将其后接的结点都去掉  </p>
+</li>
+<li><p>//NND，少这一行代码卡了哥哥7个小时（代码重构）  </p>
+</li>
+<li><p>temp.next=<strong>null</strong>;  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li><p>//<em>/</em> </p>
+</li>
+<li><p>/* 取 </p>
+</li>
+<li><p>/*  </p>
+</li>
+<li><p>/* @param k </p>
+</li>
+<li><p>/* @return </p>
+</li>
+<li><p>/*/  </p>
+</li>
+<li><p><strong>public</strong> V get(K k) {  </p>
+</li>
+<li><p>Entry<K, V> entry = <strong>null</strong>;  </p>
+</li>
+<li><p>// 1.计算K的hash值  </p>
+</li>
+<li><p><strong>int</strong> hash = k.hashCode();  </p>
+</li>
+<li><p>// 2.根据hash值找到下标  </p>
+</li>
+<li><p><strong>int</strong> index = indexFor(hash, container.length);  </p>
+</li>
+<li><p>// 3。根据index找到链表  </p>
+</li>
+<li><p>entry = container[index];  </p>
+</li>
+<li><p>// 3。若链表为空，返回null  </p>
+</li>
+<li><p><strong>if</strong> (<strong>null</strong> == entry) {  </p>
+</li>
+<li><p><strong>return</strong> <strong>null</strong>;  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>// 4。若不为空，遍历链表，比较k是否相等,如果k相等，则返回该value  </p>
+</li>
+<li><p><strong>while</strong> (<strong>null</strong> != entry) {  </p>
+</li>
+<li><p><strong>if</strong> (k == entry.key||entry.key.equals(k)) {  </p>
+</li>
+<li><p><strong>return</strong> entry.value;  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>entry = entry.next;  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>// 如果遍历完了不相等，则返回空  </p>
+</li>
+<li><p><strong>return</strong> <strong>null</strong>;  </p>
+</li>
+<li></li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li><p>//<em>/</em> </p>
+</li>
+<li><p>/* 根据hash码，容器数组的长度,计算该哈希码在容器数组中的下标值 </p>
+</li>
+<li><p>/*  </p>
+</li>
+<li><p>/* @param hashcode </p>
+</li>
+<li><p>/* @param containerLength </p>
+</li>
+<li><p>/* @return </p>
+</li>
+<li><p>/*/  </p>
+</li>
+<li><p><strong>public</strong> <strong>int</strong> indexFor(<strong>int</strong> hashcode, <strong>int</strong> containerLength) {  </p>
+</li>
+<li><p><strong>return</strong> hashcode &amp; (containerLength - 1);  </p>
+</li>
+<li></li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li><p>//<em>/</em> </p>
+</li>
+<li><p>/* 用来实际保存数据的内部类,因为采用挂链法解决冲突，此内部类设计为链表形式 </p>
+</li>
+<li><p>/*  </p>
+</li>
+<li><p>/* @param <K>key </p>
+</li>
+<li><p>/* @param <V> </p>
+</li>
+<li><p>/*            value </p>
+</li>
+<li><p>/*/  </p>
+</li>
+<li><p><strong>class</strong> Entry<K, V> {  </p>
+</li>
+<li><p>Entry<K, V> next;// 下一个结点  </p>
+</li>
+<li><p>K key;// key  </p>
+</li>
+<li><p>V value;// value  </p>
+</li>
+<li><p><strong>int</strong> hash;// 这个key对应的hash码，作为一个成员变量，当下次需要用的时候可以不用重新计算  </p>
+</li>
+<li></li>
+<li><p>// 构造方法  </p>
+</li>
+<li><p>Entry(K k, V v, <strong>int</strong> hash) {  </p>
+</li>
+<li><p><strong>this</strong>.key = k;  </p>
+</li>
+<li><p><strong>this</strong>.value = v;  </p>
+</li>
+<li><p><strong>this</strong>.hash = hash;  </p>
+</li>
+<li></li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li><p>//相应的getter()方法  </p>
+</li>
+<li></li>
+<li><p>}  </p>
+</li>
+<li><p>}  </p>
+</li>
+</ol>
+<p> 代码中有相当清楚的注释了</p>
+<p>在文章的最后这里，我要强烈的宣泄下感情</p>
+<p>MLGBD，本来以为分析的挺到位了，写出这个东西也就最多需要个把小时吧</p>
+<p>结果因为通宵作业，脑袋运转不灵</p>
+<p>硬是花了哥三个小时才写出了</p>
+<p>好不容易些出来了</p>
+<p>我日</p>
+<p>看着代码比较混乱</p>
+<p>然后就对代码重构了下</p>
+<p>把逻辑抽象清楚，进行重构就花了个多小时</p>
+<p>好不容易构造好了</p>
+<p>就开始了TMD的一直报错了----------大数据量测试时到大概5000就死循环了</p>
+<p>各种调试，各种分析都觉得没错误</p>
+<p> 最后花了哥7个小时终于找出来了</p>
+<p>我擦</p>
+<p>第一次初始化加的时候，因为每个元素的next都是空的</p>
+<p>而扩充容量resize()时，因为冲突处理是链式结构的</p>
+<p>当将他们重新hash添加的时候，重复的这些鸟元素的next是有元素的</p>
+<p>一定要设置为null</p>
+<p><strong>七**</strong>.<strong>**性能分析：</strong></p>
+<pre><code>  1.因为冲突的存在，其查找长度不可能达到O(1)
+
+  2哈希表的平均查找长度是装载因子a 的函数，而不是 n 的函数。
+
+  3.用哈希表构造查找表时，可以选择一个适当的装填因子 a ，使得平均查找长度限定在某个范围内。
+</code></pre><p>   最后给出我们这个HashMap的性能</p>
+<p>  测试代码</p>
+<p><strong>Java**</strong>代码<strong><strong> </strong></strong> <strong>[</strong><img src="&quot;&quot;收藏这段代码&quot; &quot;" alt="收藏代码]()**"><em>**</em></p>
+<ol>
+<li><p><strong>public</strong> <strong>class</strong> Test {  </p>
+</li>
+<li></li>
+<li><p><strong>public</strong> <strong>static</strong> <strong>void</strong> main(String[] args) {  </p>
+</li>
+<li><p>MyMap<String, String> mm = <strong>new</strong> MyMap<String, String>();   </p>
+</li>
+<li><p>Long aBeginTime=System.currentTimeMillis();//记录BeginTime  </p>
+</li>
+<li><p><strong>for</strong>(<strong>int</strong> i=0;i&lt;1000000;i++){  </p>
+</li>
+<li><p>mm.put(&quot;&quot;+i, &quot;&quot;+i/*100);  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>Long aEndTime=System.currentTimeMillis();//记录EndTime  </p>
+</li>
+<li><p>System.out.println(&quot;insert time--&gt;&quot;+(aEndTime-aBeginTime));  </p>
+</li>
+<li></li>
+<li><p>Long lBeginTime=System.currentTimeMillis();//记录BeginTime  </p>
+</li>
+<li><p>mm.get(&quot;&quot;+100000);  </p>
+</li>
+<li><p>Long lEndTime=System.currentTimeMillis();//记录EndTime  </p>
+</li>
+<li><p>System.out.println(&quot;seach time---&gt;&quot;+(lEndTime-lBeginTime));  </p>
+</li>
+<li><p>}  </p>
+</li>
+<li><p>}  </p>
+<p>100W个数据时，全部存储时间为1S多一点，而<strong>搜寻时间为**</strong>0 **</p>
+</li>
+</ol>
+<p>insert time--&gt;1536
+seach time---&gt;0</p>
+<p>好了，牢骚发完了</p>
+<p>本来今天想写个<strong>有关大访问量处理的一些基本概念</strong>的文章</p>
+<p>全泡汤了,明天写吧</p>
+<p>url: <a href="http://java-mzd.iteye.com/blog/827523" target="_blank">http://java-mzd.iteye.com/blog/827523</a></p>
 
       
     </div>
@@ -888,174 +1653,8 @@ P.S. 画图真的很辛苦，加上JavaEye的带宽也不是无限的……所�
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--虚拟机随谈（一）：解释器，树遍历解释器，基于栈与基于寄存器，大杂烩" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/">JVM调优总结（十二）</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="jvm-">JVM调优总结（十二）-参考资料</h1>
-<pre><code>能整理出上面一些东西，也是因为站在巨人的肩上。下面是一些参考资料，供大家学习，大家有更好的，可以继续完善：）
-</code></pre><p>· <a href="http://www.ibm.com/developerworks/cn/java/j-jtp10283/" target="_blank">Java 理论与实践: 垃圾收集简史</a></p>
-<p>· <a href="http://pengjiaheng.iteye.com/admin/blogs/#resources" target="_blank">Java SE 6 HotSpot[tm] Virtual Machine Garbage Collection Tuning</a></p>
-<p>· <a href="http://pengjiaheng.iteye.com/admin/blogs/#16.2.6" target="_blank">Improving Java Application Performance and Scalability by Reducing Garbage Collection Times and Sizing Memory Using JDK 1.4.1</a></p>
-<p>· <a href="https://java.sun.com/j2se/reference/whitepapers/memorymanagement_whitepaper.pdf" target="_blank">Hotspot memory management whitepaper</a></p>
-<p>· <a href="http://java.sun.com/performance/reference/whitepapers/tuning.html" target="_blank">Java Tuning White Paper</a></p>
-<p>· <a href="http://java.sun.com/docs/hotspot/gc1.4.2/example.html" target="_blank">Diagnosing a Garbage Collection problem</a></p>
-<p>· <a href="http://java.sun.com/javase/technologies/hotspot/vmoptions.jsp" target="_blank">Java HotSpot VM Options</a></p>
-<p>· <a href="http://blogs.sun.com/watt/resource/jvm-options-list.html" target="_blank">A Collection of JVM Options</a></p>
-<p>· <a href="http://research.sun.com/jtech/pubs/04-g1-paper-ismm.pdf" target="_blank">Garbage-First Garbage Collection</a></p>
-<p>· <a href="http://java.sun.com/docs/hotspot/gc1.4.2/faq.html" target="_blank">Frequently Asked Questions about Garbage Collection in the HotspotTM JavaTM Virtual Machine</a></p>
-<p>· <a href="http://pengjiaheng.spaces.live.com/blog/cns!2DAA368B386E6AEA!685.entry" target="_blank">JProfiler试用手记</a></p>
-<p>· <a href="http://kenwu.me/java6-jvm-options-chinese-edition-published" target="_blank">Java6 JVM参数选项大全</a></p>
-<p>· <a href="http://www.douban.com/subject/1138768/" target="_blank">《深入Java虚拟机》</a>。虽然过去了很多年，但这本书依旧是经典。</p>
-<pre><code>这里是本系列的最后一篇了，很高兴大家能够喜欢这系列的文章。期间也提了很多问题，其中有些是我之前没有想到的或者考虑欠妥的，感谢提出这些问题的朋友，我也学到的不少东西。
-</code></pre>
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_字符集--URL特殊字符详解-没有所谓的失败！除非你不再尝试！-PHPChina开源社区门户-P/">URL特殊字符详解 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_字符集--URL特殊字符详解-没有所谓的失败！除非你不再尝试！-PHPChina开源社区门户-P/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="url-phpchina-powered-by-x-space">URL特殊字符详解 - 没有所谓的失败！除非你不再尝试！ - PHPChina 开源社区门户 - Powered by X-Space</h1>
-<p><strong>没有所谓的失败！除非你不再尝试！</strong></p>
-<p><a href="&quot;复制地址&quot;">copy</a> <a href="http://smarty.blog.phpchina.com/" title="加入收藏" target="_blank">Bookmark</a> <a href="http://smarty.blog.phpchina.com" target="_blank">http://smarty.blog.phpchina.com</a></p>
-<ul>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-type-friend" target="_blank">好友</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-type-bbs" target="_blank">论坛</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-viewpro" target="_blank">留言</a></li>
-</ul>
-<p><a href="http://www.phpchina.com/batch.manage.php?uid=26354" target="_blank">空间管理</a> 您的位置: <a href="http://www.phpchina.com/" target="_blank">PHPChina 开源社区门户</a> » <a href="http://www.phpchina.com/?uid-26354" target="_blank">没有所谓的失败！除非你不再尝试！</a> » <a href="http://www.phpchina.com/?uid-26354-action-spacelist-type-blog" target="_blank">日志</a></p>
-<p>每天都在进步一点点，在这里我将记下我的点点滴滴，希望和大家一起进步，一起学习，一起共同成长PHPer之路！ PHPer成长群(49052575)欢迎各界精英加入，互相学习，互补不足。空间不再更新：如有需要请进 <a href="http://www.phpcake.cn" target="_blank">http://www.phpcake.cn</a></p>
-<h1 id="url-">URL特殊字符详解</h1>
-<p><a href="http://www.phpchina.com/batch.common.php?action=viewspace&amp;op=up&amp;itemid=32317&amp;uid=26354" target="_blank">上一篇</a> / <a href="http://www.phpchina.com/batch.common.php?action=viewspace&amp;op=next&amp;itemid=32317&amp;uid=26354" target="_blank">下一篇</a>  2008-04-11 19:48:57 / 个人分类：<a href="http://www.phpchina.com/?uid-26354-action-spacelist-type-blog-itemtypeid-3538" target="_blank">url特殊字符</a>
-<a href="http://www.phpchina.com/html/54/26354-32317.html#xspace-tracks" target="_blank">查看( 386 )</a> / <a href="http://www.phpchina.com/html/54/26354-32317.html#xspace-itemreply" target="_blank">评论( 2 )</a> / <a href="http://www.phpchina.com/html/54/26354-32317.html#xspace-itemform" target="_blank">评分( 1 / 0 )</a></p>
-<p>有些符号在URL中是不能直接传递的，如果要在URL中传递这些特殊符号，那么就要使用他们的编码了。编码的格式为：%加字符的ASCII码，即一个百分号%，后面跟对应字符的ASCII（16进制）码值。例如 空格的编码值是”%20″。
-下表中列出了一些URL特殊符号及编码
-十六进制值 1. + URL 中+号表示空格 %2B 2. 空格 URL中的空格可以用+号或者编码 %20 3. / 分隔目录和子目录 %2F 4. ? 分隔实际的 URL 和参数 %3F 5. % 指定特殊字符 %25 6. /# 表示书签 %23 7. &amp; URL 中指定的参数间的分隔符 %26 8. = URL 中指定参数的值 %3D</p>
-<p>例：要传递字符串“this%is/#te=st&amp;o k?+/”作为参数t传给te.asp，则URL可以是:
-te.asp?t=this%25is%23te%3Dst%26o%20k%3F%2B%2F 或者
-te.asp?t=this%25is%23te%3Dst%26o+k%3F%2B%2F （空格可以用%20或+代替）java中URL 的编码和解码函数
-java.net.URLEncoder.encode(String s)和java.net.URLDecoder.decode(String s);
-注：encode(String s)<a href=""><strong>方法</strong></a>过期了，现在一般用encode(String s, “GBK”);</p>
-<p>在javascrīpt 中URL 的编码和解码函数
-<a href=""><strong>escape</strong></a>(String s)和<a href=""><strong>unescape</strong></a>(String s) ;</p>
-<h3 id="-">相关阅读:</h3>
-<ul>
-<li><a href="http://www.phpchina.com/?uid-26354-action-viewspace-itemid-20379" target="_blank">encodeURIComponent应用</a> (<a href="http://www.phpchina.com/?uid-26354" target="_blank">design_dd</a>, 2007-12-06)</li>
-<li><a href="http://www.phpchina.com/?uid-50821-action-viewspace-itemid-30743" target="_blank">FLEAPHP 的一些基础学习连接</a> (<a href="http://www.phpchina.com/?uid-50821" target="_blank">brucehawking</a>, 2008-3-30)</li>
-</ul>
-<p><a href="">导入论坛</a> <a href="">收藏</a> <a href="">分享给好友</a> <a href="http://www.phpchina.com/batch.manage.php?itemid=32317" target="_blank">管理</a> <a href="">举报</a></p>
-<p>TAG: <a href="http://www.phpchina.com/?action-tag-tagname-url" target="_blank">url</a> <a href="http://www.phpchina.com/?action-tag-tagname-escape" target="_blank">escape</a> <a href="http://www.phpchina.com/?action-tag-tagname-unescape" target="_blank">unescape</a> <a href="http://www.phpchina.com/?action-tag-tagname-url%CC%D8%CA%E2%D7%D6%B7%FB" target="_blank">url特殊字符</a>
-<a href="http://www.phpchina.com/?uid-26354" target="_blank"><img src="" alt="没有所谓的失败！除非你不再尝试！"></a> <a href="">引用</a> <a href="">删除</a> <a href="http://www.phpchina.com/?uid-26354" target="_blank">design_dd</a>   /   2008-04-19 16:11:49 谢谢支持^_^ <img src="" alt=""> <a href="">引用</a> <a href="">删除</a> 废墟   /   2008-04-17 21:36:42 评 1 分
-不错。。怎么没人顶啊  。。这些人 就知道看 也不顶。。</p>
-<p><a href="">查看全部评论</a></p>
-<p><a href="">-5</a> <a href="">-3</a> <a href="">-1</a> <a href="">-</a> <a href="">+1</a> <a href="">+3</a> <a href="">+5</a></p>
-<p>评分：0</p>
-<p>我来说两句</p>
-<p>显示全部</p>
-<p><img src="" alt=":loveliness:"> <img src="" alt=":handshake"> <img src="" alt=":victory:"> <img src="" alt=":funk:"> <img src="" alt=":time:"> <img src="" alt=":kiss:"> <img src="" alt=":call:"> <img src="" alt=":hug:"> <img src="" alt=":lol"> <img src="" alt=":&#39;("> <img src="" alt=":Q"> <img src="" alt=":L"> <img src="" alt=";P"> <img src="" alt=":$"> <img src="" alt=":P"> <img src="" alt=":o"> <img src="" alt=":@"> <img src="" alt=":D"> <img src="" alt=":("> <img src="" alt=":)"></p>
-<p>内容</p>
-<p>昵称</p>
-<p>加入事件</p>
-<p>提交评论</p>
-<p><img src="" alt="design_dd"></p>
-<p><a href="http://www.phpchina.com/?uid-26354-action-viewpro-showpro-1" target="_blank">design_dd</a></p>
-<h3 id="-">用户菜单</h3>
-<ul>
-<li><a href="http://www.phpchina.com/?uid-26354-action-viewpro" target="_blank">给我留言</a></li>
-<li><a href="">加入好友</a></li>
-<li><a href="http://bbs.phpchina.com/pm.php?action=send&amp;uid=26354" target="_blank">发短消息</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-viewpro-showpro-1" target="_blank">我的介绍</a></li>
-<li><a href="http://bbs.phpchina.com/viewpro.php?uid=26354" target="_blank">论坛资料</a></li>
-<li><a href="http://www.phpchina.com/batch.manage.php?uid=26354" target="_blank">空间管理</a><h3 id="-">标题搜索</h3>
-</li>
-</ul>
-<h3 id="-">我的存档</h3>
-<ul>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1206979200-endtime-1209571200" target="_blank">2008年04月</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1204300800-endtime-1206979200" target="_blank">2008年03月</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1201795200-endtime-1204300800" target="_blank">2008年02月</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1199116800-endtime-1201795200" target="_blank">2008年01月</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1196438400-endtime-1199116800" target="_blank">2007年12月</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1193846400-endtime-1196438400" target="_blank">2007年11月</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1191168000-endtime-1193846400" target="_blank">2007年10月</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1188576000-endtime-1191168000" target="_blank">2007年09月</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1185897600-endtime-1188576000" target="_blank">2007年08月</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1183219200-endtime-1185897600" target="_blank">2007年07月</a></li>
-<li><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1180627200-endtime-1183219200" target="_blank">2007年06月</a></li>
-<li><p><a href="http://www.phpchina.com/?uid-26354-action-spacelist-starttime-1177948800-endtime-1180627200" target="_blank">2007年05月</a></p>
-<h3 id="-">数据统计</h3>
-</li>
-<li><p>访问量: 30236</p>
-</li>
-<li>日志数: 69</li>
-<li>建立时间: 2007-05-14</li>
-<li>更新时间: 2008-04-11</li>
-</ul>
-<h3 id="rss-">RSS订阅</h3>
-<ul>
-<li><a href="http://www.phpchina.com/?uid-26354-action-rss-type-blog" target="_blank"><img src="" alt="RSS订阅"></a></li>
-</ul>
-<p><a href="http://www.phpchina.com/batch.login.php?action=logout" target="_blank">清空Cookie</a> - <a href="mailto:PHPChina">联系我们</a> - <a href="http://www.phpchina.com/" target="_blank">PHPChina 开源社区门户</a> - <a href="http://bbs.phpchina.com/" target="_blank">交流论坛</a> - <a href="http://www.phpchina.com/?action/spaces" target="_blank">空间列表</a> - <a href="http://www.phpchina.com/archiver/" target="_blank">站点存档</a> - <a href="http://www.phpchina.com/?action/register" target="_blank">升级自己的空间</a></p>
-<p>Powered by <a href="http://www.supesite.com/" target="_blank"><strong>X-Space</strong></a> <em>4.0 UC</em> © 2001-2008 <a href="http://www.comsenz.com/" target="_blank">Comsenz Inc.</a>
-<a href="http://www.miibeian.gov.cn/" target="_blank">京ICP备07504665号</a>
-<a href="">Open Toolbar</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_字符集/">Java_字符集</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_字符集/" class="label label-success">Java_字符集</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_字符集--URL特殊字符详解-没有所谓的失败！除非你不再尝试！-PHPChina开源社区门户-P/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_字符集--URL特殊字符详解-没有所谓的失败！除非你不再尝试！-PHPChina开源社区门户-P" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/java深入分析/">java深入分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/java深入分析/" class="label label-success">java深入分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--Hash表分析以及Java实现/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-java深入分析--Hash表分析以及Java实现" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1068,7 +1667,7 @@ java.net.URLEncoder.encode(String s)和java.net.URLDecoder.decode(String s);
 
 
 <ul id="pagination" class="pagination pagination-lg">
-  <li><a class="extend prev" href="/page/52/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/50/">50</a></li><li><a class="page-number" href="/page/51/">51</a></li><li><a class="page-number" href="/page/52/">52</a></li><li class="active"><li><span class="page-number current">53</span></li><li><a class="page-number" href="/page/54/">54</a></li><li><a class="page-number" href="/page/55/">55</a></li><li><a class="page-number" href="/page/56/">56</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/164/">164</a></li><li><a class="page-number" href="/page/165/">165</a></li><li><a class="extend next" href="/page/54/">&raquo;</a></li>
+  <li><a class="extend prev" href="/page/52/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/50/">50</a></li><li><a class="page-number" href="/page/51/">51</a></li><li><a class="page-number" href="/page/52/">52</a></li><li class="active"><li><span class="page-number current">53</span></li><li><a class="page-number" href="/page/54/">54</a></li><li><a class="page-number" href="/page/55/">55</a></li><li><a class="page-number" href="/page/56/">56</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="page-number" href="/page/164/">164</a></li><li><a class="extend next" href="/page/54/">&raquo;</a></li>
   <div class="clearfix"></div>
 </ul></div><!--wapper-->
        </div><!-- ID main-col END -->
@@ -1135,7 +1734,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-26 21:21:33</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-29 22:06:56</em></span></div>
 </div>
 <div class="clearfix"></div>
 

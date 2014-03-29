@@ -110,1809 +110,318 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（十一）——双向认证/">Java加密技术（十一）——双向认证</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">jvm crash 的崩溃日志详细分析及注意点</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（十一）——双向认证/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="java-">Java加密技术（十一）——双向认证</h1>
-<p>对于双向认证，做一个简单的描述。
-服务器端下发证书，客户端接受证书。证书带有公钥信息，用于验证服务器端、对数据加密/解密，起到OSI五类服务的认证（鉴别）服务和保密性服务。
-这只是单向认证，为什么？因为客户端可以验证服务器端，但服务器端不能验证客户端！
-如果客户端也有这样一个证书，服务器端也就能够验证客户端，这就是双向认证了！
-换言之，当你用银行的“U盾”之类的U盘与银行账户交互时，在你验证银行服务器的同时，服务器也在验证你！这种双重验证，正是网银系统的安全关键！
-单向认证见<strong><a href="http://snowolf.iteye.com/blog/398198" target="_blank">Java加密技术（十)</a></strong>
-双向认证需要一个CA机构签发这样的客户端、服务器端证书，首先需要CA机构构建一个根证书。keytool可以构建证书但不能构建我们需要的根证书，openssl则可以！
-根证书签发客户端证书，根私钥签发服务器端证书！
-我们直接使用linux下的openssl来完成CA，需要修改openssl.cnf文件，在ubuntu下的<strong>/etc/ssl/</strong>目录下，找到[ CA_default ]修改dir变量。
-原文
-引用</p>
-<p>[ CA_default ]
-/#dir = ./demoCA /# Where everything is kept
-我们把c盘的ca目录作为CA认证的根目录，文件修改后如下所示：
-引用</p>
-<p>[ CA_default ]
-dir = $ENV::HOME/ca /# Where everything is kept
-我们需要在用户目录下构建一个ca目录，以及子目录，如下所下：
-ca
-|<strong>certs
-|</strong>newcerts
-|<strong>private
-|</strong>crl
-执行如下操作：
-Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+        <h1 id="jvm-crash-">jvm crash 的崩溃日志详细分析及注意点</h1>
+<h2 id="-">生成</h2>
 <ol>
-<li>/#!/bin/bash     </li>
-<li></li>
-<li>ca_path=ca  </li>
-<li>certs_path=$ca_path/certs  </li>
-<li>newcerts_path=$ca_path/newcerts  </li>
-<li>private_path=$ca_path/private  </li>
-<li>crl_path=$ca_path/crl  </li>
-<li></li>
-<li>echo 移除CA根目录     </li>
-<li>rm -rf ca     </li>
-<li></li>
-<li>echo 构建CA根目录     </li>
-<li>mkdir ca     </li>
-<li></li>
-<li>echo 构建子目录     </li>
-<li>mkdir certs     </li>
-<li>mkdir newcerts     </li>
-<li>mkdir private     </li>
-<li>mkdir crl    </li>
-<li></li>
-<li>/#构建文件     </li>
-<li>touch $ca_path/index.txt  </li>
-<li>echo 01 &gt; $ca_path/serial  </li>
-<li>echo      </li>
-<li></li>
-<li>/#构建随机数     </li>
-<li>openssl rand -out $private_path/.rand 1000  </li>
-<li>echo      </li>
-<li></li>
-<li>echo 生成根证书私钥     </li>
-<li>openssl genrsa -des3 -out $private_path/ca.pem 2048  </li>
-<li>echo     </li>
-<li></li>
-<li>echo 查看私钥信息  </li>
-<li>openssl rsa -noout -text -in $private_path/ca.pem  </li>
-<li>echo  </li>
-<li></li>
-<li>echo 生成根证书请求      </li>
-<li>openssl req -new -key $private_path/ca.pem -out $certs_path/ca.csr -subj &quot;/C=CN/ST=BJ/L=BJ/O=zlex/OU=zlex/CN=ca.zlex.org&quot;  </li>
-<li>echo     </li>
-<li></li>
-<li>echo 查看证书请求   </li>
-<li>openssl req -in $certs_path/ca.csr -text -noout  </li>
-<li>echo   </li>
-<li></li>
-<li>echo 签发根证书     </li>
-<li>openssl ca -create_serial -out $certs_path/ca.crt -days 3650 -batch -keyfile $private_path/ca.pem -selfsign -extensions v3_ca -infiles $certs_path/ca.csr   </li>
-<li>/#openssl x509 -req -sha1 -extensions v3_ca -signkey $private_path/ca.pem -in $certs_path/ca.csr -out $certs_path/ca.crt -days 3650  </li>
-<li>echo     </li>
-<li></li>
-<li>echo 查看证书详情  </li>
-<li>openssl x509 -in $certs_path/ca.crt -text -noout  </li>
-<li>echo  </li>
-<li></li>
-<li>echo 证书转换——根证书     </li>
-<li>openssl pkcs12 -export -clcerts -in $certs_path/ca.crt -inkey $private_path/ca.pem -out $certs_path/ca.p12  </li>
-<li>echo    </li>
-<li></li>
-<li>echo 生成服务器端私钥     </li>
-<li>openssl genrsa -des3 -out $private_path/server.pem 1024  </li>
-<li>echo     </li>
-<li></li>
-<li>echo 查看私钥信息  </li>
-<li>openssl rsa -noout -text -in $private_path/server.pem  </li>
-<li>echo  </li>
-<li></li>
-<li>echo 生成服务器端证书请求     </li>
-<li>openssl req -new -key $private_path/server.pem -out $certs_path/server.csr -subj &quot;/C=CN/ST=BJ/L=BJ/O=zlex/OU=zlex/CN=www.zlex.org&quot;  </li>
-<li>echo     </li>
-<li></li>
-<li>echo 查看证书请求   </li>
-<li>openssl req -in $certs_path/server.csr -text -noout  </li>
-<li>echo   </li>
-<li></li>
-<li>echo 签发服务器端证书  </li>
-<li>openssl ca -in $certs_path/server.csr -out $certs_path/server.crt -cert $certs_path/ca.crt -keyfile $private_path/ca.pem -days 365 -notext  </li>
-<li>/#openssl x509 -req -days 365 -sha1 -extensions v3_req -CA $certs_path/ca.crt -CAkey $private_path/ca.pem -CAserial $ca_path/serial -CAcreateserial -in $certs_path/server.csr -out $certs_path/server.crt  </li>
-<li>echo  </li>
-<li></li>
-<li>echo 查看证书详情  </li>
-<li>openssl x509 -in $certs_path/server.crt -text -noout  </li>
-<li>echo  </li>
-<li></li>
-<li>echo 证书转换——服务器端     </li>
-<li>openssl pkcs12 -export -clcerts -in $certs_path/server.crt -inkey $private_path/server.pem -out $certs_path/server.p12  </li>
-<li>echo      </li>
-<li></li>
-<li>echo 生成客户端私钥     </li>
-<li>openssl genrsa -des3 -out $private_path/client.pem 1024  </li>
-<li>echo     </li>
-<li></li>
-<li>echo 生成客户端私钥     </li>
-<li>openssl genrsa -des3 -out $private_path/client.pem 1024  </li>
-<li>echo     </li>
-<li></li>
-<li>echo 查看私钥信息  </li>
-<li>openssl rsa -noout -text -in $private_path/client.pem  </li>
-<li>echo  </li>
-<li></li>
-<li>echo 生成客户端证书请求     </li>
-<li>openssl req -new -key $private_path/client.pem -out $certs_path/client.csr -subj &quot;/C=CN/ST=BJ/L=BJ/O=zlex/OU=zlex/CN=zlex&quot;  </li>
-<li>echo     </li>
-<li></li>
-<li>echo 查看证书请求   </li>
-<li>openssl req -in $certs_path/client.csr -text -noout  </li>
-<li>echo   </li>
-<li></li>
-<li>echo 签发客户端证书     </li>
-<li>openssl ca -in $certs_path/client.csr -out $certs_path/client.crt -cert $certs_path/ca.crt -keyfile $private_path/ca.pem -days 365 -notext  </li>
-<li>/#openssl x509 -req -days 365 -sha1 -extensions dir_sect -CA $certs_path/ca.crt -CAkey $private_path/ca.pem -CAserial $ca_path/serial -in $certs_path/client.csr -out $certs_path/client.crt  </li>
-<li>echo     </li>
-<li></li>
-<li>echo 查看证书详情  </li>
-<li>openssl x509 -in $certs_path/client.crt -text -noout  </li>
-<li>echo  </li>
-<li></li>
-<li>echo 证书转换——客户端     </li>
-<li>openssl pkcs12 -export -clcerts -in $certs_path/client.crt -inkey $private_path/client.pem -out $certs_path/client.p12  </li>
-<li>echo   </li>
-<li></li>
-<li>echo 生成证书链PKCS/#7  </li>
-<li>openssl crl2pkcs7 -nocrl -certfile $certs_path/server.crt -certfile $certs_path/ca.crt -certfile $certs_path/client.crt -out  </li>
-<li>form PEM -out $certs_path/zlex.p7b  </li>
-<li>echo  </li>
-<li></li>
-<li>echo 查看证书链  </li>
-<li>openssl pkcs7 -in $certs_path/zlex.p7b -print_certs -noout  </li>
-</ol>
-<p>/#!/bin/bash  </p>
-<p>ca_path=ca</p>
-<p>certs_path=$ca_path/certs
-newcerts_path=$ca_path/newcerts</p>
-<p>private_path=$ca_path/private
-crl_path=$ca_path/crl</p>
-<p>echo 移除CA根目录  </p>
-<p>rm -rf ca  </p>
-<p>echo 构建CA根目录<br>mkdir ca  </p>
-<p>echo 构建子目录  </p>
-<p>mkdir certs<br>mkdir newcerts  </p>
-<p>mkdir private<br>mkdir crl </p>
-<p>/#构建文件  </p>
-<p>touch $ca_path/index.txt
-echo 01 &gt; $ca_path/serial</p>
-<p>echo   </p>
-<p>/#构建随机数<br>openssl rand -out $private_path/.rand 1000</p>
-<p>echo   </p>
-<p>echo 生成根证书私钥<br>openssl genrsa -des3 -out $private_path/ca.pem 2048</p>
-<p>echo  </p>
-<p>echo 查看私钥信息
-openssl rsa -noout -text -in $private_path/ca.pem</p>
-<p>echo</p>
-<p>echo 生成根证书请求<br>openssl req -new -key $private_path/ca.pem -out $certs_path/ca.csr -subj &quot;/C=CN/ST=BJ/L=BJ/O=zlex/OU=zlex/CN=ca.zlex.org&quot;</p>
-<p>echo  </p>
-<p>echo 查看证书请求
-openssl req -in $certs_path/ca.csr -text -noout</p>
-<p>echo</p>
-<p>echo 签发根证书<br>openssl ca -create_serial -out $certs_path/ca.crt -days 3650 -batch -keyfile $private_path/ca.pem -selfsign -extensions v3_ca -infiles $certs_path/ca.csr</p>
-<p>/#openssl x509 -req -sha1 -extensions v3_ca -signkey $private_path/ca.pem -in $certs_path/ca.csr -out $certs_path/ca.crt -days 3650
-echo  </p>
-<p>echo 查看证书详情</p>
-<p>openssl x509 -in $certs_path/ca.crt -text -noout
-echo</p>
-<p>echo 证书转换——根证书  </p>
-<p>openssl pkcs12 -export -clcerts -in $certs_path/ca.crt -inkey $private_path/ca.pem -out $certs_path/ca.p12
-echo </p>
-<p>echo 生成服务器端私钥  </p>
-<p>openssl genrsa -des3 -out $private_path/server.pem 1024
-echo  </p>
-<p>echo 查看私钥信息</p>
-<p>openssl rsa -noout -text -in $private_path/server.pem
-echo</p>
-<p>echo 生成服务器端证书请求  </p>
-<p>openssl req -new -key $private_path/server.pem -out $certs_path/server.csr -subj &quot;/C=CN/ST=BJ/L=BJ/O=zlex/OU=zlex/CN=www.zlex.org&quot;
-echo  </p>
-<p>echo 查看证书请求</p>
-<p>openssl req -in $certs_path/server.csr -text -noout
-echo</p>
-<p>echo 签发服务器端证书</p>
-<p>openssl ca -in $certs_path/server.csr -out $certs_path/server.crt -cert $certs_path/ca.crt -keyfile $private_path/ca.pem -days 365 -notext
-/#openssl x509 -req -days 365 -sha1 -extensions v3_req -CA $certs_path/ca.crt -CAkey $private_path/ca.pem -CAserial $ca_path/serial -CAcreateserial -in $certs_path/server.csr -out $certs_path/server.crt</p>
-<p>echo</p>
-<p>echo 查看证书详情
-openssl x509 -in $certs_path/server.crt -text -noout</p>
-<p>echo</p>
-<p>echo 证书转换——服务器端<br>openssl pkcs12 -export -clcerts -in $certs_path/server.crt -inkey $private_path/server.pem -out $certs_path/server.p12</p>
-<p>echo   </p>
-<p>echo 生成客户端私钥<br>openssl genrsa -des3 -out $private_path/client.pem 1024</p>
-<p>echo  </p>
-<p>echo 生成客户端私钥<br>openssl genrsa -des3 -out $private_path/client.pem 1024</p>
-<p>echo  </p>
-<p>echo 查看私钥信息
-openssl rsa -noout -text -in $private_path/client.pem</p>
-<p>echo</p>
-<p>echo 生成客户端证书请求<br>openssl req -new -key $private_path/client.pem -out $certs_path/client.csr -subj &quot;/C=CN/ST=BJ/L=BJ/O=zlex/OU=zlex/CN=zlex&quot;</p>
-<p>echo  </p>
-<p>echo 查看证书请求
-openssl req -in $certs_path/client.csr -text -noout</p>
-<p>echo</p>
-<p>echo 签发客户端证书<br>openssl ca -in $certs_path/client.csr -out $certs_path/client.crt -cert $certs_path/ca.crt -keyfile $private_path/ca.pem -days 365 -notext</p>
-<p>/#openssl x509 -req -days 365 -sha1 -extensions dir_sect -CA $certs_path/ca.crt -CAkey $private_path/ca.pem -CAserial $ca_path/serial -in $certs_path/client.csr -out $certs_path/client.crt
-echo  </p>
-<p>echo 查看证书详情</p>
-<p>openssl x509 -in $certs_path/client.crt -text -noout
-echo</p>
-<p>echo 证书转换——客户端  </p>
-<p>openssl pkcs12 -export -clcerts -in $certs_path/client.crt -inkey $private_path/client.pem -out $certs_path/client.p12
-echo</p>
-<p>echo 生成证书链PKCS/#7</p>
-<p>openssl crl2pkcs7 -nocrl -certfile $certs_path/server.crt -certfile $certs_path/ca.crt -certfile $certs_path/client.crt -out
-form PEM -out $certs_path/zlex.p7b</p>
-<p>echo</p>
-<p>echo 查看证书链
-openssl pkcs7 -in $certs_path/zlex.p7b -print_certs -noout
-这个脚本就是最重要的结晶了！<img src="" alt="">
-执行结果，如下：
-引用</p>
-<p>生成根证书私钥
-Generating RSA private key, 2048 bit long modulus
-..................................+++
-.............................................................+++
-e is 65537 (0x10001)
-Enter pass phrase for ca/private/ca.pem:
-Verifying - Enter pass phrase for ca/private/ca.pem:
-查看私钥信息
-Enter pass phrase for ca/private/ca.pem:
-Private-Key: (2048 bit)
-modulus:
-    00:d4:18:ab:5f:ad:b7:d0:09:d4:68:63:b5:db:8a:
-    d1:a1:db:7e:f3:bb:bb:c2:be:a7:35:17:9e:bb:20:
-    d3:1f:ed:63:e7:7d:29:6d:d2:7c:60:06:47:53:a6:
-    23:b0:bd:94:65:3f:57:1e:00:51:f3:a1:9a:1b:83:
-    14:a5:53:72:86:21:a2:57:22:2f:6a:a9:46:50:8c:
-    f0:51:cf:e6:83:5b:23:dc:f9:ea:6c:2e:51:20:61:
-    d1:84:9f:28:e8:01:89:b5:cb:55:68:4a:11:b1:06:
-    56:31:21:16:c8:ac:2b:68:31:e1:de:12:d3:21:12:
-    83:36:4c:ca:a8:b5:7e:b9:a7:63:4e:8e:e0:79:0f:
-    0e:91:36:28:7c:dd:9a:e2:e0:98:8b:91:7f:09:7d:
-    20:bb:37:f2:ab:aa:f0:ef:ae:68:7e:db:ca:db:33:
-    84:48:5a:e3:ff:0b:08:0e:96:6d:01:c8:12:35:ec:
-    9f:31:55:7f:53:7e:bd:fb:c4:16:b8:1f:17:29:42:
-    0f:0e:04:57:14:18:fd:e5:d6:3f:40:04:cd:85:dd:
-    d3:eb:2f:9a:bf:3c:8a:60:01:88:2f:43:0a:8b:bb:
-    50:13:f8:cc:68:f9:10:eb:f9:7e:63:de:62:55:32:
-    a8:fe:ce:51:67:79:c9:a6:3b:a3:c9:d7:81:7c:48:
-    f3:d1
-publicExponent: 65537 (0x10001)
-privateExponent:
-    00:b0:8a:e4:43:1c:df:6e:bc:6f:e0:80:76:c4:8a:
-    75:5a:0b:d1:4d:61:cb:b5:1b:6b:24:c7:47:69:ad:
-    b5:ee:d2:73:a1:21:4e:95:ca:69:9a:a8:3f:40:c2:
-    7e:dc:c3:c0:bc:d2:0f:5a:ba:9b:7c:76:dc:46:e0:
-    42:14:27:34:a1:af:67:68:ad:dc:d8:24:94:91:c1:
-    ee:db:ba:78:be:87:e3:7f:31:4b:4e:c6:f2:e2:48:
-    69:d4:c1:82:94:33:8b:84:15:ff:3e:72:c0:ed:20:
-    40:28:5e:c9:8f:39:b8:5b:df:81:89:8f:13:cc:68:
-    93:6d:64:58:20:3c:0a:82:ce:ec:2f:9b:b2:9d:ca:
-    e7:19:22:98:29:6e:7c:4d:85:45:17:50:8f:5d:b1:
-    45:be:42:af:1a:7f:84:26:b4:5d:a6:22:8a:07:e8:
-    b3:b4:5a:59:45:20:b5:ef:1c:81:25:9e:73:74:04:
-    d6:57:30:2c:a7:25:50:7c:d7:87:73:b3:d0:c2:8b:
-    c9:02:8e:15:9e:40:41:a5:7a:a9:d8:85:fb:5b:9a:
-    59:83:bc:80:fa:74:e6:88:14:70:33:61:d7:f5:51:
-    47:8f:60:51:cb:c4:97:66:65:94:f0:ed:58:ca:80:
-    c1:89:e0:55:68:4c:69:21:0f:08:27:e0:87:11:df:
-    b7:bd
-prime1:
-    00:f7:ff:b0:40:de:62:b6:a2:e5:d0:f5:fa:28:3d:
-    d3:30:30:89:8f:d1:ae:df:e9:09:ee:a0:b0:a5:a5:
-    a4:e5:93:97:7e:e6:0b:09:70:4c:62:99:5e:7d:45:
-    2f:fd:21:5a:31:d9:26:7f:39:5f:6e:eb:36:02:4e:
-    18:99:1b:38:13:99:f5:f3:a3:6b:93:83:67:fb:58:
-    67:d4:07:eb:e3:2f:31:b3:97:8f:f6:86:1f:15:08:
-    1a:4b:b5:a8:06:97:72:9c:74:ab:53:1f:ac:ee:fb:
-    59:03:39:a6:5c:a8:77:43:c0:2c:14:60:0e:71:3d:
-    70:b6:59:09:40:86:04:54:bf
-prime2:
-    00:da:f0:73:2c:bd:52:a5:0d:9a:40:c4:34:fc:c9:
-    cf:0f:67:8a:02:01:ca:e7:b8:4e:57:da:0c:0d:b2:
-    f9:f3:f2:e4:4c:82:61:aa:04:2c:88:39:18:bd:86:
-    d6:dc:d0:e9:6c:c6:6f:d9:87:59:57:9b:1a:6b:c9:
-    56:c1:4d:33:ce:3e:15:b9:42:4e:e0:f8:14:91:c3:
-    fe:63:b2:13:29:99:a7:a6:13:cc:f8:9c:38:29:28:
-    dd:ed:d1:a3:7c:05:2c:26:a0:84:c6:09:9e:42:ef:
-    7b:5e:50:c7:57:e3:bc:02:93:0b:74:a1:b5:0b:6e:
-    23:18:8b:82:6f:ac:3c:0b:6f
-exponent1:
-    7c:a1:23:4b:46:37:27:7f:6f:ac:f6:a0:93:ae:96:
-    3e:46:76:2b:2f:7e:09:8a:8c:72:3e:90:e7:7d:fa:
-    03:61:8b:a5:bb:27:da:c3:73:af:ad:51:9d:f4:b2:
-    2c:2c:a1:ae:21:69:c6:4f:e7:d4:cf:21:a2:40:ea:
-    fd:ae:7f:1c:e2:a7:86:9c:1e:c8:d0:25:e6:5b:44:
-    3a:7b:0c:a1:6c:2b:37:0c:b8:cd:74:13:94:b7:30:
-    b7:d1:7f:b2:68:53:b1:aa:b4:1a:9e:f5:82:58:10:
-    20:9d:cd:2c:0d:81:7a:2b:ce:3b:23:16:be:f3:d8:
-    7b:da:fc:da:4f:3f:47:f3
-exponent2:
-    66:c9:5c:49:34:d9:08:04:4a:d6:fd:46:a3:27:5b:
-    be:af:ad:6b:23:cc:4e:dd:88:6a:56:44:32:6a:44:
-    4e:f3:49:9b:61:da:d8:26:fd:81:36:cd:16:ad:a7:
-    52:24:02:72:be:f6:e3:f9:57:48:79:d8:fd:a1:98:
-    c9:47:a5:7a:be:4b:14:9e:bc:c9:81:ae:a6:80:8d:
-    7d:e0:ac:7e:6b:54:f9:f3:71:d7:86:00:17:d2:c7:
-    de:4e:fd:a1:cc:0b:de:56:9d:ff:1b:a4:e1:67:ed:
-    53:6a:39:2c:5a:0e:7a:66:ee:89:e3:21:4c:2c:78:
-    ed:9d:11:af:bb:fc:b4:a1
-coefficient:
-    00:b1:23:a8:cc:b1:5e:2e:38:09:0c:b5:df:2c:c6:
-    15:e8:08:48:45:b9:9d:ec:6f:27:45:5b:a7:bc:b6:
-    b1:ec:a5:39:b4:40:8e:bc:40:1f:b9:4d:14:2e:18:
-    fb:87:1e:20:91:34:58:e3:ac:c3:4a:dc:a8:2a:97:
-    ce:aa:8d:62:0e:91:af:1f:53:d6:37:55:1d:14:9c:
-    01:98:34:77:28:d7:cf:f7:a0:2d:73:40:48:5e:ed:
-    ae:9b:15:42:06:e6:a3:5a:2b:b0:bc:ee:7a:bb:52:
-    e6:28:19:c2:e5:de:6f:4d:fa:fb:69:81:7b:13:2b:
-    01:87:bf:bf:66:8f:24:a1:8f
-生成根证书请求
-Enter pass phrase for ca/private/ca.pem:
-查看证书请求
-Certificate Request:
-    Data:
-        Version: 0 (0x0)
-        Subject: C=CN, ST=BJ, L=BJ, O=zlex, OU=zlex, CN=ca.zlex.org
-        Subject Public Key Info:
-            Public Key Algorithm: rsaEncryption
-            RSA Public Key: (2048 bit)
-                Modulus (2048 bit):
-                    00:d4:18:ab:5f:ad:b7:d0:09:d4:68:63:b5:db:8a:
-                    d1:a1:db:7e:f3:bb:bb:c2:be:a7:35:17:9e:bb:20:
-                    d3:1f:ed:63:e7:7d:29:6d:d2:7c:60:06:47:53:a6:
-                    23:b0:bd:94:65:3f:57:1e:00:51:f3:a1:9a:1b:83:
-                    14:a5:53:72:86:21:a2:57:22:2f:6a:a9:46:50:8c:
-                    f0:51:cf:e6:83:5b:23:dc:f9:ea:6c:2e:51:20:61:
-                    d1:84:9f:28:e8:01:89:b5:cb:55:68:4a:11:b1:06:
-                    56:31:21:16:c8:ac:2b:68:31:e1:de:12:d3:21:12:
-                    83:36:4c:ca:a8:b5:7e:b9:a7:63:4e:8e:e0:79:0f:
-                    0e:91:36:28:7c:dd:9a:e2:e0:98:8b:91:7f:09:7d:
-                    20:bb:37:f2:ab:aa:f0:ef:ae:68:7e:db:ca:db:33:
-                    84:48:5a:e3:ff:0b:08:0e:96:6d:01:c8:12:35:ec:
-                    9f:31:55:7f:53:7e:bd:fb:c4:16:b8:1f:17:29:42:
-                    0f:0e:04:57:14:18:fd:e5:d6:3f:40:04:cd:85:dd:
-                    d3:eb:2f:9a:bf:3c:8a:60:01:88:2f:43:0a:8b:bb:
-                    50:13:f8:cc:68:f9:10:eb:f9:7e:63:de:62:55:32:
-                    a8:fe:ce:51:67:79:c9:a6:3b:a3:c9:d7:81:7c:48:
-                    f3:d1
-                Exponent: 65537 (0x10001)
-        Attributes:
-            a0:00
-    Signature Algorithm: sha1WithRSAEncryption
-        af:91:f8:56:6f:db:de:cb:df:2c:87:93:99:ac:4b:51:12:a2:
-        c1:2b:09:d2:58:7c:e1:07:5c:53:9f:f3:e1:b6:3a:e9:08:e7:
-        65:89:3b:0a:01:83:24:a3:b5:74:65:50:a5:77:bc:30:1b:7d:
-        80:8b:4c:92:ec:81:91:6e:b7:8f:05:e7:1d:b2:89:84:18:8c:
-        5f:66:be:19:15:ba:ba:c3:f7:0d:c3:7d:7a:11:47:17:e5:cf:
-        87:69:2e:15:91:d7:db:9d:8e:c9:0f:81:71:fa:00:93:33:2c:
-        99:e1:be:76:06:f1:8a:e6:8b:1d:9b:07:70:f0:f2:44:91:ed:
-        a2:ed:28:91:5f:6a:8a:f3:cf:ab:0d:b3:05:30:72:19:86:ae:
-        c6:2d:a4:22:9f:21:cf:55:0c:b7:79:44:01:6e:36:43:a5:dc:
-        a0:ea:46:2a:b0:9d:b3:53:4a:57:fc:72:1b:4c:52:cc:a3:39:
-        d6:49:d6:f4:8c:e2:bf:5a:a6:6e:69:7c:f2:bc:7b:02:b7:f5:
-        91:7f:94:2b:8c:58:0f:aa:a3:72:93:46:fe:08:29:08:51:eb:
-        c6:a0:4e:7a:e1:bd:c6:0b:11:9d:63:96:af:22:ee:7b:79:84:
-        cd:e7:f0:23:17:e7:9f:a2:73:c5:15:e1:f5:a1:af:8d:58:f5:
-        e0:eb:57:fd
-签发根证书
-Using configuration from /etc/pki/tls/openssl.cnf
-Enter pass phrase for ca/private/ca.pem:
-Check that the request matches the signature
-Signature ok
-Certificate Details:
-        Serial Number: 1 (0x1)
-        Validity
-            Not Before: Jul 24 08:15:59 2012 GMT
-            Not After : Jul 22 08:15:59 2022 GMT
-        Subject:
-            countryName               = CN
-            stateOrProvinceName       = BJ
-            organizationName          = zlex
-            organizationalUnitName    = zlex
-            commonName                = ca.zlex.org
-        X509v3 extensions:
-            X509v3 Subject Key Identifier:
-                7E:C9:9A:37:37:66:AC:79:41:63:F0:61:48:CD:24:39:2F:C2:0E:E9
-            X509v3 Authority Key Identifier:
-                keyid:7E:C9:9A:37:37:66:AC:79:41:63:F0:61:48:CD:24:39:2F:C2:0E:E9
-                DirName:/C=CN/ST=BJ/O=zlex/OU=zlex/CN=ca.zlex.org
-                serial:01
-            X509v3 Basic Constraints:
-                CA:TRUE
-Certificate is to be certified until Jul 22 08:15:59 2022 GMT (3650 days)
-Write out database with 1 new entries
-Data Base Updated
-查看证书详情
-Certificate:
-    Data:
-        Version: 3 (0x2)
-        Serial Number: 1 (0x1)
-        Signature Algorithm: sha1WithRSAEncryption
-        Issuer: C=CN, ST=BJ, O=zlex, OU=zlex, CN=ca.zlex.org
-        Validity
-            Not Before: Jul 24 08:15:59 2012 GMT
-            Not After : Jul 22 08:15:59 2022 GMT
-        Subject: C=CN, ST=BJ, O=zlex, OU=zlex, CN=ca.zlex.org
-        Subject Public Key Info:
-            Public Key Algorithm: rsaEncryption
-            RSA Public Key: (2048 bit)
-                Modulus (2048 bit):
-                    00:d4:18:ab:5f:ad:b7:d0:09:d4:68:63:b5:db:8a:
-                    d1:a1:db:7e:f3:bb:bb:c2:be:a7:35:17:9e:bb:20:
-                    d3:1f:ed:63:e7:7d:29:6d:d2:7c:60:06:47:53:a6:
-                    23:b0:bd:94:65:3f:57:1e:00:51:f3:a1:9a:1b:83:
-                    14:a5:53:72:86:21:a2:57:22:2f:6a:a9:46:50:8c:
-                    f0:51:cf:e6:83:5b:23:dc:f9:ea:6c:2e:51:20:61:
-                    d1:84:9f:28:e8:01:89:b5:cb:55:68:4a:11:b1:06:
-                    56:31:21:16:c8:ac:2b:68:31:e1:de:12:d3:21:12:
-                    83:36:4c:ca:a8:b5:7e:b9:a7:63:4e:8e:e0:79:0f:
-                    0e:91:36:28:7c:dd:9a:e2:e0:98:8b:91:7f:09:7d:
-                    20:bb:37:f2:ab:aa:f0:ef:ae:68:7e:db:ca:db:33:
-                    84:48:5a:e3:ff:0b:08:0e:96:6d:01:c8:12:35:ec:
-                    9f:31:55:7f:53:7e:bd:fb:c4:16:b8:1f:17:29:42:
-                    0f:0e:04:57:14:18:fd:e5:d6:3f:40:04:cd:85:dd:
-                    d3:eb:2f:9a:bf:3c:8a:60:01:88:2f:43:0a:8b:bb:
-                    50:13:f8:cc:68:f9:10:eb:f9:7e:63:de:62:55:32:
-                    a8:fe:ce:51:67:79:c9:a6:3b:a3:c9:d7:81:7c:48:
-                    f3:d1
-                Exponent: 65537 (0x10001)
-        X509v3 extensions:
-            X509v3 Subject Key Identifier:
-                7E:C9:9A:37:37:66:AC:79:41:63:F0:61:48:CD:24:39:2F:C2:0E:E9
-            X509v3 Authority Key Identifier:
-                keyid:7E:C9:9A:37:37:66:AC:79:41:63:F0:61:48:CD:24:39:2F:C2:0E:E9
-                DirName:/C=CN/ST=BJ/O=zlex/OU=zlex/CN=ca.zlex.org
-                serial:01
-            X509v3 Basic Constraints:
-                CA:TRUE
-    Signature Algorithm: sha1WithRSAEncryption
-        8a:99:b8:17:fc:64:7b:88:9c:1b:91:23:60:f4:5c:51:16:9a:
-        9f:42:b4:d3:a5:bb:79:ca:78:e3:fc:a7:af:66:da:ec:5a:8c:
-        81:c1:aa:04:32:a9:59:e0:d6:6a:f2:37:38:97:70:a5:27:5d:
-        14:73:2e:2d:73:78:1d:37:2c:04:f7:c3:99:9d:be:0c:dd:2a:
-        27:2c:0f:6e:95:96:01:c7:4c:99:f7:49:69:f9:ba:cb:62:b8:
-        c6:43:6c:5b:b5:cd:25:42:a7:fb:81:27:bc:d8:e4:95:26:7d:
-        da:50:f8:b8:be:0a:3d:54:35:d0:9d:22:e7:f0:f0:4c:7d:b4:
-        57:2e:98:91:1a:1d:49:e5:8e:48:f6:2b:54:7e:04:fc:1c:e3:
-        52:f7:04:f6:9b:bb:84:25:31:f7:31:6e:7f:fa:4c:e4:15:a2:
-        86:0a:1a:56:8c:ad:07:49:fb:bc:28:27:a3:95:ba:eb:b3:28:
-        db:11:78:ef:84:fc:3c:16:df:58:39:2e:14:8d:89:fe:7a:d2:
-        24:eb:a7:66:11:8c:88:55:40:e1:c3:3b:95:b2:bc:af:36:0e:
-        92:a8:cd:62:d5:57:9c:11:1b:f6:a1:36:5f:25:6c:16:c5:e2:
-        68:19:e7:12:3d:4b:07:24:81:e6:71:f9:59:c5:f9:1c:62:6d:
-        b3:24:b9:8a
-证书转换——根证书
-Enter pass phrase for ca/private/ca.pem:
-Enter Export Password:
-Verifying - Enter Export Password:
-生成服务器端私钥
-Generating RSA private key, 1024 bit long modulus
-......................................................++++++
-................++++++
-e is 65537 (0x10001)
-Enter pass phrase for ca/private/server.pem:
-Verifying - Enter pass phrase for ca/private/server.pem:
-查看私钥信息
-Enter pass phrase for ca/private/server.pem:
-Private-Key: (1024 bit)
-modulus:
-    00:d8:f9:bd:0a:a8:d3:97:98:b2:22:af:29:a9:31:
-    76:50:52:77:c8:3b:7c:91:75:db:b3:63:88:cc:00:
-    be:1a:6c:e6:80:23:90:37:5f:1a:d3:80:f2:7f:b5:
-    77:01:ec:85:3e:4e:c0:af:0d:77:c0:a5:8b:bc:c3:
-    fe:70:91:66:17:a4:ec:23:08:5b:e3:df:a3:40:2f:
-    e6:83:bd:3f:d0:62:9c:c0:36:ad:e7:cb:13:e8:34:
-    d7:6a:66:57:f5:bb:94:2f:7c:d5:27:7b:ee:e6:4f:
-    fc:ff:c1:a4:01:96:d6:a0:b8:46:1d:93:02:a6:c5:
-    00:bd:d9:e9:4e:2d:87:d5:95
-publicExponent: 65537 (0x10001)
-privateExponent:
-    4d:da:15:fd:6c:24:37:c1:bf:30:f8:be:af:09:a3:
-    55:20:b1:ff:f3:70:37:d5:1d:16:99:c1:2c:c9:9b:
-    6c:69:e4:ae:d7:93:d8:7a:54:6a:cd:5a:b5:7e:0c:
-    0c:71:ac:41:76:0a:67:05:23:11:c9:94:81:0f:a6:
-    0d:07:ee:a4:26:0e:20:ff:36:6c:f7:2d:fa:8e:39:
-    85:f8:b8:1a:e0:be:26:f8:24:3c:d4:d0:a0:89:9c:
-    48:15:d9:28:de:51:dd:14:3f:ca:c9:63:ed:5d:e4:
-    50:b0:06:5e:1b:f8:99:b4:49:f6:d6:cb:60:8a:7b:
-    fa:f8:6e:86:44:55:e5:45
-prime1:
-    00:ef:cc:38:ab:e6:98:71:09:32:5c:69:b3:e0:59:
-    9d:d7:7a:f9:e3:b9:cd:a8:84:74:1a:91:2a:db:2c:
-    96:40:5a:28:0b:99:6c:da:fa:ca:83:54:e0:59:06:
-    84:df:55:9a:04:9c:1c:6b:54:52:d5:31:d7:f9:0e:
-    9a:13:b0:ed:03
-prime2:
-    00:e7:a2:c3:03:55:d7:54:7c:3a:38:40:f1:ac:9a:
-    e8:dd:3a:5c:24:a6:78:34:c4:ce:24:c8:31:de:5a:
-    0e:df:09:df:7c:ad:36:14:e0:be:6d:2c:58:89:c6:
-    7e:ec:51:82:68:81:91:ed:b5:04:ff:c0:61:8e:aa:
-    5b:ee:6b:f3:87
-exponent1:
-    2a:22:0c:d7:0f:56:3b:8e:2d:1e:15:a8:78:43:e6:
-    ba:e4:ad:a1:78:95:0d:05:f0:cc:76:33:3c:7d:52:
-    0d:0e:8a:38:b7:85:6b:d8:62:da:be:80:08:c4:5f:
-    76:4a:39:1c:94:3d:5e:12:5b:d7:7f:c1:7d:ce:35:
-    fe:3d:b8:f7
-exponent2:
-    00:94:0b:ec:36:52:84:19:04:79:35:81:14:b5:ec:
-    20:8f:5d:00:8d:90:34:5e:0d:b7:6f:bc:e0:5a:ac:
-    16:bb:29:15:45:1b:73:e8:6e:28:67:a0:a3:4a:13:
-    ab:05:a1:a7:06:e2:61:81:9b:64:01:8e:55:0c:19:
-    08:3e:df:92:3b
-coefficient:
-    00:8e:4e:ee:04:55:cc:4f:0f:c0:02:a4:9d:08:a8:
-    4b:ec:72:7c:86:27:a9:0a:5e:1c:94:65:9e:c6:8a:
-    6a:5c:9b:76:5d:c0:ae:f8:36:61:15:3b:67:fb:15:
-    b3:cf:f4:2c:9b:56:66:13:89:89:69:01:d9:6e:b0:
-    f7:02:d4:06:c9
-生成服务器端证书请求
-Enter pass phrase for ca/private/server.pem:
-查看证书请求
-Certificate Request:
-    Data:
-        Version: 0 (0x0)
-        Subject: C=CN, ST=BJ, L=BJ, O=zlex, OU=zlex, CN=www.zlex.org
-        Subject Public Key Info:
-            Public Key Algorithm: rsaEncryption
-            RSA Public Key: (1024 bit)
-                Modulus (1024 bit):
-                    00:d8:f9:bd:0a:a8:d3:97:98:b2:22:af:29:a9:31:
-                    76:50:52:77:c8:3b:7c:91:75:db:b3:63:88:cc:00:
-                    be:1a:6c:e6:80:23:90:37:5f:1a:d3:80:f2:7f:b5:
-                    77:01:ec:85:3e:4e:c0:af:0d:77:c0:a5:8b:bc:c3:
-                    fe:70:91:66:17:a4:ec:23:08:5b:e3:df:a3:40:2f:
-                    e6:83:bd:3f:d0:62:9c:c0:36:ad:e7:cb:13:e8:34:
-                    d7:6a:66:57:f5:bb:94:2f:7c:d5:27:7b:ee:e6:4f:
-                    fc:ff:c1:a4:01:96:d6:a0:b8:46:1d:93:02:a6:c5:
-                    00:bd:d9:e9:4e:2d:87:d5:95
-                Exponent: 65537 (0x10001)
-        Attributes:
-            a0:00
-    Signature Algorithm: sha1WithRSAEncryption
-        2b:e9:b9:0b:e0:94:56:95:dd:59:1e:19:16:e0:f9:73:db:50:
-        63:d3:d4:4d:5c:9b:98:9f:a7:6d:9b:4d:ae:67:52:18:e1:42:
-        b0:66:7c:75:6a:db:98:bc:e6:47:08:aa:55:ca:ce:35:5c:5a:
-        60:8b:7b:c8:f0:10:8a:bd:5f:d7:c8:b8:48:03:18:7e:68:6e:
-        69:35:9c:c8:b0:c8:65:43:43:25:35:d7:d2:70:45:55:ab:78:
-        51:4d:22:c3:68:b2:97:b5:3c:86:e8:2b:43:de:5d:e4:b0:b5:
-        0e:eb:84:9d:42:81:ee:e0:0a:48:40:6a:93:a4:bd:3a:45:6f:
-        20:24
-签发服务器端证书
-Using configuration from /etc/pki/tls/openssl.cnf
-Enter pass phrase for ca/private/ca.pem:
-Check that the request matches the signature
-Signature ok
-Certificate Details:
-        Serial Number: 2 (0x2)
-        Validity
-            Not Before: Jul 24 08:16:15 2012 GMT
-            Not After : Jul 24 08:16:15 2013 GMT
-        Subject:
-            countryName               = CN
-            stateOrProvinceName       = BJ
-            organizationName          = zlex
-            organizationalUnitName    = zlex
-            commonName                = www.zlex.org
-        X509v3 extensions:
-            X509v3 Basic Constraints:
-                CA:FALSE
-            Netscape Comment:
-                OpenSSL Generated Certificate
-            X509v3 Subject Key Identifier:
-                CF:79:10:96:42:84:0C:51:DE:6E:DB:3C:5B:08:F1:E1:EB:0C:26:B9
-            X509v3 Authority Key Identifier:
-                keyid:7E:C9:9A:37:37:66:AC:79:41:63:F0:61:48:CD:24:39:2F:C2:0E:E9
-Certificate is to be certified until Jul 24 08:16:15 2013 GMT (365 days)
-Sign the certificate? [y/n]:y
-1 out of 1 certificate requests certified, commit? [y/n]y
-Write out database with 1 new entries
-Data Base Updated
-查看证书详情
-Certificate:
-    Data:
-        Version: 3 (0x2)
-        Serial Number: 2 (0x2)
-        Signature Algorithm: sha1WithRSAEncryption
-        Issuer: C=CN, ST=BJ, O=zlex, OU=zlex, CN=ca.zlex.org
-        Validity
-            Not Before: Jul 24 08:16:15 2012 GMT
-            Not After : Jul 24 08:16:15 2013 GMT
-        Subject: C=CN, ST=BJ, O=zlex, OU=zlex, CN=www.zlex.org
-        Subject Public Key Info:
-            Public Key Algorithm: rsaEncryption
-            RSA Public Key: (1024 bit)
-                Modulus (1024 bit):
-                    00:d8:f9:bd:0a:a8:d3:97:98:b2:22:af:29:a9:31:
-                    76:50:52:77:c8:3b:7c:91:75:db:b3:63:88:cc:00:
-                    be:1a:6c:e6:80:23:90:37:5f:1a:d3:80:f2:7f:b5:
-                    77:01:ec:85:3e:4e:c0:af:0d:77:c0:a5:8b:bc:c3:
-                    fe:70:91:66:17:a4:ec:23:08:5b:e3:df:a3:40:2f:
-                    e6:83:bd:3f:d0:62:9c:c0:36:ad:e7:cb:13:e8:34:
-                    d7:6a:66:57:f5:bb:94:2f:7c:d5:27:7b:ee:e6:4f:
-                    fc:ff:c1:a4:01:96:d6:a0:b8:46:1d:93:02:a6:c5:
-                    00:bd:d9:e9:4e:2d:87:d5:95
-                Exponent: 65537 (0x10001)
-        X509v3 extensions:
-            X509v3 Basic Constraints:
-                CA:FALSE
-            Netscape Comment:
-                OpenSSL Generated Certificate
-            X509v3 Subject Key Identifier:
-                CF:79:10:96:42:84:0C:51:DE:6E:DB:3C:5B:08:F1:E1:EB:0C:26:B9
-            X509v3 Authority Key Identifier:
-                keyid:7E:C9:9A:37:37:66:AC:79:41:63:F0:61:48:CD:24:39:2F:C2:0E:E9
-    Signature Algorithm: sha1WithRSAEncryption
-        3d:85:0a:f5:a6:8e:f5:13:1b:fc:74:b6:50:8f:fe:0c:e6:32:
-        0e:0c:5a:0a:75:2d:e8:15:39:2f:93:46:29:c6:cc:27:5a:36:
-        a0:93:f8:bc:38:d5:2d:55:b9:19:de:81:6f:b6:5f:1f:07:65:
-        81:c5:12:4e:ea:3e:09:d0:d5:b8:66:c1:cd:4d:5d:51:19:a1:
-        7f:7b:cb:dc:bf:b0:be:3e:f8:8b:74:d3:31:a9:95:a3:ef:25:
-        a3:1e:98:65:0f:d4:40:51:ef:42:02:72:f0:59:26:8a:e7:d6:
-        ca:34:ad:fb:3d:a8:e7:05:93:a6:78:bd:b5:90:51:83:06:2b:
-        95:db:01:0c:89:9f:74:a4:32:89:c5:15:c6:ec:e2:61:10:29:
-        70:da:c5:ea:d6:9c:be:c3:4c:a1:42:6a:26:2f:23:7c:90:51:
-        8f:51:ee:49:c9:6b:9c:0c:15:a2:d3:dc:90:19:db:4d:d1:ad:
-        ca:06:d1:e1:60:20:18:b1:6d:0b:17:f7:06:e6:e8:d1:b0:0c:
-        6d:55:16:f1:63:54:da:c2:3f:6c:e5:99:68:7a:a0:fa:29:5c:
-        dc:cf:34:90:fb:91:7b:e0:5d:bb:a0:9d:91:f3:17:bd:0b:5a:
-        69:d7:0c:24:75:ca:b2:08:da:bf:67:35:ce:01:d0:4e:45:81:
-        97:bd:fb:87
-证书转换——服务器端
-Enter pass phrase for ca/private/server.pem:
-Enter Export Password:
-Verifying - Enter Export Password:
-生成客户端私钥
-Generating RSA private key, 1024 bit long modulus
-..++++++
-...........++++++
-e is 65537 (0x10001)
-Enter pass phrase for ca/private/client.pem:
-Verifying - Enter pass phrase for ca/private/client.pem:
-查看私钥信息
-Enter pass phrase for ca/private/client.pem:
-Private-Key: (1024 bit)
-modulus:
-    00:b4:e9:7d:3d:6b:8b:07:94:7d:47:51:56:3e:0e:
-    92:2f:87:8c:60:0f:b8:cb:eb:90:6d:13:76:51:75:
-    e4:3e:b7:6e:1f:f0:63:5b:f7:ba:51:c0:04:1e:f1:
-    d0:ef:58:4a:35:47:4a:1a:11:72:fc:e9:10:82:ec:
-    3e:0d:ef:7d:17:a0:5e:93:b4:01:8f:a5:27:3c:3e:
-    a9:26:f0:00:ba:ca:24:98:92:51:3e:4b:d0:81:a7:
-    fc:14:e2:98:f5:27:f2:51:4c:a8:ae:b4:5f:e7:cc:
-    70:7e:23:57:92:6a:cf:d4:1d:6f:b3:52:8a:4a:1a:
-    1b:65:f0:4d:1c:0b:1f:50:eb
-publicExponent: 65537 (0x10001)
-privateExponent:
-    3a:35:b2:8d:73:af:fd:55:62:e5:f2:9e:dc:42:d5:
-    f8:a3:15:a0:c7:0e:3f:d6:e0:d6:a7:df:77:20:86:
-    bb:43:4c:14:cc:c5:3b:8f:3f:0d:14:ca:7e:a6:72:
-    02:c1:16:c7:83:d3:ad:05:96:49:18:38:ae:d7:92:
-    b3:eb:2e:05:43:d6:3d:04:3c:0b:fc:15:79:c5:85:
-    10:ed:21:6e:30:73:0b:a6:4f:9a:fe:db:4a:98:bc:
-    ec:03:7b:7f:e6:16:2f:a5:f3:5e:0d:cf:ce:eb:4a:
-    3e:c5:b9:7f:fc:4c:60:9e:0e:d4:aa:91:5a:46:f7:
-    b3:77:fc:0b:1b:62:70:b9
-prime1:
-    00:ef:6d:7f:92:6a:af:21:59:ed:fe:49:a8:7c:4a:
-    1d:4d:7c:f9:38:bf:e7:dc:42:41:e1:33:f9:e1:c7:
-    74:45:2e:1c:e4:40:8d:5f:1a:ac:11:9e:a4:6c:1d:
-    00:6d:4e:aa:4d:58:e9:92:84:ac:d9:29:67:e0:79:
-    a8:a3:15:e3:2d
-prime2:
-    00:c1:6f:21:c5:62:48:78:3a:0f:25:98:00:46:d6:
-    c2:2d:0f:96:fb:20:4b:f4:03:81:71:3f:6f:30:c0:
-    f3:a6:e6:f4:00:a4:fa:0b:97:e6:2a:21:8c:cb:c1:
-    28:eb:5f:f6:01:62:85:9a:37:98:e7:53:a4:8b:3f:
-    bd:77:eb:f3:77
-exponent1:
-    00:e3:71:e0:9b:85:af:22:7e:9c:a0:50:f6:b6:43:
-    6d:bc:bb:b8:c0:d9:44:f8:2f:15:08:4b:68:d8:bb:
-    b1:cf:3a:34:05:fc:f0:8f:64:f6:0a:b2:ea:bd:2d:
-    7b:c7:5a:d0:5b:33:d8:86:f0:74:86:c3:57:c3:9d:
-    ae:be:66:3f:6d
-exponent2:
-    00:82:4a:c9:04:9b:5f:15:1c:86:77:5c:1b:53:9b:
-    f4:cf:45:60:fd:66:93:c2:99:59:e7:5e:43:17:23:
-    e0:fa:db:36:1f:f9:00:34:2e:ec:ea:14:0f:32:6f:
-    b9:90:51:e2:f2:ab:da:32:36:a0:d7:b0:8f:74:fc:
-    4a:33:2c:cb:a1
-coefficient:
-    51:c1:7e:d7:0d:98:86:cb:ca:41:ea:aa:54:6c:00:
-    49:c3:18:12:c4:5b:75:fe:0d:0c:e2:2f:0f:93:8e:
-    8e:01:c5:9d:ff:40:2b:20:08:24:7f:a5:f2:da:67:
-    96:5e:e6:7e:1e:52:32:2f:88:ef:df:20:6a:75:ec:
-    28:cd:fa:a0
-生成客户端证书请求
-Enter pass phrase for ca/private/client.pem:
-查看证书请求
-Certificate Request:
-    Data:
-        Version: 0 (0x0)
-        Subject: C=CN, ST=BJ, L=BJ, O=zlex, OU=zlex, CN=zlex
-        Subject Public Key Info:
-            Public Key Algorithm: rsaEncryption
-            RSA Public Key: (1024 bit)
-                Modulus (1024 bit):
-                    00:b4:e9:7d:3d:6b:8b:07:94:7d:47:51:56:3e:0e:
-                    92:2f:87:8c:60:0f:b8:cb:eb:90:6d:13:76:51:75:
-                    e4:3e:b7:6e:1f:f0:63:5b:f7:ba:51:c0:04:1e:f1:
-                    d0:ef:58:4a:35:47:4a:1a:11:72:fc:e9:10:82:ec:
-                    3e:0d:ef:7d:17:a0:5e:93:b4:01:8f:a5:27:3c:3e:
-                    a9:26:f0:00:ba:ca:24:98:92:51:3e:4b:d0:81:a7:
-                    fc:14:e2:98:f5:27:f2:51:4c:a8:ae:b4:5f:e7:cc:
-                    70:7e:23:57:92:6a:cf:d4:1d:6f:b3:52:8a:4a:1a:
-                    1b:65:f0:4d:1c:0b:1f:50:eb
-                Exponent: 65537 (0x10001)
-        Attributes:
-            a0:00
-    Signature Algorithm: sha1WithRSAEncryption
-        91:5b:b2:2e:b3:54:14:92:7a:44:c0:59:11:0f:fe:08:50:33:
-        09:0f:73:d3:9d:15:43:07:66:4a:9e:7c:de:12:4d:bc:b6:3a:
-        7a:6b:36:40:3a:4b:ea:db:f7:2e:a1:de:ce:4f:a6:98:14:3b:
-        c0:f6:3d:fe:db:82:fa:c7:f1:1e:9a:6c:2b:ff:e6:a4:91:b1:
-        ab:20:44:91:a8:d9:1b:13:8f:9e:24:68:16:f3:c1:66:7b:3b:
-        29:b5:61:3d:be:88:00:d8:0a:1c:63:f0:25:6c:33:7d:86:80:
-        54:d5:75:db:6f:7e:9c:52:4c:70:0d:5a:88:ae:b5:1a:12:41:
-        e4:47
-签发客户端证书
-Using configuration from /etc/pki/tls/openssl.cnf
-Enter pass phrase for ca/private/ca.pem:
-Check that the request matches the signature
-Signature ok
-Certificate Details:
-        Serial Number: 3 (0x3)
-        Validity
-            Not Before: Jul 24 08:16:35 2012 GMT
-            Not After : Jul 24 08:16:35 2013 GMT
-        Subject:
-            countryName               = CN
-            stateOrProvinceName       = BJ
-            organizationName          = zlex
-            organizationalUnitName    = zlex
-            commonName                = zlex
-        X509v3 extensions:
-            X509v3 Basic Constraints:
-                CA:FALSE
-            Netscape Comment:
-                OpenSSL Generated Certificate
-            X509v3 Subject Key Identifier:
-                FD:85:1C:BA:E0:C4:81:F5:F4:92:F1:FC:8A:59:77:33:60:6F:47:F7
-            X509v3 Authority Key Identifier:
-                keyid:7E:C9:9A:37:37:66:AC:79:41:63:F0:61:48:CD:24:39:2F:C2:0E:E9
-Certificate is to be certified until Jul 24 08:16:35 2013 GMT (365 days)
-Sign the certificate? [y/n]:y
-1 out of 1 certificate requests certified, commit? [y/n]y
-Write out database with 1 new entries
-Data Base Updated
-查看证书详情
-Certificate:
-    Data:
-        Version: 3 (0x2)
-        Serial Number: 3 (0x3)
-        Signature Algorithm: sha1WithRSAEncryption
-        Issuer: C=CN, ST=BJ, O=zlex, OU=zlex, CN=ca.zlex.org
-        Validity
-            Not Before: Jul 24 08:16:35 2012 GMT
-            Not After : Jul 24 08:16:35 2013 GMT
-        Subject: C=CN, ST=BJ, O=zlex, OU=zlex, CN=zlex
-        Subject Public Key Info:
-            Public Key Algorithm: rsaEncryption
-            RSA Public Key: (1024 bit)
-                Modulus (1024 bit):
-                    00:b4:e9:7d:3d:6b:8b:07:94:7d:47:51:56:3e:0e:
-                    92:2f:87:8c:60:0f:b8:cb:eb:90:6d:13:76:51:75:
-                    e4:3e:b7:6e:1f:f0:63:5b:f7:ba:51:c0:04:1e:f1:
-                    d0:ef:58:4a:35:47:4a:1a:11:72:fc:e9:10:82:ec:
-                    3e:0d:ef:7d:17:a0:5e:93:b4:01:8f:a5:27:3c:3e:
-                    a9:26:f0:00:ba:ca:24:98:92:51:3e:4b:d0:81:a7:
-                    fc:14:e2:98:f5:27:f2:51:4c:a8:ae:b4:5f:e7:cc:
-                    70:7e:23:57:92:6a:cf:d4:1d:6f:b3:52:8a:4a:1a:
-                    1b:65:f0:4d:1c:0b:1f:50:eb
-                Exponent: 65537 (0x10001)
-        X509v3 extensions:
-            X509v3 Basic Constraints:
-                CA:FALSE
-            Netscape Comment:
-                OpenSSL Generated Certificate
-            X509v3 Subject Key Identifier:
-                FD:85:1C:BA:E0:C4:81:F5:F4:92:F1:FC:8A:59:77:33:60:6F:47:F7
-            X509v3 Authority Key Identifier:
-                keyid:7E:C9:9A:37:37:66:AC:79:41:63:F0:61:48:CD:24:39:2F:C2:0E:E9
-    Signature Algorithm: sha1WithRSAEncryption
-        b2:31:c0:15:a1:8f:2c:6d:61:0c:4f:6e:c1:fe:7a:88:e0:60:
-        ce:6d:43:b4:29:d8:4d:83:4d:ea:ce:f0:8e:c1:c7:3b:bd:30:
-        cb:92:71:11:7d:19:04:11:58:25:5d:1b:ed:6f:22:13:91:ea:
-        13:7f:0e:99:00:ec:fb:b3:a5:e2:b9:ea:ea:bb:35:09:3b:ca:
-        f5:49:ac:a1:d3:d5:ae:ff:ce:11:a9:2f:53:74:88:24:9f:f8:
-        b2:bc:02:4d:1a:bb:c1:53:3e:6e:31:52:4d:ac:f8:14:bd:b1:
-        0d:31:1d:aa:94:43:38:5e:fb:c2:26:3e:43:ba:25:3b:23:27:
-        a8:7d:5d:3d:f9:97:28:71:51:1d:a4:56:44:b4:f6:51:4a:2b:
-        8b:47:d3:10:49:04:cd:c3:58:62:75:bc:c7:6a:4c:d5:9a:a8:
-        e9:9c:23:ec:f8:26:e5:de:43:4e:f2:8d:c2:75:40:70:3f:03:
-        0f:74:78:7a:bc:ca:6f:90:a0:3e:3a:d2:92:16:d5:ca:af:93:
-        28:1f:24:3a:7e:2c:b9:db:87:10:68:e0:c9:6c:0b:5d:9f:15:
-        be:bc:13:22:af:7b:8f:e9:14:51:04:65:7a:69:18:c2:ca:4f:
-        cb:e5:4c:62:41:88:b1:ee:ac:43:14:34:6d:58:af:52:b1:25:
-        76:f3:0e:8f
-证书转换——客户端
-Enter pass phrase for ca/private/client.pem:
-Enter Export Password:
-Verifying - Enter Export Password:
-生成证书链
-查看证书链
-subject=/C=CN/ST=BJ/O=zlex/OU=zlex/CN=www.zlex.org
-issuer=/C=CN/ST=BJ/O=zlex/OU=zlex/CN=ca.zlex.org
-subject=/C=CN/ST=BJ/O=zlex/OU=zlex/CN=ca.zlex.org
-issuer=/C=CN/ST=BJ/O=zlex/OU=zlex/CN=ca.zlex.org
-subject=/C=CN/ST=BJ/O=zlex/OU=zlex/CN=zlex
-issuer=/C=CN/ST=BJ/O=zlex/OU=zlex/CN=ca.zlex.org
-来看一下这3套证书，如下两幅图所示：
-CA证书
-<img src="" alt="">
-<img src="" alt="">
-<img src="" alt="">
-服务器证书
-<img src="" alt="">
-<img src="" alt="">
-<img src="" alt="">
-客户证书
-<img src="" alt="">
-<img src="" alt="">
-<img src="" alt="">
-证书链
-<img src="" alt="">
-&quot;ca.zlex.org&quot;证书充当了CA根证书，&quot;www.zlex.org&quot;充当服务器端证书，&quot;zlex&quot;充当客户端证书
-使用keytool将其导入本地密钥库
-导入CA证书
-Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>keytool -import -v -trustcacerts -alias ca.zlex.org -file ca.crt -storepass 123456 -keystore ca.keystore          </li>
-</ol>
-<p>keytool -import -v -trustcacerts -alias ca.zlex.org -file ca.crt -storepass 123456 -keystore ca.keystore<br>控制台输出
-引用</p>
-<p>所有者:CN=ca.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN
-签发人:CN=ca.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN
-序列号:989b27ef00e53a99
-有效期: Wed Jul 18 17:53:51 CST 2012 至Sat Jul 16 17:53:51 CST 2022
-证书指纹:
-         MD5:BA:14:1F:89:3A:1E:63:7B:20:AC:5A:50:FE:65:7E:16
-         SHA1:E0:A4:0E:6F:09:7E:01:27:C0:FC:62:26:1A:0C:C6:7B:BF:6A:18:B3
-         签名算法名称:SHA1withRSA
-         版本: 1
-信任这个认证？ [否]：  y
-认证已添加至keystore中
-[正在存储 ca.keystore]
-导入服务器端证书
-Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>keytool -import -v -trustcacerts -alias www.zlex.org -file server.crt -storepass 123456 -keystore server.keystore  </li>
-</ol>
-<p>keytool -import -v -trustcacerts -alias www.zlex.org -file server.crt -storepass 123456 -keystore server.keystore
-控制台输出
-引用</p>
-<p>所有者:CN=www.zlex.org, OU=zlex, O=zlex, ST=BJ, C=CN
-签发人:CN=ca.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN
-序列号:1
-有效期: Wed Jul 18 17:54:25 CST 2012 至Thu Jul 18 17:54:25 CST 2013
-证书指纹:
-         MD5:7E:5E:66:56:AF:E7:F5:72:0F:FC:95:85:97:07:4E:2A
-         SHA1:B1:E7:E8:AC:AB:C9:72:69:D8:E2:25:D5:16:A9:AF:C1:B7:4A:74:5D
-         签名算法名称:SHA1withRSA
-         版本: 3
-扩展:
-/#1: ObjectId: 2.5.29.14 Criticality=false
-SubjectKeyIdentifier [
-KeyIdentifier [
-0000: A8 49 2F E2 2D 15 9F 42   BD 76 2B 20 D3 EB A5 EE  .I/.-..B.v+ ....
-0010: 31 CA E7 63                                        1..c
-]
-]
-/#2: ObjectId: 2.5.29.19 Criticality=false
-BasicConstraints:[
-  CA:false
-  PathLen: undefined
-]
-/#3: ObjectId: 2.5.29.35 Criticality=false
-AuthorityKeyIdentifier [
-[CN=ca.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN]
-SerialNumber: [    989b27ef 00e53a99]
-]
-/#4: ObjectId: 2.16.840.1.113730.1.13 Criticality=false
-信任这个认证？ [否]：  y
-认证已添加至keystore中
-[正在存储 server.keystore]
-导入客户端证书
-Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>keytool -import -v -trustcacerts -alias client -file client.crt -storepass 123456 -keystore client.keystore  </li>
-</ol>
-<p>keytool -import -v -trustcacerts -alias client -file client.crt -storepass 123456 -keystore client.keystore
-以下是输出内容：
-引用</p>
-<p>所有者:CN=zlex, OU=zlex, O=zlex, ST=BJ, C=CN
-签发人:CN=ca.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN
-序列号:2
-有效期: Wed Jul 18 17:54:49 CST 2012 至Thu Jul 18 17:54:49 CST 2013
-证书指纹:
-         MD5:81:16:ED:92:9E:17:DB:E3:BE:DE:CD:8D:F8:E0:EE:C4
-         SHA1:C0:E0:42:81:79:70:4C:F8:44:D4:76:2D:C5:62:7C:67:B2:41:B3:AC
-         签名算法名称:SHA1withRSA
-         版本: 3
-扩展:
-/#1: ObjectId: 2.5.29.14 Criticality=false
-SubjectKeyIdentifier [
-KeyIdentifier [
-0000: 0C 2C 25 86 C6 8D 04 88   F5 63 19 DC 09 B1 3C 5D  .,%......c....&lt;]
-0010: 59 C9 72 1B                                        Y.r.
-]
-]
-/#2: ObjectId: 2.5.29.19 Criticality=false
-BasicConstraints:[
-  CA:false
-  PathLen: undefined
-]
-/#3: ObjectId: 2.5.29.35 Criticality=false
-AuthorityKeyIdentifier [
-[CN=ca.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN]
-SerialNumber: [    989b27ef 00e53a99]
-]
-/#4: ObjectId: 2.16.840.1.113730.1.13 Criticality=false
-信任这个认证？ [否]：  y
-认证已添加至keystore中
-[正在存储 client.keystore]
-PS 吊销证书：
-Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>echo 吊销客户端证书  </li>
-<li>openssl ca -revoke $certs_path/client.crt -cert $certs_path/ca.crt -keyfile $private_path/ca.pem   </li>
-</ol>
-<p>echo 吊销客户端证书</p>
-<p>openssl ca -revoke $certs_path/client.crt -cert $certs_path/ca.crt -keyfile $private_path/ca.pem
-引用</p>
-<p>Using configuration from /etc/pki/tls/openssl.cnf
-Enter pass phrase for private/ca.pem:
-Revoking Certificate 02.
-Data Base Updated
-生成证书吊销列表文件（CRL）
-执行命令如下：
-Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>openssl ca -gencrl -out ca.crl -config &quot;$HOME/testca/conf/testca.conf&quot;  </li>
-</ol>
-<p>openssl ca -gencrl -out ca.crl -config &quot;$HOME/testca/conf/testca.conf&quot;
--crldays和-crlhours参数,说明下一个吊销列表将在多少天后（或多少小时候）发布。
-可以用以下命令检查testca.crl的内容：
-Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>openssl crl -in testca.crl -text -noout  </li>
-</ol>
-<p>openssl crl -in testca.crl -text -noout
-引用
-<a href="http://blog.csdn.net/gothicane/articles/2865818.aspx" target="_blank"><a href="http://blog.csdn.net/gothicane/articles/2865818.aspx">http://blog.csdn.net/gothicane/articles/2865818.aspx</a></a>
-<a href="http://www.5dlinux.com/article/7/2009/linux_35291.html" target="_blank"><a href="http://www.5dlinux.com/article/7/2009/linux_35291.html">http://www.5dlinux.com/article/7/2009/linux_35291.html</a></a>
-<a href="http://www.tc.umn.edu/~brams006/selfsign_ubuntu.html" target="_blank"><a href="http://www.tc.umn.edu/~brams006/selfsign_ubuntu.html">http://www.tc.umn.edu/~brams006/selfsign_ubuntu.html</a></a>
-<a href="http://www.tc.umn.edu/~brams006/selfsign.html" target="_blank"><a href="http://www.tc.umn.edu/~brams006/selfsign.html">http://www.tc.umn.edu/~brams006/selfsign.html</a></a>
-<a href="http://zhouzhk.iteye.com/blog/136943" target="_blank"><a href="http://zhouzhk.iteye.com/blog/136943">http://zhouzhk.iteye.com/blog/136943</a></a>
-<a href="http://bbs.cfan.com.cn/thread-743287-1-1.html" target="_blank"><a href="http://bbs.cfan.com.cn/thread-743287-1-1.html">http://bbs.cfan.com.cn/thread-743287-1-1.html</a></a>
-<a href="http://www.iteye.com/problems/4072" target="_blank"><a href="http://www.iteye.com/problems/4072">http://www.iteye.com/problems/4072</a></a>
-<a href="http://blog.csdn.net/jasonhwang/archive/2008/04/26/2329589.aspx" target="_blank"><a href="http://blog.csdn.net/jasonhwang/archive/2008/04/26/2329589.aspx">http://blog.csdn.net/jasonhwang/archive/2008/04/26/2329589.aspx</a></a>
-<a href="http://blog.csdn.net/jasonhwang/archive/2008/04/29/2344768.aspx" target="_blank"><a href="http://blog.csdn.net/jasonhwang/archive/2008/04/29/2344768.aspx">http://blog.csdn.net/jasonhwang/archive/2008/04/29/2344768.aspx</a></a>
-<strong>相关链接：
-<a href="http://snowolf.iteye.com/blog/379860" target="_blank">Java加密技术（一）——BASE64与单向加密算法MD5&amp;SHA&amp;MAC</a>
-<a href="http://snowolf.iteye.com/blog/380034" target="_blank">Java加密技术（二）——对称加密DES&amp;AES</a>
-<a href="http://snowolf.iteye.com/blog/380761" target="_blank">Java加密技术（三）——PBE算法</a>
-<a href="http://snowolf.iteye.com/blog/381767" target="_blank">Java加密技术（四）——非对称加密算法RSA</a>
-<a href="http://snowolf.iteye.com/blog/382422" target="_blank">Java加密技术（五）——非对称加密算法的由来</a>
-<a href="http://snowolf.iteye.com/blog/382749" target="_blank">Java加密技术（六）——数字签名算法DSA</a>
-<a href="http://snowolf.iteye.com/blog/383412" target="_blank">Java加密技术（七）——非对称加密算法最高ECC</a>
-<a href="http://snowolf.iteye.com/blog/391931" target="_blank">Java加密技术（八）——数字证书</a>
-<a href="http://snowolf.iteye.com/blog/397693" target="_blank">Java加密技术（九）——初探SSL</a>
-<a href="http://snowolf.iteye.com/blog/398198" target="_blank">Java加密技术（十）——单向认证</a>
-<a href="http://snowolf.iteye.com/blog/510985" target="_blank">Java加密技术（十一）——双向认证</a>
-<a href="http://snowolf.iteye.com/blog/735294" target="_blank">Java加密技术（十二）——/<em>.PFX(/</em>.p12)&amp;个人信息交换文件</a>
-</strong></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/加解密/">加解密</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/加解密/" class="label label-success">加解密</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（十一）——双向认证/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（十一）——双向认证" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（十）——单向认证/">Java加密技术（十）——单向认证</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（十）——单向认证/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-">Java加密技术（十）——单向认证</h1>
-<pre><code>在**[Java 加密技术（九）](http://snowolf.iteye.com/blog/397693)**中，我们使用自签名证书完成了认证。接下来，我们使用第三方CA签名机构完成证书签名。
-这里我们使用[thawte](https://www.thawte.com/)提供的测试用21天免费ca证书。
-1.要在该网站上注明你的域名，这里使用**www.zlex.org**作为测试用域名（请勿使用该域名作为你的域名地址，该域名受法律保护！请使用其他非注册域名！）。
-2.如果域名有效，你会收到邮件要求你访问[https://www.thawte.com/cgi/server/try.exe](https://www.thawte.com/cgi/server/try.exe)获得ca证书。
-3.复述密钥库的创建。
-</code></pre><p>Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li><p>keytool -genkey -validity 36000 -alias www.zlex.org -keyalg RSA -keystore d:\zlex.keystore<br>keytool -genkey -validity 36000 -alias www.zlex.org -keyalg RSA -keystore d:\zlex.keystore
-在这里我使用的密码为 <strong>123456</strong>
-控制台输出：
-Console代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<li><p>生成error 文件的路径：你可以通过参数设置-XX:ErrorFile=/path/hs_error%p.log, 默认是在java运行的当前目录 [default: ./hs_err_pid%p.log]</p>
 </li>
-<li><p>输入keystore密码：  </p>
+<li><p>参数-XX:OnError  可以在crash退出的时候执行命令，格式是-XX:OnError=“string”,  <string> 可以是命令的集合，用分号做分隔符, 可以用&quot;%p&quot;来取到当前进程的ID.
+例如：</p>
 </li>
-<li>再次输入新密码:  </li>
-<li>您的名字与姓氏是什么？  </li>
-<li>[Unknown]：  www.zlex.org  </li>
-<li>您的组织单位名称是什么？  </li>
-<li>[Unknown]：  zlex  </li>
-<li>您的组织名称是什么？  </li>
-<li>[Unknown]：  zlex  </li>
-<li>您所在的城市或区域名称是什么？  </li>
-<li>[Unknown]：  BJ  </li>
-<li>您所在的州或省份名称是什么？  </li>
-<li>[Unknown]：  BJ  </li>
-<li>该单位的两字母国家代码是什么  </li>
-<li>[Unknown]：  CN  </li>
-<li>CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN 正确吗？  </li>
-<li>[否]：  Y  </li>
-<li></li>
-<li>输入<tomcat>的主密码  </li>
-<li>（如果和 keystore 密码相同，按回车）：  </li>
-<li>再次输入新密码:  </li>
 </ol>
-<p>输入keystore密码：</p>
-<p>再次输入新密码:
-您的名字与姓氏是什么？</p>
-<p>  [Unknown]：  www.zlex.org
-您的组织单位名称是什么？</p>
-<p>  [Unknown]：  zlex
-您的组织名称是什么？</p>
-<p>  [Unknown]：  zlex
-您所在的城市或区域名称是什么？</p>
-<p>  [Unknown]：  BJ
-您所在的州或省份名称是什么？</p>
-<p>  [Unknown]：  BJ
-该单位的两字母国家代码是什么</p>
-<p>  [Unknown]：  CN
-CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN 正确吗？</p>
-<p>  [否]：  Y</p>
-<p>输入<tomcat>的主密码
-        （如果和 keystore 密码相同，按回车）：</p>
-<p>再次输入新密码:</p>
-<pre><code>4.通过如下命令，从zlex.keystore中导出CA证书申请。
-</code></pre><p>Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<p>// -XX:OnError=&quot;pmap %p&quot;                // show memory map</p>
+<p>// -XX:OnError=&quot;gcore %p; dbx - %p&quot;     // dump core and launch debugger</p>
+<p>在linux中系统会fork出一个子进程去执行shell的命令，因为是用fork可能会内存不够的情况，注意修改你的 /proc/sys/vm/overcommit_memory 参数,不清楚为什么这里不使用vfork</p>
 <ol>
-<li>keytool -certreq -alias www.zlex.org -file d:\zlex.csr -keystore d:\zlex.keystore -v<br>keytool -certreq -alias www.zlex.org -file d:\zlex.csr -keystore d:\zlex.keystore -v你会获得zlex.csr文件，可以用记事本打开，内容如下格式：</li>
+<li>-XX:+ShowMessageBoxOnError 参数，当jvm crash的时候在linux里会启动gdb 去分析和调式，适合在测试环境中使用。</li>
 </ol>
-<p>Text代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<h2 id="-error-"><a href=""></a>什么情况下不会生成error文件</h2>
+<p>linux 内核在发生OOM的时候会强制kill一些进程, 可以在/var/logs/messages中查找</p>
+<h2 id="-error-crash-"><a href=""></a>Error crash 文件的几个重要部分</h2>
+<p><strong>a.  错误信息概要</strong></p>
+<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
 <ol>
-<li>-----BEGIN NEW CERTIFICATE REQUEST-----  </li>
-<li>MIIBnDCCAQUCAQAwXDELMAkGA1UEBhMCQ04xCzAJBgNVBAgTAkJKMQswCQYDVQQHEwJCSjENMAsG  </li>
-<li>A1UEChMEemxleDENMAsGA1UECxMEemxleDEVMBMGA1UEAxMMd3d3LnpsZXgub3JnMIGfMA0GCSqG  </li>
-<li>SIb3DQEBAQUAA4GNADCBiQKBgQCR6DXU9Mp+mCKO7cv9JPsj0n1Ec/GpM09qvhpgX3FNad/ZWSDc  </li>
-<li>vU77YXZSoF9hQp3w1LC+eeKgd2MlVpXTvbVwBNVd2HiQPp37ic6BUUjSaX8LHtCl7l0BIEye9qQ2  </li>
-<li>j8G0kak7e8ZA0s7nb3Ymq/K8BV7v0MQIdhIc1bifK9ZDewIDAQABoAAwDQYJKoZIhvcNAQEFBQAD  </li>
-<li>gYEAMA1r2fbZPtNx37U9TRwadCH2TZZecwKJS/hskNm6ryPKIAp9APWwAyj8WJHRBz5SpZM4zmYO  </li>
-<li>oMCI8BcnY2A4JP+R7/SwXTdH/xcg7NVghd9A2SCgqMpF7KMfc5dE3iygdiPu+UhY200Dvpjx8gmJ  </li>
-<li>1UbH3+nqMUyCrZgURFslOUY=  </li>
-<li>-----END NEW CERTIFICATE REQUEST-----<br>-----BEGIN NEW CERTIFICATE REQUEST-----</li>
+<li>/# A fatal error has been detected by the Java Runtime Environment:  </li>
+<li>/#  </li>
+<li>/#  SIGSEGV (0xb) at pc=0x0000000000043566, pid=32046, tid=1121192256  </li>
+<li>/#  </li>
+<li>/# JRE version: 6.0_17-b04  </li>
+<li>/# Java VM: Java HotSpot(TM) 64-Bit Server VM (14.3-b01 mixed mode linux-amd64 )  </li>
+<li>/# Problematic frame:  </li>
+<li>/# C  0x0000000000043566  </li>
+<li>/#  </li>
+<li>/# If you would like to submit a bug report, please visit:  </li>
+<li>/#   <a href="http://java.sun.com/webapps/bugreport/crash.jsp" target="_blank">http://java.sun.com/webapps/bugreport/crash.jsp</a>  </li>
+<li>/# The crash happened outside the Java Virtual Machine in native code.  </li>
+<li>/# See problematic frame for where to report the bug.<br>SIGSEGV 错误的信号类型 </li>
 </ol>
-<p>MIIBnDCCAQUCAQAwXDELMAkGA1UEBhMCQ04xCzAJBgNVBAgTAkJKMQswCQYDVQQHEwJCSjENMAsG
-A1UEChMEemxleDENMAsGA1UECxMEemxleDEVMBMGA1UEAxMMd3d3LnpsZXgub3JnMIGfMA0GCSqG</p>
-<p>SIb3DQEBAQUAA4GNADCBiQKBgQCR6DXU9Mp+mCKO7cv9JPsj0n1Ec/GpM09qvhpgX3FNad/ZWSDc
-vU77YXZSoF9hQp3w1LC+eeKgd2MlVpXTvbVwBNVd2HiQPp37ic6BUUjSaX8LHtCl7l0BIEye9qQ2</p>
-<p>j8G0kak7e8ZA0s7nb3Ymq/K8BV7v0MQIdhIc1bifK9ZDewIDAQABoAAwDQYJKoZIhvcNAQEFBQAD
-gYEAMA1r2fbZPtNx37U9TRwadCH2TZZecwKJS/hskNm6ryPKIAp9APWwAyj8WJHRBz5SpZM4zmYO</p>
-<p>oMCI8BcnY2A4JP+R7/SwXTdH/xcg7NVghd9A2SCgqMpF7KMfc5dE3iygdiPu+UhY200Dvpjx8gmJ
-1UbH3+nqMUyCrZgURFslOUY=</p>
-<p>-----END NEW CERTIFICATE REQUEST-----
-    5.将上述文件内容拷贝到<a href="https://www.thawte.com/cgi/server/try.exe" target="_blank"><a href="https://www.thawte.com/cgi/server/try.exe">https://www.thawte.com/cgi/server/try.exe</a></a>中，点击next，获得回应内容，这里是p7b格式。
-内容如下：</p>
-<p>Text代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<p>pc 就是IP/PC寄存器值也就是执行指令的代码地址</p>
+<p>pid 就是进程id</p>
+<p>/# Problematic frame:</p>
+<p>/# V  [libjvm.so+0x593045]</p>
+<p>就是导致问题的动态链接库函数的地址</p>
+<p>pc 和 +0x593045 指的是同一个地址，只是一个是动态的偏移地址，一个是运行的虚拟地址</p>
+<p><strong>b.信号信息</strong></p>
+<p>Java中在linux 中注册的信号处理函数，中间有2个参数info, ucvoid</p>
+<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
 <ol>
-<li>-----BEGIN PKCS7-----  </li>
-<li>MIIF3AYJKoZIhvcNAQcCoIIFzTCCBckCAQExADALBgkqhkiG9w0BBwGgggWxMIID  </li>
-<li>EDCCAnmgAwIBAgIQA/mx/pKoaB+KGX2hveFU9zANBgkqhkiG9w0BAQUFADCBhzEL  </li>
-<li>MAkGA1UEBhMCWkExIjAgBgNVBAgTGUZPUiBURVNUSU5HIFBVUlBPU0VTIE9OTFkx  </li>
-<li>HTAbBgNVBAoTFFRoYXd0ZSBDZXJ0aWZpY2F0aW9uMRcwFQYDVQQLEw5URVNUIFRF  </li>
-<li>U1QgVEVTVDEcMBoGA1UEAxMTVGhhd3RlIFRlc3QgQ0EgUm9vdDAeFw0wOTA1Mjgw  </li>
-<li>MDIxMzlaFw0wOTA2MTgwMDIxMzlaMFwxCzAJBgNVBAYTAkNOMQswCQYDVQQIEwJC  </li>
-<li>SjELMAkGA1UEBxMCQkoxDTALBgNVBAoTBHpsZXgxDTALBgNVBAsTBHpsZXgxFTAT  </li>
-<li>BgNVBAMTDHd3dy56bGV4Lm9yZzCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA  </li>
-<li>keg11PTKfpgiju3L/ST7I9J9RHPxqTNPar4aYF9xTWnf2Vkg3L1O+2F2UqBfYUKd  </li>
-<li>8NSwvnnioHdjJVaV0721cATVXdh4kD6d+4nOgVFI0ml/Cx7Qpe5dASBMnvakNo/B  </li>
-<li>tJGpO3vGQNLO5292JqvyvAVe79DECHYSHNW4nyvWQ3sCAwEAAaOBpjCBozAMBgNV  </li>
-<li>HRMBAf8EAjAAMB0GA1UdJQQWMBQGCCsGAQUFBwMBBggrBgEFBQcDAjBABgNVHR8E  </li>
-<li>OTA3MDWgM6Axhi9odHRwOi8vY3JsLnRoYXd0ZS5jb20vVGhhd3RlUHJlbWl1bVNl  </li>
-<li>cnZlckNBLmNybDAyBggrBgEFBQcBAQQmMCQwIgYIKwYBBQUHMAGGFmh0dHA6Ly9v  </li>
-<li>Y3NwLnRoYXd0ZS5jb20wDQYJKoZIhvcNAQEFBQADgYEATPuxZbtJJSPmXvfrr1yz  </li>
-<li>xqM06IwTZ6UU0lZRG7I0WufMjNMKdpn8hklUhE17mxAhGSpewLVVeLR7uzBLFkuC  </li>
-<li>X7wMXxhoYdJZtNai72izU6Rd1oknao7diahvRxPK4IuQ7y2oZ511/4T4vgY6iRAj  </li>
-<li>q4q76HhPJrVRL/sduaiu+gYwggKZMIICAqADAgECAgEAMA0GCSqGSIb3DQEBBAUA  </li>
-<li>MIGHMQswCQYDVQQGEwJaQTEiMCAGA1UECBMZRk9SIFRFU1RJTkcgUFVSUE9TRVMg  </li>
-<li>T05MWTEdMBsGA1UEChMUVGhhd3RlIENlcnRpZmljYXRpb24xFzAVBgNVBAsTDlRF  </li>
-<li>U1QgVEVTVCBURVNUMRwwGgYDVQQDExNUaGF3dGUgVGVzdCBDQSBSb290MB4XDTk2  </li>
-<li>MDgwMTAwMDAwMFoXDTIwMTIzMTIxNTk1OVowgYcxCzAJBgNVBAYTAlpBMSIwIAYD  </li>
-<li>VQQIExlGT1IgVEVTVElORyBQVVJQT1NFUyBPTkxZMR0wGwYDVQQKExRUaGF3dGUg  </li>
-<li>Q2VydGlmaWNhdGlvbjEXMBUGA1UECxMOVEVTVCBURVNUIFRFU1QxHDAaBgNVBAMT  </li>
-<li>E1RoYXd0ZSBUZXN0IENBIFJvb3QwgZ8wDQYJKoZIhvcNAQEBBQADgY0AMIGJAoGB  </li>
-<li>ALV9kG+Os6x/DOhm+tKUQfzVMWGhE95sFmEtkMMTX2Zi4n6i6BvzoReJ5njzt1LF  </li>
-<li>cqu4EUk9Ji20egKKfmqRzmQFLP7+1niSdfJEUE7cKY40QoI99270PTrLjJeaMcCl  </li>
-<li>+AYl+kD+RL5BtuKKU3PurYcsCsre6aTvjMcqpTJOGeSPAgMBAAGjEzARMA8GA1Ud  </li>
-<li>EwEB/wQFMAMBAf8wDQYJKoZIhvcNAQEEBQADgYEAgozj7BkD9O8si2V0v+EZ/t7E  </li>
-<li>fz/LC8y6mD7IBUziHy5/53ymGAGLtyhXHvX+UIE6UWbHro3IqVkrmY5uC93Z2Wew  </li>
-<li>A/6edK3KFUcUikrLeewM7gmqsiASEKx2mKRKlu12jXyNS5tXrPWRDvUKtFC1uL9a  </li>
-<li>12rFAQS2BkIk7aU+ghYxAA==  </li>
-<li>-----END PKCS7-----<br>-----BEGIN PKCS7-----</li>
+<li>static void crash_handler(int sig, siginfo_t/<em> info, void/</em> ucVoid) {  </li>
+<li>// unmask current signal  </li>
+<li>sigset_t newset;  </li>
+<li>sigemptyset(&amp;newset);  </li>
+<li>sigaddset(&amp;newset, sig);  </li>
+<li>sigprocmask(SIG_UNBLOCK, &amp;newset, NULL);  </li>
+<li></li>
+<li>VMError err(NULL, sig, NULL, info, ucVoid);  </li>
+<li>err.report_and_die();  </li>
+<li>}<br>在crash report中的信号错误提示</li>
 </ol>
-<p>MIIF3AYJKoZIhvcNAQcCoIIFzTCCBckCAQExADALBgkqhkiG9w0BBwGgggWxMIID
-EDCCAnmgAwIBAgIQA/mx/pKoaB+KGX2hveFU9zANBgkqhkiG9w0BAQUFADCBhzEL</p>
-<p>MAkGA1UEBhMCWkExIjAgBgNVBAgTGUZPUiBURVNUSU5HIFBVUlBPU0VTIE9OTFkx
-HTAbBgNVBAoTFFRoYXd0ZSBDZXJ0aWZpY2F0aW9uMRcwFQYDVQQLEw5URVNUIFRF</p>
-<p>U1QgVEVTVDEcMBoGA1UEAxMTVGhhd3RlIFRlc3QgQ0EgUm9vdDAeFw0wOTA1Mjgw
-MDIxMzlaFw0wOTA2MTgwMDIxMzlaMFwxCzAJBgNVBAYTAkNOMQswCQYDVQQIEwJC</p>
-<p>SjELMAkGA1UEBxMCQkoxDTALBgNVBAoTBHpsZXgxDTALBgNVBAsTBHpsZXgxFTAT
-BgNVBAMTDHd3dy56bGV4Lm9yZzCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA</p>
-<p>keg11PTKfpgiju3L/ST7I9J9RHPxqTNPar4aYF9xTWnf2Vkg3L1O+2F2UqBfYUKd
-8NSwvnnioHdjJVaV0721cATVXdh4kD6d+4nOgVFI0ml/Cx7Qpe5dASBMnvakNo/B</p>
-<p>tJGpO3vGQNLO5292JqvyvAVe79DECHYSHNW4nyvWQ3sCAwEAAaOBpjCBozAMBgNV
-HRMBAf8EAjAAMB0GA1UdJQQWMBQGCCsGAQUFBwMBBggrBgEFBQcDAjBABgNVHR8E</p>
-<p>OTA3MDWgM6Axhi9odHRwOi8vY3JsLnRoYXd0ZS5jb20vVGhhd3RlUHJlbWl1bVNl
-cnZlckNBLmNybDAyBggrBgEFBQcBAQQmMCQwIgYIKwYBBQUHMAGGFmh0dHA6Ly9v</p>
-<p>Y3NwLnRoYXd0ZS5jb20wDQYJKoZIhvcNAQEFBQADgYEATPuxZbtJJSPmXvfrr1yz
-xqM06IwTZ6UU0lZRG7I0WufMjNMKdpn8hklUhE17mxAhGSpewLVVeLR7uzBLFkuC</p>
-<p>X7wMXxhoYdJZtNai72izU6Rd1oknao7diahvRxPK4IuQ7y2oZ511/4T4vgY6iRAj
-q4q76HhPJrVRL/sduaiu+gYwggKZMIICAqADAgECAgEAMA0GCSqGSIb3DQEBBAUA</p>
-<p>MIGHMQswCQYDVQQGEwJaQTEiMCAGA1UECBMZRk9SIFRFU1RJTkcgUFVSUE9TRVMg
-T05MWTEdMBsGA1UEChMUVGhhd3RlIENlcnRpZmljYXRpb24xFzAVBgNVBAsTDlRF</p>
-<p>U1QgVEVTVCBURVNUMRwwGgYDVQQDExNUaGF3dGUgVGVzdCBDQSBSb290MB4XDTk2
-MDgwMTAwMDAwMFoXDTIwMTIzMTIxNTk1OVowgYcxCzAJBgNVBAYTAlpBMSIwIAYD</p>
-<p>VQQIExlGT1IgVEVTVElORyBQVVJQT1NFUyBPTkxZMR0wGwYDVQQKExRUaGF3dGUg
-Q2VydGlmaWNhdGlvbjEXMBUGA1UECxMOVEVTVCBURVNUIFRFU1QxHDAaBgNVBAMT</p>
-<p>E1RoYXd0ZSBUZXN0IENBIFJvb3QwgZ8wDQYJKoZIhvcNAQEBBQADgY0AMIGJAoGB
-ALV9kG+Os6x/DOhm+tKUQfzVMWGhE95sFmEtkMMTX2Zi4n6i6BvzoReJ5njzt1LF</p>
-<p>cqu4EUk9Ji20egKKfmqRzmQFLP7+1niSdfJEUE7cKY40QoI99270PTrLjJeaMcCl
-+AYl+kD+RL5BtuKKU3PurYcsCsre6aTvjMcqpTJOGeSPAgMBAAGjEzARMA8GA1Ud</p>
-<p>EwEB/wQFMAMBAf8wDQYJKoZIhvcNAQEEBQADgYEAgozj7BkD9O8si2V0v+EZ/t7E
-fz/LC8y6mD7IBUziHy5/53ymGAGLtyhXHvX+UIE6UWbHro3IqVkrmY5uC93Z2Wew</p>
-<p>A/6edK3KFUcUikrLeewM7gmqsiASEKx2mKRKlu12jXyNS5tXrPWRDvUKtFC1uL9a
-12rFAQS2BkIk7aU+ghYxAA==</p>
-<p>-----END PKCS7-----
-将其存储为zlex.p7b
-    6.将由CA签发的证书导入密钥库。</p>
-<p>Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
 <ol>
-<li><p>keytool -import -trustcacerts -alias www.zlex.org -file d:\zlex.p7b -keystore d:\zlex.keystore -v<br>keytool -import -trustcacerts -alias www.zlex.org -file d:\zlex.p7b -keystore d:\zlex.keystore -v
-在这里我使用的密码为 <strong>123456</strong>
- 控制台输出：
-Console代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>输入keystore密码：  </p>
-</li>
-<li></li>
-<li>回复中的最高级认证：  </li>
-<li></li>
-<li>所有者:CN=Thawte Test CA Root, OU=TEST TEST TEST, O=Thawte Certification, ST=FOR  </li>
-<li>TESTING PURPOSES ONLY, C=ZA  </li>
-<li>签发人:CN=Thawte Test CA Root, OU=TEST TEST TEST, O=Thawte Certification, ST=FOR  </li>
-<li>TESTING PURPOSES ONLY, C=ZA  </li>
-<li>序列号:0  </li>
-<li>有效期: Thu Aug 01 08:00:00 CST 1996 至Fri Jan 01 05:59:59 CST 2021  </li>
-<li>证书指纹:  </li>
-<li>MD5:5E:E0:0E:1D:17:B7:CA:A5:7D:36:D6:02:DF:4D:26:A4  </li>
-<li>SHA1:39:C6:9D:27:AF:DC:EB:47:D6:33:36:6A:B2:05:F1:47:A9:B4:DA:EA  </li>
-<li>签名算法名称:MD5withRSA  </li>
-<li>版本: 3  </li>
-<li></li>
-<li>扩展:  </li>
-<li></li>
-<li>/#1: ObjectId: 2.5.29.19 Criticality=true  </li>
-<li>BasicConstraints:[  </li>
-<li>CA:true  </li>
-<li>PathLen:2147483647  </li>
-<li>]  </li>
-<li></li>
-<li></li>
-<li>... 是不可信的。 还是要安装回复？ [否]：  Y  </li>
-<li>认证回复已安装在 keystore中  </li>
-<li>[正在存储 d:\zlex.keystore]  </li>
+<li>siginfo:si_signo=SIGSEGV: si_errno=0, si_code=1 (SEGV_MAPERR), si_addr=0x0000000000043566<br>信号的详细信息和si_addr 出错误的内存，都保存在siginfo_t的结构体中，也就是信号注册函数crash_handler里的参数info,内核会保存导致错误的内存地址在用户空间的信号结构体中siginfo_t，这样在进程在注册的信号处理函数中可以取得导致错误的地址。</li>
 </ol>
-<p>输入keystore密码：</p>
-<p>回复中的最高级认证：</p>
-<p>所有者:CN=Thawte Test CA Root, OU=TEST TEST TEST, O=Thawte Certification, ST=FOR</p>
-<p>TESTING PURPOSES ONLY, C=ZA
-签发人:CN=Thawte Test CA Root, OU=TEST TEST TEST, O=Thawte Certification, ST=FOR</p>
-<p>TESTING PURPOSES ONLY, C=ZA
-序列号:0</p>
-<p>有效期: Thu Aug 01 08:00:00 CST 1996 至Fri Jan 01 05:59:59 CST 2021
-证书指纹:</p>
-<pre><code>     MD5:5E:E0:0E:1D:17:B7:CA:A5:7D:36:D6:02:DF:4D:26:A4
-     SHA1:39:C6:9D:27:AF:DC:EB:47:D6:33:36:6A:B2:05:F1:47:A9:B4:DA:EA
-
-     签名算法名称:MD5withRSA
-     版本: 3
-</code></pre><p>扩展:</p>
-<p>/#1: ObjectId: 2.5.29.19 Criticality=true</p>
-<p>BasicConstraints:[
-  CA:true</p>
-<p>  PathLen:2147483647
-]</p>
-<p>... 是不可信的。 还是要安装回复？ [否]：  Y
-认证回复已安装在 keystore中</p>
-<p>[正在存储 d:\zlex.keystore]
-    7.域名定位
-    将域名www.zlex.org定位到本机上。打开C:\Windows\System32\drivers\etc\hosts文件，将www.zlex.org绑定在本机上。在文件末尾追加127.0.0.1       www.zlex.org。现在通过地址栏访问<a href="http://www.zlex.org，或者通过ping命令，如果能够定位到本机，域名映射就搞定了。" target="_blank">http://www.zlex.org，或者通过ping命令，如果能够定位到本机，域名映射就搞定了。</a>
-    8.配置server.xml
-Xml代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<p><strong>c.寄存器信息</strong></p>
+<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
 <ol>
-<li>&lt;Connector  </li>
-<li>keystoreFile=&quot;conf/zlex.keystore&quot;  </li>
-<li>keystorePass=&quot;123456&quot;   </li>
-<li>truststoreFile=&quot;conf/zlex.keystore&quot;      </li>
-<li>truststorePass=&quot;123456&quot;       </li>
-<li>SSLEnabled=&quot;true&quot;  </li>
-<li>URIEncoding=&quot;UTF-8&quot;  </li>
-<li>clientAuth=&quot;false&quot;            </li>
-<li>maxThreads=&quot;150&quot;  </li>
-<li>port=&quot;443&quot;  </li>
-<li>protocol=&quot;HTTP/1.1&quot;  </li>
-<li>scheme=&quot;https&quot;  </li>
-<li>secure=&quot;true&quot;  </li>
-<li><p>sslProtocol=&quot;TLS&quot; /&gt;  </p>
-<p> &lt;Connector</p>
-<pre><code> keystoreFile=&quot;conf/zlex.keystore&quot;
- keystorePass=&quot;123456&quot;
-
- truststoreFile=&quot;conf/zlex.keystore&quot;   
- truststorePass=&quot;123456&quot;    
-
- SSLEnabled=&quot;true&quot;
- URIEncoding=&quot;UTF-8&quot;
-
- clientAuth=&quot;false&quot;           
- maxThreads=&quot;150&quot;
-
- port=&quot;443&quot;
- protocol=&quot;HTTP/1.1&quot;
-
- scheme=&quot;https&quot;
- secure=&quot;true&quot;
-
- sslProtocol=&quot;TLS&quot; /&gt;
-</code></pre><p>将文件<strong>zlex.keystore</strong>拷贝到tomcat的<strong>conf</strong>目录下，重新启动tomcat。访问<a href="https://www.zlex.org/" target="_blank"><a href="https://www.zlex.org/">https://www.zlex.org/</a></a>，我们发现联网有些迟钝。大约5秒钟后，网页正常显示，同时有如下图所示：
-<img src="" alt="">
-浏览器验证了该CA机构的有效性。
-打开证书，如下图所示：
-<img src="" alt="">
-调整测试类：
-Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>import static org.junit.Assert./*;  </p>
-</li>
-<li></li>
-<li>import java.io.DataInputStream;  </li>
-<li>import java.io.InputStream;  </li>
-<li>import java.net.URL;  </li>
-<li></li>
-<li>import javax.net.ssl.HttpsURLConnection;  </li>
-<li></li>
-<li>import org.junit.Test;  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/*  </li>
-<li>/* @author 梁栋 </li>
-<li>/* @version 1.0 </li>
-<li>/* @since 1.0 </li>
-<li>/*/  </li>
-<li>public class CertificateCoderTest {  </li>
-<li>private String password = &quot;123456&quot;;  </li>
-<li>private String alias = &quot;www.zlex.org&quot;;  </li>
-<li>private String certificatePath = &quot;d:/zlex.cer&quot;;  </li>
-<li>private String keyStorePath = &quot;d:/zlex.keystore&quot;;  </li>
-<li></li>
-<li>@Test  </li>
-<li>public void test() throws Exception {  </li>
-<li>System.err.println(&quot;公钥加密——私钥解密&quot;);  </li>
-<li>String inputStr = &quot;Ceritifcate&quot;;  </li>
-<li>byte[] data = inputStr.getBytes();  </li>
-<li></li>
-<li>byte[] encrypt = CertificateCoder.encryptByPublicKey(data,  </li>
-<li>certificatePath);  </li>
-<li></li>
-<li>byte[] decrypt = CertificateCoder.decryptByPrivateKey(encrypt,  </li>
-<li>keyStorePath, alias, password);  </li>
-<li>String outputStr = new String(decrypt);  </li>
-<li></li>
-<li>System.err.println(&quot;加密前: &quot; + inputStr + &quot;\n\r&quot; + &quot;解密后: &quot; + outputStr);  </li>
-<li></li>
-<li>// 验证数据一致  </li>
-<li>assertArrayEquals(data, decrypt);  </li>
-<li></li>
-<li>// 验证证书有效  </li>
-<li>assertTrue(CertificateCoder.verifyCertificate(certificatePath));  </li>
-<li></li>
-<li>}  </li>
-<li></li>
-<li>@Test  </li>
-<li>public void testSign() throws Exception {  </li>
-<li>System.err.println(&quot;私钥加密——公钥解密&quot;);  </li>
-<li></li>
-<li>String inputStr = &quot;sign&quot;;  </li>
-<li>byte[] data = inputStr.getBytes();  </li>
-<li></li>
-<li>byte[] encodedData = CertificateCoder.encryptByPrivateKey(data,  </li>
-<li>keyStorePath, alias, password);  </li>
-<li></li>
-<li>byte[] decodedData = CertificateCoder.decryptByPublicKey(encodedData,  </li>
-<li>certificatePath);  </li>
-<li></li>
-<li>String outputStr = new String(decodedData);  </li>
-<li>System.err.println(&quot;加密前: &quot; + inputStr + &quot;\n\r&quot; + &quot;解密后: &quot; + outputStr);  </li>
-<li>assertEquals(inputStr, outputStr);  </li>
-<li></li>
-<li>System.err.println(&quot;私钥签名——公钥验证签名&quot;);  </li>
-<li>// 产生签名  </li>
-<li>String sign = CertificateCoder.sign(encodedData, keyStorePath, alias,  </li>
-<li>password);  </li>
-<li>System.err.println(&quot;签名:\r&quot; + sign);  </li>
-<li></li>
-<li>// 验证签名  </li>
-<li>boolean status = CertificateCoder.verify(encodedData, sign,  </li>
-<li>certificatePath);  </li>
-<li>System.err.println(&quot;状态:\r&quot; + status);  </li>
-<li>assertTrue(status);  </li>
-<li></li>
-<li>}  </li>
-<li></li>
-<li>@Test  </li>
-<li>public void testHttps() throws Exception {  </li>
-<li>URL url = new URL(&quot;<a href="https://www.zlex.org/examples/" target="_blank">https://www.zlex.org/examples/</a>&quot;);  </li>
-<li>HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();  </li>
-<li></li>
-<li>conn.setDoInput(true);  </li>
-<li>conn.setDoOutput(true);  </li>
-<li></li>
-<li>CertificateCoder.configSSLSocketFactory(conn, password, keyStorePath,  </li>
-<li>keyStorePath);  </li>
-<li></li>
-<li>InputStream is = conn.getInputStream();  </li>
-<li></li>
-<li>int length = conn.getContentLength();  </li>
-<li></li>
-<li>DataInputStream dis = new DataInputStream(is);  </li>
-<li>byte[] data = new byte[length];  </li>
-<li>dis.readFully(data);  </li>
-<li></li>
-<li>dis.close();  </li>
-<li>conn.disconnect();  </li>
-<li>System.err.println(new String(data));  </li>
-<li>}  </li>
-<li>}  </li>
+<li>Registers:  </li>
+<li>RAX=0x00002aacb5ae5de2, RBX=0x00002aaaaf46aa48, RCX=0x0000000000000219, RDX=0x00002aaaaf46b920  </li>
+<li>RSP=0x0000000042d3f968, RBP=0x0000000042d3f9c8, RSI=0x0000000042d3f9e8, RDI=0x0000000045aef9b8  </li>
+<li>R8 =0x0000000000000f80, R9 =0x00002aaab3d30ce8, R10=0x00002aaaab138ea1, R11=0x00002b017ae65110  </li>
+<li>R12=0x0000000042d3f6f0, R13=0x00002aaaaf46aa48, R14=0x0000000042d3f9e8, R15=0x0000000045aef800  </li>
+<li>RIP=0x0000000000043566, EFL=0x0000000000010202, CSGSFS=0x0000000000000033, ERR=0x0000000000000014  </li>
+<li>TRAPNO=0x000000000000000e<br>寄存器的信息就保存在b部分的信号处理函数参数 (ucontext_t/*)usVoid中</li>
 </ol>
-<p>import static org.junit.Assert./*;</p>
-<p>import java.io.DataInputStream;</p>
-<p>import java.io.InputStream;
-import java.net.URL;</p>
-<p>import javax.net.ssl.HttpsURLConnection;</p>
-<p>import org.junit.Test;</p>
-<p>//<em>/</em></p>
-<p>/<em>
-/</em> @author 梁栋</p>
-<p>/<em> @version 1.0
-/</em> @since 1.0</p>
-<p>/*/
-public class CertificateCoderTest {</p>
-<pre><code>private String password = &quot;123456&quot;;
-private String alias = &quot;www.zlex.org&quot;;
-
-private String certificatePath = &quot;d:/zlex.cer&quot;;
-private String keyStorePath = &quot;d:/zlex.keystore&quot;;
-
-
-@Test
-
-public void test() throws Exception {
-    System.err.println(&quot;公钥加密——私钥解密&quot;);
-
-    String inputStr = &quot;Ceritifcate&quot;;
-    byte[] data = inputStr.getBytes();
-
-
-    byte[] encrypt = CertificateCoder.encryptByPublicKey(data,
-
-            certificatePath);
-
-
-    byte[] decrypt = CertificateCoder.decryptByPrivateKey(encrypt,
-            keyStorePath, alias, password);
-
-    String outputStr = new String(decrypt);
-
-
-    System.err.println(&quot;加密前: &quot; + inputStr + &quot;\n\r&quot; + &quot;解密后: &quot; + outputStr);
-
-
-    // 验证数据一致
-    assertArrayEquals(data, decrypt);
-
-
-    // 验证证书有效
-
-    assertTrue(CertificateCoder.verifyCertificate(certificatePath));
-
-
-}
-
-
-@Test
-public void testSign() throws Exception {
-
-    System.err.println(&quot;私钥加密——公钥解密&quot;);
-
-
-    String inputStr = &quot;sign&quot;;
-    byte[] data = inputStr.getBytes();
-
-
-    byte[] encodedData = CertificateCoder.encryptByPrivateKey(data,
-
-            keyStorePath, alias, password);
-
-
-    byte[] decodedData = CertificateCoder.decryptByPublicKey(encodedData,
-            certificatePath);
-
-
-    String outputStr = new String(decodedData);
-
-    System.err.println(&quot;加密前: &quot; + inputStr + &quot;\n\r&quot; + &quot;解密后: &quot; + outputStr);
-    assertEquals(inputStr, outputStr);
-
-
-    System.err.println(&quot;私钥签名——公钥验证签名&quot;);
-
-    // 产生签名
-    String sign = CertificateCoder.sign(encodedData, keyStorePath, alias,
-
-            password);
-    System.err.println(&quot;签名:\r&quot; + sign);
-
-
-    // 验证签名
-
-    boolean status = CertificateCoder.verify(encodedData, sign,
-            certificatePath);
-
-    System.err.println(&quot;状态:\r&quot; + status);
-    assertTrue(status);
-
-
-}
-
-
-@Test
-
-public void testHttps() throws Exception {
-    URL url = new URL(&quot;https://www.zlex.org/examples/&quot;);
-
-    HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
-
-
-    conn.setDoInput(true);
-    conn.setDoOutput(true);
-
-
-    CertificateCoder.configSSLSocketFactory(conn, password, keyStorePath,
-
-            keyStorePath);
-
-
-    InputStream is = conn.getInputStream();
-
-
-    int length = conn.getContentLength();
-
-
-    DataInputStream dis = new DataInputStream(is);
-    byte[] data = new byte[length];
-
-    dis.readFully(data);
-
-
-    dis.close();
-    conn.disconnect();
-
-    System.err.println(new String(data));
-}
-</code></pre><p>}
-再次执行，验证通过！<img src="" alt="">
-由此，我们了基于SSL协议的认证过程。测试类的testHttps方法模拟了一次浏览器的HTTPS访问。<img src="" alt="">
-<strong>相关链接：
-<a href="http://snowolf.iteye.com/blog/379860" target="_blank">Java加密技术（一）——BASE64与单向加密算法MD5&amp;SHA&amp;MAC</a>
-<a href="http://snowolf.iteye.com/blog/380034" target="_blank">Java加密技术（二）——对称加密DES&amp;AES</a>
-<a href="http://snowolf.iteye.com/blog/380761" target="_blank">Java加密技术（三）——PBE算法</a>
-<a href="http://snowolf.iteye.com/blog/381767" target="_blank">Java加密技术（四）——非对称加密算法RSA</a>
-<a href="http://snowolf.iteye.com/blog/382422" target="_blank">Java加密技术（五）——非对称加密算法的由来</a>
-<a href="http://snowolf.iteye.com/blog/382749" target="_blank">Java加密技术（六）——数字签名算法DSA</a>
-<a href="http://snowolf.iteye.com/blog/383412" target="_blank">Java加密技术（七）——非对称加密算法最高ECC</a>
-<a href="http://snowolf.iteye.com/blog/391931" target="_blank">Java加密技术（八）——数字证书</a>
-<a href="http://snowolf.iteye.com/blog/397693" target="_blank">Java加密技术（九）——初探SSL</a>
-<a href="http://snowolf.iteye.com/blog/398198" target="_blank">Java加密技术（十）——单向认证</a>
-<a href="http://snowolf.iteye.com/blog/510985" target="_blank">Java加密技术（十一）——双向认证</a>
-<a href="http://snowolf.iteye.com/blog/735294" target="_blank">Java加密技术（十二）——/<em>.PFX(/</em>.p12)&amp;个人信息交换文件</a>
-</strong></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/加解密/">加解密</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/加解密/" class="label label-success">加解密</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（十）——单向认证/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（十）——单向认证" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--存取之美——HashMap原理、源码、实践/">存取之美 —— HashMap原理、源码、实践</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--存取之美——HashMap原理、源码、实践/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-hashmap-">存取之美 —— HashMap原理、源码、实践</h1>
-<p><a href="http://www.javaeye.com/" target="_blank">首页</a> <a href="http://www.javaeye.com/news" target="_blank">新闻</a> <a href="http://www.javaeye.com/forums" target="_blank">论坛</a> <a href="http://www.javaeye.com/ask" target="_blank">问答</a> <a href="http://www.javaeye.com/blogs" target="_blank">博客</a> <a href="http://www.javaeye.com/job" target="_blank">招聘</a> <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">更多 ▼</a></p>
-<p><a href="http://www.javaeye.com/wiki" target="_blank">专栏</a> <a href="http://www.javaeye.com/groups" target="_blank">圈子</a> <a href="http://www.javaeye.com/search" target="_blank">搜索</a></p>
-<p><a href="http://grunt1223.javaeye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.javaeye.com/all" target="_blank">我的应用</a> <a href="http://grunt1223.javaeye.com/login" target="_blank">登录</a> <a href="http://grunt1223.javaeye.com/signup" target="_blank">注册</a></p>
-<h1 id="-http-grunt1223-javaeye-com-"><a href="http://grunt1223.javaeye.com/" target="_blank">小白的博客</a></h1>
-<p>永久域名 <a href="http://grunt1223.javaeye.com/" target="_blank"><a href="http://grunt1223.javaeye.com/">http://grunt1223.javaeye.com/</a></a></p>
-<p><a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">54顶</a>
-<a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">9踩</a></p>
-<p><a href="http://grunt1223.javaeye.com/blog/545776" title="利用方法拦截器优化Ibatis更新策略  —— 基于POJO、CGLIB、SPRING AOP" target="_blank">利用方法拦截器优化Ibatis更新策略 —— ...</a></p>
-<p>2009-12-09</p>
-<h3 id="-hashmap-http-grunt1223-javaeye-com-blog-544497-"><a href="http://grunt1223.javaeye.com/blog/544497" target="_blank">存取之美 —— HashMap原理、源码、实践</a></h3>
-<p><strong>文章分类:<a href="http://www.javaeye.com/blogs/category/java" target="_blank">Java编程</a></strong>
-HashMap是一种十分常用的数据结构，作为一个应用开发人员，对其原理、实现的加深理解有助于更高效地进行数据存取。本文所用的jdk版本为1.5。
-<strong>使用HashMap</strong>
-《Effective JAVA》中认为，99%的情况下，当你覆盖了equals方法后，请务必覆盖hashCode方法。默认情况下，这两者会采用Object的“原生”实现方式，即：
-protected native int hashCode(); public boolean equals(Object obj) { return (this == obj); }
-hashCode方法的定义用到了native关键字，表示它是由C或C++采用较为底层的方式来实现的，你可以认为它返回了该对象的内存地址；而缺省equals则认为，只有当两者引用同一个对象时，才认为它们是相等的。如果你只是覆盖了equals()而没有重新定义hashCode()，在读取HashMap的时候，除非你使用一个与你保存时引用完全相同的对象作为key值，否则你将得不到该key所对应的值。
-另一方面，你应该尽量避免使用“可变”的类作为HashMap的键。如果你将一个对象作为键值并保存在HashMap中，之后又改变了其状态，那么HashMap就会产生混乱，你所保存的值可能丢失（尽管遍历集合可能可以找到）。可参考<em><a href="http://www.ibm.com/developerworks/cn/java/j-jtp02183/" target="_blank"><a href="http://www.ibm.com/developerworks/cn/java/j-jtp02183/">http://www.ibm.com/developerworks/cn/java/j-jtp02183/</a></a></em>
-<strong>HashMap存取机制</strong>
-Hashmap实际上是一个数组和链表的结合体，利用数组来模拟一个个桶（类似于Bucket Sort）以快速存取不同hashCode的key，对于相同hashCode的不同key，再调用其equals方法从List中提取出和key所相对应的value。
-JAVA中hashMap的初始化主要是为initialCapacity和loadFactor这两个属性赋值。前者表示hashMap中用来区分不同hash值的key空间长度，后者是指定了当hashMap中的元素超过多少的时候，开始自动扩容，。默认情况下initialCapacity为16，loadFactor为0.75，它表示一开始hashMap可以存放16个不同的hashCode，当填充到第12个的时候，hashMap会自动将其key空间的长度扩容到32，以此类推；这点可以从源码中看出来：
-void addEntry(int hash, K key, V value, int bucketIndex) { Entry<K,V> e = table[bucketIndex]; table[bucketIndex] = new Entry<K,V>(hash, key, value, e); if (size++ &gt;= threshold) resize(2 /* table.length); }
-而每当hashMap扩容后，内部的每个元素存放的位置都会发生变化（因为元素的最终位置是其hashCode对key空间长度取模而得），因此resize方法中又会调用transfer函数，用来重新分配内部的元素；这个过程成为rehash，是十分消耗性能的，因此在可预知元素的个数的情况下，一般应该避免使用缺省的initialCapacity，而是通过构造函数为其指定一个值。例如我们可能会想要将数据库查询所得1000条记录以某个特定字段（比如ID）为key缓存在hashMap中，为了提高效率、避免rehash，可以直接指定initialCapacity为2048。
-另一个值得注意的地方是，hashMap其key空间的长度一定为2的N次方，这一点可以从一下源码中看出来：
-int capacity = 1; while (capacity &lt; initialCapacity) capacity &lt;&lt;= 1;
-即使我们在构造函数中指定的initialCapacity不是2的平方数，capacity还是会被赋值为2的N次方。
-为什么Sun Microsystem的工程师要将hashMap key空间的长度设为2的N次方呢？这里参考R.W.Floyed给出的衡量散列思想的三个标准：</p>
-<p>一个好的hash算法的计算应该是非常快的
-一个好的hash算法应该是冲突极小化
-如果存在冲突,应该是冲突均匀化
-为了将各元素的hashCode保存至长度为Length的key数组中，一般采用取模的方式，即index = hashCode % Length。不可避免的，存在多个不同对象的hashCode被安排在同一位置，这就是我们平时所谓的“冲突”。如果仅仅是考虑元素均匀化与冲突极小化，似乎应该将Length取为素数（尽管没有明显的理论来支持这一点，但数学家们通过大量的实践得出结论，对素数取模的产生结果的无关性要大于其它数字）。为此，Craig Larman and Rhett Guthrie《Java Performence》中对此也大加抨击。为了弄清楚这个问题，Bruce Eckel（Thinking in JAVA的作者）专程采访了java.util.hashMap的作者Joshua Bloch，并将他采用这种设计的原因放到了网上（<a href="http://grunt1223.javaeye.com/blog/&lt;em&gt;http://www.roseindia.net/javatutorials/javahashmap.shtml&lt;/em" target="_blank"><em><a href="http://www.roseindia.net/javatutorials/javahashmap.shtml">http://www.roseindia.net/javatutorials/javahashmap.shtml</a></em></a>） 。
-上述设计的原因在于，取模运算在包括JAVA在内的大多数语言中的效率都十分低下，而当除数为2的N次方时，取模运算将退化为最简单的位运算，其效率明显提升（按照Bruce Eckel给出的数据，大约可以提升5～8倍） 。看看JDK中是如何实现的：
-static int indexFor(int h, int length) { return h &amp; (length-1); }
-当key空间长度为2的N次方时，计算hashCode为h的元素的索引可以用简单的与操作来代替笨拙的取模操作！假设某个对象的hashCode为35（二进制为100011），而hashMap采用默认的initialCapacity（16），那么indexFor计算所得结果将会是100011 &amp; 1111 = 11，即十进制的3，是不是恰好是35 Mod 16。
-上面的方法有一个问题，就是它的计算结果仅有对象hashCode的低位决定，而高位被统统屏蔽了；以上面为例，19（10011）、35（100011）、67（1000011）等就具有相同的结果。针对这个问题， Joshua Bloch采用了“防御性编程”的解决方法，在使用各对象的hashCode之前对其进行二次Hash，参看JDK中的源码：
-static int hash(Object x) { int h = x.hashCode(); h += ~(h &lt;&lt; 9); h ^= (h &gt;&gt;&gt; 14); h += (h &lt;&lt; 4); h ^= (h &gt;&gt;&gt; 10); return h; }
-采用这种旋转Hash函数的主要目的是让原有hashCode的高位信息也能被充分利用，且兼顾计算效率以及数据统计的特性，其具体的原理已超出了本文的领域。
-加快Hash效率的另一个有效途径是编写良好的自定义对象的HashCode，String的实现采用了如下的计算方法：
-for (int i = 0; i &lt; len; i++) { h = 31/<em>h + val[off++]; } hash = h;
-这种方法HashCode的计算方法可能最早出现在Brian W. Kernighan和Dennis M. Ritchie的《The C Programming Language》中，被认为是性价比最高的算法（又被称为times33算法，因为C中乘数常量为33，JAVA中改为31），实际上，包括List在内的大多数的对象都是用这种方法计算Hash值。
-另一种比较特殊的hash算法称为布隆过滤器，它以牺牲细微精度为代价，换来存储空间的大量节俭，常用于诸如判断用户名重复、是否在黑名单上等等，可以参考李开复的数学之美系列第13篇（</em><a href="http://googlechinablog.com/2006/08/blog-post.html" target="_blank"><a href="http://googlechinablog.com/2006/08/blog-post.html">http://googlechinablog.com/2006/08/blog-post.html</a></a><em>）
-<strong>Fail-Fast机制</strong>
-众所周知，HashMap不是线程安全的集合类。但在某些容错能力较好的应用中，如果你不想仅仅因为1%的可能性而去承受hashTable的同步开销，则可以考虑利用一下HashMap的Fail-Fast机制，其具体实现如下：
-Entry<K,V> nextEntry() { if (modCount != expectedModCount) throw new ConcurrentModificationException(); …… }
-其中modCount为HashMap的一个实例变量，并且被声明为volatile，表示任何线程都可以看到该变量被其它线程修改的结果（根据JVM内存模型的优化，每一个线程都会存一份自己的工作内存，此工作内存的内容与本地内存并非时时刻刻都同步，因此可能会出现线程间的修改不可见的问题） 。使用Iterator开始迭代时，会将modCount的赋值给expectedModCount，在迭代过程中，通过每次比较两者是否相等来判断HashMap是否在内部或被其它线程修改。HashMap的大多数修改方法都会改变ModCount，参考下面的源码：
-public V put(K key, V value) { K k = maskNull(key); int hash = hash(k); int i = indexFor(hash, table.length); for (Entry<K,V> e = table[i]; e != null; e = e.next) { if (e.hash == hash &amp;&amp; eq(k, e.key)) { V oldValue = e.value; e.value = value; e.recordAccess(this); return oldValue; } } modCount++; addEntry(hash, k, value, i); return null; }
-以put方法为例，每次往HashMap中添加元素都会导致modCount自增。其它诸如remove、clear方法也都包含类似的操作。
-从上面可以看出，HashMap所采用的Fail-Fast机制本质上是一种乐观锁机制，通过检查状态——没有问题则忽略——有问题则抛出异常的方式，来避免线程同步的开销，下面给出一个在单线程环境下发生Fast-Fail的例子：
-class Test { public static void main(String[] args) { java.util.HashMap<Object,String> map=new java.util.HashMap<Object,String>(); map.put(new Object(), &quot;a&quot;); map.put(new Object(), &quot;b&quot;); java.util.Iterator<Object> it=map.keySet().iterator(); while(it.hasNext()){ it.next(); map.put(&quot;&quot;, &quot;&quot;); System.out.println(map.size()); } }
-运行上面的代码会抛出java.util.ConcurrentModificationException，因为在迭代过程中修改了HashMap内部的元素导致modCount自增。若将上面代码中 map.put(new Object(), &quot;b&quot;) 这句注释掉，程序会顺利通过，因为此时HashMap中只包含一个元素，经过一次迭代后已到了尾部，所以不会出现问题，也就没有抛出异常的必要了。
-在通常并发环境下，还是建议采用同步机制。这一般通过对自然封装该映射的对象进行同步操作来完成。如果不存在这样的对象，则应该使用 Collections.synchronizedMap 方法来“包装”该映射。最好在创建时完成这一操作，以防止意外的非同步访问。
-<strong>LinkedHashMap</strong>
-遍历HashMap所得到的数据是杂乱无章的，这在某些情况下客户需要特定遍历顺序时是十分有用的。比如，这种数据结构很适合构建 LRU 缓存。调用 put 或 get 方法将会访问相应的条目（假定调用完成后它还存在）。putAll 方法以指定映射的条目集合迭代器提供的键-值映射关系的顺序，为指定映射的每个映射关系生成一个条目访问。Sun提供的J2SE说明文档特别规定任何其他方法均不生成条目访问，尤其，collection 集合类的操作不会影响底层映射的迭代顺序。
-LinkedHashMap的实现与 HashMap 的不同之处在于，前者维护着一个运行于所有条目的双重链接列表。此链接列表定义了迭代顺序，该迭代顺序通常就是集合中元素的插入顺序。该类定义了header、before与after三个属性来表示该集合类的头与前后“指针”，其具体用法类似于数据结构中的双链表，以删除某个元素为例：
-private void remove() { before.after = after; after.before = before; }
-实际上就是改变前后指针所指向的元素。
-显然，由于增加了维护链接列表的开支，其性能要比 HashMap 稍逊一筹，不过有一点例外：LinkedHashMap的迭代所需时间与其的所包含的元素成比例；而HashMap 迭代时间很可能开支较大，因为它所需要的时间与其容量（分配给Key空间的长度）成比例。一言以蔽之，随机存取用HashMap，顺序存取或是遍历用LinkedHashMap。
-LinkedHashMap还重写了removeEldestEntry方法以实现自动清除过期数据的功能，这在HashMap中是无法实现的，因为后者其内部的元素是无序的。默认情况下，LinkedHashMap中的removeEldestEntry的作用被关闭，其具体实现如下：
-protected boolean removeEldestEntry(Map.Entry<K,V> eldest) { return false; }
-可以使用如下的代码覆盖removeEldestEntry：
-private static final int MAX_ENTRIES = 100; protected boolean removeEldestEntry(Map.Entry eldest) { return size() &gt; MAX_ENTRIES; }
-它表示，刚开始，LinkedHashMap中的元素不断增长；当它内部的元素超过MAX_ENTRIES（100）后，每当有新的元素被插入时，都会自动删除双链表中最前端（最旧）的元素，从而保持LinkedHashMap的长度稳定。
-缺省情况下，LinkedHashMap采取的更新策略是类似于队列的FIFO，如果你想实现更复杂的更新逻辑比如LRU（最近最少使用） 等，可以在构造函数中指定其accessOrder为true，因为的访问元素的方法（get）内部会调用一个“钩子”，即recordAccess，其具体实现如下：
-void recordAccess(HashMap<K,V> m) { LinkedHashMap<K,V> lm = (LinkedHashMap<K,V>)m; if (lm.accessOrder) { lm.modCount++; remove(); addBefore(lm.header); } }
-上述代码主要实现了这样的功能：如果accessOrder被设置为true，则每次访问元素时，都将该元素移至headr的前面，即链表的尾部。将removeEldestEntry与accessOrder一起使用，就可以实现最基本的内存缓存，具体代码可参考[</em><a href="http://bluepopopo.javaeye.com/blog/180236*](http://grunt1223.javaeye.com/blog/" target="_blank">http://bluepopopo.javaeye.com/blog/180236*](http://grunt1223.javaeye.com/blog/</a><em><a href="http://bluepopopo.javaeye.com/blog/180236" target="_blank">http://bluepopopo.javaeye.com/blog/180236</a></em>)。
-<strong>WeakHashMap</strong>
-99%的JAVA教材教导我们不要去干预JVM的垃圾回收机制，但JAVA中确实存在着与其密切相关的四种引用：强引用、软引用、弱引用以及幻象引用。
-JAVA中默认的HashMap采用的是采用类似于强引用的强键来管理的，这意味着即使作为key的对象已经不存在了（指没有任何一个引用指向它），也仍然会保留在HashMap中，在某些情况下（例如内存缓存）中，这些过期的条目可能会造成内存泄漏等问题。
-WeakHashMap采用的策略是，只要作为key的对象已经不存在了（超出生命周期），就不会阻止垃圾收集器清空此条目，即使当前机器的内存并不紧张。不过，由于GC是一个优先级很低的线程，因此不一定会很快发现那些只具有弱引用的对象，除非你显示地调用它，可以参考下面的例子：
-public static void main(String[] args) { Map<String, String>map = new WeakHashMap<String, String>(); map.put(new String(&quot;Alibaba&quot;), &quot;alibaba&quot;); while (map.containsKey(&quot;Alibaba&quot;)) { try { Thread.sleep(500); } catch (InterruptedException ignored) { } System.out.println(&quot;Checking for empty&quot;); System.gc(); }
-上述代码输出一次Checking for empty就退出了主线程，意味着GC在最近的一次垃圾回收周期中清除了new String(“Alibaba”),同时WeakHashMap也做出了及时的反应，将该键对应的条目删除了。如果将map的类型改为HashMap的话，由于其内部采用的是强引用机制，因此即使GC被显示调用，map中的条目依然存在，程序会不断地打出Checking for empty字样。另外，在使用WeakHashMap的情况下，若是将
-map.put(new String(&quot;Alibaba&quot;), &quot;alibaba&quot;);
-改为
-map.put(&quot;Alibaba&quot;, &quot;alibaba&quot;);
-程序还是会不断输出Checking for empty。这与前面我们分析的WeakHashMap的弱引用机制并不矛盾，因为JVM为了减小重复创建和维护多个相同String的开销，其内部采用了蝇量模式（《JAVA与模式》），此时的“Alibaba”是存放在常量池而非堆中的，因此即使没有对象指向“Alibaba”，它也不会被GC回收。弱引用特别适合以下对象：占用大量内存，但通过垃圾回收功能回收以后很容易重新创建。
-介于HashMap和WeakHashMap之中的是SoftHashMap，它所采用的软引用的策略指的是，垃圾收集器并不像其收集弱可及的对象一样尽量地收集软可及的对象，相反，它只在真正 “需要” 内存时才收集软可及的对象。软引用对于垃圾收集器来说是一种“睁一只眼，闭一只眼”方式，即 “只要内存不太紧张，我就会保留该对象。但是如果内存变得真正紧张了，我就会去收集并处理这个对象。” 就这一点看，它其实要比WeakHashMap更适合于实现缓存机制。遗憾的是，JAVA中并没有实现相关的SoftHashMap类（Apache和Google提供了第三方的实现），但它却是提供了两个十分重要的类java.lang.ref.SoftReference以及ReferenceQueue，可以在对象应用状态发生改变是得到通知，可以参考com.alibaba.common.collection.SofthashMap中processQueue方法的实现:
-private ReferenceQueue queue = new ReferenceQueue(); ValueCell vc; Map hash = new HashMap(initialCapacity, loadFactor); …… while ((vc = (ValueCell) queue.poll()) != null) { if (vc.isValid()) { hash.remove(vc.key); } else { valueCell.dropped--; } } }
-processQueue方法会在几乎所有SoftHashMap的方法中被调用到，JVM会通过ReferenceQueue的poll方法通知该对象已经过期并且当前的内存现状需要将它释放，此时我们就可以将其从hashMap中剔除。事实上，默认情况下，Alibaba的MemoryCache所使用的就是SoftHashMap。</p>
-<p><a href="http://grunt1223.javaeye.com/blog/544497#"><strong>54</strong>
-顶</a><a href="http://grunt1223.javaeye.com/blog/544497#"><strong>9</strong>
-踩</a>
-<a href="http://grunt1223.javaeye.com/blog/545776" title="利用方法拦截器优化Ibatis更新策略  —— 基于POJO、CGLIB、SPRING AOP" target="_blank">利用方法拦截器优化Ibatis更新策略 —— ...</a></p>
-<ul>
-<li>09:46</li>
-<li>浏览 (5374)</li>
-<li><a href="http://grunt1223.javaeye.com/blog/544497#comments" target="_blank">评论</a> (16)</li>
-<li>分类: <a href="http://grunt1223.javaeye.com/category/89020" target="_blank">算法与数据结构</a></li>
-<li><a href="http://www.javaeye.com/wiki/topic/544497" target="_blank">相关推荐</a><h3 id="-">评论</h3>
-</li>
+<p>在X86架构下：</p>
+<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>void os::print_context(outputStream /<em>st, void /</em>context) {  </li>
+<li>if (context == NULL) return;  </li>
+<li></li>
+<li>ucontext_t /<em>uc = (ucontext_t/</em>)context;  </li>
+<li>st-&gt;print_cr(&quot;Registers:&quot;);  </li>
+<li>/#ifdef AMD64  </li>
+<li>st-&gt;print(  &quot;RAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RAX]);  </li>
+<li>st-&gt;print(&quot;, RBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBX]);  </li>
+<li>st-&gt;print(&quot;, RCX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RCX]);  </li>
+<li>st-&gt;print(&quot;, RDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDX]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;RSP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSP]);  </li>
+<li>st-&gt;print(&quot;, RBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBP]);  </li>
+<li>st-&gt;print(&quot;, RSI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSI]);  </li>
+<li>st-&gt;print(&quot;, RDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDI]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;R8 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R8]);  </li>
+<li>st-&gt;print(&quot;, R9 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R9]);  </li>
+<li>st-&gt;print(&quot;, R10=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R10]);  </li>
+<li>st-&gt;print(&quot;, R11=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R11]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;R12=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R12]);  </li>
+<li>st-&gt;print(&quot;, R13=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R13]);  </li>
+<li>st-&gt;print(&quot;, R14=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R14]);  </li>
+<li>st-&gt;print(&quot;, R15=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R15]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;RIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RIP]);  </li>
+<li>st-&gt;print(&quot;, EFL=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
+<li>st-&gt;print(&quot;, CSGSFS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_CSGSFS]);  </li>
+<li>st-&gt;print(&quot;, ERR=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ERR]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(&quot;  TRAPNO=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_TRAPNO]);  </li>
+<li>/#else  </li>
+<li>st-&gt;print(  &quot;EAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EAX]);  </li>
+<li>st-&gt;print(&quot;, EBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBX]);  </li>
+<li>st-&gt;print(&quot;, ECX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ECX]);  </li>
+<li>st-&gt;print(&quot;, EDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDX]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;ESP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_UESP]);  </li>
+<li>st-&gt;print(&quot;, EBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBP]);  </li>
+<li>st-&gt;print(&quot;, ESI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ESI]);  </li>
+<li>st-&gt;print(&quot;, EDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDI]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;EIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EIP]);  </li>
+<li>st-&gt;print(&quot;, CR2=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.cr2);  </li>
+<li>st-&gt;print(&quot;, EFLAGS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
+<li>/#endif // AMD64  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;cr();  </li>
+<li></li>
+<li>intptr_t /<em>sp = (intptr_t /</em>)os::Linux::ucontext_get_sp(uc);  </li>
+<li>st-&gt;print_cr(&quot;Top of Stack: (sp=&quot; PTR_FORMAT &quot;)&quot;, sp);  </li>
+<li>print_hex_dump(st, (address)sp, (address)(sp + 8/*sizeof(intptr_t)), sizeof(intptr_t));  </li>
+<li>st-&gt;cr();  </li>
+<li></li>
+<li>// Note: it may be unsafe to inspect memory near pc. For example, pc may  </li>
+<li>// point to garbage if entry point in an nmethod is corrupted. Leave  </li>
+<li>// this at the end, and hope for the best.  </li>
+<li>address pc = os::Linux::ucontext_get_pc(uc);  </li>
+<li>st-&gt;print_cr(&quot;Instructions: (pc=&quot; PTR_FORMAT &quot;)&quot;, pc);  </li>
+<li>print_hex_dump(st, pc - 16, pc + 16, sizeof(char));  </li>
+<li>}<br>寄存器的信息在分析出错的时候是非常重要的
+打印出执行附近的部分机器码</li>
+</ol>
+<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>Instructions: (pc=0x00007f48f14ef51a)  </li>
+<li>0x00007f48f14ef4fa:   90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd  </li>
+<li>0x00007f48f14ef50a:   f8 5f ff ff 48 89 b5 f0 5f ff ff b8 00 00 00 00  </li>
+<li>0x00007f48f14ef51a:   c7 00 01 00 00 00 c6 85 00 60 ff ff ff c9 c3 90  </li>
+<li>0x00007f48f14ef52a:   90 90 90 90 90 90 55 48 89 e5 53 48 8d 1d 94 00<br>在instruction 部分中会打印出部分的机器码</li>
+</ol>
+<p>格式是</p>
+<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>地址：机器码<br>第一种使用udis库里带的udcli工具来反汇编</li>
+</ol>
+<p>命令：</p>
+<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>echo &#39;90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd&#39; | udcli -intel -x -64 -o 0x00007f48f14ef4fa<br>显示出对应的汇编</li>
+</ol>
+<p>第二种可以用</p>
+<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>objectdump -d -C libjvm.so &gt;&gt; jvmsodisass.dump   </li>
+</ol>
+<p>查找偏移地址  0x593045， 就是当时的执行的汇编，然后结合上下文，源码推测出问题的语句。</p>
+<p><strong>d.寄存器对应的内存的值</strong></p>
+<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>RAX=0x0000000000000000 is an unknown value  </li>
+<li>RBX=0x000000041a07d1e8 is an oop  </li>
+<li>{method}  </li>
+<li><ul>
+<li>klass: {other class}  </li>
 </ul>
-<p><a href=""></a></p>
-<p>16 楼 <a href="http://beneo.javaeye.com/" target="_blank">beneo</a> 2010-06-18   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>是不是叫做Floyed的人都是神啊
-15 楼 <a href="http://usiboy.javaeye.com/" target="_blank">usiboy</a> 2009-12-27   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>这篇文章分析的很透彻，无论是从算法的角度还是从应用的层面都讲的挺详细的，本人也在研究HashMap的写法，但不足的是少了一点HashMap的设计模式，从《Effective Java》这本书来看，也提到了一点HashMap的模式，我最不明白的是Entry的设计，希望能和楼主一起讨论这个Entry设计的目的。</p>
-<p>14 楼 <a href="http://dvaknheo.javaeye.com/" target="_blank">dvaknheo</a> 2009-12-15   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>有没有碰到过 hash 碰撞的诡异现象？
-13 楼 <a href="http://liuxuejin.javaeye.com/" target="_blank">liuxuejin</a> 2009-12-15   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>写得真好，我现在正在研究这个东西！</p>
-<p>12 楼 <a href="http://longhua828.javaeye.com/" target="_blank">longhua828</a> 2009-12-14   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>真强，本人第一次发帖，好不容易通过了论坛发帖规则测试，太难了
-11 楼 <a href="http://kellersoon.javaeye.com/" target="_blank">kellersoon</a> 2009-12-12   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>好文章， 感觉下边这段很巧妙<img src="" alt="">
-static int indexFor(int h, int length) { return h &amp; (length-1); }</p>
-<p>10 楼 <a href="http://liusu.javaeye.com/" target="_blank">liusu</a> 2009-12-11   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>Test &#39;%&#39; and &#39;&amp;&#39;
-package test; //<em>/</em> /<em> Why HashMap use operation &#39;&amp;&#39; replace &#39;%&#39; ? /</em> /<em> Test: /</em> % Cost 2844ms /<em> &amp; Cost 921ms /</em> /<em> So. /</em> @author seany1 /<em> /</em>/ public class ModolTest { public static void main(String[] args) { int base = 1 &lt;&lt; 4; int all = 100000000; System.out.println(base); String hashTest = new String(&quot;Test hash&quot;); long start = System.currentTimeMillis(); for (int i = 0; i &lt; all; i++) { int x = hashTest.hashCode() % base; } long end = System.currentTimeMillis(); System.out.println(&quot;&#39;%&#39; Cost &quot; + (end - start) + &quot;ms&quot;); start = System.currentTimeMillis(); for (int i = 0; i &lt; all; i++) { int x = hashTest.hashCode() &amp; base; } end = System.currentTimeMillis(); System.out.println(&quot;&#39;&amp;&#39; Cost &quot; + (end - start) + &quot;ms&quot;); } }
-9 楼 <a href="http://ardenyu.javaeye.com/" target="_blank">andyu2008</a> 2009-12-11   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>看完了，楼主写的的确很不错！</p>
-<p>8 楼 <a href="http://halzhang.javaeye.com/" target="_blank">Aguo</a> 2009-12-11   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>very well<img src="" alt="">
-7 楼 <a href="http://j-catteam.javaeye.com/" target="_blank">J-catTeam</a> 2009-12-10   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>为什么都要说hashcode就是地址呢···
-呵呵
-~散列码</p>
-<p>6 楼 <a href="http://challengerjiang.javaeye.com/" target="_blank">challengerjiang</a> 2009-12-10   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>真的很好哦<img src="" alt="">
-5 楼 <a href="http://idealab.javaeye.com/" target="_blank">idealab</a> 2009-12-10   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
+</li>
+<li>RCX=0x0000000000000000 is an unknown value  </li>
+<li>RDX=0x0000000040111800 is a thread  </li>
+<li>RSP=0x0000000041261b88 is pointing into the stack for thread: 0x0000000040111800  </li>
+<li>RBP=0x000000004126bb20 is pointing into the stack for thread: 0x0000000040111800  </li>
+<li>RSI=0x000000004126bb80 is pointing into the stack for thread: 0x0000000040111800  </li>
+<li>RDI=0x00000000401119d0 is an unknown value  </li>
+<li>R8 =0x0000000040111c40 is an unknown value  </li>
+<li>R9 =0x00007f48fcc8b550: <offset 0xa85550> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
+<li>R10=0x00007f48f8ca7d41 is an Interpreter codelet  </li>
+<li>method entry point (kind = native)  [0x00007f48f8ca7ae0, 0x00007f48f8ca8320]  2112 bytes  </li>
+<li>R11=0x00007f48fc98f270: <offset 0x789270> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
+<li>R12=0x0000000000000000 is an unknown value  </li>
+<li>R13=0x000000041a07d1e8 is an oop  </li>
+<li>{method}  </li>
+<li><ul>
+<li>klass: {other class}  </li>
+</ul>
+</li>
+<li>R14=0x000000004126bb88 is pointing into the stack for thread: 0x0000000040111800  </li>
+<li>R15=0x0000000040111800 is a thread<br>jvm 会通过寄存器的值对找对应的对象，也是一个比较好的参考</li>
+</ol>
+<p><strong>e. 其他的信息</strong></p>
+<p>error 里面还有一些线程信息，还有当时内存映像信息，这些都可以作为分析的部分参考</p>
+<p>crash 报告可以大概的反应出一个当时的情况，特别是在没有core dump的时候，是比较有助于帮助分析的，但如果有core dump的话，最终还是core dump能快速准确的发现问题原因。
+来源： <a href="[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)">[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/">内存离线分析——jhat命令(Java Heap Analyse Tool)</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-jhat-java-heap-analyse-tool-">内存离线分析——jhat命令(Java Heap Analyse Tool)</h1>
+<p><strong>jhat命令 -- Java Head Analyse Tool</strong> 
+用途：是用来分析java堆的命令，可以将堆中的对象以html的形式显示出来，包括对象的数量，大小等等，并支持对象查询语言
+第一步：导出堆
+<img src="" alt=""> 
+第二步：分析堆文件
+<img src="" alt=""> 
+第三步：查看html
+<img src="" alt=""></p>
+<p>有时你dump出来的堆很大，在启动时会报堆空间不足的错误，可以使用如下参数：
+<strong>jhat -J-Xmx512m <heap dump file>
+对于jhat启动后显示的html页面中功能：
+（1）显示出堆中所包含的所有的类
+<img src="" alt="">
+（2）从根集能引用到的对象
+<img src="" alt="">
+（3）显示平台包括的所有类的实例数量
+<img src="" alt="">
+（4）堆实例的分布表
+<img src="" alt=""></strong></p>
+<p><strong>（5）执行对象查询语句
+<img src="" alt=""> 
+更多关于对象查询语言的信息，见这篇文章：
+<a href="http://blog.csdn.net/gtuu0123/archive/2010/11/27/6039592.aspx" target="_blank">http://blog.csdn.net/gtuu0123/archive/2010/11/27/6039592.aspx</a></strong>
+<strong>来源： <a href="[http://blog.csdn.net/gtuu0123/article/details/6039474](http://blog.csdn.net/gtuu0123/article/details/6039474)">[http://blog.csdn.net/gtuu0123/article/details/6039474](http://blog.csdn.net/gtuu0123/article/details/6039474)</a> </strong></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">一次Java内存溢出异常的分析过程</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-java-">一次Java内存溢出异常的分析过程</h1>
+<p>前些天，<a href="http://server.chinabyte.com/" target="_blank">服务器</a>上一个服务跑了一个多月突然当掉了。看了下日志，程序抛出了java.lang.OutOfMemoryError，之前也出现过同样的错误，服务跑了三个月内存溢出。出现这个异常，初步判断是程序有内存泄漏，接下来需要利用一些工具来分析具体原因。</p>
+<p>首先使用jdk自带的工具jmap转储(dump)java内存堆数据到本地文件中。jmap转储(dump)命令格式如下：</p>
+<p>jmap -dump:</p>
+<p>表示dump选项，表示需要dump的java应用程序的进程ID</p>
+<p>dump-options可以有以下三种参数，参数之间用逗号隔开：</p>
+<p>live，只dump活动的object，如果没有指定，表示dump所有object</p>
+<p>format=b，字节流格式</p>
+<p>file=，是转储文件的保存路径</p>
+<p>下面是dump命令的一个例子:</p>
+<p>jmap -dump:format=b,file=heap.bin 8023</p>
+<p>dump完成后，用Eclipse Memory Analyzer打开转储文件进行分析。Eclipse Memory Analyzer是一个java内存堆转储文件分析工具，可以生成内存分析报告(包括内存泄露Leak Suspects )。下面是分析完成后查看Top Consumers所看到的图表:</p>
 <p><img src="" alt=""></p>
-<p>4 楼 <a href="http://enhydra.javaeye.com/" target="_blank">enhydra</a> 2009-12-10   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>真不错 
-3 楼 <a href="http://lijiecong.javaeye.com/" target="_blank">lijiecong</a> 2009-12-09   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>写的非常好，数学之美不是李开复写的：）</p>
-<p>2 楼 <a href="http://wh-mimi.javaeye.com/" target="_blank">猫尾摆摆</a> 2009-12-09   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>研究的很透彻了，对旋转hash没明白，呵呵
-1 楼 <a href="http://mylazygirl.javaeye.com/" target="_blank">mylazygirl</a> 2009-12-09   <a href="http://grunt1223.javaeye.com/blog/544497#" target="_blank">引用</a></p>
-<p>写的不错~~</p>
-<h3 id="-">发表评论</h3>
-<p>您还没有登录，请<a href="http://grunt1223.javaeye.com/login" target="_blank">登录</a>后发表评论(快捷键 Alt+S / Ctrl+Enter)</p>
-<p><a href="http://grunt1223.javaeye.com/" target="_blank"><img src="&quot;grunt1223的博客: 小白的博客&quot;" alt="grunt1223的博客"></a></p>
-<p>grunt1223</p>
-<ul>
-<li>浏览: 9713 次</li>
-<li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
-<li>来自: 杭州</li>
-<li><img src="" alt=""></li>
-<li><a href="http://grunt1223.javaeye.com/blog/profile" target="_blank">详细资料</a> <a href="http://grunt1223.javaeye.com/blog/guest_book" target="_blank">留言簿</a></li>
-</ul>
-<h3 id="-">搜索本博客</h3>
-<h3 id="-http-grunt1223-javaeye-com-blog-user_visits-">最近访客 <a href="http://grunt1223.javaeye.com/blog/user_visits" target="_blank">&gt;&gt;更多访客</a></h3>
-<p><a href="http://mmblue.javaeye.com/" target="_blank"><img src="&quot;mmBlue的博客: &quot;" alt="mmBlue的博客"></a></p>
-<p><a href="http://mmblue.javaeye.com/" target="_blank">mmBlue</a></p>
-<p><a href="http://nickevin.javaeye.com/" target="_blank"><img src="&quot;nickevin的博客: Less is more&quot;" alt="nickevin的博客"></a></p>
-<p><a href="http://nickevin.javaeye.com/" target="_blank">nickevin</a>
-<a href="http://yingmu0591.javaeye.com/" target="_blank"><img src="&quot;yingmu0591的博客: yingmu0591&quot;" alt="yingmu0591的博客"></a></p>
-<p><a href="http://yingmu0591.javaeye.com/" target="_blank">yingmu0591</a></p>
-<p><a href="http://xlongbuilder.javaeye.com/" target="_blank"><img src="&quot;xlongbuilder的博客: 不跟蛤蟆讨论大海的故事&quot;" alt="xlongbuilder的博客"></a></p>
-<p><a href="http://xlongbuilder.javaeye.com/" target="_blank">xlongbuilder</a></p>
-<h3 id="-">博客分类</h3>
-<ul>
-<li><a href="http://grunt1223.javaeye.com/" target="_blank">全部博客 (5)</a></li>
-<li><a href="http://grunt1223.javaeye.com/category/89020" target="_blank">算法与数据结构 (1)</a></li>
-<li><a href="http://grunt1223.javaeye.com/category/89031" target="_blank">设计模式 (3)</a></li>
-<li><a href="http://grunt1223.javaeye.com/category/89223" target="_blank">Spring、Ibatis、Hibernate (1)</a></li>
-<li><a href="http://grunt1223.javaeye.com/category/89474" target="_blank">企业级应用开发 (0)</a></li>
-<li><a href="http://grunt1223.javaeye.com/category/89475" target="_blank">产品设计 (0)</a></li>
-<li><p><a href="http://grunt1223.javaeye.com/category/89476" target="_blank">心路历程 (0)</a></p>
-<h3 id="-">其他分类</h3>
-</li>
-<li><p><a href="http://grunt1223.javaeye.com/blog/favorite" target="_blank">我的收藏</a> (6)</p>
-</li>
-<li><a href="http://grunt1223.javaeye.com/blog/topic" target="_blank">我的论坛主题贴</a> (0)</li>
-<li><a href="http://grunt1223.javaeye.com/blog/post" target="_blank">我的所有论坛贴</a> (3)</li>
-<li><a href="http://grunt1223.javaeye.com/blog/article" target="_blank">我的精华良好贴</a> (0)</li>
-</ul>
-<h3 id="-">最近加入圈子</h3>
-<h3 id="-">存档</h3>
-<ul>
-<li><a href="http://grunt1223.javaeye.com/blog/monthblog/2009-12" target="_blank">2009-12</a> (5)</li>
-<li><a href="http://grunt1223.javaeye.com/blog/monthblog_more" target="_blank">更多存档...</a></li>
-</ul>
-<h3 id="-">最新评论</h3>
-<ul>
-<li><a href="http://grunt1223.javaeye.com/blog/544497#comments" title="存取之美 —— HashMap原理、源码、实践" target="_blank">存取之美 —— HashMap原 ...</a>
-是不是叫做Floyed的人都是神啊
--- by <a href="http://beneo.javaeye.com/" target="_blank">beneo</a></li>
-<li><a href="http://grunt1223.javaeye.com/blog/551287#comments" title="设计模式初学者教程（下）" target="_blank">设计模式初学者教程（下）</a>
-正在读图中的1，2，4，5这4本书。
--- by <a href="http://duriun-yahoo-cn.javaeye.com/" target="_blank">Durian</a></li>
-<li><a href="http://grunt1223.javaeye.com/blog/551287#comments" title="设计模式初学者教程（下）" target="_blank">设计模式初学者教程（下）</a>
-写得很有意思，谢谢这篇文章。
--- by <a href="http://xmiangui.javaeye.com/" target="_blank">xmiangui</a></li>
-<li><a href="http://grunt1223.javaeye.com/blog/544497#comments" title="存取之美 —— HashMap原理、源码、实践" target="_blank">存取之美 —— HashMap原 ...</a>
-这篇文章分析的很透彻，无论是从算法的角度还是从应用的层面都讲的挺详细的，本人也在研 ...
--- by <a href="http://usiboy.javaeye.com/" target="_blank">usiboy</a></li>
-<li><p><a href="http://grunt1223.javaeye.com/blog/551287#comments" title="设计模式初学者教程（下）" target="_blank">设计模式初学者教程（下）</a>
-很好的诙谐授课方式！！！
--- by <a href="http://hqm1988.javaeye.com/" target="_blank">hqm1988</a></p>
-<h3 id="-">评论排行榜</h3>
-</li>
-<li><p><a href="http://grunt1223.javaeye.com/blog/544497" title="存取之美 —— HashMap原理、源码、实践" target="_blank">存取之美 —— HashMap原理、源码、实践</a></p>
-</li>
-<li><a href="http://grunt1223.javaeye.com/blog/549122" title="设计模式初学者教程（上）" target="_blank">设计模式初学者教程（上）</a></li>
-<li><a href="http://grunt1223.javaeye.com/blog/551287" title="设计模式初学者教程（下）" target="_blank">设计模式初学者教程（下）</a></li>
-<li><a href="http://grunt1223.javaeye.com/blog/549893" title="设计模式的定义、设计原则及案例" target="_blank">设计模式的定义、设计原则及案例</a></li>
-<li><p><a href="http://grunt1223.javaeye.com/blog/545776" title="利用方法拦截器优化Ibatis更新策略  —— 基于POJO、CGLIB、SPRING AOP" target="_blank">利用方法拦截器优化Ibatis更新策略 —— ...</a></p>
-</li>
-<li><p><a href="http://grunt1223.javaeye.com/rss" target="_blank"><img src="" alt="Rss"></a></p>
-</li>
-<li><a href="http://fusion.google.com/add?feedurl=http://grunt1223.javaeye.com/rss" target="_blank"><img src="" alt="Rss_google"></a></li>
-<li><a href="http://www.xianguo.com/subscribe.php?url=http://grunt1223.javaeye.com/rss" target="_blank"><img src="" alt="Rss_xianguo"></a></li>
-<li><a href="http://www.google.com/search?hl=zh-CN&amp;q=RSS" target="_blank">[什么是RSS?]</a>
-声明：JavaEye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
-© 2003-2010 JavaEye.com. All rights reserved. 上海炯耐计算机软件有限公司 [ 沪ICP备05023328号 ]</li>
-</ul>
+<p><img src="" alt=""></p>
+<p>看到这两张图表，问题就比较明朗了。berkeley db中的数据结点com.sleepycat.je.tree.BIN占用了大量内存，导致内存溢出了。为了提高访问效率，berkeley db会缓存大量的结点，缓存大小限制可以在EnvironmentConfig设置，默认为jvm内存大小限制的60%。而这个应用程序中使用了5个EnvironmentImpl，并且都未单独设置缓存大小，总的缓存限制为jvm内存限制的300%(图表中BIN结点已经占用了94.55%的内存)，远远超出java的内存限制。随着服务的运行，缓存数据越来越多，最后导致内存溢出错误。因此，为每个EnvironmentImpl设置合适的缓存大小限制，就可以避免再次发生内存溢出。
+来源： <a href="[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)">[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)</a> </p>
 
       
     </div>
@@ -1922,8 +431,8 @@ package test; //<em>/</em> /<em> Why HashMap use operation &#39;&amp;&#39; repla
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/数组&集合/">数组&集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/数组&集合/" class="label label-success">数组&集合</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--存取之美——HashMap原理、源码、实践/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-数组集合--存取之美——HashMap原理、源码、实践" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1938,18 +447,120 @@ package test; //<em>/</em> /<em> Why HashMap use operation &#39;&amp;&#39; repla
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和-Java综合-Java/">淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和 </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析java内存/">离线分析java内存</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和-Java综合-Java/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析java内存/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-cpu-list-java-java-javaeye-">淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和 - Java综合 - Java - JavaEye论坛</h1>
-<p><img src="" alt=""> Saving Data...
-正在保存数据...
-正在儲存資料...</p>
+        <h1 id="-java-">离线分析java内存</h1>
+<p> 如题，我这里简单说下我现在离线分析java内存的方式，所谓离线，就是需要dump出正在运行的java系统中的一些运行时堆栈数据，然后拿到线下来分析，分析可以包括内存，线程，GC等等，同时不会对正在运行的生产环境的机器造成很大的影响，对应着离线分析，当然是在线分析了，这个我在后面会尝试下，因为离线分析有些场景还是模拟不出来，需要借助LR来模拟压力，查看在线的java程序运行情况了。</p>
+<pre><code>        首先一个简单的问题，如何dump出java运行时堆栈，这个SUN就提供了很好的工具，位于JAVA_HOME/bin目录下的jmap（java memory map之意），如果需要dump出当前运行的java进程的堆栈数据，则首先需要获得该java进程的进程ID,在linux下可以使用
+</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>ps -aux  </li>
+<li></li>
+<li>ps -ef | grep java  </li>
+</ol>
+<p>或者使用jdk自带的一个工具jps，例如</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>/JAVA_HOME/bin/jps  </li>
+</ol>
+<p>找到了当前运行的java进程的id后，就可以对正在运行的java进程使用jmap工具进行dump了，例如使用以下命令：</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>JAVA_HOME/bin/jmap  -dump:format=b,file=heap.bin <pid>   </li>
+</ol>
+<p>其中file = heap.bin的意思是dump出的文件名叫heap.bin, 当然你可以选择你喜欢的名字，我这里选择叫/*.bin是为了后面使用方便，<pid>表示你需要dump的java进程的id。</p>
+<p>这里需要注意的是，记住dump的进程是java进程，不会是jboss的进程，weblogic的进程等。dump过程中机器load可能会升高，但是在我这里测试发现load升的不是特别快，同时dump时需要的磁盘空间也比较大，例如我这里测试的几个系统，分别是500M 800M 1500M  3000M，所以确保你运行jmap命令时所在的目录中的磁盘空间足够，当然现在的系统磁盘空间都比较大。</p>
+<p>以上是在java进程还存活的时候进行的dump，有的时候我们的java进程crash后，会生成一个core.pid文件，这个core.pid文件还不能直接被我们的java 内存分析工具使用，需要将其转换为java 内存分析工具可以读的文件（例如使用jmap工具dump出的heap.bin文件就是很多java 内存分析工具可以读的文件格式）。将core.pid文件转换为jmap工具dump出的文件格式还可以继续使用jmap工具，这个的说明可以见我前几篇中的一个转载（<a href="http://dikar.iteye.com/blog/643196" target="_blank">Create Java heapdumps with the help of core dumps</a>），这里我在补充点</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>jmap -heap:format=b [java binary] [core dump file]  </li>
+<li></li>
+<li></li>
+<li>64位下可以指定使用64位模式  </li>
+<li></li>
+<li>jmap -d64  -dump:format=b [java binary] [core dump file]  </li>
+</ol>
+<p>需要说明一下，使用jmap转换core.pid文件时，当文件格式比较大时，可能大于2G的时候就不能执行成功（我转换3G文件大小的时候没有成功）而报出</p>
+<p>Error attaching to core file: Can&#39;t attach to the core file</p>
+<p>查过sun的bug库中，这个bug还没有被修复，我想还是由于32位下用户进程寻址大小限制在2G的范围内引起的，在64位系统和64位jdk版本中，转换3G文件应该没有什么大的问题（有机会有环境得需要测试下）。如果有兴趣分析jmap转换不成功的同学，可以使用如下命令来分析跟踪命令的执行轨迹，例如使用</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>strace  jmap -heap:format=b [java binary] [core dum  </li>
+<li><p>p]  </p>
+<p>对于strace的命令的说明，同样可以参考我前几篇文章中的一个<a href="http://dikar.iteye.com/blog/643201" target="_blank"> strace命令用法</a></p>
+</li>
+</ol>
+<p>同时对于core.pid文件的调试我也补充一下, 其中&gt;&gt;表示命令提示符</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li><blockquote>
+<blockquote>
+<p>gdb JAVA_HOME/bin/java  core.pid  </p>
+</blockquote>
+</blockquote>
+</li>
+<li></li>
+<li><blockquote>
+<blockquote>
+<p>bt  </p>
+</blockquote>
+</blockquote>
+</li>
+</ol>
+<p>bt后就可以看到生成core.pid文件时，系统正在执行的一个操作，例如是哪个so文件正在执行等。</p>
+<p>好了说了这么多，上面都是怎么生成java 运行期DUMP文件的，接下来我们就进入分析阶段，为了分析这个dump出的文件，需要将这个文件弄到你的分析程序所在的机器上，例如可以是windows上，linux上，这个和你使用的分析工具以及使用的操作系统有关。不管使用什么系统，总是需要把生产环境下打出的dump文件搞到你的分析机器上，由于dump出的文件经常会比较大，例如达到2G，这么大的文件不是很好的从生产环境拉下来，因此使用FTP的方式把文件拖到分析机器上，同时由于单个文件很大，因此为了快速的将文件下载到分析机器，我们可以使用分而治之的思想，先将文件切割为小文件下载，然后在合并为一个大文件即可，还好linux提供了很方便的工具，例如使用如下命令</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>$ split -b 300m heap.bin  </li>
+<li></li>
+<li>$ cat x/* &gt; heap.bin  </li>
+</ol>
+<p>在上面的 split 命令行中的 “300m” 表示分割后的每个文件为 300MB，“heap.bin” 为待分割的dump文件，分割后的文件自动命名为 xaa，xab，xac等 
+cat 命令可将这些分割后的文件合并为一个文件，例如将所有x开头的文件合并为heap.bin</p>
+<p>如果我们是利用一个中间层的FTP服务器来保存数据的，那么我们还需要连接这个FTP服务器把合并后的文件拉下来，在windows下我推荐使用一个工具，速度很快而且简单，</p>
+<p>winscp   <a href="http://winscp.net/eng/docs/lang:chs" target="_blank">http://winscp.net/eng/docs/lang:chs</a></p>
+<p>好了分析的文件终于经过一翻周折到了你的分析机器上，现在我们就可以使用分析工具来分析这个dump出的程序了，这里我主要是分析内存的问题，所以我说下我选择的内存分析工具，我这里使用的是开源的由SAP 和IBM 支持的一个内存分析工具</p>
+<h1 id="memory-analyzer-mat-">Memory Analyzer (MAT)</h1>
+<p><a href="http://www.eclipse.org/mat/" target="_blank">http://www.eclipse.org/mat/</a></p>
+<p>我建议下载 Stand-alone Eclipse RCP 版本，不要装成eclipse的插件，因为这个分析起来还是很耗内存。<em>**</em></p>
+<p>下载好了，解压开来就可以直接使用了（基于eclipse的），打开以后，在菜单栏中选择打开文件，选择你刚刚的dump文件，然后一路的next就可以了，最后你会看到一个报告，这个报告里会告诉你可能的内存泄露的点，以及内存中对象的一个分布，关于mat的使用请参考官方说明，当然你也可以自己徜徉在学习的海洋中 。</p>
+<p>对于dump文件的分析还可以使用jdk中提供的一个jhat工具来查看，不过这个很耗内存，而且默认的内存大小不够，还需要增加参数设置内存大小才能分析出，不过我看了下分析出的结果不是很满意，而且这个用起来很慢。还是推荐使用mat 。
+来源： <a href="[http://dikar.iteye.com/blog/643436](http://dikar.iteye.com/blog/643436)">[http://dikar.iteye.com/blog/643436](http://dikar.iteye.com/blog/643436)</a> </p>
+<p> 摘文：<a href="http://dikar.iteye.com/blog/643196" target="_blank">Create Java heapdumps with the help of core dumps</a></p>
+<p>转载自：<a href="http://devops-abyss.blogspot.com/2010/03/create-java-heapdumps-with-help-of-core.html" target="_blank">http://devops-abyss.blogspot.com/2010/03/create-java-heapdumps-with-help-of-core.html</a></p>
+<p>Hi,
+for some time I had the problem, that taking Java heap dumps with jmap took too long. When one of my tomcats crashed by an OutOfMemoryException, I had no time to do a heap dump because it took some hours and the server had to be back online.
+Now I found a sollution to my problem. The initial idea came from <a href="https://proxy.evlit.net/browse.php?u=http%3A%2F%2Fserverfault.com%2Fquestions%2F110153%2Fhow-to-reliably-take-java-heap-dumps%2F12545&amp;b=4#125451" target="_blank">this</a> post. It had a solution for Solaris, but with some googling and try and error I found a solution for linux too.</p>
+<ol>
+<li>create a core dump of your java process with gdb
+gdb --pid=[java pid] 
+gcore [file name] 
+detach 
+quit</li>
+<li>restart the tomcat or do whatever you like with the java process</li>
+<li>attach jmap to the core dump and create a Java heap dump
+jmap -heap:format=b [java binary] [core dump file]</li>
+<li><p>analyze your Java heap dump with your prefered tool</p>
+<p>When you get the following error in step three:
+Error attaching to core file: Can&#39;t attach to the core file</p>
+</li>
+</ol>
+<p>This might help:
+In my case the error apeared because I used the wrong java binary in the jmap call. When you are not sure about your java binary, open the core dump with gdb:</p>
+<p>gdb --core=[core dump file]</p>
+<p>You will get an output similar to this one:</p>
+<p>GNU gdb 6.6 Copyright (C) 2006 Free Software Foundation, Inc. GDB is free software, covered by the GNU General Public License, and you are welcome to change it and/or distribute copies of it under certain conditions. Type &quot;show copying&quot; to see the conditions. There is absolutely no warranty for GDB.  Type &quot;show warranty&quot; for details. This GDB was configured as &quot;i586-suse-linux&quot;... (no debugging symbols found) Using host libthread_db library &quot;/lib/libthread_db.so.1&quot;. 
+warning: core file may not match specified executable file. (no debugging symbols found) Failed to read a valid object file image from memory. Core was generated by `/opt/tomcat/bin/jsvc&#39;. /#0  0xffffe410 in _start ()</p>
+<p> What you are looking for is in this line:</p>
+<p>Core was generated by `/opt/tomcat/bin/jsvc&#39;.</p>
+<p> Call jmap with this binary and you will get a heapdump.</p>
+<p>来源： <a href="[http://dikar.iteye.com/blog/643196](http://dikar.iteye.com/blog/643196)">[http://dikar.iteye.com/blog/643196](http://dikar.iteye.com/blog/643196)</a> </p>
 
       
     </div>
@@ -1959,8 +570,8 @@ package test; //<em>/</em> /<em> Why HashMap use operation &#39;&amp;&#39; repla
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/数组&集合/">数组&集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/数组&集合/" class="label label-success">数组&集合</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和-Java综合-Java/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-数组集合--淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和-Java综合-Java" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析java内存/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--离线分析java内存" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1975,418 +586,51 @@ package test; //<em>/</em> /<em> Why HashMap use operation &#39;&amp;&#39; repla
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和/">淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/">离线分析—— MAT(Memory Analyzer Tool)工具入门介绍</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-cpu-list-">淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和</h1>
-<p><strong>永久链接：<a href="http://flysnow.iteye.com/blog/711162" target="_blank"><a href="http://flysnow.iteye.com/blog/711162">http://flysnow.iteye.com/blog/711162</a></a></strong>
-引用</p>
-<p>前几天在网上看到一个淘宝的面试题：有一个很大的整数list，需要求这个list中所有整数的和，写一个可以充分利用多核CPU的代码，来计算结果。
-<strong>一：分析题目</strong>
-从题中可以看到“很大的List”以及“充分利用多核CPU”，这就已经充分告诉我们要采用多线程(任务)进行编写。具体怎么做呢？大概的思路就是分割List，每一小块的List采用一个线程(任务)进行计算其和，最后等待所有的线程(任务)都执行完后就可得到这个“很大的List”中所有整数的和。
-<strong>二：具体分析和技术方案</strong>
-既然我们已经决定采用多线程(任务)，并且还要分割List，每一小块的List采用一个线程(任务)进行计算其和，那么我们必须要等待所有的线程(任务)完成之后才能得到正确的结果，那么怎么才能保证“等待所有的线程(任务)完成之后输出结果呢”？这就要靠java.util.concurrent包中的CyclicBarrier类了。它是一个同步辅助类，它允许一组线程(任务)互相等待，直到到达某个公共屏障点 (common barrier point)。在涉及一组固定大小的线程(任务)的程序中，这些线程(任务)必须不时地互相等待，此时 CyclicBarrier 很有用。简单的概括其适应场景就是：当一组线程(任务)并发的执行一件工作的时候，必须等待所有的线程(任务)都完成时才能进行下一个步骤。具体技术方案步骤如下：</p>
-<ul>
-<li>分割List，根据采用的线程(任务)数平均分配，即list.size()/threadCounts。</li>
-<li>定义一个记录“很大List”中所有整数和的变量sum，采用一个线程(任务)处理一个分割后的子List，计算子List中所有整数和(subSum)，然后把和(subSum)累加到sum上。</li>
-<li>等待所有线程(任务)完成后输出总和(sum)的值。
-示意图如下：
-<img src="&quot;点击查看原始大小图片&quot;" alt="">
-<strong>三：详细编码实现</strong>
-代码中有很详细的注释，这里就不解释了。
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></li>
-</ul>
-<ol>
-<li>//<em>/</em> </li>
-<li>/* 计算List中所有整数的和<br> </li>
-<li>/* 采用多线程，分割List计算 </li>
-<li>/* @author 飞雪无情 </li>
-<li>/* @since 2010-7-12 </li>
-<li>/*/  </li>
-<li>public class CountListIntegerSum {  </li>
-<li>private long sum;//存放整数的和  </li>
-<li>private CyclicBarrier barrier;//障栅集合点(同步器)  </li>
-<li>private List<Integer> list;//整数集合List  </li>
-<li>private int threadCounts;//使用的线程数  </li>
-<li>public CountListIntegerSum(List<Integer> list,int threadCounts) {  </li>
-<li>this.list=list;  </li>
-<li>this.threadCounts=threadCounts;  </li>
-<li>}  </li>
-<li>//<em>/</em> </li>
-<li>/* 获取List中所有整数的和 </li>
-<li>/* @return </li>
-<li>/*/  </li>
-<li>public long getIntegerSum(){  </li>
-<li>ExecutorService exec=Executors.newFixedThreadPool(threadCounts);  </li>
-<li>int len=list.size()/threadCounts;//平均分割List  </li>
-<li>//List中的数量没有线程数多（很少存在）  </li>
-<li>if(len==0){  </li>
-<li>threadCounts=list.size();//采用一个线程处理List中的一个元素  </li>
-<li>len=list.size()/threadCounts;//重新平均分割List  </li>
-<li>}  </li>
-<li>barrier=new CyclicBarrier(threadCounts+1);  </li>
-<li>for(int i=0;i&lt;threadCounts;i++){  </li>
-<li>//创建线程任务  </li>
-<li>if(i==threadCounts-1){//最后一个线程承担剩下的所有元素的计算  </li>
-<li>exec.execute(new SubIntegerSumTask(list.subList(i/*len,list.size())));  </li>
-<li>}else{  </li>
-<li>exec.execute(new SubIntegerSumTask(list.subList(i/<em>len, len/</em>(i+1)&gt;list.size()?list.size():len/*(i+1))));  </li>
-<li>}  </li>
-<li>}  </li>
-<li>try {  </li>
-<li>barrier.await();//关键，使该线程在障栅处等待，直到所有的线程都到达障栅处  </li>
-<li>} catch (InterruptedException e) {  </li>
-<li>System.out.println(Thread.currentThread().getName()+&quot;:Interrupted&quot;);  </li>
-<li>} catch (BrokenBarrierException e) {  </li>
-<li>System.out.println(Thread.currentThread().getName()+&quot;:BrokenBarrier&quot;);  </li>
-<li>}  </li>
-<li>exec.shutdown();  </li>
-<li>return sum;  </li>
-<li>}  </li>
-<li>//<em>/</em> </li>
-<li>/* 分割计算List整数和的线程任务 </li>
-<li>/* @author lishuai </li>
-<li>/* </li>
-<li>/*/  </li>
-<li>public class SubIntegerSumTask implements Runnable{  </li>
-<li>private List<Integer> subList;  </li>
-<li>public SubIntegerSumTask(List<Integer> subList) {  </li>
-<li>this.subList=subList;  </li>
-<li>}  </li>
-<li>public void run() {  </li>
-<li>long subSum=0L;  </li>
-<li>for (Integer i : subList) {  </li>
-<li>subSum += i;  </li>
-<li>}    </li>
-<li>synchronized(CountListIntegerSum.this){//在CountListIntegerSum对象上同步  </li>
-<li>sum+=subSum;  </li>
-<li>}  </li>
-<li>try {  </li>
-<li>barrier.await();//关键，使该线程在障栅处等待，直到所有的线程都到达障栅处  </li>
-<li>} catch (InterruptedException e) {  </li>
-<li>System.out.println(Thread.currentThread().getName()+&quot;:Interrupted&quot;);  </li>
-<li>} catch (BrokenBarrierException e) {  </li>
-<li>System.out.println(Thread.currentThread().getName()+&quot;:BrokenBarrier&quot;);  </li>
-<li>}  </li>
-<li>System.out.println(&quot;分配给线程：&quot;+Thread.currentThread().getName()+&quot;那一部分List的整数和为：\tSubSum:&quot;+subSum);  </li>
-<li>}  </li>
-<li></li>
-<li>}  </li>
-<li></li>
-<li>}  </li>
-</ol>
-<p>//<em>/</em></p>
-<p>/<em> 计算List中所有整数的和<br>
-/</em> 采用多线程，分割List计算</p>
-<p>/<em> @author 飞雪无情
-/</em> @since 2010-7-12</p>
-<p>/*/
-public class CountListIntegerSum {</p>
-<pre><code>private long sum;//存放整数的和
-private CyclicBarrier barrier;//障栅集合点(同步器)
+        <h1 id="-mat-memory-analyzer-tool-">离线分析—— MAT(Memory Analyzer Tool)工具入门介绍</h1>
+<p>1、MAT是什么？</p>
+<pre><code>MAT(Memory Analyzer Tool)，一个基于Eclipse的内存分析工具，是一个快速、功能丰富的JAVA heap分析工具，它可以帮助我们查找内存泄漏和减少内存消耗。使用内存分析工具从众多的对象中进行分析，快速的计算出在内存中对象的占用大小，看看是谁阻止了垃圾收集器的回收工作，并可以通过报表直观的查看到可能造成这种结果的对象。
 
-private List&lt;Integer&gt; list;//整数集合List
-private int threadCounts;//使用的线程数
-
-public CountListIntegerSum(List&lt;Integer&gt; list,int threadCounts) {
-    this.list=list;
-
-    this.threadCounts=threadCounts;
-}
-
-//*/*
- /* 获取List中所有整数的和
-
- /* @return
- /*/
-
-public long getIntegerSum(){
-    ExecutorService exec=Executors.newFixedThreadPool(threadCounts);
-
-    int len=list.size()/threadCounts;//平均分割List
-    //List中的数量没有线程数多（很少存在）
-
-    if(len==0){
-        threadCounts=list.size();//采用一个线程处理List中的一个元素
-
-        len=list.size()/threadCounts;//重新平均分割List
-    }
-
-    barrier=new CyclicBarrier(threadCounts+1);
-    for(int i=0;i&lt;threadCounts;i++){
-
-        //创建线程任务
-        if(i==threadCounts-1){//最后一个线程承担剩下的所有元素的计算
-
-            exec.execute(new SubIntegerSumTask(list.subList(i/*len,list.size())));
-        }else{
-
-            exec.execute(new SubIntegerSumTask(list.subList(i/*len, len/*(i+1)&gt;list.size()?list.size():len/*(i+1))));
-        }
-
-    }
-    try {
-
-        barrier.await();//关键，使该线程在障栅处等待，直到所有的线程都到达障栅处
-    } catch (InterruptedException e) {
-
-        System.out.println(Thread.currentThread().getName()+&quot;:Interrupted&quot;);
-    } catch (BrokenBarrierException e) {
-
-        System.out.println(Thread.currentThread().getName()+&quot;:BrokenBarrier&quot;);
-    }
-
-    exec.shutdown();
-    return sum;
-
-}
-//*/*
-
- /* 分割计算List整数和的线程任务
- /* @author lishuai
-
- /*
- /*/
-
-public class SubIntegerSumTask implements Runnable{
-    private List&lt;Integer&gt; subList;
-
-    public SubIntegerSumTask(List&lt;Integer&gt; subList) {
-        this.subList=subList;
-
-    }
-    public void run() {
-
-        long subSum=0L;
-        for (Integer i : subList) {
-
-            subSum += i;
-        } 
-
-        synchronized(CountListIntegerSum.this){//在CountListIntegerSum对象上同步
-            sum+=subSum;
-
-        }
-        try {
-
-            barrier.await();//关键，使该线程在障栅处等待，直到所有的线程都到达障栅处
-        } catch (InterruptedException e) {
-
-            System.out.println(Thread.currentThread().getName()+&quot;:Interrupted&quot;);
-        } catch (BrokenBarrierException e) {
-
-            System.out.println(Thread.currentThread().getName()+&quot;:BrokenBarrier&quot;);
-        }
-
-        System.out.println(&quot;分配给线程：&quot;+Thread.currentThread().getName()+&quot;那一部分List的整数和为：\tSubSum:&quot;+subSum);
-    }
-
-
-}
-</code></pre><p>}
-有人可能对barrier=new CyclicBarrier(threadCounts+1);//创建的线程数和主线程main有点不解，不是采用的线程(任务)数是threadCounts个吗？怎么为CyclicBarrier设置的给定数量的线程参与者比我们要采用的线程数多一个呢？答案就是这个多出来的一个用于控制main主线程的，主线程也要等待，它要等待其他所有的线程完成才能输出sum值，这样才能保证sum值的正确性，如果main不等待的话，那么结果将是不可预料的。
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>//<em>/</em> </li>
-<li>/* 计算List中所有整数的和测试类 </li>
-<li>/* @author 飞雪无情 </li>
-<li>/* @since 2010-7-12 </li>
-<li>/*/  </li>
-<li>public class CountListIntegerSumMain {  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* @param args </li>
-<li>/*/  </li>
-<li>public static void main(String[] args) {  </li>
-<li>List<Integer> list = new ArrayList<Integer>();  </li>
-<li>int threadCounts = 10;//采用的线程数  </li>
-<li>//生成的List数据  </li>
-<li>for (int i = 1; i &lt;= 1000000; i++) {  </li>
-<li>list.add(i);  </li>
-<li>}  </li>
-<li>CountListIntegerSum countListIntegerSum=new CountListIntegerSum(list,threadCounts);  </li>
-<li>long sum=countListIntegerSum.getIntegerSum();  </li>
-<li>System.out.println(&quot;List中所有整数的和为:&quot;+sum);  </li>
-<li>}  </li>
-<li></li>
-<li>}  </li>
-</ol>
-<p>//<em>/</em></p>
-<p>/<em> 计算List中所有整数的和测试类
-/</em> @author 飞雪无情</p>
-<p>/<em> @since 2010-7-12
-/</em>/</p>
-<p>public class CountListIntegerSumMain {</p>
-<pre><code>//*/*
- /* @param args
-
- /*/
-public static void main(String[] args) {
-
-    List&lt;Integer&gt; list = new ArrayList&lt;Integer&gt;();
-    int threadCounts = 10;//采用的线程数
-
-    //生成的List数据
-    for (int i = 1; i &lt;= 1000000; i++) {
-
-        list.add(i);
-    }
-
-    CountListIntegerSum countListIntegerSum=new CountListIntegerSum(list,threadCounts);
-    long sum=countListIntegerSum.getIntegerSum();
-
-    System.out.println(&quot;List中所有整数的和为:&quot;+sum);
-}
-</code></pre><p>}
-<strong>四：总结</strong>
-本文主要通过一个淘宝的面试题为引子，介绍了并发的一点小知识，主要是介绍通过CyclicBarrier同步辅助器辅助多个并发任务共同完成一件工作。Java SE5的java.util.concurrent引入了大量的设计来解决并发问题，使用它们有助于我们编写更加简单而健壮的并发程序。
-<strong>附mathfox提到的ExecutorService.invokeAll()方法的实现</strong>
-这个不用自己控制等待，invokeAll执行给定的任务，当所有任务完成时，返回保持任务状态和结果的 Future 列表。sdh5724也说用了同步，性能不好。这个去掉了同步，根据返回结果的 Future 列表相加就得到总和了。</p>
-<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>//<em>/</em> </li>
-<li>/* 使用ExecutorService的invokeAll方法计算 </li>
-<li>/* @author 飞雪无情 </li>
-<li>/* </li>
-<li>/*/  </li>
-<li>public class CountSumWithCallable {  </li>
-<li></li>
-<li>//<em>/</em> </li>
-<li>/* @param args </li>
-<li>/* @throws InterruptedException  </li>
-<li>/* @throws ExecutionException  </li>
-<li>/*/  </li>
-<li>public static void main(String[] args) throws InterruptedException, ExecutionException {  </li>
-<li>int threadCounts =19;//使用的线程数  </li>
-<li>long sum=0;  </li>
-<li>ExecutorService exec=Executors.newFixedThreadPool(threadCounts);  </li>
-<li>List<Callable<Long>&gt; callList=new ArrayList<Callable<Long>&gt;();  </li>
-<li>//生成很大的List  </li>
-<li>List<Integer> list = new ArrayList<Integer>();  </li>
-<li>for (int i = 0; i &lt;= 1000000; i++) {  </li>
-<li>list.add(i);  </li>
-<li>}  </li>
-<li>int len=list.size()/threadCounts;//平均分割List  </li>
-<li>//List中的数量没有线程数多（很少存在）  </li>
-<li>if(len==0){  </li>
-<li>threadCounts=list.size();//采用一个线程处理List中的一个元素  </li>
-<li>len=list.size()/threadCounts;//重新平均分割List  </li>
-<li>}  </li>
-<li>for(int i=0;i&lt;threadCounts;i++){  </li>
-<li>final List<Integer> subList;  </li>
-<li>if(i==threadCounts-1){  </li>
-<li>subList=list.subList(i/*len,list.size());  </li>
-<li>}else{  </li>
-<li>subList=list.subList(i/<em>len, len/</em>(i+1)&gt;list.size()?list.size():len/*(i+1));  </li>
-<li>}  </li>
-<li>//采用匿名内部类实现  </li>
-<li>callList.add(new Callable<Long>(){  </li>
-<li>public Long call() throws Exception {  </li>
-<li>long subSum=0L;  </li>
-<li>for(Integer i:subList){  </li>
-<li>subSum+=i;  </li>
-<li>}  </li>
-<li>System.out.println(&quot;分配给线程：&quot;+Thread.currentThread().getName()+&quot;那一部分List的整数和为：\tSubSum:&quot;+subSum);  </li>
-<li>return subSum;  </li>
-<li>}  </li>
-<li>});  </li>
-<li>}  </li>
-<li>List<Future<Long>&gt; futureList=exec.invokeAll(callList);  </li>
-<li>for(Future<Long> future:futureList){  </li>
-<li>sum+=future.get();  </li>
-<li>}  </li>
-<li>exec.shutdown();  </li>
-<li>System.out.println(sum);  </li>
-<li>}  </li>
-<li></li>
-<li>}<br>//<em>/</em></li>
-</ol>
-<p>/<em> 使用ExecutorService的invokeAll方法计算
-/</em> @author 飞雪无情</p>
-<p>/<em>
-/</em>/</p>
-<p>public class CountSumWithCallable {</p>
-<pre><code>//*/*
- /* @param args
-
- /* @throws InterruptedException
- /* @throws ExecutionException
-
- /*/
-public static void main(String[] args) throws InterruptedException, ExecutionException {
-
-    int threadCounts =19;//使用的线程数
-    long sum=0;
-
-    ExecutorService exec=Executors.newFixedThreadPool(threadCounts);
-    List&lt;Callable&lt;Long&gt;&gt; callList=new ArrayList&lt;Callable&lt;Long&gt;&gt;();
-
-    //生成很大的List
-    List&lt;Integer&gt; list = new ArrayList&lt;Integer&gt;();
-
-    for (int i = 0; i &lt;= 1000000; i++) {
-        list.add(i);
-
-    }
-    int len=list.size()/threadCounts;//平均分割List
-
-    //List中的数量没有线程数多（很少存在）
-    if(len==0){
-
-        threadCounts=list.size();//采用一个线程处理List中的一个元素
-        len=list.size()/threadCounts;//重新平均分割List
-
-    }
-    for(int i=0;i&lt;threadCounts;i++){
-
-        final List&lt;Integer&gt; subList;
-        if(i==threadCounts-1){
-
-            subList=list.subList(i/*len,list.size());
-        }else{
-
-            subList=list.subList(i/*len, len/*(i+1)&gt;list.size()?list.size():len/*(i+1));
-        }
-
-        //采用匿名内部类实现
-        callList.add(new Callable&lt;Long&gt;(){
-
-            public Long call() throws Exception {
-                long subSum=0L;
-
-                for(Integer i:subList){
-                    subSum+=i;
-
-                }
-                System.out.println(&quot;分配给线程：&quot;+Thread.currentThread().getName()+&quot;那一部分List的整数和为：\tSubSum:&quot;+subSum);
-
-                return subSum;
-            }
-
-        });
-    }
-
-    List&lt;Future&lt;Long&gt;&gt; futureList=exec.invokeAll(callList);
-    for(Future&lt;Long&gt; future:futureList){
-
-        sum+=future.get();
-    }
-
-    exec.shutdown();
-    System.out.println(sum);
-
-}
-</code></pre><p>}
-<strong>一些感言</strong>
-这篇文章是昨天夜里11点多写好的，我当时是在网上看到了这个题目，就做了一下分析，写了实现代码，由于水平有限，难免有bug，这里感谢xifo等人的指正。这些帖子从发表到现在不到24小时的时间里创造了近9000的浏览次数，回复近100，这是我没有想到的，javaeye很久没这么疯狂过啦。这不是因为我的算法多好，而是因为这个题目、这篇帖子所体现出的意义。大家在看完这篇帖子后不光指正错误，还对方案进行了改进，关键是思考，人的思维是无穷的，只要我们善于发掘，善于思考，总能想出一些意想不到的方案。
-从算法看，或者从题目场景对比代码实现来看，或许不是一篇很好的帖子，但是我说这篇帖子是很有意义的，方案也是在很多场景适用，有时我们可以假设这不是计算和，而是把数据写到一个个的小文件里，或者是分割进行网络传输等等，都有一定的启发，特别是回帖中的讨论。
-单说一下回帖，我建议进来的人尽量看完所有的回帖，因为这里是很多人集思广益的精华，这里有他们分析问题，解决问题的思路，还有每个人提到的解决方案，想想为什么能用?为什么不能用?为什么好?为什么不好?
-<strong>我一直相信：讨论是解决问题、提高水平的最佳方式！</strong></p>
+![]()
+</code></pre><p>2.为什么使用MAT？
+    当服务器应用占用了过多内存的时候，会遇到OutOfMemoryError。如何快速定位问题呢？Eclipse MAT的出现使这个问题变得非常简单。它能够离线分析dump的文件数据。
+    Eclipse MAT是SAP公司贡献的一个工具，可以在Eclipse网站下载到它，完全免费的。它可比Sun提供的内存镜像分析工具jhat要强太多了。
+3.
+首页：<a href="http://www.eclipse.org/mat/" target="_blank"><a href="http://www.eclipse.org/mat/![](http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif">http://www.eclipse.org/mat/![](http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif</a>)</a> 
+插件更新地址：
+<a href="http://download.eclipse.org/mat/1.0/update-site/" target="_blank"><a href="http://download.eclipse.org/mat/1.0/update-site/">http://download.eclipse.org/mat/1.0/update-site/</a></a><a href="http://d/" target="_blank"><img src="http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif" alt=""></a></p>
+<p>先调用jdk的工具得到heap使用情况</p>
+<p>我安装的是jdk1.6</p>
+<p>C:/&gt;java -version</p>
+<p>java version &quot;1.6.0_11&quot;</p>
+<p>Java(TM) SE Runtime Environment (build 1.6.0_11-b03)</p>
+<p>Java HotSpot(TM) Client VM (build 11.0-b16, mixed mode, sharing)</p>
+<p>调用jdk工具jps查看当前的java进程</p>
+<p>C:/&gt;jps</p>
+<p>3504 Jps</p>
+<p>3676 Bootstrap</p>
+<p>3496 org.eclipse.equinox.launcher_1.0.201.R35x_v20090715.jar</p>
+<p>调用jmap工具得到信息</p>
+<p>C:/&gt;jmap -dump:format=b,file=heap.bin 3676</p>
+<p>Dumping heap to C:/heap.bin ...</p>
+<p>Heap dump file created</p>
+<p>这时，我们的C盘根目录，就生成了heap.bin文件，用eclipse的file----&gt;open打开这个文件，首先是一个启动图：</p>
+<p><img src="" alt=""></p>
+<p>这里可以选择查看</p>
+<p>1、内存泄露报表，自动检查可能存在内存泄露的对象，通过报表展示存活的对象以及为什么他们没有被垃圾收集；</p>
+<p>2、对象报表，对可颖对象的分析，如字符串是否定义重了，空的collection、finalizer以及弱引用等。</p>
+<p>我这里选择的是查看内存报表，以下是截的简略图：</p>
+<p><img src="" alt=""></p>
+<p> <img src="" alt=""></p>
+<p>通过报表展示，蛮清楚的，下面还有详细的说明，这里就没有帖图了，有兴趣的可以继续探究。
+来源： <a href="[http://blog.csdn.net/fenglibing/article/details/6298326](http://blog.csdn.net/fenglibing/article/details/6298326)">[http://blog.csdn.net/fenglibing/article/details/6298326](http://blog.csdn.net/fenglibing/article/details/6298326)</a> </p>
 
       
     </div>
@@ -2396,8 +640,8 @@ public static void main(String[] args) throws InterruptedException, ExecutionExc
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/数组&集合/">数组&集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/数组&集合/" class="label label-success">数组&集合</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-数组集合--淘宝面试题：如何充分利用多核CPU，计算很大的List中所有整数的和" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -2410,7 +654,7 @@ public static void main(String[] args) throws InterruptedException, ExecutionExc
 
 
 <ul id="pagination" class="pagination pagination-lg">
-  <li><a class="extend prev" href="/page/70/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/68/">68</a></li><li><a class="page-number" href="/page/69/">69</a></li><li><a class="page-number" href="/page/70/">70</a></li><li class="active"><li><span class="page-number current">71</span></li><li><a class="page-number" href="/page/72/">72</a></li><li><a class="page-number" href="/page/73/">73</a></li><li><a class="page-number" href="/page/74/">74</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/164/">164</a></li><li><a class="page-number" href="/page/165/">165</a></li><li><a class="extend next" href="/page/72/">&raquo;</a></li>
+  <li><a class="extend prev" href="/page/70/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/68/">68</a></li><li><a class="page-number" href="/page/69/">69</a></li><li><a class="page-number" href="/page/70/">70</a></li><li class="active"><li><span class="page-number current">71</span></li><li><a class="page-number" href="/page/72/">72</a></li><li><a class="page-number" href="/page/73/">73</a></li><li><a class="page-number" href="/page/74/">74</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="page-number" href="/page/164/">164</a></li><li><a class="extend next" href="/page/72/">&raquo;</a></li>
   <div class="clearfix"></div>
 </ul></div><!--wapper-->
        </div><!-- ID main-col END -->
@@ -2477,7 +721,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-26 21:21:33</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-29 22:06:56</em></span></div>
 </div>
 <div class="clearfix"></div>
 

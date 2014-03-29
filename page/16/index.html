@@ -110,198 +110,412 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--SelectionInsertionBubble/">SelectionInsertionBubble</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy几个重要的结构体/">HAProxy几个重要的结构体</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--SelectionInsertionBubble/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy几个重要的结构体/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="selectioninsertionbubble">SelectionInsertionBubble</h1>
-<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 选择、插入、气泡排序</a></h1>
-<h2 id="-">说明</h2>
-<p>选择排序（Selection sort）、插入排序（Insertion sort）与气泡排序（Bubble sort）这三个排序方式是初学排序所必须知道的三个基本排序方式，它们由于速度不快而不实用（平均与最快的时间复杂度都是O(n2)），然而它们排序的方式确是值得观察与探讨的。</p>
-<h2 id="-">解法</h2>
+        <h1 id="haproxy-">HAProxy几个重要的结构体</h1>
+<h1 id="-haproxy-http-tech-uc-cn-p-1738-"><a href="http://tech.uc.cn/?p=1738" target="_blank">HAProxy几个重要的结构体</a></h1>
+<p>上一篇文章《<a href="http://tech.uc.cn/?p=1523" target="_blank">HAProxy的event_accept函数源码分析</a>》（以下简称上文）理顺了HAProxy接收客户端连接的主要流程，遗留下相关的基础设施和数据结构没有深入分析，这一篇先介绍几个重要的结构体。</p>
+<p>另外要说明的是，本系列文章对HAProxy的分析都基于目前的稳定版本HAProxy 1.4，而目前的开发版本HAProxy 1.5和1.4相比，重构力度比较大，不少函数名称和结构体都发生变化，但是关键流程还是基本一致的，请各位读者留意。</p>
+<h1 id="1-session">1. session</h1>
+<p>上文讲的其实就是HAProxy怎样在客户端和服务端之间建立一个完整的链路，相关信息都保存到一个session结构体中。原本的session结构体有80行，可以说非常冗长。和上文思路一样，本着不追求旁枝末节，以较小的代价描述HAProxy原理的原则，我把它进行简化，去掉了HTTP处理相关的成员和一些实现额外功能的成员，只把必不可少的成员列出来：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13 struct session {</p>
+<pre><code>struct list list;         //* position in global sessions list /*/
+struct task /*task;        //* the task associated with this session /*/
+
+int conn_retries;         //* number of connect retries left /*/
+int flags;                //* some flags describing the session /*/
+
+struct buffer /*req;       //* request buffer /*/
+struct buffer /*rep;       //* response buffer /*/
+
+struct stream_interface si[2];     //* client and server stream interfaces /*/
+struct sockaddr_storage cli_addr;  //* the client address /*/
+
+struct sockaddr_in srv_addr;       //* the address to connect to /*/
+struct server /*srv;       //* the server the session will be running or has been running on /*/
+
+struct server /*prev_srv;  //* the server the was running on, after a redispatch, otherwise NULL /*/
+</code></pre><p>};</p>
+<p>其中，task、req、rep和si在上文已经有所提及，下面也会有进一步解释；conn_retries、flags、cli_addr和srv_addr甚至不用看注释就明白其意义；srv和prev_srv也很明显，一个指向将要执行或正在执行的后端服务器结构体，一个指向上一次曾经执行的后端服务器结构体。</p>
+<p>list也是一个结构体，包含n和p两个指向struct list类型的指针，详见mini-clist.h。它在这里的作用是把各个session结构体串起来，形成 一个双向链表，如下图所示。这是包括HAProxy和Linux内核广泛使用的一种数据结构。我认为用在这里倒不是很必要，不过仍然是一种值得学习的技巧。</p>
+<p><a href="http://tech.uc.cn/wp-content/uploads/2013/07/haproxy_sessions.png" target="_blank"><img src="" alt="haproxy_sessions"></a></p>
+<p>值得注意的是，这种链表是嵌入到各个结构体中使用，p和n两个指针成员各自指向前、后节点节点的list成员，而非前、后节点本身。</p>
+<h1 id="2-task">2. task</h1>
+<p>task结构体的主要成员如下：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8 struct task {</p>
+<pre><code>struct eb32_node wq;  //* ebtree node used to hold the task in the wait queue /*/
+struct eb32_node rq;  //* ebtree node used to hold the task in the run queue /*/
+
+int state;            //* task state : bit field of TASK_/* /*/
+int expire;           //* next expiration date for this task, in ticks /*/
+
+struct task /* (/*process)(struct task /*t);  //* the function which processes the task /*/
+void /*context;        //* the task&#39;s context /*/
+</code></pre><p>};</p>
+<p>其中，state和expire都是顾名思义；process是函数指针，根据task的类型会执行不同的处理函数，以后的文章再叙述；context指向与task关联的结构体，在event_accept函数中，context指向的就是session。</p>
+<p>重点讲一下wq和rq，它们是两个使用32位键的ebtree节点（以下简称ebnode），分别代表该task与等待队列和运行队列的关系。在第一篇文章《<a href="http://tech.uc.cn/?p=1031" target="_blank">HAProxy的独门武器：ebtree</a>》中，因为没有具体例子印证，有一个关于ebnode的特点没有交代：一个ebnode在ebtree中，当且仅当该ebnode的leaf_p不为空。这一点可以从ebnode的插入、删除操作中推导得出。</p>
+<p>因此，判断一个task是否在运行队列中就是：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4 static inline int task_in_rq(struct task /*t)</p>
+<p>{
+    return t-&gt;rq.node.leaf_p != NULL;</p>
+<p>}</p>
+<p>同样，判断一个task是否在等待队列中就是：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4 static inline int task_in_wq(struct task /*t)</p>
+<p>{
+    return t-&gt;wq.node.leaf_p != NULL;</p>
+<p>}</p>
+<p>从运行队列中删除一个task：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5 static inline struct task /<em>__task_unlink_rq(struct task /</em>t)</p>
+<p>{
+    eb32_delete(&amp;t-&gt;rq);</p>
+<pre><code>return t;
+</code></pre><p>}</p>
+<p>从等待队列中删除一个task，这里有个优化，last_timer指向最后一个入队列的task（稍后再介绍）：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7 static inline struct task /<em>__task_unlink_wq(struct task /</em>t)</p>
+<p>{
+    eb32_delete(&amp;t-&gt;wq);</p>
+<pre><code>if (last_timer == &amp;t-&gt;wq)
+    last_timer = NULL;
+
+return t;
+</code></pre><p>}</p>
+<p>添加task到运行队列，也就是唤醒该task，上文的event_accept函数，最终也是会执行到这里：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8 extern struct task /<em>__task_wakeup(struct task /</em>t)</p>
+<p>{
+    t-&gt;rq.key = ++rqueue_ticks;</p>
+<pre><code>// clear state flags at the same time
+t-&gt;state &amp;= ~TASK_WOKEN_ANY;
+
+eb32_insert(&amp;rqueue, &amp;t-&gt;rq);
+return t;
+</code></pre><p>}</p>
+<p>添加task到等待队列，也就是让该task排队，乍看上去有点复杂，其实核心部分就只有两三句，关于last_timer的都是一些优化工作，使得HAProxy更快地找到插入的地方：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13</p>
+<p>14
+15</p>
+<p>16
+17</p>
+<p>18
+19</p>
+<p>20
+21</p>
+<p>22
+23</p>
+<p>24 extern void __task_queue(struct task /*task)</p>
+<p>{
+    if (likely(task_in_wq(task)))</p>
+<pre><code>    __task_unlink_wq(task);
+
+
+//* the task is not in the queue now /*/
+task-&gt;wq.key = task-&gt;expire;
+
+
+if (likely(last_timer &amp;&amp;
+
+       last_timer-&gt;node.bit &lt; 0 &amp;&amp;
+       last_timer-&gt;key == task-&gt;wq.key &amp;&amp;
+
+       last_timer-&gt;node.node_p)) {
+    eb_insert_dup(&amp;last_timer-&gt;node, &amp;task-&gt;wq.node);
+
+    if (task-&gt;wq.node.bit &lt; last_timer-&gt;node.bit)
+        last_timer = &amp;task-&gt;wq;
+
+    return;
+}
+
+eb32_insert(&amp;timers, &amp;task-&gt;wq);
+
+
+//* Make sure we don&#39;t assign the last_timer to a node-less entry /*/
+if (task-&gt;wq.node.node_p &amp;&amp; (!last_timer || (task-&gt;wq.node.bit &lt; last_timer-&gt;node.bit)))
+
+    last_timer = &amp;task-&gt;wq;
+return;
+</code></pre><p>}</p>
+<p>由此可以看出，ebtree函数库在使用上，只负责ebnode的组织，并不负责对ebnode的分配和释放，否则wq和rq就是两个ebnode类型的指针，而不是两个ebnode。这样做是有道理的，利用以上ebnode的特点，一个task可以先后多次挂载到相应的以ebtree为具体设施的队列中，减少了内存分配和释放次数。</p>
+<h1 id="3-stream-interface">3. stream interface</h1>
+<p>stream interface结构体的主要成员如下：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13</p>
+<p>14
+15</p>
+<p>16
+17</p>
+<p>18
+19</p>
+<p>20
+21 struct stream_interface {</p>
+<pre><code>unsigned int state;       //* SI_ST/* /*/
+unsigned int prev_state;  //* SI_ST/*, copy of previous state /*/
+
+void /*owner;              //* generally a (struct task/*) /*/
+int fd;                   //* file descriptor for a stream driver when known /*/
+
+unsigned int flags;
+unsigned int exp;         //* wake up time for connect, queue, turn-around, ... /*/
+
+void (/*update)(struct stream_interface /*);     //* I/O update function /*/
+void (/*shutr)(struct stream_interface /*);      //* shutr function /*/
+
+void (/*shutw)(struct stream_interface /*);      //* shutw function /*/
+void (/*chk_rcv)(struct stream_interface /*);    //* chk_rcv function /*/
+
+void (/*chk_snd)(struct stream_interface /*);    //* chk_snd function /*/
+int (/*connect)(struct stream_interface /*, struct proxy /*, struct server /*,
+
+   struct sockaddr /*, struct sockaddr /*);      //* connect function if any /*/
+void (/*iohandler)(struct stream_interface /*);  //* internal I/O handler when embedded /*/
+
+struct buffer /*ib, /*ob;   //* input and output buffers /*/
+unsigned int err_type;    //* first error detected, one of SI_ET_/* /*/
+
+void /*err_loc;            //* commonly the server, NULL when SI_ET_NONE /*/
+void /*private;            //* may be used by any function above /*/
+
+unsigned int st0, st1;    //* may be used by any function above /*/
+</code></pre><p>};</p>
+<p>大部分成员可以从注释中了解其用途，值得注意的是几个函数指针。大致上，它们可以指向两组函数：默认一组是以stream<em>sock</em>开头，用于在socket与缓冲区之间传输数据，转发处理业务流；另一组是以stream<em>int</em>开头，负责拦截、统计和响应客户端的监控请求，因为HAProxy的业务请求与监控请求是发送到同一个端口，通过URI来区分的，而监控请求显然是不能转发到后端服务器的，所以必须在获得各计数器数据后返回客户端。</p>
+<p>以下简述一下stream<em>sock</em>开头的那一组函数的作用。这一组函数在上文的event_accept函数中初始化。
+update指向的函数（stream_sock_data_finish）用于更新stream interface的fd的读写状态和相关标志位。
+shutr和shutw指向的函数（stream_sock_shutr和stream_sock_shutw）分别用于关闭stream interface上的读和写。
+chk_rcv指向的函数（stream_sock_chk_rcv）由消费者调用，用于通知生产者：缓冲区可能有空间了。
+chk_snd指向的函数（stream_sock_chk_snd）由生产者调用，用于通知消费者：缓冲区可能有数据了。
+当si是客户端stream interface时，connect为空，因为客户端连接显然已经建立。
+当si是服务端stream interface时，connect指向HAProxy与服务端建立连接的那个函数（tcpv4_connect_server），而它会在backend.c的connect_server执行时被调用。
+iohandler总是为空。</p>
+<p>stream<em>int</em>开头的那一组函数在stream_interface.c的stream_int_register_handler函数中初始化，而该函数只有在监控分支才会执行。最明显区别是这一组会设置iohandler，而且调用时会重新唤醒所属的task，调用后马上返回，不再向下处理，如下所示：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13</p>
+<p>14
+15</p>
+<p>16
+17</p>
+<p>18
+19 struct task /<em>process_session(struct task /</em>t)</p>
+<p>{
+    ...</p>
+<pre><code>//* Call the second stream interface&#39;s I/O handler if it&#39;s embedded.
+ /* Note that this one may wake the task up again.
+
+ /*/
+if (s-&gt;req-&gt;cons-&gt;iohandler) {
+
+    s-&gt;req-&gt;cons-&gt;iohandler(s-&gt;req-&gt;cons);
+    if (task_in_rq(t)) {
+
+        //* If we woke up, we don&#39;t want to requeue the
+         /* task to the wait queue, but rather requeue
+
+         /* it into the runqueue ASAP.
+         /*/
+
+        t-&gt;expire = TICK_ETERNITY;
+        return t;
+
+    }
+}
+
+...
+</code></pre><p>}</p>
+<h1 id="4-buffer">4. buffer</h1>
+<p>完整的buffer结构体如下：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13</p>
+<p>14
+15</p>
+<p>16
+17</p>
+<p>18
+19</p>
+<p>20
+21</p>
+<p>22
+23 struct buffer {</p>
+<pre><code>unsigned int flags;             //* BF_/* /*/
+int rex;                        //* expiration date for a read, in ticks /*/
+
+int wex;                        //* expiration date for a write or connect, in ticks /*/
+int rto;                        //* read timeout, in ticks /*/
+
+int wto;                        //* write timeout, in ticks /*/
+int cto;                        //* connect timeout, in ticks /*/
+
+unsigned int l;                 //* data length /*/
+char /*r, /*w, /*lr;               //* read ptr, write ptr, last read /*/
+
+unsigned int size;              //* buffer size in bytes /*/
+unsigned int send_max;          //* number of bytes the sender can consume om this buffer, &lt;= l /*/
+
+unsigned int to_forward;        //* number of bytes to forward after send_max without a wake-up /*/
+unsigned int analysers;         //* bit field indicating what to do on the buffer /*/
+
+int analyse_exp;                //* expiration date for current analysers (if set) /*/
+void (/*hijacker)(struct session /*, struct buffer /*); //* alternative content producer /*/
+
+unsigned char xfer_large;       //* number of consecutive large xfers /*/
+unsigned char xfer_small;       //* number of consecutive small xfers /*/
+
+unsigned long long total;       //* total data read /*/
+struct stream_interface /*prod;  //* producer attached to this buffer /*/
+
+struct stream_interface /*cons;  //* consumer attached to this buffer /*/
+struct pipe /*pipe;              //* non-NULL only when data present /*/
+
+char data[0];                   //* &lt;size&gt; bytes /*/
+</code></pre><p>};</p>
+<p>可以看到，HAProxy的buffer结构体也由许多成员组成，常规buffer该有的一个都不少，例如size、data、l、r、w、lr等等，除此之外，还有具有HAProxy特有的生产者、消费者stream interface指针（prod和cons），还有众多表示读写过期时间、超时时间的成员，还有指示具体请求响应解析过程的标志位（analysers），还有回调函数hijacker（不过看起来没有使用），还有表示该buffer最多能向其消费者发送多少字节的send_max，还有在HTTP chunked格式转发时才有意义的to_forward，还有连续满负荷传输数据和连续低负荷传输数据的计数器（xfer_large和xfer_small），以触发判断是否使用splice系统调用。面对把这么多功能揽于一身的buffer，看你晕不晕！</p>
+<p>下面只挑一些具有通用借鉴意义的成员提及一下。</p>
+<p>最后的那个成员data[0]是一个“零长度数组”，不懂的google一下就知道了，很简单，不多说。</p>
+<h1 id="5-pipe">5. pipe</h1>
+<p>buffer的倒数第二个成员pipe指针，指向的是这么一个链表结构：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6 struct pipe {</p>
+<pre><code>int data;   //* number of bytes present in the pipe  /*/
+int prod;   //* FD the producer must write to ; -1 if none /*/
+
+int cons;   //* FD the consumer must read from ; -1 if none /*/
+struct pipe /*next;
+</code></pre><p>};</p>
+<p>因为splice系统调用要求输入和输出至少必须有一个描述符是管道符，所以，HAProxy准备了一对管道符（prod和cons）。当使用splice读数据时，HAProxy从源socket描述符（对于请求，就是连接客户端与HAProxy的socket描述符，对于响应，则是连接服务端与HAProxy的socket 描述符；下面的目的socket描述符刚好相反）splice到管道符prod；当使用splice写数据时，HAProxy从管道符cons splice到目的socket描述符。详见stream_socket.c的stream_sock_splice_in函数和stream_sock_write_loop函数：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13</p>
+<p>14
+15 static int stream_sock_splice_in(struct buffer /<em>b, struct stream_interface /</em>si)</p>
+<p>{
+    ...</p>
+<pre><code>ret = splice(fd, NULL, b-&gt;pipe-&gt;prod, NULL, max,
+        SPLICE_F_MOVE|SPLICE_F_NONBLOCK);
+
+...
+</code></pre><p>}</p>
+<p>static int stream_sock_write_loop(struct stream_interface /<em>si, struct buffer /</em>b)</p>
+<p>{
+    ...</p>
+<pre><code>ret = splice(b-&gt;pipe-&gt;cons, NULL, si-&gt;fd, NULL, b-&gt;pipe-&gt;data,
+        SPLICE_F_MOVE|SPLICE_F_NONBLOCK);
+
+...
+</code></pre><p>}</p>
+<p>这样一来，每个buffer就要创建一对管道符，从上文和上面的分析可知，每个session就有两个buffer，而每个session的生命周期是从客户端连接建立到客户端连接释放（这里之前没有提到，以后可能会讲一下），所以，如果并发量很大，这是一个巨大的消耗。为此，HAProxy用管道池来解决这一问题，就像内存池的使用那样，需要有一个next指针把pipe结构体串起来。具体流程是，读取数据之前，调用get_pipe函数获取一对管道符，全部数据写完之后（由data指示数据是否写完），调用put_pipe函数进行释放，这样管道只会在异步等待写的时候被占用，大大减少使用量，从而减少系统开销。详见上面两个函数的代码。</p>
+<h1 id="6-">6. 小结</h1>
+<p>五个我认为比较重要的结构体就介绍到这里。当然，HAProxy还有许多结构体，例如proxy、server、listener等等，不过，这些结构体，要么比较容易看懂，要么网上已经有比较齐全的资料，要么可以陆续在后面的文章中单独说明。而session、task、stream interface、buffer和pipe这五个结构体，连同第一篇介绍的ebtree，向我们展现了HAProxy作为一个高性能代理服务器的底层数据组织和一些重要的处理细节。</p>
+<h3 id="-">您可能感兴趣的文章</h3>
 <ul>
-<li>选择排序
-将要排序的对象分作两部份，一个是已排序的，一个是未排序的，从后端未排序部份选择一个最小值，并放入前端已排序部份的最后一个，例如：
-排序前：70 80 31 37 10 1 48 60 33 80</li>
+<li><a href="http://tech.uc.cn/?p=1523" target="_blank">HAProxy的event_accept函数源码分析</a></li>
+<li><a href="http://tech.uc.cn/?p=1031" target="_blank">HAProxy的独门武器：ebtree</a></li>
+<li><a href="http://tech.uc.cn/?p=965" target="_blank">Nginx使用ETag功能的分析</a></li>
 </ul>
-<ol>
-<li>[1] 80 31 37 10 70 48 60 33 80 选出最小值1</li>
-<li>[1 10] 31 37 80 70 48 60 33 80 选出最小值10</li>
-<li>[1 10 31] 37 80 70 48 60 33 80 选出最小值31</li>
-<li>[1 10 31 33] 80 70 48 60 37 80 ......</li>
-<li>[1 10 31 33 37] 70 48 60 80 80 ......</li>
-<li>[1 10 31 33 37 48] 70 60 80 80 ......</li>
-<li>[1 10 31 33 37 48 60] 70 80 80 ......</li>
-<li>[1 10 31 33 37 48 60 70] 80 80 ......</li>
-<li>[1 10 31 33 37 48 60 70 80] 80 ......</li>
-</ol>
-<ul>
-<li>插入排序
-像是玩朴克一样，我们将牌分作两堆，每次从后面一堆的牌抽出最前端的牌，然后插入前面一堆牌的适当位置，例如：
-排序前：92 77 67 8 6 84 55 85 43 67</li>
-</ul>
-<ol>
-<li>[77 92] 67 8 6 84 55 85 43 67 将77插入92前</li>
-<li>[67 77 92] 8 6 84 55 85 43 67 将67插入77前</li>
-<li>[8 67 77 92] 6 84 55 85 43 67 将8插入67前</li>
-<li>[6 8 67 77 92] 84 55 85 43 67 将6插入8前</li>
-<li>[6 8 67 77 84 92] 55 85 43 67 将84插入92前</li>
-<li>[6 8 55 67 77 84 92] 85 43 67 将55插入67前</li>
-<li>[6 8 55 67 77 84 85 92] 43 67 ......</li>
-<li>[6 8 43 55 67 77 84 85 92] 67 ......</li>
-<li>[6 8 43 55 67 67 77 84 85 92] ......</li>
-</ol>
-<ul>
-<li>气泡排序法
-顾名思义，就是排序时，最大的元素会如同气泡一样移至右端，其利用比较相邻元素的方法，将大的元素交换至右端，所以大的元素会不断的往右移动，直到适当的位置为止。</li>
-</ul>
-<p>基本的气泡排序法可以利用旗标的方式稍微减少一些比较的时间，当寻访完阵列后都没有发生任何的交换动作，表示排序已经完成，而无需再进行之后的回圈比较与交换动作，例如：
-排序前：95 27 90 49 80 58 6 9 18 50</p>
-<ol>
-<li>27 90 49 80 58 6 9 18 50 [95] 95浮出</li>
-<li>27 49 80 58 6 9 18 50 [90 95] 90浮出</li>
-<li>27 49 58 6 9 18 50 [80 90 95] 80浮出</li>
-<li>27 49 6 9 18 50 [58 80 90 95] ......</li>
-<li>27 6 9 18 49 [50 58 80 90 95] ......</li>
-<li>6 9 18 27 [49 50 58 80 90 95] ......</li>
-<li>6 9 18 [27 49 50 58 80 90 95] 由于接下来不会再发生交换动作，排序提早结束
-在上面的例子当中，还加入了一个观念，就是当进行至i与i+1时没有交换的动作，表示接下来的i+2至n已经排序完毕，这也增进了气泡排序的效率。</li>
-</ol>
-<h2 id="-">实作</h2>
-<ul>
-<li><p>C
-/#include <stdio.h>
-/#include <stdlib.h>
-/#include <time.h>
-/#define MAX 10
-/#define SWAP(x,y) {int t; t = x; x = y; y = t;}
-void selsort(int[]); // 选择排序
-void insort(int[]); // 插入排序
-void bubsort(int[]); // 气泡排序
-int main(void) {
-int number[MAX] = {0};
-int i;
-srand(time(NULL));
-printf(&quot;排序前：&quot;);
-for(i = 0; i &lt; MAX; i++) {
-number[i] = rand() % 100;
-printf(&quot;%d &quot;, number[i]);
-}
-printf(&quot;\n请选择排序方式：\n&quot;);
-printf(&quot;(1)选择排序\n(2)插入排序\n(3)气泡排序\n:&quot;);
-scanf(&quot;%d&quot;, &amp;i);
-switch(i) {
-case 1:
-selsort(number); break;
-case 2:
-insort(number); break;
-case 3:
-bubsort(number); break;
-default:
-printf(&quot;选项错误(1..3)\n&quot;);
-}
-return 0;
-}
-void selsort(int number[]) {
-int i, j, k, m;
-for(i = 0; i &lt; MAX-1; i++) {
-m = i;
-for(j = i+1; j &lt; MAX; j++)
-if(number[j] &lt; number[m])
-m = j;
-if( i != m)
-SWAP(number[i], number[m])
-printf(&quot;第 %d 次排序：&quot;, i+1);
-for(k = 0; k &lt; MAX; k++)
-printf(&quot;%d &quot;, number[k]);
-printf(&quot;\n&quot;);
-}
-}
-void insort(int number[]) {
-int i, j, k, tmp;
-for(j = 1; j &lt; MAX; j++) {
-tmp = number[j];
-i = j - 1;
-while(tmp &lt; number[i]) {
-number[i+1] = number[i];
-i--;
-if(i == -1)
-break;
-}
-number[i+1] = tmp;
-printf(&quot;第 %d 次排序：&quot;, j);
-for(k = 0; k &lt; MAX; k++)
-printf(&quot;%d &quot;, number[k]);
-printf(&quot;\n&quot;);
-}
-}
-void bubsort(int number[]) {
-int i, j, k, flag = 1;
-for(i = 0; i &lt; MAX-1 &amp;&amp; flag == 1; i++) {
-flag = 0;
-for(j = 0; j &lt; MAX-i-1; j++) {
-if(number[j+1] &lt; number[j]) {
-SWAP(number[j+1], number[j]);
-flag = 1;
-}
-}
-printf(&quot;第 %d 次排序：&quot;, i+1);
-for(k = 0; k &lt; MAX; k++)
-printf(&quot;%d &quot;, number[k]);
-printf(&quot;\n&quot;);
-}
-}</p>
-</li>
-<li><p>Java
-public class BasicSort {
-public static void selectionSort(int[] number) {
-for(int i = 0; i &lt; number.length - 1; i++) {
-int m = i;
-for(int j = i + 1; j &lt; number.length; j++)
-if(number[j] &lt; number[m])
-m = j;
-if(i != m)
-swap(number, i, m);
-}
-}
-public static void injectionSort(int[] number) {
-for(int j = 1; j &lt; number.length; j++) {
-int tmp = number[j];
-int i = j - 1;
-while(tmp &lt; number[i]) {
-number[i+1] = number[i];
-i--;
-if(i == -1)
-break;
-}
-number[i+1] = tmp;
-}
-}
-public static void bubbleSort(int[] number) {
-boolean flag = true;
-for(int i = 0; i &lt; number.length-1 &amp;&amp; flag; i++) {
-flag = false;
-for(int j = 0; j &lt; number.length-i-1; j++) {
-if(number[j+1] &lt; number[j]) {
-swap(number, j+1, j);
-flag = true;
-}
-}
-}
-}
-private static void swap(int[] number, int i, int j) {
-int t;
-t = number[i];
-number[i] = number[j];
-number[j] = t;
-}
-}</p>
-</li>
-</ul>
+<p>来源： <a href="[http://tech.uc.cn/?p=1738](http://tech.uc.cn/?p=1738)">[http://tech.uc.cn/?p=1738](http://tech.uc.cn/?p=1738)</a></p>
 
       
     </div>
@@ -311,8 +525,8 @@ number[j] = t;
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:34:50"datetime="2014-03-07 10:34:50"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--SelectionInsertionBubble/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--SelectionInsertionBubble" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--HAProxy几个重要的结构体/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--HAProxy几个重要的结构体" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -327,98 +541,655 @@ number[j] = t;
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--SeparateNumber/">SeparateNumber</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-压缩-解压--java打tar/">java打tar</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--SeparateNumber/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-压缩-解压--java打tar/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="separatenumber">SeparateNumber</h1>
-<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 数字拆解</a></h1>
+        <h1 id="java-tar">java打tar</h1>
+<p><strong>java**</strong>打tar.gz包**</p>
+<p>2011-01-26 00:36</p>
+<p>package src.com.snow.test;</p>
+<p>import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.zip.GZIPOutputStream;</p>
+<p>import org.apache.tools.tar.TarEntry;
+import org.apache.tools.tar.TarOutputStream;
+import org.apache.tools.zip.ZipOutputStream;</p>
+<p>//<em> 
+ /</em> 功能：压缩文件成tar.gz格式 
+ /<em>/
+public class TarUtils {
+ private static int BUFFER = 1024 /</em> 4; // 缓冲大小
+ private static byte[] B_ARRAY = new byte[BUFFER];</p>
+<p> //<em>
+  /</em> 方法功能：打包单个文件或文件夹 参数：inputFileName 要打包的文件夹或文件的路径 targetFileName 打包后的文件路径
+  /*/
+ public void execute(String inputFileName, String targetFileName) {
+  File inputFile = new File(inputFileName);
+  String base = inputFileName
+    .substring(inputFileName.lastIndexOf(&quot;/&quot;) + 1);
+  TarOutputStream out = getTarOutputStream(targetFileName);
+  tarPack(out, inputFile, base);
+  try {
+   if (null != out) {
+    out.close();
+   }
+  } catch (IOException e) {
+   e.printStackTrace();
+  }
+  compress(new File(targetFileName));
+ }</p>
+<p> //<em>
+  /</em> 方法功能：打包多个文件或文件夹 参数：inputFileNameList 要打包的文件夹或文件的路径的列表 targetFileName
+  /<em> 打包后的文件路径
+  /</em>/
+ public void execute(List<String> inputFileNameList, String targetFileName) {
+  TarOutputStream out = getTarOutputStream(targetFileName);</p>
+<p>  for (String inputFileName : inputFileNameList) {
+   File inputFile = new File(inputFileName);
+   String base = inputFileName.substring(inputFileName
+     .lastIndexOf(&quot;/&quot;) + 1);
+   tarPack(out, inputFile, base);
+  }</p>
+<p>  try {
+   if (null != out) {
+    out.close();
+   }
+  } catch (IOException e) {
+   e.printStackTrace();
+  }
+  compress(new File(targetFileName));
+ }</p>
+<p> //<em>
+  /</em> 方法功能：打包成tar文件 参数：out 打包后生成文件的流 inputFile 要压缩的文件夹或文件 base 打包文件中的路径
+  /*/</p>
+<p> private void tarPack(TarOutputStream out, File inputFile, String base) {
+  if (inputFile.isDirectory()) // 打包文件夹
+  {
+   packFolder(out, inputFile, base);
+  } else // 打包文件
+  {
+   packFile(out, inputFile, base);
+  }
+ }</p>
+<p> //<em>
+  /</em> 方法功能：遍历文件夹下的内容，如果有子文件夹，就调用tarPack方法 参数：out 打包后生成文件的流 inputFile 要压缩的文件夹或文件
+  /<em> base 打包文件中的路径
+  /</em>/
+ private void packFolder(TarOutputStream out, File inputFile, String base) {
+  File[] fileList = inputFile.listFiles();
+  try {
+   // 在打包文件中添加路径
+   out.putNextEntry(new TarEntry(base + &quot;/&quot;));
+  } catch (IOException e) {
+   e.printStackTrace();
+  }
+  base = base.length() == 0 ? &quot;&quot; : base + &quot;/&quot;;
+  for (File file : fileList) {
+   tarPack(out, file, base + file.getName());
+  }
+ }</p>
+<p> //<em>
+  /</em> 方法功能：打包文件 参数：out 压缩后生成文件的流 inputFile 要压缩的文件夹或文件 base 打包文件中的路径
+  /*/
+ private void packFile(TarOutputStream out, File inputFile, String base) {
+  TarEntry tarEntry = new TarEntry(base);</p>
+<p>  // 设置打包文件的大小，如果不设置，打包有内容的文件时，会报错
+  tarEntry.setSize(inputFile.length());
+  try {
+   out.putNextEntry(tarEntry);
+  } catch (IOException e) {
+   e.printStackTrace();
+  }
+  FileInputStream in = null;
+  try {
+   in = new FileInputStream(inputFile);
+  } catch (FileNotFoundException e) {
+   e.printStackTrace();
+  }
+  int b = 0;</p>
+<p>  try {
+   while ((b = in.read(B_ARRAY, 0, BUFFER)) != -1) {
+    out.write(B_ARRAY, 0, b);
+   }
+  } catch (IOException e) {
+   e.printStackTrace();
+  } catch (NullPointerException e) {
+   System.err
+     .println(&quot;NullPointerException info ======= [FileInputStream is null]&quot;);
+  } finally {
+   try {
+    if (null != in) {
+     in.close();
+    }
+    if (null != out) {
+     out.closeEntry();
+    }
+   } catch (IOException e) {</p>
+<p>   }
+  }
+ }</p>
+<p> //<em>
+  /</em> 方法功能：把打包的tar文件压缩成gz格式 参数：srcFile 要压缩的tar文件路径
+  /*/
+ private void compress(File srcFile) {
+  File target = new File(srcFile.getAbsolutePath() + &quot;.gz&quot;);
+  FileInputStream in = null;
+  GZIPOutputStream out = null;
+  try {
+   in = new FileInputStream(srcFile);
+   out = new GZIPOutputStream(new FileOutputStream(target));
+   int number = 0;
+   while ((number = in.read(B_ARRAY, 0, BUFFER)) != -1) {
+    out.write(B_ARRAY, 0, number);
+   }
+  } catch (FileNotFoundException e) {
+   e.printStackTrace();
+  } catch (IOException e) {
+   e.printStackTrace();
+  } finally {
+   try {
+    if (in != null) {
+     in.close();
+    }</p>
+<pre><code>if (out != null) {
+ out.close();
+}
+</code></pre><p>   } catch (IOException e) {
+    e.printStackTrace();
+   }
+  }
+ }</p>
+<p> //<em>
+  /</em> 方法功能：获得打包后文件的流 参数：targetFileName 打包后文件的路径
+  /*/
+ private TarOutputStream getTarOutputStream(String targetFileName) {
+  // 如果打包文件没有.tar后缀名，就自动加上
+  targetFileName = targetFileName.endsWith(&quot;.tar&quot;) ? targetFileName
+    : targetFileName + &quot;.tar&quot;;
+  FileOutputStream fileOutputStream = null;
+  try {
+   fileOutputStream = new FileOutputStream(targetFileName);
+  } catch (FileNotFoundException e) {
+   e.printStackTrace();
+  }
+  BufferedOutputStream bufferedOutputStream = new BufferedOutputStream(
+    fileOutputStream);
+  TarOutputStream out = new TarOutputStream(bufferedOutputStream);</p>
+<p>  // 如果不加下面这段，当压缩包中的路径字节数超过100 byte时，就会报错
+  out.setLongFileMode(TarOutputStream.LONGFILE_GNU);
+  return out;
+ }</p>
+<p>}</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/压缩-解压/">压缩-解压</a></li></span></span> | <span class="tags">Tagged <a href="/tags/压缩-解压/" class="label label-primary">压缩-解压</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-压缩-解压--java打tar/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-压缩-解压--java打tar" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/">JosephusProblem</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="josephusproblem">JosephusProblem</h1>
+<h1 id="-algorithm-gossip-josephus-problem-"><a href="">Algorithm Gossip: 约瑟夫问题（Josephus Problem）</a></h1>
 <h2 id="-">说明</h2>
-<p>这个题目来自于 <a href="http://www.jsptw.com/jute/post/view?bid=5&amp;id=8317&amp;sty=1&amp;tpg=1&amp;age=0" target="_blank">数字拆解</a>，我将之改为C语言的版本，并加上说明。
-题目是这样的：
-3 = 2+1 = 1+1+1 所以3有三种拆法
-4 = 3 + 1 = 2 + 2 = 2 + 1 + 1 = 1 + 1 + 1 + 1 共五种
-5 = 4 + 1 = 3 + 2 = 3 + 1 + 1 = 2 + 2 + 1 = 2 + 1 + 1 + 1 = 1 + 1 +1 +1 +1
-共七种
-依此类推，请问一个指定数字NUM的拆解方法个数有多少个？</p>
+<p>据说著名犹太历史学家 Josephus有过以下的故事：在罗马人占领乔塔帕特后，39 个犹太人与Josephus及他的朋友躲到一个洞中，39个犹太人决定宁愿死也不要被敌人到，于是决定了一个自杀方式，41个人排成一个圆圈，由第1个人 开始报数，每报数到第3人该人就必须自杀，然后再由下一个重新报数，直到所有人都自杀身亡为止。
+然而Josephus 和他的朋友并不想遵从，Josephus要他的朋友先假装遵从，他将朋友与自己安排在第16个与第31个位置，于是逃过了这场死亡游戏。</p>
 <h2 id="-">解法</h2>
-<p>我们以上例中最后一个数字5的拆解为例，假设f( n )为数字n的可拆解方式个数，而f(x, y)为使用y以下的数字来拆解x的方法个数，则观察：
-5 = 4 + 1 = 3 + 2 = 3 + 1 + 1 = 2 + 2 + 1 = 2 + 1 + 1 + 1 = 1 + 1 +1 +1 +1
-使用函式来表示的话：
-f(5) = f(4, 1) + f(3,2) + f(2,3) + f(1,4) + f(0,5)
-其中f(1, 4) = f(1, 3) + f(1, 2) + f(1, 1)，但是使用大于1的数字来拆解1没有意义，所以f(1, 4) = f(1, 1)，而同样的，f(0, 5)会等于f(0, 0)，所以：
-f(5) = f(4, 1) + f(3,2) + f(2,3) + f(1,1) + f(0,0)
-依照以上的说明，使用动态程式规画（Dynamic programming）来进行求解，其中f(4,1)其实就是f(5-1, min(5-1,1))，f(x, y)就等于f(n-y, min(n-x, y))，其中n为要拆解的数字，而min()表示取两者中较小的数。
-使用一个二维阵列表格table[x][y]来表示f(x, y)，刚开始时，将每列的索引0与索引1元素值设定为1，因为任何数以0以下的数拆解必只有1种，而任何数以1以下的数拆解也必只有1种：
-for(i = 0; i &lt; NUM +1; i++){
-    table[i][0] = 1;  // 任何数以0以下的数拆解必只有1种
-    table[i][1] = 1;  // 任何数以1以下的数拆解必只有1种
+<p>约瑟夫问题可用代数分析来求解，将这个问题扩大好了，假设现在您与m个朋友不幸参与了这个游戏，您要如何保护您与您的朋友？只要画两个圆圈就可以让自己与朋友免于死亡游戏，这两个圆圈内圈是排列顺序，而外圈是自杀顺序，如下图所示：
+<img src="&quot;约瑟夫问题&quot;" alt="约瑟夫问题"> 使用程式来求解的话，只要将阵列当作环状来处理就可以了，在阵列中由计数1开始，每找到三个无资料区就填入一个计数，直而计数达41为止，然后将阵列由索引1开始列出，就可以得知每个位置的自杀顺序，这就是约瑟夫排列，41个人而报数3的约琴夫排列如下所示：
+14 36 1 38 15 2 24 30 3 16 34 4 25 17 5 40 31 6 18 26 7 37 19 8 35 27 9 20 32 10 41 21 11 28 39 12 22 33 13 29 23
+由上可知，最后一个自杀的是在第31个位置，而倒数第二个自杀的要排在第16个位置，之前的人都死光了，所以他们也就不知道约琴夫与他的朋友并没有遵守游戏规则了。</p>
+<h2 id="-">实作</h2>
+<ul>
+<li><p>C
+/#include <stdio.h>
+/#include <stdlib.h>
+/#define N 41
+/#define M 3
+int main(void) {
+int man[N] = {0};
+int count = 1;
+int i = 0, pos = -1;
+int alive = 0;
+while(count &lt;= N) {
+do {
+pos = (pos+1) % N; // 环状处理
+if(man[pos] == 0)
+i++;
+if(i == M) { // 报数为3了
+i = 0;
+break;
+}
+} while(1);
+man[pos] = count;
+count++;
+}
+printf(&quot;\n约琴夫排列：&quot;);
+for(i = 0; i &lt; N; i++)
+printf(&quot;%d &quot;, man[i]);
+printf(&quot;\n\n您想要救多少人？&quot;);
+scanf(&quot;%d&quot;, &amp;alive);
+printf(&quot;\nL表示这%d人要放的位置：\n&quot;, alive);
+for(i = 0; i &lt; N; i++) {
+if(man[i] &gt; alive)
+printf(&quot;D&quot;);
+else
+printf(&quot;L&quot;);
+if((i+1) % 5 == 0)
+printf(&quot; &quot;);
+}
+printf(&quot;\n&quot;);
+return 0;
 }</p>
-<p>接下来就开始一个一个进行拆解了，如果数字为NUM，则我们的阵列维度大小必须为NUM x (NUM/2+1)，以数字10为例，其维度为10 x 6我们的表格将会如下所示：
-1 1 0 0 0 0
-1 1 0 0 0 0
-1 1 2 0 0 0
-1 1 2 3 0 0
-1 1 3 4 5 0
-1 1 3 5 6 7
-1 1 4 7 9 0
-1 1 4 8 0 0
-1 1 5 0 0 0
-1 1 0 0 0 0</p>
+</li>
+<li><p>Java
+public class Josephus {
+public static int[] arrayOfJosephus(
+int number, int per) {
+int[] man = new int[number];
+for(int count = 1, i = 0, pos = -1;
+count &lt;= number; count++) {
+do {
+pos = (pos+1) % number; // 环状处理
+if(man[pos] == 0)
+i++;
+if(i == per) { // 报数为3了
+i = 0;
+break;
+}
+} while(true);
+man[pos] = count;
+}
+return man;
+}
+public static void main(String[] args) {
+int[] man = Josephus.arrayOfJosephus(41, 3);
+int alive = 3;
+System.out.println(&quot;约琴夫排列：&quot;);
+for(int i = 0; i &lt; 41; i++)
+System.out.print(man[i] + &quot; &quot;);
+System.out.println(&quot;\nL表示3个存活的人要放的位置：&quot;);
+for(int i = 0; i &lt; 41; i++) {
+if(man[i] &gt; alive)
+System.out.print(&quot;D&quot;);
+else
+System.out.print(&quot;L&quot;);
+if((i+1) % 5 == 0)
+System.out.print(&quot; &quot;);
+}
+System.out.println();
+}
+}</p>
+</li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:37:19"datetime="2014-03-07 10:37:19"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-压缩-解压--Java实现将多个文件打包压缩成tar_gz文件-易锐的日志-网易博客/">Java实现将多个文件打包压缩成tar_gz文件 </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-压缩-解压--Java实现将多个文件打包压缩成tar_gz文件-易锐的日志-网易博客/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-tar_gz-">Java实现将多个文件打包压缩成tar_gz文件 - 易锐的日志 - 网易博客</h1>
+<p><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://www.163.com/" target="_blank">网易 </a></p>
+<p><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://news.163.com/" target="_blank">新闻</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://t.163.com/" target="_blank">微博</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://email.163.com/" target="_blank">邮箱</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://photo.163.com/" target="_blank">相册</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://yuedu.163.com/" target="_blank">阅读</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://www.youdao.com/" target="_blank">有道</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://photo.163.com/pp/square/" target="_blank">摄影</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://aipai.163.com?from=163blog" target="_blank">爱拍</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://fm.163.com/?fmblogzx0628" target="_blank">闪电邮</a><a href="http://m.123.163.com/?frombkcp" target="_blank">手机邮</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://yxp.163.com/" target="_blank">印像派</a><a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://dream.163.com/?from=bkcp" target="_blank">梦幻人生</a> <a href="http://blog.163.com/redirect.html?frompersonalbloghome&amp;url=http://sitemap.163.com/" target="_blank">更多</a></p>
+<p><a href="http://blog.163.com/?frompersonalbloghome" target="_blank">博客 </a></p>
+<p><a href="http://blog.163.com/services/wapblog.html?frompersonalbloghome" target="_blank">手机博客</a><a href="http://blog.163.com/clone/clone.html?frompersonalbloghome" target="_blank">博客搬家</a><a href="http://blog.163.com/vip.do?frompersonalbloghome" target="_blank">博客VIP服务</a> <a href="http://blog.163.com/blog_admin/blog/static/721279201082863728829/?frompersonalbloghome" target="_blank">LiveWriter写博</a><a href="http://blog.163.com/blog_admin/blog/static/721279201092713253500/?frompersonalbloghome" target="_blank">word写博</a><a href="http://blog.163.com/services/mailblog.html?frompersonalbloghome" target="_blank">邮件写博</a><a href="http://blog.163.com/services/emsblog.html?frompersonalbloghome" target="_blank">短信写博</a> <a href="http://blog.163.com/showMultiUser.do?frompersonalbloghome" target="_blank">群博客</a><a href="http://blog.163.com/BLOG_YOUCAI/" target="_blank">博客油菜地</a><a href="http://blog.163.com/ht/?frompersonalbloghome" target="_blank">博客话题</a><a href="http://blog.163.com/hot/history/?frompersonalbloghome" target="_blank">博客热点</a><a href="http://q.163.com/#home?frompersonalbloghome" target="_blank">博客圈子</a><a href="http://blog.163.com/findFriend.do?type=5?frompersonalbloghome" target="_blank">找朋友</a>
+<a href="http://blog.163.com/public/explore/?frompersonalbloghome" target="_blank">发现</a></p>
+<p><a href="http://blog.163.com/g/?frompersonalbloghome" target="_blank">小组</a>
+<a href="http://blog.163.com/public/theme/?frompersonalbloghome" target="_blank">风格</a></p>
+<p><a href="http://blog.163.com/randomUser.do" title="随便看看"></a></p>
+<p><a href="http://blog.163.com/vip.do" target="_blank">博客VIP服务</a></p>
+<p><a href="http://reg.163.com/reg/reg.jsp?product=blog&amp;url=http://blog.163.com/ntesRegBlank.html&amp;loginurl=http://blog.163.com/" target="_blank">创建博客</a> <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/#" target="_blank">登录</a>  </p>
+<p> 关注</p>
+<p>重要提醒：系统检测到您的帐号可能存在被盗风险，请尽快<a href="http://reg.163.com/Main.jsp?username=kliumin@126.com" target="_blank">查看风险提示</a>，并立即<a href="http://blog.163.com/kliumin@126/settings/?fromnewcenter#m=0&amp;t=7" target="_blank">修改密码</a>。  |  <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/" target="_blank">关闭</a></p>
+<p>网易博客安全提醒：系统检测到您当前密码的安全性较低，为了您的账号安全，建议您适时修改密码    <a href="http://blog.163.com/kliumin@126/settings/?fromnewcenter#m=0&amp;t=7" target="_blank">立即修改</a>  |  <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/" target="_blank">关闭</a>
+<a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/" target="_blank"></a>   <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/">显示下一条</a>  |  <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/" target="_blank">关闭</a></p>
+<p><a href="http://blog.163.com/public/explore/?fromblogbanner"></a>
+<a href="http://www.lofter.com/invite/163blog/?email="></a></p>
+<h1 id="-">易锐的博客</h1>
+<p>我的博客
+ <a href="http://blog.163.com/kliumin@126/blog/static/8165118520091063306587/#"></a></p>
+<h2 id="-">导航</h2>
+<ul>
+<li><a href="http://blog.163.com/kliumin@126/" target="_blank">首页</a></li>
+<li><a href="http://blog.163.com/kliumin@126/blog/" target="_blank">日志</a></li>
+<li><a href="http://blog.163.com/kliumin@126/album/" target="_blank">相册</a></li>
+<li><a href="http://blog.163.com/kliumin@126/music/" target="_blank">音乐</a></li>
+<li><a href="http://blog.163.com/kliumin@126/collection/" target="_blank">收藏</a></li>
+<li><a href="http://blog.163.com/kliumin@126/friends/" target="_blank">博友</a></li>
+<li><a href="http://blog.163.com/kliumin@126/profile/" target="_blank">关于我</a></li>
+</ul>
+<h2 id="-">日志</h2>
+<p><a href="http://blog.163.com/kliumin@126/blog/static/81651185200910413622503/" target="_blank">eclipse注释规范设置</a></p>
+<h3 id="java-tar-gz-">Java实现将多个文件打包压缩成tar.gz文件</h3>
+<p>2009-11-06 15:30:06|  分类： <a href="http://blog.163.com/kliumin@126/blog/#m=0&amp;t=1&amp;c=fks_087067087087088066084083085095092087087070085087094070" title="默认分类" target="_blank">默认分类</a> |  标签： |字号大中小 <a href="">订阅</a></p>
+<p>后缀为tar.gz的文件实际上时先将文件（单个或多个）打包成后缀为tar的（tar包）文件，再用gzip压缩成gz文件，如此来说我们便可以用两步来实现此功能，请看代码：</p>
+<p>import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.zip.GZIPOutputStream;</p>
+<p>import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
+import org.apache.commons.compress.utils.IOUtils;</p>
+<p>//<em>/</em>
+ /<em> @Title: GZIPUtil.java
+ /</em> @Description: gzip文件压缩和解压缩工具类
+ /<em> @author LM
+ /</em> @date 2009-11-4 下午06:23:29
+ /<em> @version V1.0
+ /</em>/
+public class GZIPUtil {</p>
+<p> //<em>/</em>
+  /<em>
+  /</em> @Title: pack
+  /<em> @Description: 将一组文件打成tar包
+  /</em> @param sources 要打包的原文件数组
+  /<em> @param target 打包后的文件
+  /</em> @return File    返回打包后的文件
+  /<em> @throws
+  /</em>/
+ public static File pack(File[] sources, File target){
+  FileOutputStream out = null;
+  try {
+   out = new FileOutputStream(target);
+  } catch (FileNotFoundException e1) {
+   e1.printStackTrace();
+  }
+  TarArchiveOutputStream os = new TarArchiveOutputStream(out);
+  for (File file : sources) {
+   try {
+    os.putArchiveEntry(new TarArchiveEntry(file));
+    IOUtils.copy(new FileInputStream(file), os);
+    os.closeArchiveEntry();</p>
+<p>   } catch (FileNotFoundException e) {
+    e.printStackTrace();
+   } catch (IOException e) {
+    e.printStackTrace();
+   }
+  }
+  if(os != null) {
+   try {
+    os.flush();
+    os.close();
+   } catch (IOException e) {
+    e.printStackTrace();
+   }
+  }</p>
+<p>  return target;
+ }</p>
+<p> //<em>/</em>
+  /<em>
+  /</em> @Title: compress
+  /<em> @Description: 将文件用gzip压缩
+  /</em> @param  source 需要压缩的文件
+  /<em> @return File    返回压缩后的文件
+  /</em> @throws
+  /*/
+ public static File compress(File source) {
+  File target = new File(source.getName() + &quot;.gz&quot;);
+  FileInputStream in = null;
+  GZIPOutputStream out = null;
+  try {
+   in = new FileInputStream(source);
+   out = new GZIPOutputStream(new FileOutputStream(target));
+   byte[] array = new byte[1024];
+   int number = -1;
+   while((number = in.read(array, 0, array.length)) != -1) {
+    out.write(array, 0, number);
+   }
+  } catch (FileNotFoundException e) {
+   e.printStackTrace();
+   return null;
+  } catch (IOException e) {
+   e.printStackTrace();
+   return null;
+  } finally {
+   if(in != null) {
+    try {
+     in.close();
+    } catch (IOException e) {
+     e.printStackTrace();
+     return null;
+    }
+   }</p>
+<p>   if(out != null) {
+    try {
+     out.close();
+    } catch (IOException e) {
+     e.printStackTrace();
+     return null;
+    }
+   }
+  }
+  return target;
+ }</p>
+<p> public static void main(String[] args) {
+  File[] sources = new File[] {new File(&quot;task.xml&quot;), new File(&quot;app.properties&quot;)};
+  File target = new File(&quot;release_package.tar&quot;);
+  compress(pack(sources, target));
+ }
+}</p>
+<p>可以打包压缩，那么解压缩就是反其道而行，有时间再来写一篇解压缩的。
+  评论这张</p>
+<p><img src="" alt=""> 转发至微博
+<img src="" alt=""> 转发至微博</p>
+<p><img src="" alt=""> 0人  |  分享到：         </p>
+<p>阅读(674)| 评论(0)| 引用 (0) |举报</p>
+<p><a href="http://blog.163.com/kliumin@126/blog/static/81651185200910413622503/" target="_blank">eclipse注释规范设置</a></p>
+<h3 id="-">历史上的今天</h3>
+<h3 id="-">相关文章</h3>
+<h3 id="-">最近读者</h3>
+<h3 id="-">评论</h3>
+<p><a href=""></a></p>
+<p>this.p={ m:2, b:2, id:&#39;fks_083066081080089069080083087095092087087070085087094070&#39;, blogTitle:&#39;Java实现将多个文件打包压缩成tar.gz文件&#39;, blogAbstract:&#39;<P\>后缀为tar.gz的文件实际上时先将文件（单个或多个）打包成后缀为tar的（tar包）文件，再用gzip压缩成gz文件，如此来说我们便可以用两步来实现此功能，请看代码：</P\>\r\n<P\>imp<wbr\>ort java.io.File;<BR\>imp<wbr\>ort java.io.FileInputStream;<BR\>imp<wbr\>ort java.io.FileNotFoundException;<BR\>imp<wbr\>ort java.io.FileOutputStream;<BR\>imp<wbr\>ort java.io.IOException;<BR\>imp<wbr\>ort java.util.zip.GZIPOutputStream;</P\>\r\n<P\>imp<wbr\>ort org.apache.commons.compress.archivers.tar.TarArchiveEntry;</P\>&#39;, blogTag:&#39;&#39;, blogUrl:&#39;blog/static/8165118520091063306587&#39;, isPublished:1, istop:false, type:0, modifyTime:0, publishTime:1257492606587, permalink:&#39;blog/static/8165118520091063306587&#39;, commentCount:0, mainCommentCount:0, recommendCount:0, bsrk:-100, publisherId:0, recomBlogHome:false, attachmentsFileIds:[], vote:{}, groupInfo:{}, friendstatus:&#39;none&#39;, followstatus:&#39;unFollow&#39;, pubSucc:&#39;&#39;, visitorProvince:&#39;广东&#39;, visitorCity:&#39;深圳&#39;, postAddInfo:{}, mset:&#39;000&#39;, mcon:&#39;&#39;, srk:-100, remindgoodnightblog:false, isBlackVisitor:false, isShowYodaoAd:false, hostIntro:&#39;&#39;, hmcon:&#39;&#39; }   {list a as x} {if !!x} <div class="iblock nbw-fce nbw-f40"> <a class="fc03 noul" target="_blank" hidefocus="true" href="http://blog.163.com/${x.visitorName}/"> {if x.visitorName==visitor.userName} <img alt="${x.visitorNickname|escape}" onerror="location.f40" class="cwd bdwa bdc0" src="${fn1(x.visitorName)}&r=${visitor.imageUpdateTime}"/> {else} <img alt="${x.visitorNickname|escape}" onerror="location.f40" class="cwd bdwa bdc0" src="${fn1(x.visitorName)}"/> {/if} </a> <div class="cwd vname thide"> {if x.moveFrom==&#39;wap&#39;} <a class="noul pnt" target="_blank" href="http://blog.163.com/services/wapblog.html?frompersonalbloghome"><span title="来自网易手机博客" class="iblock wapIcon"> </span></a> {elseif x.moveFrom==&#39;iphone&#39;} <a class="noul pnt" target="_blank"><span title="来自iPhone客户端" class="iblock iphoneIcon"> </span></a> {elseif x.moveFrom==&#39;android&#39;} <a class="noul pnt" target="_blank"><span title="来自Android客户端" class="iblock androidIcon"> </span></a> {elseif x.moveFrom==&#39;mobile&#39;} <a class="noul pnt" target="_blank" href="http://blog.163.com/services/emsblog.html?frompersonalbloghome"><span title="来自网易短信写博" class="iblock wapIcon"> </span></a> {/if} <a class="fc03 m2a" target="_blank" hidefocus="true" href="http://blog.163.com/${x.visitorName}/"> ${fn(x.visitorNickname,8)|escape} </a> </div> </div> {/if} {/list}   {if !!a} <a target="_blank" href="http://blog.163.com/${a.userName}/"><img class="bdwa bdc0 pnt" onerror="location.f60" src="${fn1(a.userName)}"/></a> <a target="_blank" class="fc03 m2a" href="http://blog.163.com/${a.userName}/">${fn(a.nickname,8)|escape}</a> <div class="intro fc05">${a.selfIntro|escape}{if great260}${suplement}{/if}</div> <div class="acts ztag"></div> <div class="mbga phide xtag"> <div class="mbgai"> </div> <a class="fc03 xtag m2a" href="/#" target="_blank"></a> </div> {/if}  &lt;/#--最新日志，群博日志--&gt;  {list a as x} {if !!x} <li class="thide"><a target="_blank" class="fc03 m2a" href="${furl()}${x.permalink}/?latestBlog">${fn(x.title,26)|escape}</a></li> {/if} {/list}  &lt;/#--推荐日志--&gt;  <p class="fc06">推荐过这篇日志的人：</p> <div> {list a as x} {if !!x} <div class="iblock nbw-fce nbw-f40"> <a class="fc03 noul" target="_blank" hidefocus="true" href="http://blog.163.com/${x.recommenderName}/"> <img alt="${x.recommenderNickname}" onerror="location.f40" class="cwd bdwa bdc0" src="${fn1(x.recommenderName)}"/> </a> <div class="cwd thide"> <a class="fc03 m2a" target="_blank" hidefocus="true" href="http://blog.163.com/${x.recommenderName}/"> ${fn(x.recommenderNickname,6)|escape} </a> </div> </div> {/if} {/list} </div> {if !!b&amp;&amp;b.length&gt;0} <p class="fc06">他们还推荐了：</p> <ul> {list b as y} {if !!y} <li class="rrb"><span class="iblock">·</span><a class="fc03 m2a" target="_blank" href="http://blog.163.com/${y.recommendBlogPermalink}/?from=blog/static/8165118520091063306587">${y.recommendBlogTitle}</a></li> {/if} {/list} </ul> {/if}  &lt;/#--引用记录--&gt;  <span class="pleft fc07">引用记录：</span> <ul class="tbac"> {list d as x} <li class="clearfix"> <span class="pleft iblock">·</span> <div class="tbl thide pleft"><span><a target="_blank" class="fc07 m2a" href="${x.referBlogUrl}">${x.referBlogTitle}</a></span></div> <div class="tbr pleft"><span><a target="_blank" class="fc07 m2a" href="${x.referHomePage}">${x.referUserName}</a></span></div> </li> {/list} </ul>  &lt;/#--博主推荐--&gt;  {list a as x} {if !!x} <li class="thide"><a target="_blank" class="fc03 m2a" href="http://blog.163.com/${x.userName}/${x.permalink}/?recommendBlog" title="${x.title|default:""|escape}">${x.title|default:&quot;&quot;|escape}</a></li> {/if} {/list}  &lt;/#--随机阅读--&gt;  {list a as x} {if !!x} <li class="thide"><a target="_blank" class="fc03 m2a" href="http://blog.163.com/${x.userName}/${x.permalink}/?personalRecomBlog" title="${x.title|default:""|escape}">${x.title|default:&quot;&quot;|escape}</a></li> {/if} {/list}  &lt;/#--首页推荐--&gt;  {list a as x} {if !!x} <li class="thide"><a target="_blank" class="fc03 m2a" target="_blank" href="${x.blogUrl|default:""|escape}?recommendReader" title="${x.blogTile|default:""|escape}">${x.blogTile|default:&quot;&quot;|escape}</a></li> {/if} {/list}  &lt;/#--相关文章--&gt;  <ul> {list a as x} {if x_index&gt;9}{break}{/if} {if !!x} <li class="thide fc03"> <a class="m2a" target="_blank" target="_blank" href="${x.url|default:""}?fromdm&fromSearch&isFromSearchEngine=${isFromSearchEngine|default:"no"}" title="${x.title|default:""|escape}">${x.title|default:&quot;&quot;|escape}</a><span class="fc07">${fn2(parseInt(x.date),&#39;yyyy-MM-dd HH:mm:ss&#39;)}</span> </li> {/if} {/list} </ul>  &lt;/#--历史上的今天--&gt;  <ul> {list a as x} {if x_index&gt;4}{break}{/if} {if !!x} <li class="thide fc03"> <a class="m2a" target="_blank" href="http://blog.163.com/${x.userName}/${x.permalink|default:""}" title="${x.title|default:""|escape}">${fn1(x.title,60)|escape}</a><span class="fc07">${fn2(x.publishTime,&#39;yyyy-MM-dd HH:mm:ss&#39;)}</span> </li> {/if} {/list} </ul>  &lt;/#--右边模块结构--&gt;  <div class="uinfo ztag"></div> <h4 class="fc07 fs0 ltt">最新日志</h4> <ul class="ztag blst"></ul> <h4 class="fc07 fs0 ltt phide ztag">该作者的其他文章</h4> <ul class="ztag blst"></ul> <h4 class="fc07 fs0 ltt phide ztag">博主推荐</h4> <ul class="ztag blst"></ul> <h4 class="fc07 fs0 ltt phide ztag">相关日志</h4> <ul class="ztag blst"></ul> <h4 class="fc07 fs0 ltt phide ztag">随机阅读</h4> <ul class="ztag blst"></ul> <h4 class="fc07 fs0 ltt phide ztag">首页推荐</h4> <ul class="ztag blst"></ul> <div class="more"><a target="_blank" class="fc03 m2a" href="http://blog.163.com">更多&gt;&gt;</a></div> <br/><a id="yodaoad_suggest" target="_blank" href="http://fankui.163.com/ft/comment.fb?pid=12004&fid=16023" class="fc05 m2a phide">对“推广广告”提建议</a> <br/><br/> <div id="yodaoad_r" style="display:none;_zoom:1;"></div>  &lt;/#--评论模块结构--&gt;  <div class="publish ztag"></div> <div class="bdwt bds2 bdc0 phide" id="yodaoad_2" style="_zoom:1;"></div> <div class="ztag bdwt bds2 bdc0"> <div class="case"></div> <div class="clearfix"></div> </div>  &lt;/#--引用模块结构--&gt;  <div class="close"> <span class="ztag iblock icn0 icn0-57"> </span> </div> <div class="ztag phide"></div>  &lt;/#--博主发起的投票--&gt;  {list a as x} {if !!x} <li> <a href="http://blog.163.com/${x.userName}/" target="_blank" class="m2a fc03">${x.nickName|escape}</a>  投票给 {var first_option = true;} {list x.voteDetailList as voteToOption} {if voteToOption==1} {if first_option==false},{/if}  “${b[voteToOption_index]}”   {/if} {/list} {if (x.role!=&quot;-1&quot;) },“我是${c[x.role]}”  {/if}     <span class="fc07">    ${fn1(x.voteTime)}</span> {if x.userName==&#39;&#39;}{/if} {/if} {/list}</p>
+<h2 id="-">页脚</h2>
+<p><a href="http://corp.163.com/index_gb.html" target="_blank">公司简介</a> - <a href="http://gb.corp.163.com/gb/contactus.html" target="_blank">联系方法</a> - <a href="http://corp.163.com/gb/job/job.html" target="_blank">招聘信息</a> - <a href="http://help.163.com/?b13abk1" target="_blank">客户服务</a> - <a href="http://corp.163.com/gb/legal/legal.html" target="_blank">隐私政策</a> - <a href="http://blog.163.com/public/theme/" target="_blank">博客风格</a> - <a href="http://blog.163.com/services/wapblog.html" target="_blank">手机博客</a> - <a href="http://blog.163.com/vip.do" target="_blank">VIP博客</a> - <a href="">订阅此博客</a></p>
+<p>网易公司版权所有 ©1997-2011</p>
+<p><a rel="nofollow" class="pr" target="_blank" href="http://help.163.com/special/007525FT/blog.html?b13aze1">帮助</a> <span class="fr iblock space icn1 icn1-4"> </span> <a class="pr" target="_blank" href="http://blog.163.com/activation.do?host=activation&&username=${u}">${u}</a>   {list wl as x} <div class="grp">${x.g}</div> {list x.l as y} <a class="itm noul" href="/#" hidefocus="true" name="{if typeof(y.v)=='string'}${y.v}{else}${y_index}{/if}">${y.n}</a> {/list} {/list}   {if defined(&#39;wl&#39;)} {list wl as x}<a class="itm noul" href="/#" hidefocus="true" name="${x.v}">${x.n}</a>{/list} {/if}</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/压缩-解压/">压缩-解压</a></li></span></span> | <span class="tags">Tagged <a href="/tags/压缩-解压/" class="label label-primary">压缩-解压</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-压缩-解压--Java实现将多个文件打包压缩成tar_gz文件-易锐的日志-网易博客/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-压缩-解压--Java实现将多个文件打包压缩成tar_gz文件-易锐的日志-网易博客" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--InterpolationSearch/">InterpolationSearch</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--InterpolationSearch/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="interpolationsearch">InterpolationSearch</h1>
+<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 插补搜寻法</a></h1>
+<h2 id="-">说明</h2>
+<p>如果却搜寻的资料分布平均的话，可以使用插补（Interpolation）搜寻法来进行搜寻，在搜寻的对象大于500时，插补搜寻法会比 二分搜寻法 来的快速。</p>
+<h2 id="-">解法</h2>
+<p>插补搜寻法是以资料分布的近似直线来作比例运算，以求出中间的索引并进行资料比对，如果取出的值小于要寻找的值，则提高下界，如果取出的值大于要寻找的 值，则降低下界，如此不断的减少搜寻的范围，所以其本原则与二分搜寻法是相同的，至于中间值的寻找是透过比例运算，如下所示，其中K是指定要寻找的对象， 而m则是可能的索引值：
+<img src="&quot;插补搜寻&quot;" alt="插补搜寻"></p>
 <h2 id="-">实作</h2>
 <ul>
 <li>C
 /#include <stdio.h>
 /#include <stdlib.h>
-/#define NUM 10 // 要拆解的数字
-/#define DEBUG 0
+/#include <time.h>
+/#define MAX 10
+/#define SWAP(x,y) {int t; t = x; x = y; y = t;}
+void quicksort(int[], int, int);
+int intsrch(int[], int);
 int main(void) {
-int table[NUM][NUM/2+1] = {0}; // 动态规画表格
-int count = 0;
-int result = 0;
-int i, j, k;
-printf(&quot;数字拆解\n&quot;);
-printf(&quot;3 = 2+1 = 1+1+1 所以3有三种拆法\n&quot;);
-printf(&quot;4 = 3 + 1 = 2 + 2 = 2 + 1 + 1 = 1 + 1 + 1 + 1&quot;);
-printf(&quot;共五种\n&quot;);
-printf(&quot;5 = 4 + 1 = 3 + 2 = 3 + 1 + 1&quot;);
-printf(&quot; = 2 + 2 + 1 = 2 + 1 + 1 + 1 = 1 + 1 +1 +1 +1&quot;);
-printf(&quot;共七种\n&quot;);
-printf(&quot;依此类推，求 %d 有几种拆法？&quot;, NUM);
-// 初始化
-for(i = 0; i &lt; NUM; i++){
-table[i][0] = 1; // 任何数以0以下的数拆解必只有1种
-table[i][1] = 1; // 任何数以1以下的数拆解必只有1种
+int number[MAX] = {0};
+int i, find;
+srand(time(NULL));
+for(i = 0; i &lt; MAX; i++) {
+number[i] = rand() % 100;
 }
-// 动态规划
-for(i = 2; i &lt;= NUM; i++){
-for(j = 2; j &lt;= i; j++){
-if(i + j &gt; NUM) // 大于 NUM
-continue;
-count = 0;
-for(k = 1 ; k &lt;= j; k++){
-count += table[i-k][(i-k &gt;= k) ? k : i-k];
-}
-table[i][j] = count;
-}
-}
-// 计算并显示结果
-for(k = 1 ; k &lt;= NUM; k++)
-result += table[NUM-k][(NUM-k &gt;= k) ? k : NUM-k];
-printf(&quot;\n\nresult: %d\n&quot;, result);
-if(DEBUG) {
-printf(&quot;\n除错资讯\n&quot;);
-for(i = 0; i &lt; NUM; i++) {
-for(j = 0; j &lt; NUM/2+1; j++)
-printf(&quot;%2d&quot;, table[i][j]);
+quicksort(number, 0, MAX-1);
+printf(&quot;数列：&quot;);
+for(i = 0; i &lt; MAX; i++)
+printf(&quot;%d &quot;, number[i]);
+printf(&quot;\n输入寻找对象：&quot;);
+scanf(&quot;%d&quot;, &amp;find);
+if((i = intsrch(number, find)) &gt;= 0)
+printf(&quot;找到数字于索引 %d &quot;, i);
+else
+printf(&quot;\n找不到指定数&quot;);
 printf(&quot;\n&quot;);
-}
-}
 return 0;
+}
+int intsrch(int number[], int find) {
+int low, mid, upper;
+low = 0;
+upper = MAX - 1;
+while(low &lt;= upper) {
+mid = (upper-low)/*
+(find-number[low])/(number[upper]-number[low])</li>
+</ul>
+<ul>
+<li>low;
+if(mid &lt; low || mid &gt; upper)
+return -1;
+if(find &lt; number[mid])
+upper = mid - 1;
+else if(find &gt; number[mid])
+low = mid + 1;
+else
+return mid;
+}
+return -1;
+}
+void quicksort(int number[], int left, int right) {
+int i, j, k, s;
+if(left &lt; right) {
+s = number[(left+right)/2];
+i = left - 1;
+j = right + 1;
+while(1) {
+while(number[++i] &lt; s) ; // 向右找
+while(number[--j] &gt; s) ; // 向左找
+if(i &gt;= j)
+break;
+SWAP(number[i], number[j]);
+}
+quicksort(number, left, i-1); // 对左边进行递回
+quicksort(number, j+1, right); // 对右边进行递回
+}
+}</li>
+</ul>
+<ul>
+<li>Java
+public class InterpolationSearch {
+public static int search(int[] number, int des) {
+int low = 0;
+int upper = number.length - 1;
+while(low &lt;= upper) {
+int mid = (upper-low)/*
+(des-number[low])/(number[upper]-number[low])</li>
+</ul>
+<ul>
+<li>low;
+if(mid &lt; low || mid &gt; upper)
+return -1;
+if(des &lt; number[mid])
+upper = mid - 1;
+else if(des &gt; number[mid])
+low = mid + 1;
+else
+return mid;
+}
+return -1;
+}
+public static void main(String[] args) {
+int[] number = {1, 4, 2, 6, 7, 3, 9, 8};
+QuickSort.sort(number);
+int find = InterpolationSearch.search(number, 3);
+if(find != -1)
+System.out.println(&quot;找到数值于索引&quot; + find);
+else
+System.out.println(&quot;找不到数值&quot;);
+}
 }</li>
 </ul>
 
@@ -430,428 +1201,8 @@ return 0;
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:34:54"datetime="2014-03-07 10:34:54"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--SeparateNumber/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--SeparateNumber" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShakerSort/">ShakerSort</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShakerSort/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="shakersort">ShakerSort</h1>
-<h1 id="-algorithm-gossip-shaker-"><a href="">Algorithm Gossip: Shaker 排序法 - 改良的气泡排序</a></h1>
-<h2 id="-">说明</h2>
-<p>请看看之前介绍过的气泡排序法：
-     for(i = 0; i &lt; MAX-1 &amp;&amp; flag == 1; i++) {
-        flag = 0;
-        for(j = 0; j &lt; MAX-i-1; j++) {
-            if(number[j+1] &lt; number[j]) {
-                SWAP(number[j+1], number[j]);
-                flag = 1;
-            }
-        }
-    }</p>
-<p>事实上这个气泡排序法已经不是单纯的气泡排序了，它使用了旗标与右端左移两个方法来改进排序的效能，而Shaker排序法使用到后面这个观念进一步改良气泡排序法。</p>
-<h2 id="-">解法</h2>
-<p>在上面的气泡排序法中，交换的动作并不会一直进行至阵列的最后一个，而是会进行至MAX-i-1，所以排序的过程中，阵列右方排序好的元素会一直增加，使得左边排序的次数逐渐减少，如我们的例子所示：
-排序前：95 27 90 49 80 58 6 9 18 50</p>
-<ol>
-<li>27 90 49 80 58 6 9 18 50 [95] 95浮出</li>
-<li>27 49 80 58 6 9 18 50 [90 95] 90浮出</li>
-<li>27 49 58 6 9 18 50 [80 90 95] 80浮出</li>
-<li>27 49 6 9 18 50 [58 80 90 95] ......</li>
-<li>27 6 9 18 49 [50 58 80 90 95] ......</li>
-<li>6 9 18 27 [49 50 58 80 90 95] ......</li>
-<li>6 9 18 [27 49 50 58 80 90 95]
-方括号括住的部份表示已排序完毕，Shaker排序使用了这个概念，如果让左边的元素也具有这样的性质，让左右两边的元素都能先排序完成，如此未排序的元素会集中在中间，由于左右两边同时排序，中间未排序的部份将会很快的减少。
-方法就在于气泡排序的双向进行，先让气泡排序由左向右进行，再来让气泡排序由右往左进行，如此完成一次排序的动作，而您必须使用left与right两个旗标来记录左右两端已排序的元素位置。
-一个排序的例子如下所示：
-排序前：45 19 77 81 13 28 18 19 77 11
-往右排序：19 45 77 13 28 18 19 77 11 [81]
-向左排序：[11] 19 45 77 13 28 18 19 77 [81]
-往右排序：[11] 19 45 13 28 18 19 [77 77 81]
-向左排序：[11 13] 19 45 18 28 19 [77 77 81]
-往右排序：[11 13] 19 18 28 19 [45 77 77 81]
-向左排序：[11 13 18] 19 19 28 [45 77 77 81]
-往右排序：[11 13 18] 19 19 [28 45 77 77 81]
-向左排序：[11 13 18 19 19] [28 45 77 77 81]
-如上所示，括号中表示左右两边已排序完成的部份，当left &gt; right时，则排序完成。</li>
-</ol>
-<h2 id="-">实作</h2>
-<ul>
-<li><p>C
-/#include <stdio.h>
-/#include <stdlib.h>
-/#include <time.h>
-/#define MAX 10
-/#define SWAP(x,y) {int t; t = x; x = y; y = t;}
-void shakersort(int[]);
-int main(void) {
-int number[MAX] = {0};
-int i;
-srand(time(NULL));
-printf(&quot;排序前：&quot;);
-for(i = 0; i &lt; MAX; i++) {
-number[i] = rand() % 100;
-printf(&quot;%d &quot;, number[i]);
-}
-shakersort(number);
-printf(&quot;\n&quot;);
-return 0;
-}
-void shakersort(int number[]) {
-int i, left = 0, right = MAX - 1, shift = 0;
-while(left &lt; right) {
-// 向右进行气泡排序
-for(i = left; i &lt; right; i++) {
-if(number[i] &gt; number[i+1]) {
-SWAP(number[i], number[i+1]);
-shift = i;
-}
-}
-right = shift;
-printf(&quot;\n往右排序：&quot;);
-for(i = 0; i &lt; MAX; i++)
-printf(&quot;%d &quot;, number[i]);
-// 向左进行气泡排序
-for(i = right; i &gt; left; i--) {
-if(number[i] &lt; number[i-1]) {
-SWAP(number[i], number[i-1]);
-shift = i;
-}
-}
-left = shift;
-printf(&quot;\n向左排序：&quot;);
-for(i = 0; i &lt; MAX; i++)
-printf(&quot;%d &quot;, number[i]);
-}
-}</p>
-</li>
-<li><p>Java
-public class ShakerSort {
-public static void sort(int[] number) {
-int i, left = 0,
-right = number.length - 1,
-shift = 0;
-while(left &lt; right) {
-// 向右进行气泡排序
-for(i = left; i &lt; right; i++) {
-if(number[i] &gt; number[i+1]) {
-swap(number, i, i+1);
-shift = i;
-}
-}
-right = shift;
-// 向左进行气泡排序
-for(i = right; i &gt; left; i--) {
-if(number[i] &lt; number[i-1]) {
-swap(number, i ,i-1);
-shift = i;
-}
-}
-left = shift;
-}
-}
-private static void swap(int[] number, int i, int j) {
-int t;
-t = number[i];
-number[i] = number[j];
-number[j] = t;
-}
-}</p>
-</li>
-</ul>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:34:58"datetime="2014-03-07 10:34:58"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShakerSort/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--ShakerSort" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShellSort/">ShellSort</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShellSort/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="shellsort">ShellSort</h1>
-<h1 id="-algorithm-gossip-shell-"><a href="">Algorithm Gossip: Shell 排序法 - 改良的插入排序</a></h1>
-<h2 id="-">说明</h2>
-<p>插入排序法由未排序的后半部前端取出一个值，插入已排序前半部的适当位置，概念简单但速度不快。
-排序要加快的基本原则之一，是让后一次的排序进行时，尽量利用前一次排序后的结果，以加快排序的速度，Shell排序法即是基于此一概念来改良插入排序法。</p>
-<h2 id="-">解法</h2>
-<p>Shell排序法最初是D.L Shell于1959所提出，假设要排序的元素有n个，则每次进行插入排序时并不是所有的元素同时进行时，而是取一段间隔。
-Shell首先将间隔设定为n/2，然后跳跃进行插入排序，再来将间隔n/4，跳跃进行排序动作，再来间隔设定为n/8、n/16，直到间隔为1之后的最 后一次排序终止，由于上一次的排序动作都会将固定间隔内的元素排序好，所以当间隔越来越小时，某些元素位于正确位置的机率越高，因此最后几次的排序动作将 可以大幅减低。
-举个例子来说，假设有一未排序的数字如右：89 12 65 97 61 81 27 2 61 98
-数字的总数共有10个，所以第一次我们将间隔设定为10 / 2 = 5，此时我们对间隔为5的数字进行排序，如下所示：
-<img src="&quot;Shell 排序&quot;" alt="Shell 排序">
-画线连结的部份表示 要一起进行排序的部份，再来将间隔设定为5 / 2的商，也就是2，则第二次的插入排序对象如下所示：
-<img src="&quot;Shell 排序&quot;" alt="Shell 排序">
-再来间隔设定为2 / 2 = 1，此时就是单纯的插入排序了，由于大部份的元素都已大致排序过了，所以最后一次的插入排序几乎没作什么排序动作了：
-<img src="&quot;Shell 排序&quot;" alt="Shell 排序">
- 将间隔设定为n / 2是D.L Shell最初所提出，在教科书中使用这个间隔比较好说明，然而Shell排序法的关键在于间隔的选定，例如Sedgewick证明选用以下的间隔可以加 快Shell排序法的速度：
-<img src="&quot;Shell 排序&quot;" alt="Shell 排序">
- 其中4/<em>(2j)2 + 3/</em>(2j) + 1不可超过元素总数n值，使用上式找出j后代入4/<em>(2j)2 + 3/</em>(2j) + 1求得第一个间隔，然后将2j除以2代入求得第二个间隔，再来依此类推。
-后来还有人证明有其它的间隔选定法可以将Shell排序法的速度再加快；另外Shell排序法的概念也可以用来改良气泡排序法。</p>
-<h2 id="-">实作</h2>
-<ul>
-<li><p>C
-/#include <stdio.h>
-/#include <stdlib.h>
-/#include <time.h>
-/#define MAX 10
-/#define SWAP(x,y) {int t; t = x; x = y; y = t;}
-void shellsort(int[]);
-int main(void) {
-int number[MAX] = {0};
-int i;
-srand(time(NULL));
-printf(&quot;排序前：&quot;);
-for(i = 0; i &lt; MAX; i++) {
-number[i] = rand() % 100;
-printf(&quot;%d &quot;, number[i]);
-}
-shellsort(number);
-return 0;
-}
-void shellsort(int number[]) {
-int i, j, k, gap, t;
-gap = MAX / 2;
-while(gap &gt; 0) {
-for(k = 0; k &lt; gap; k++) {
-for(i = k+gap; i &lt; MAX; i+=gap) {
-for(j = i - gap; j &gt;= k; j-=gap) {
-if(number[j] &gt; number[j+gap]) {
-SWAP(number[j], number[j+gap]);
-}
-else
-break;
-}
-}
-}
-printf(&quot;\ngap = %d：&quot;, gap);
-for(i = 0; i &lt; MAX; i++)
-printf(&quot;%d &quot;, number[i]);
-printf(&quot;\n&quot;);
-gap /= 2;
-}
-}</p>
-</li>
-<li><p>Java
-public class ShellSort {
-public static void sort(int[] number) {
-int gap = number.length / 2;
-while(gap &gt; 0) {
-for(int k = 0; k &lt; gap; k++) {
-for(int i = k+gap; i &lt; number.length; i+=gap) {
-for(int j = i - gap; j &gt;= k; j-=gap) {
-if(number[j] &gt; number[j+gap]) {
-swap(number, j, j+gap);
-}
-else
-break;
-}
-}
-}
-gap /= 2;
-}
-}
-private static void swap(int[] number, int i, int j) {
-int t;
-t = number[i];
-number[i] = number[j];
-number[j] = t;
-}
-}</p>
-</li>
-</ul>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:35:02"datetime="2014-03-07 10:35:02"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShellSort/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--ShellSort" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShuffleCard/">ShuffleCard</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShuffleCard/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="shufflecard">ShuffleCard</h1>
-<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 洗扑克牌（乱数排列）</a></h1>
-<h2 id="-">说明</h2>
-<p>洗扑克牌的原理其实与乱数排列是相同的，都是将一组数字（例如1～N）打乱重新排列，只不过洗扑克牌多了一个花色判断的动作而已。</p>
-<h2 id="-">解法</h2>
-<p>初学者通常会直接想到，随机产生1～N的乱数并将之存入阵列中，后来产生的乱数存入阵列前必须先检查阵列中是否已有重复的数字，如果有这个数就不存入，再重新产生下一个数，运气不好的话，重复的次数就会很多，程式的执行速度就很慢了，这不是一个好方法。
-以1～52的乱数排列为例好了，可以将阵列先依序由1到52填入，然后使用一个回圈走访阵列，并随机产生1～52的乱数，将产生的乱数当作索引取出阵列值，并与目前阵列走访到的值相交换，如此就不用担心乱数重复的问题了，阵列走访完毕后，所有的数字也就重新排列了。
-至于如何判断花色？这只是除法的问题而已，取商数判断花色，取余数判断数字，您可以直接看程式比较清楚。</p>
-<h2 id="-">实作</h2>
-<ul>
-<li><p>C
-/#include <stdio.h>
-/#include <stdlib.h>
-/#include <time.h>
-/#define N 52
-int main(void) {
-int poker[N + 1];
-int i, j, tmp, remain;
-// 初始化阵列
-for(i = 1; i &lt;= N; i++)
-poker[i] = i;
-srand(time(0));
-// 洗牌
-for(i = 1; i &lt;= N; i++) {
-j = rand() % 52 + 1;
-tmp = poker[i];
-poker[i] = poker[j];
-poker[j] = tmp;
-}
-for(i = 1; i &lt;= N; i++) {
-// 判断花色
-switch((poker[i]-1) / 13) {
-case 0:
-printf(&quot;桃&quot;); break;
-case 1:
-printf(&quot;心&quot;); break;
-case 2:
-printf(&quot;砖&quot;); break;
-case 3:
-printf(&quot;梅&quot;); break;
-}
-// 扑克牌数字
-remain = poker[i] % 13;
-switch(remain) {
-case 0:
-printf(&quot;K &quot;); break;
-case 12:
-printf(&quot;Q &quot;); break;
-case 11:
-printf(&quot;J &quot;); break;
-default:
-printf(&quot;%d &quot;, remain); break;
-}
-if(i % 13 == 0)
-printf(&quot;\n&quot;);
-}
-return 0;
-}</p>
-</li>
-<li><p>Java
-public class ShuffleCard {
-public static void main(String args[]) {
-final int N = 52;
-int[] poker = new int[N + 1];
-// 初始化阵列
-for(int i = 1; i &lt;= N; i++)
-poker[i] = i;
-// 洗牌
-for(int i = 1; i &lt;= N; i++) {
-int j = (int) (Math.random() /* N);
-if(j == 0)
-j = 1;
-int tmp = poker[i];
-poker[i] = poker[j];
-poker[j] = tmp;
-}
-for(int i = 1; i &lt;= N; i++) {
-// 判断花色
-switch((poker[i]-1) / 13) {
-case 0:
-System.out.print(&quot;桃&quot;); break;
-case 1:
-System.out.print(&quot;心&quot;); break;
-case 2:
-System.out.print(&quot;砖&quot;); break;
-case 3:
-System.out.print(&quot;梅&quot;); break;
-}
-// 扑克牌数字
-int remain = poker[i] % 13;
-switch(remain) {
-case 0:
-System.out.print(&quot;K &quot;); break;
-case 12:
-System.out.print(&quot;Q &quot;); break;
-case 11:
-System.out.print(&quot;J &quot;); break;
-default:
-System.out.print(remain + &quot; &quot;); break;
-}
-if(i % 13 == 0)
-System.out.println(&quot;&quot;);
-}
-}
-}</p>
-</li>
-</ul>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:35:07"datetime="2014-03-07 10:35:07"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShuffleCard/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--ShuffleCard" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:37:24"datetime="2014-03-07 10:37:24"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--InterpolationSearch/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--InterpolationSearch" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -864,7 +1215,7 @@ System.out.println(&quot;&quot;);
 
 
 <ul id="pagination" class="pagination pagination-lg">
-  <li><a class="extend prev" href="/page/15/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/13/">13</a></li><li><a class="page-number" href="/page/14/">14</a></li><li><a class="page-number" href="/page/15/">15</a></li><li class="active"><li><span class="page-number current">16</span></li><li><a class="page-number" href="/page/17/">17</a></li><li><a class="page-number" href="/page/18/">18</a></li><li><a class="page-number" href="/page/19/">19</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/164/">164</a></li><li><a class="page-number" href="/page/165/">165</a></li><li><a class="extend next" href="/page/17/">&raquo;</a></li>
+  <li><a class="extend prev" href="/page/15/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/13/">13</a></li><li><a class="page-number" href="/page/14/">14</a></li><li><a class="page-number" href="/page/15/">15</a></li><li class="active"><li><span class="page-number current">16</span></li><li><a class="page-number" href="/page/17/">17</a></li><li><a class="page-number" href="/page/18/">18</a></li><li><a class="page-number" href="/page/19/">19</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="page-number" href="/page/164/">164</a></li><li><a class="extend next" href="/page/17/">&raquo;</a></li>
   <div class="clearfix"></div>
 </ul></div><!--wapper-->
        </div><!-- ID main-col END -->
@@ -931,7 +1282,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Blog powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a> Theme <strong><a href='https://github.com/chenall/hexo-theme-chenall'>chenall</a></strong>(Some change in it)<span class="pull-right"> 更新时间: <em>2014-03-26 21:21:32</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-29 22:06:56</em></span></div>
 </div>
 <div class="clearfix"></div>
 
