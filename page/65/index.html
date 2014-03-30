@@ -110,1503 +110,607 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-java-com-wmi-监控--100-纯java调用windows的wmi获取监控数据-肖国颖的个人页面-开源中国社区/">100</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency28-线程池/">深入浅出 Java Concurrency (28)</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-java-com-wmi-监控--100-纯java调用windows的wmi获取监控数据-肖国颖的个人页面-开源中国社区/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency28-线程池/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="100-java-windows-wmi-">100%纯java调用windows的wmi获取监控数据 - 肖国颖的个人页面 - 开源中国社区</h1>
-<p><a href="http://www.oschina.net/" title="开源中国社区首页" target="_blank">开源中国社区</a></p>
-<p>开源项目发现、使用和交流平台</p>
+        <h1 id="-java-concurrency-28-">深入浅出 Java Concurrency (28): 线程池</h1>
+<p><a href="http://www.blogjava.net/xylz/archive/2010/12/19/341098.html" target="_blank"> 简介</a></p>
+<p>从这一节开始正式进入线程池的部分。其实整个体系已经拖了很长的时间，因此后面的章节会加快速度，甚至只是一个半成品或者简单化，以后有时间的慢慢补充、完善。</p>
+<p>其实线程池是并发包里面很重要的一部分，在实际情况中也是使用很多的一个重要组件。</p>
+<p>下图描述的是线程池API的一部分。广义上的完整线程池可能还包括Thread/Runnable、Timer/TimerTask等部分。这里只介绍主要的和高级的API以及架构和原理。</p>
+<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-part-1-_8E6F/ThreadPool2_2.png" target="_blank"><img src="&quot;ThreadPool2&quot;" alt="ThreadPool2"></a></p>
+<p>大多数并发应用程序是围绕执行任务（Task）进行管理的。所谓任务就是抽象、离散的工作单元（unit of work）。把一个应用程序的工作（work）分离到任务中，可以简化程序的管理；这种分离还在不同事物间划分了自然的分界线，可以方便程序在出现错误时进行恢复；同时这种分离还可以为并行工作提供一个自然的结构，有利于提高程序的并发性。<a href="http://www.blogjava.net/xylz/archive/2010/12/19/341098.html#jcp" target="_blank">[1]</a></p>
+<p>并发执行任务的一个很重要前提是拆分任务。把一个大的过程或者任务拆分成很多小的工作单元，每一个工作单元可能相关、也可能无关，这些单元在一定程度上可以充分利用CPU的特性并发的执行，从而提高并发性（性能、响应时间、吞吐量等）。</p>
+<p>所谓的任务拆分就是确定每一个执行任务（工作单元）的边界。理想情况下独立的工作单元有最大的吞吐量，这些工作单元不依赖于其它工作单元的状态、结果或者其他资源等。因此将任务尽可能的拆分成一个个独立的工作单元有利于提高程序的并发性。</p>
+<p>对于有依赖关系以及资源竞争的工作单元就涉及到任务的调度和负载均衡。工作单元的状态、结果或者其他资源等有关联的工作单元就需要有一个总体的调度者来协调资源和执行顺序。同样在有限的资源情况下，大量的任务也需要一个协调各个工作单元的调度者。这就涉及到任务执行的策略问题。</p>
+<p>任务的执行策略包括4W3H部分：</p>
 <ul>
-<li><a href="http://www.oschina.net/project" target="_blank">项目</a></li>
-<li><a href="http://www.oschina.net/question" target="_blank">讨论</a></li>
-<li><a href="http://www.oschina.net/code/list" target="_blank">代码</a></li>
-<li><a href="http://www.oschina.net/news" target="_blank">资讯</a></li>
-<li><a href="http://www.oschina.net/translate" target="_blank">翻译</a></li>
-<li><a href="http://www.oschina.net/blog" target="_blank">博客</a></li>
-<li><a href="http://www.oschina.net/android" target="_blank">Android</a></li>
-<li><a href="http://www.oschina.net/job" target="_blank">招聘</a></li>
+<li>任务在什么（What）线程中执行</li>
+<li>任务以什么（What）顺序执行（FIFO/LIFO/优先级等）</li>
+<li>同时有多少个（How Many）任务并发执行</li>
+<li>允许有多少个（How Many）个任务进入执行队列</li>
+<li>系统过载时选择放弃哪一个（Which）任务，如何（How）通知应用程序这个动作</li>
+<li>任务执行的开始、结束应该做什么（What）处理</li>
 </ul>
-<p>当前访客身份： arctichia [ <a href="http://my.oschina.net/arcichia" target="_blank">我的空间</a> | <a href="http://my.oschina.net/action/user/logout?session=9c386f172b1174553110&amp;goto_page=http%3A%2F%2Fmy.oschina.net%2Fnoahxiao" target="_blank">退出</a> ]  <a href="http://my.oschina.net/arcichia/admin/inbox" title="进入我的留言箱" target="_blank">你有<em>0</em>新留言</a></p>
-<p>软件 代码 讨论区 新闻 博客</p>
-<p>软件</p>
-<ul>
-<li><a href="">软件</a></li>
-<li><a href="">代码</a></li>
-<li><a href="">讨论区</a></li>
-<li><a href="">新闻</a></li>
-<li><a href="">博客</a>
-<a href="http://my.oschina.net/noahxiao" target="_blank"><img src="&quot;肖国颖&quot;" alt="肖国颖"></a>  <a href="http://my.oschina.net/noahxiao" title="男" target="_blank">肖国颖</a>  <img src="&quot;男&quot;" alt=""> <a href="&quot;成为TA的粉丝&quot;">关注此人</a></li>
-</ul>
-<p><a href="http://my.oschina.net/noahxiao/fellow" target="_blank">关注(4)</a> <a href="http://my.oschina.net/noahxiao/fans" target="_blank">粉丝(71)</a> <a href="http://www.oschina.net/question/3307_20931" title="查看OSCHINA积分规则" target="_blank">积分(280)</a></p>
-<p>不做鬼中鬼，怎做人上人
-<a href="">.发送留言</a> <a href="http://www.oschina.net/question/ask?user=569848" target="_blank">.请教问题</a></p>
-<p><strong>博客分类</strong></p>
-<ul>
-<li><a href="http://my.oschina.net/noahxiao/blog?catalog=186739" target="_blank">工作日志</a>(47)</li>
-<li><a href="http://my.oschina.net/noahxiao/blog?catalog=186740" target="_blank">日常记录</a>(0)</li>
-<li><a href="http://my.oschina.net/noahxiao/blog?catalog=186741" target="_blank">转贴的文章</a>(0)
-<strong>阅读排行</strong></li>
-</ul>
+<p>在后面的章节中会详细分写这些策略是如何实现的。我们先来简单回答些如何满足上面的条件。</p>
 <ol>
-<li><a href="http://my.oschina.net/noahxiao/blog/61987" target="_blank">1. 在Android中嵌入AdMob广告，赚午饭钱</a></li>
-<li><a href="http://my.oschina.net/noahxiao/blog/86328" target="_blank">2. 解决iOS6看YouTb的心酸，补充可看版(goagent+opendoor)</a></li>
-<li><a href="http://my.oschina.net/noahxiao/blog/126357" target="_blank">3. 当单例（Singleton）爱上多线程——重复初始化问题</a></li>
-<li><a href="http://my.oschina.net/noahxiao/blog/112759" target="_blank">4. Java序列化与JSON序列化大比拼</a></li>
-<li><a href="http://my.oschina.net/noahxiao/blog/61495" target="_blank">5. 在Eclipse中用Scala语言开发Android应用</a></li>
-<li><a href="http://my.oschina.net/noahxiao/blog/88687" target="_blank">6. Ubuntu 12.10下用Empathy（pidgin-lwqq）登录QQ</a></li>
-<li><a href="http://my.oschina.net/noahxiao/blog/65071" target="_blank">7. 解决Ubuntu 12.04下频繁死机-Chrome</a></li>
-<li><a href="http://my.oschina.net/noahxiao/blog/140771" target="_blank">8. 以Jar形式为Web项目提供资源文件（JS、CSS与图片）</a></li>
+<li>首先明确一定是在Java里面可以供使用者调用的启动线程类是Thread。因此Runnable或者Timer/TimerTask等都是要依赖Thread来启动的，因此在ThreadPool里面同样也是靠Thread来启动多线程的。</li>
+<li>默认情况下Runnable接口执行完毕后是不能拿到执行结果的，因此在ThreadPool里就定义了一个Callable接口来处理执行结果。</li>
+<li>为了异步阻塞的获取结果，Future可以帮助调用线程获取执行结果。</li>
+<li>Executor解决了向线程池提交任务的入口问题，同时ScheduledExecutorService解决了如何进行重复调用任务的问题。</li>
+<li>CompletionService解决了如何按照执行完毕的顺序获取结果的问题，这在某些情况下可以提高任务执行的并发，调用线程不必在长时间任务上等待过多时间。</li>
+<li>显然线程的数量是有限的，而且也不宜过多，因此合适的任务队列是必不可少的，BlockingQueue的容量正好可以解决此问题。</li>
+<li>固定任务容量就意味着在容量满了以后需要一定的策略来处理过多的任务（新任务），RejectedExecutionHandler正好解决此问题。</li>
+<li>一定时间内阻塞就意味着有超时，因此TimeoutException就是为了描述这种现象。TimeUnit是为了描述超时时间方便的一个时间单元枚举类。</li>
+<li>有上述问题就意味了配置一个合适的线程池是很复杂的，因此Executors默认的一些线程池配置可以减少这个操作。</li>
 </ol>
-<p><strong>最新评论</strong></p>
+<p>线程池的基本策略大致就这些，从下一节开始就从线程池的基本原理和执行方法开始描述。</p>
+<p><a href="">[1] Java Concurrency in Practice</a>
+来源： <a href="[http://www.blogjava.net/xylz/archive/2010/12/19/341098.html](http://www.blogjava.net/xylz/archive/2010/12/19/341098.html)">[http://www.blogjava.net/xylz/archive/2010/12/19/341098.html](http://www.blogjava.net/xylz/archive/2010/12/19/341098.html)</a> <a href="http://www.blogjava.net/xylz/archive/2010/12/21/341281.html" target="_blank">Executor 以及Executors</a>
+Java里面线程池的顶级接口是Executor，但是严格意义上讲Executor并不是一个线程池，而只是一个执行线程的工具。真正的线程池接口是ExecutorService。</p>
+<p>下面这张图完整描述了线程池的类体系结构。</p>
+<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-Java-Concurrency-28--part-1-_1302E/Executor-class_2.png" target="_blank"><img src="&quot;Executor-class&quot;" alt="Executor-class"></a></p>
+<p>首先Executor的execute方法只是执行一个Runnable的任务，当然了从某种角度上将最后的实现类也是在线程中启动此任务的。根据线程池的执行策略最后这个任务可能在新的线程中执行，或者线程池中的某个线程，甚至是调用者线程中执行（相当于直接运行Runnable的run方法）。这点在后面会详细说明。</p>
+<p>ExecutorService在Executor的基础上增加了一些方法，其中有两个核心的方法：</p>
 <ul>
-<li><a href="http://my.oschina.net/wenshao" target="_blank">@wenshao</a>：fastjson缺省是做循环引用检测的，你关掉这个再测... <a href="http://my.oschina.net/action/tweet/go?obj=274988152&amp;type=18&amp;user=127152" target="_blank">查看»</a></li>
-<li><a href="http://my.oschina.net/wenshao" target="_blank">@wenshao</a>：这个测试不对，你直接测试JavaBean而不是Map看看... <a href="http://my.oschina.net/action/tweet/go?obj=274988031&amp;type=18&amp;user=127152" target="_blank">查看»</a></li>
-<li><a href="http://my.oschina.net/u/1182868" target="_blank">@rrstpit</a>：Fffff <a href="http://my.oschina.net/action/tweet/go?obj=274896306&amp;type=18&amp;user=1182868" target="_blank">查看»</a></li>
-<li><a href="http://my.oschina.net/fxl" target="_blank">@付学良</a>：引用来自“xautlx”的评论 Servlet3规范好像已经... <a href="http://my.oschina.net/action/tweet/go?obj=274529269&amp;type=18&amp;user=83617" target="_blank">查看»</a></li>
-<li><a href="http://my.oschina.net/112358" target="_blank">@yezheng1993</a>：引用来自“肖国颖”的评论 引用来自“yezheng19... <a href="http://my.oschina.net/action/tweet/go?obj=274481572&amp;type=18&amp;user=1173735" target="_blank">查看»</a></li>
-<li><a href="http://my.oschina.net/noahxiao" target="_blank">@肖国颖</a>：引用来自“yezheng1993”的评论 请问一下怎么在那... <a href="http://my.oschina.net/action/tweet/go?obj=274479348&amp;type=18&amp;user=569848" target="_blank">查看»</a></li>
-<li><a href="http://my.oschina.net/112358" target="_blank">@yezheng1993</a>：请问一下怎么在那边创建文件以及文件夹，新手，还... <a href="http://my.oschina.net/action/tweet/go?obj=274477519&amp;type=18&amp;user=1173735" target="_blank">查看»</a></li>
-<li><a href="http://my.oschina.net/u/151176" target="_blank">@xautlx</a>：Servlet3规范好像已经有标准支持：<a href="https://blogs" target="_blank">https://blogs</a>... <a href="http://my.oschina.net/action/tweet/go?obj=274464191&amp;type=18&amp;user=151176" target="_blank">查看»</a></li>
-<li><a href="http://my.oschina.net/u/613918" target="_blank">@ahnan</a>：www.webjars.org <a href="http://my.oschina.net/action/tweet/go?obj=274462857&amp;type=18&amp;user=613918" target="_blank">查看»</a></li>
-<li><p><a href="http://my.oschina.net/wj2699" target="_blank">@wj2699</a>：spring的mvc确实有这么个功能，但是如果和apach... <a href="http://my.oschina.net/action/tweet/go?obj=274461745&amp;type=18&amp;user=106294" target="_blank">查看»</a>
-<strong>访客统计</strong></p>
-</li>
-<li><p>今日访问：26</p>
-</li>
-<li>昨日访问：148</li>
-<li>本周访问：389</li>
-<li>本月访问：1573</li>
-<li>所有访问：52224</li>
+<li>Future&lt;?&gt; submit(Runnable task)</li>
+<li><T> Future<T> submit(Callable<T> task)</li>
 </ul>
-<p><a href="http://my.oschina.net/noahxiao" target="_blank">空间</a> » <a href="http://my.oschina.net/noahxiao/blog" target="_blank">博客</a> » <a href="http://my.oschina.net/noahxiao/blog?catalog=186739" target="_blank">工作日志</a> » 博客正文</p>
-<h1 id="-100-java-windows-wmi-"><img src="" alt=""> 100%纯java调用windows的wmi获取监控数据</h1>
-<p><em>23</em>人收藏此文章,  <a href="&quot;添加到收藏夹&quot;">我要收藏</a>   发表于12个月前(2012-08-16 18:17) , 已有<strong>2348</strong>次阅读 ，共<strong><a href="">5</a></strong>个评论</p>
-<p>纯java主要体现在可以跨平台调用com。所用的是j-Interop，它是100%纯java实现的com的调用</p>
-<h3 id="1-">1、环境准备</h3>
-<p>a、windows要开启Remote Registry与Windows Management Instrumentation服务</p>
-<p>b、修改安全策略</p>
-<p>我系统是英文的，如果是中文系统，翻译为中文，相对应的查找并修改。</p>
-<p>Administrative Tools&gt;Local Security Policy&gt;Local Policy&gt;Security Policy&gt;Network access: Sharing and security model for local accounts</p>
-<p>修改为Classic（经典）</p>
-<p>c、禁用放火墙</p>
-<p>d、window2008系统注册表越狱（高版本的win）</p>
-<p>需要修改regedit中HKEY_CLASSES_ROOT\CLSID{76A64158-CB41-11D1-8B02-00600806D9B6}的权限，windows2008不再给Administrators完全控制权。</p>
-<p>下载SetACL.exe，下载地址：<a href="http://files.helgeklein.com/downloads/SetACL/current/SetACL%20(executable%20version).zip" target="_blank">http://files.helgeklein.com/downloads/SetACL/current/SetACL%20(executable%20version).zip</a></p>
-<p>set_wmi_reg_acl.cmd</p>
-<p><a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
-<p>1</p>
-<p>SetACL.exe -on</p>
-<p>&quot;HKEY_CLASSES_ROOT\CLSID{76A64158-CB41-11D1-8B02-00600806D9B6}&quot;</p>
-<p>-ot reg -actn setowner -ownr</p>
-<p>&quot;n:Administrators&quot;</p>
-<p>2</p>
-<p>SetACL.exe -on</p>
-<p>&quot;HKEY_CLASSES_ROOT\CLSID{76A64158-CB41-11D1-8B02-00600806D9B6}&quot;</p>
-<p>-ot reg -actn ace -ace</p>
-<p>&quot;n:Administrators;p:full&quot;</p>
-<p>以超级管理员身份执行这个cms，就会把owner与完全控制权限授予Administrators组</p>
-<h2 id="-">#</h2>
-<h3 id="2-">2、程序代码</h3>
-<p>java类</p>
-<p><a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
-<p>001</p>
-<p>package</p>
-<p>org.noah.wmitest;</p>
-<p>002</p>
-<p>003</p>
-<p>import</p>
-<p>org.jinterop.dcom.common.JIException;</p>
-<p>004</p>
-<p>import</p>
-<p>org.jinterop.dcom.common.JISystem;
-005</p>
-<p>import</p>
-<p>org.jinterop.dcom.core./*;</p>
-<p>006</p>
-<p>import</p>
-<p>org.jinterop.dcom.impls.JIObjectFactory;
-007</p>
-<p>import</p>
-<p>org.jinterop.dcom.impls.automation.IJIDispatch;</p>
-<p>008</p>
-<p>import</p>
-<p>org.jinterop.dcom.impls.automation.IJIEnumVariant;
-009</p>
-<p>import</p>
-<p>org.slf4j.Logger;</p>
-<p>010</p>
-<p>import</p>
-<p>org.slf4j.LoggerFactory;
-011</p>
-<p>012</p>
-<p>import</p>
-<p>java.net.UnknownHostException;
-013</p>
-<p>import</p>
-<p>java.util.logging.Level;</p>
-<p>014</p>
-<p>015</p>
-<p>//<em>/</em></p>
-<p>016</p>
-<p>/* Created with IntelliJ IDEA.
-017</p>
-<p>/* User: noah</p>
-<p>018</p>
-<p>/* Date: 8/16/12
-019</p>
-<p>/* Time: 8:00 AM</p>
-<p>020</p>
-<p>/* To change this template use File | Settings | File Templates.
-021</p>
-<p>/*/</p>
-<p>022</p>
-<p>public</p>
-<p>class</p>
-<p>WmiService {
-023</p>
-<p>024</p>
-<p>private</p>
-<p>JIComServer m_ComStub =</p>
-<p>null</p>
-<p>;
-025</p>
-<p>private</p>
-<p>IJIComObject m_ComObject =</p>
-<p>null</p>
-<p>;</p>
-<p>026</p>
-<p>private</p>
-<p>IJIDispatch m_Dispatch =</p>
-<p>null</p>
-<p>;
-027</p>
-<p>private</p>
-<p>String m_Address =</p>
-<p>null</p>
-<p>;</p>
-<p>028</p>
-<p>private</p>
-<p>JISession m_Session =</p>
-<p>null</p>
-<p>;
-029</p>
-<p>private</p>
-<p>IJIDispatch m_WbemServices =</p>
-<p>null</p>
-<p>;</p>
-<p>030</p>
-<p>031</p>
-<p>private</p>
-<p>static</p>
-<p>final</p>
-<p>String WMI_CLSID =</p>
-<p>&quot;76A6415B-CB41-11d1-8B02-00600806D9B6&quot;</p>
-<p>;</p>
-<p>032</p>
-<p>private</p>
-<p>static</p>
-<p>final</p>
-<p>String WMI_PROGID =</p>
-<p>&quot;WbemScripting.SWbemLocator&quot;</p>
-<p>;
-033</p>
-<p>034</p>
-<p>private</p>
-<p>Logger logger = LoggerFactory.getLogger(</p>
-<p>this</p>
-<p>.getClass());
-035</p>
-<p>036</p>
-<p>037</p>
-<p>public</p>
-<p>WmiService(String address) {</p>
-<p>038</p>
-<p>JISystem.setAutoRegisteration(</p>
-<p>true</p>
-<p>);
-039</p>
-<p>JISystem.getLogger().setLevel(Level.WARNING);</p>
-<p>040</p>
-<p>m_Address = address;
-041</p>
-<p>}</p>
-<p>042</p>
-<p>043</p>
-<p>public</p>
-<p>void</p>
-<p>query(String strQuery) {</p>
-<p>044</p>
-<p>045</p>
-<p>System.out.println(</p>
-<p>&quot;query:&quot;</p>
+<p>这两个方法都是向线程池中提交任务，它们的区别在于Runnable在执行完毕后没有结果，Callable执行完毕后有一个结果。这在多个线程中传递状态和结果是非常有用的。另外他们的相同点在于都返回一个Future对象。Future对象可以阻塞线程直到运行完毕（获取结果，如果有的话），也可以取消任务执行，当然也能够检测任务是否被取消或者是否执行完毕。</p>
+<p>在没有Future之前我们检测一个线程是否执行完毕通常使用Thread.join()或者用一个死循环加状态位来描述线程执行完毕。现在有了更好的方法能够阻塞线程，检测任务执行完毕甚至取消执行中或者未开始执行的任务。</p>
+<p>ScheduledExecutorService描述的功能和Timer/TimerTask类似，解决那些需要任务重复执行的问题。这包括延迟时间一次性执行、延迟时间周期性执行以及固定延迟时间周期性执行等。当然了继承ExecutorService的ScheduledExecutorService拥有ExecutorService的全部特性。</p>
+<p>ThreadPoolExecutor是ExecutorService的默认实现，其中的配置、策略也是比较复杂的，在后面的章节中会有详细的分析。</p>
+<p>ScheduledThreadPoolExecutor是继承ThreadPoolExecutor的ScheduledExecutorService接口实现，周期性任务调度的类实现，在后面的章节中会有详细的分析。</p>
+<p>这里需要稍微提一下的是CompletionService接口，它是用于描述顺序获取执行结果的一个线程池包装器。它依赖一个具体的线程池调度，但是能够根据任务的执行先后顺序得到执行结果，这在某些情况下可能提高并发效率。</p>
+<p>要配置一个线程池是比较复杂的，尤其是对于线程池的原理不是很清楚的情况下，很有可能配置的线程池不是较优的，因此在Executors类里面提供了一些静态工厂，生成一些常用的线程池。</p>
 <ul>
-<li>strQuery);</li>
+<li><strong>newSingleThreadExecutor</strong>：创建一个单线程的线程池。这个线程池只有一个线程在工作，也就是相当于单线程串行执行所有任务。如果这个唯一的线程因为异常结束，那么会有一个新的线程来替代它。此线程池保证所有任务的执行顺序按照任务的提交顺序执行。</li>
+<li><strong>newFixedThreadPool</strong>：创建固定大小的线程池。每次提交一个任务就创建一个线程，直到线程达到线程池的最大大小。线程池的大小一旦达到最大值就会保持不变，如果某个线程因为执行异常而结束，那么线程池会补充一个新线程。</li>
+<li><strong>newCachedThreadPool</strong>：创建一个可缓存的线程池。如果线程池的大小超过了处理任务所需要的线程，那么就会回收部分空闲（60秒不执行任务）的线程，当任务数增加时，此线程池又可以智能的添加新线程来处理任务。此线程池不会对线程池大小做限制，线程池大小完全依赖于操作系统（或者说JVM）能够创建的最大线程大小。</li>
+<li><strong>newScheduledThreadPool</strong>：创建一个大小无限的线程池。此线程池支持定时以及周期性执行任务的需求。</li>
+<li><strong>newSingleThreadScheduledExecutor</strong>：创建一个单线程的线程池。此线程池支持定时以及周期性执行任务的需求。</li>
 </ul>
-<p>046</p>
-<p>047</p>
-<p>JIVariant results[] =</p>
-<p>new</p>
-<p>JIVariant[</p>
-<p>0</p>
-<p>];</p>
-<p>048</p>
-<p>try</p>
-<p>{
-049</p>
-<p>results = m_WbemServices.callMethodA(</p>
-<p>&quot;ExecQuery&quot;</p>
-<p>,</p>
-<p>new</p>
-<p>Object[]{</p>
-<p>new</p>
-<p>JIString(strQuery), JIVariant.OPTIONAL_PARAM(), JIVariant.OPTIONAL_PARAM(), JIVariant.OPTIONAL_PARAM()});</p>
-<p>050</p>
-<p>IJIDispatch wOSd = (IJIDispatch) JIObjectFactory.narrowObject((results[</p>
-<p>0</p>
-<p>]).getObjectAsComObject());
-051</p>
-<p>052</p>
-<p>int</p>
-<p>count = wOSd.get(</p>
-<p>&quot;Count&quot;</p>
-<p>).getObjectAsInt();
-053</p>
-<p>054</p>
-<p>IJIComObject enumComObject = wOSd.get(</p>
-<p>&quot;_NewEnum&quot;</p>
-<p>).getObjectAsComObject();
-055</p>
-<p>IJIEnumVariant enumVariant = (IJIEnumVariant) JIObjectFactory.narrowObject(enumComObject.queryInterface(IJIEnumVariant.IID));</p>
-<p>056</p>
-<p>057</p>
-<p>IJIDispatch wbemObject_dispatch =</p>
-<p>null</p>
-<p>;</p>
-<p>058</p>
-<p>059</p>
-<p>for</p>
-<p>(</p>
-<p>int</p>
-<p>c =</p>
-<p>0</p>
-<p>; c &lt; count; c++) {</p>
-<p>060</p>
-<p>061</p>
-<p>Object[] values = enumVariant.next(</p>
-<p>1</p>
-<p>);</p>
-<p>062</p>
-<p>JIArray array = (JIArray) values[</p>
-<p>0</p>
-<p>];
-063</p>
-<p>Object[] arrayObj = (Object[]) array.getArrayInstance();</p>
-<p>064</p>
-<p>for</p>
-<p>(</p>
-<p>int</p>
-<p>j =</p>
-<p>0</p>
-<p>; j &lt; arrayObj.length; j++) {
-065</p>
-<p>wbemObject_dispatch = (IJIDispatch) JIObjectFactory.narrowObject(((JIVariant) arrayObj[j]).getObjectAsComObject());</p>
-<p>066</p>
-<p>}
-067</p>
-<p>068</p>
-<p>String str = (wbemObject_dispatch.callMethodA(</p>
-<p>&quot;GetObjectText_&quot;</p>
-<p>,</p>
-<p>new</p>
-<p>Object[]{</p>
-<p>1</p>
-<p>}))[</p>
-<p>0</p>
-<p>].getObjectAsString2();
-069</p>
-<p>System.out.println(</p>
-<p>&quot;(&quot;</p>
+<p>在详细讲解ThreadPoolExecutor的时候会具体讨论上述参数配置后的意义和原理。</p>
+<p>线程池是一个复杂的任务调度工具，因此它涉及到任务、线程池等的生命周期问题，在下一节中来探讨下这个问题。
+来源： <a href="[http://www.blogjava.net/xylz/archive/2010/12/21/341281.html](http://www.blogjava.net/xylz/archive/2010/12/21/341281.html)">[http://www.blogjava.net/xylz/archive/2010/12/21/341281.html](http://www.blogjava.net/xylz/archive/2010/12/21/341281.html)</a> <a href="http://www.blogjava.net/xylz/archive/2011/01/04/342316.html" target="_blank">Executor 生命周期</a></p>
+<p>我们知道线程是有多种执行状态的，同样管理线程的线程池也有多种状态。JVM会在所有线程（非后台daemon线程）全部终止后才退出，为了节省资源和有效释放资源关闭一个线程池就显得很重要。有时候无法正确的关闭线程池，将会阻止JVM的结束。</p>
+<p>线程池Executor是异步的执行任务，因此任何时刻不能够直接获取提交的任务的状态。这些任务有可能已经完成，也有可能正在执行或者还在排队等待执行。因此关闭线程池可能出现一下几种情况：</p>
 <ul>
-<li>c +</li>
+<li>平缓关闭：已经启动的任务全部执行完毕，同时不再接受新的任务</li>
+<li>立即关闭：取消所有正在执行和未执行的任务</li>
 </ul>
-<p>&quot;):&quot;</p>
-<p>);</p>
-<p>070</p>
-<p>System.out.println(str);
-071</p>
-<p>System.out.println();</p>
-<p>072</p>
-<p>}
-073</p>
-<p>074</p>
-<p>075</p>
-<p>}</p>
-<p>catch</p>
-<p>(JIException e) {</p>
-<p>076</p>
-<p>e.printStackTrace();
-077</p>
-<p>}</p>
-<p>078</p>
-<p>}
-079</p>
-<p>080</p>
-<p>public</p>
-<p>void</p>
-<p>connect(</p>
-<p>final</p>
-<p>String domain,</p>
-<p>final</p>
-<p>String username,</p>
-<p>final</p>
-<p>String password) {
-081</p>
-<p>try</p>
-<p>{</p>
-<p>082</p>
-<p>083</p>
-<p>m_Session = JISession.createSession(domain, username, password);</p>
-<p>084</p>
-<p>m_Session.useSessionSecurity(</p>
-<p>true</p>
-<p>);
-085</p>
-<p>m_Session.setGlobalSocketTimeout(</p>
-<p>5000</p>
-<p>);</p>
-<p>086</p>
-<p>087</p>
-<p>m_ComStub =</p>
-<p>new</p>
-<p>JIComServer(JIProgId.valueOf(WMI_PROGID), m_Address, m_Session);</p>
-<p>088</p>
-<p>089</p>
-<p>IJIComObject unknown = m_ComStub.createInstance();</p>
-<p>090</p>
-<p>m_ComObject = unknown.queryInterface(WMI_CLSID);
-091</p>
-<p>092</p>
-<p>m_Dispatch = (IJIDispatch) JIObjectFactory.narrowObject(m_ComObject.queryInterface(IJIDispatch.IID));
-093</p>
-<p>JIVariant results[] = m_Dispatch.callMethodA(</p>
-<p>094</p>
-<p>&quot;ConnectServer&quot;</p>
-<p>,
-095</p>
-<p>new</p>
-<p>Object[]{</p>
-<p>096</p>
-<p>new</p>
-<p>JIString(m_Address),
-097</p>
-<p>JIVariant.OPTIONAL_PARAM(),</p>
-<p>098</p>
-<p>JIVariant.OPTIONAL_PARAM(),
-099</p>
-<p>JIVariant.OPTIONAL_PARAM(),</p>
-<p>100</p>
-<p>JIVariant.OPTIONAL_PARAM(),
-101</p>
-<p>JIVariant.OPTIONAL_PARAM(),</p>
-<p>102</p>
-<p>0</p>
-<p>,
-103</p>
-<p>JIVariant.OPTIONAL_PARAM()</p>
-<p>104</p>
-<p>}
-105</p>
-<p>);</p>
-<p>106</p>
-<p>107</p>
-<p>m_WbemServices = (IJIDispatch) JIObjectFactory.narrowObject((results[</p>
-<p>0</p>
-<p>]).getObjectAsComObject());</p>
-<p>108</p>
-<p>109</p>
-<p>}</p>
-<p>catch</p>
-<p>(JIException e) {</p>
-<p>110</p>
-<p>e.printStackTrace();
-111</p>
-<p>if</p>
-<p>(m_Session !=</p>
-<p>null</p>
-<p>) {</p>
-<p>112</p>
-<p>try</p>
-<p>{
-113</p>
-<p>JISession.destroySession(m_Session);</p>
-<p>114</p>
-<p>}</p>
-<p>catch</p>
-<p>(JIException e1) {
-115</p>
-<p>logger.error(e.getMessage(), e);</p>
-<p>116</p>
-<p>}
-117</p>
-<p>}</p>
-<p>118</p>
-<p>}</p>
-<p>catch</p>
-<p>(UnknownHostException e) {
-119</p>
-<p>if</p>
-<p>(m_Session !=</p>
-<p>null</p>
-<p>) {</p>
-<p>120</p>
-<p>try</p>
-<p>{
-121</p>
-<p>JISession.destroySession(m_Session);</p>
-<p>122</p>
-<p>}</p>
-<p>catch</p>
-<p>(JIException e1) {
-123</p>
-<p>logger.error(e.getMessage(), e);</p>
-<p>124</p>
-<p>}
-125</p>
-<p>}</p>
-<p>126</p>
-<p>}
-127</p>
-<p>}</p>
-<p>128</p>
-<p>129</p>
-<p>public</p>
-<p>void</p>
-<p>disconnect() {</p>
-<p>130</p>
-<p>try</p>
-<p>{
-131</p>
-<p>JISession.destroySession(m_Session);</p>
-<p>132</p>
-<p>}</p>
-<p>catch</p>
-<p>(JIException e) {
-133</p>
-<p>logger.error(e.getMessage(), e);</p>
-<p>134</p>
-<p>}
-135</p>
-<p>}</p>
-<p>136</p>
-<p>137</p>
-<p>138</p>
-<p>public</p>
-<p>static</p>
-<p>void</p>
-<p>main(String[] args) {
-139</p>
-<p>140</p>
-<p>WmiService wmiService =</p>
-<p>new</p>
-<p>WmiService(</p>
-<p>&quot;172.16.158.129&quot;</p>
-<p>);
-141</p>
-<p>142</p>
-<p>//域（一般为空字符），用户名，密码
-143</p>
-<p>wmiService.connect(</p>
-<p>&quot;&quot;</p>
-<p>,</p>
-<p>&quot;username&quot;</p>
-<p>,</p>
-<p>&quot;password&quot;</p>
-<p>);</p>
-<p>144</p>
-<p>145</p>
-<p>//系统信息</p>
-<p>146</p>
-<p>wmiService.query(</p>
-<p>&quot;SELECT /* FROM Win32_ComputerSystem&quot;</p>
-<p>);
-147</p>
-<p>148</p>
-<p>//CPU信息
-149</p>
-<p>wmiService.query(</p>
-<p>&quot;SELECT /* FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name != &#39;_Total&#39;&quot;</p>
-<p>);</p>
-<p>150</p>
-<p>151</p>
-<p>//内存信息</p>
-<p>152</p>
-<p>wmiService.query(</p>
-<p>&quot;SELECT /* FROM Win32_PerfFormattedData_PerfOS_Memory&quot;</p>
-<p>);
-153</p>
-<p>154</p>
-<p>//磁盘信息
-155</p>
-<p>wmiService.query(</p>
-<p>&quot;SELECT /* FROM Win32_PerfRawData_PerfDisk_PhysicalDisk Where Name != &#39;_Total&#39;&quot;</p>
-<p>);</p>
-<p>156</p>
-<p>157</p>
-<p>wmiService.disconnect();</p>
-<p>158</p>
-<p>}
-159</p>
-<p>}</p>
-<p>mavne配置(pom.xml)
-<a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
-<p>01</p>
-<p>&lt;?</p>
-<p>xml</p>
-<p>version</p>
-<p>=</p>
-<p>&quot;1.0&quot;</p>
-<p>encoding</p>
-<p>=</p>
-<p>&quot;UTF-8&quot;</p>
-<p>?&gt;</p>
-<p>02</p>
-<p>&lt;</p>
-<p>project</p>
-<p>xmlns</p>
-<p>=</p>
-<p>&quot;<a href="http://maven.apache.org/POM/4.0.0" target="_blank">http://maven.apache.org/POM/4.0.0</a>&quot;
-03</p>
-<p>xmlns:xsi</p>
-<p>=</p>
-<p>&quot;<a href="http://www.w3.org/2001/XMLSchema-instance" target="_blank">http://www.w3.org/2001/XMLSchema-instance</a>&quot;</p>
-<p>04</p>
-<p>xsi:schemaLocation</p>
-<p>=</p>
-<p>&quot;<a href="http://maven.apache.org/POM/4.0.0" target="_blank">http://maven.apache.org/POM/4.0.0</a> <a href="http://maven.apache.org/xsd/maven-4.0.0.xsd" target="_blank">http://maven.apache.org/xsd/maven-4.0.0.xsd</a>&quot;</p>
-<p>&gt;
-05</p>
-<p>&lt;</p>
-<p>modelVersion</p>
-<blockquote>
-<p>4.0.0&lt;/</p>
-</blockquote>
-<p>modelVersion</p>
-<p>&gt;</p>
-<p>06</p>
-<p>07</p>
-<p>&lt;</p>
-<p>groupId</p>
-<blockquote>
-<p>org.noahx&lt;/</p>
-</blockquote>
-<p>groupId</p>
-<p>&gt;</p>
-<p>08</p>
-<p>&lt;</p>
-<p>artifactId</p>
-<blockquote>
-<p>wmi-test&lt;/</p>
-</blockquote>
-<p>artifactId</p>
-<p>&gt;
-09</p>
-<p>&lt;</p>
-<p>version</p>
-<blockquote>
-<p>1.0&lt;/</p>
-</blockquote>
-<p>version</p>
-<p>&gt;</p>
-<p>10</p>
-<p>11</p>
-<p>12</p>
-<p>&lt;</p>
-<p>dependencies</p>
-<p>&gt;
-13</p>
-<p>14</p>
-<p>&lt;</p>
-<p>dependency</p>
-<p>&gt;
-15</p>
-<p>&lt;</p>
-<p>groupId</p>
-<blockquote>
-<p>org.kohsuke.jinterop&lt;/</p>
-</blockquote>
-<p>groupId</p>
-<p>&gt;</p>
-<p>16</p>
-<p>&lt;</p>
-<p>artifactId</p>
-<blockquote>
-<p>j-interop&lt;/</p>
-</blockquote>
-<p>artifactId</p>
-<p>&gt;
-17</p>
-<p>&lt;</p>
-<p>version</p>
-<blockquote>
-<p>2.0.8-kohsuke-1&lt;/</p>
-</blockquote>
-<p>version</p>
-<p>&gt;</p>
-<p>18</p>
-<p>&lt;/</p>
-<p>dependency</p>
-<p>&gt;
-19</p>
-<p>20</p>
-<p>&lt;</p>
-<p>dependency</p>
-<p>&gt;
-21</p>
-<p>&lt;</p>
-<p>groupId</p>
-<blockquote>
-<p>org.slf4j&lt;/</p>
-</blockquote>
-<p>groupId</p>
-<p>&gt;</p>
-<p>22</p>
-<p>&lt;</p>
-<p>artifactId</p>
-<blockquote>
-<p>slf4j-log4j12&lt;/</p>
-</blockquote>
-<p>artifactId</p>
-<p>&gt;
-23</p>
-<p>&lt;</p>
-<p>version</p>
-<blockquote>
-<p>1.6.4&lt;/</p>
-</blockquote>
-<p>version</p>
-<p>&gt;</p>
-<p>24</p>
-<p>&lt;/</p>
-<p>dependency</p>
-<p>&gt;
-25</p>
-<p>26</p>
-<p>&lt;/</p>
-<p>dependencies</p>
-<p>&gt;
-27</p>
-<p>28</p>
-<p>&lt;/</p>
-<p>project</p>
-<p>&gt;</p>
-<p>运行结果</p>
-<p><a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
-<p>001</p>
-<p>query:SELECT /* FROM Win32_ComputerSystem</p>
-<p>002</p>
-<p>(0):
-003</p>
-<p>004</p>
-<p>instance of Win32_ComputerSystem
-005</p>
-<p>{</p>
-<p>006</p>
-<p>AdminPasswordStatus = 1;
-007</p>
-<p>AutomaticResetBootOption = FALSE;</p>
-<p>008</p>
-<p>AutomaticResetCapability = TRUE;
-009</p>
-<p>BootOptionOnLimit = 3;</p>
-<p>010</p>
-<p>BootOptionOnWatchDog = 3;
-011</p>
-<p>BootROMSupported = TRUE;</p>
-<p>012</p>
-<p>BootupState =</p>
-<p>&quot;Normal boot&quot;</p>
-<p>;
-013</p>
-<p>Caption =</p>
-<p>&quot;NAK-E1A7C21EA3C&quot;</p>
-<p>;</p>
-<p>014</p>
-<p>ChassisBootupState = 3;
-015</p>
-<p>CreationClassName =</p>
-<p>&quot;Win32_ComputerSystem&quot;</p>
-<p>;</p>
-<p>016</p>
-<p>CurrentTimeZone = 480;
-017</p>
-<p>Description =</p>
-<p>&quot;AT/AT COMPATIBLE&quot;</p>
-<p>;</p>
-<p>018</p>
-<p>Domain =</p>
-<p>&quot;WORKGROUP&quot;</p>
-<p>;
-019</p>
-<p>DomainRole = 0;</p>
-<p>020</p>
-<p>EnableDaylightSavingsTime = TRUE;
-021</p>
-<p>FrontPanelResetStatus = 3;</p>
-<p>022</p>
-<p>InfraredSupported = FALSE;
-023</p>
-<p>KeyboardPasswordStatus = 3;</p>
-<p>024</p>
-<p>Manufacturer =</p>
-<p>&quot;VMware, Inc.&quot;</p>
-<p>;
-025</p>
-<p>Model =</p>
-<p>&quot;VMware Virtual Platform&quot;</p>
-<p>;</p>
-<p>026</p>
-<p>Name =</p>
-<p>&quot;NAK-E1A7C21EA3C&quot;</p>
-<p>;
-027</p>
-<p>NetworkServerModeEnabled = TRUE;</p>
-<p>028</p>
-<p>NumberOfLogicalProcessors = 2;
-029</p>
-<p>NumberOfProcessors = 1;</p>
-<p>030</p>
-<p>OEMStringArray = {</p>
-<p>&quot;[MS_VM_CERT/SHA1/27d66596a61c48dd3dc7216fd715126e33f59ae7]&quot;</p>
-<p>,</p>
-<p>&quot;Welcome to the Virtual Machine&quot;</p>
-<p>};
-031</p>
-<p>PartOfDomain = FALSE;</p>
-<p>032</p>
-<p>PauseAfterReset =</p>
-<p>&quot;3932100000&quot;</p>
-<p>;
-033</p>
-<p>PowerOnPasswordStatus = 0;</p>
-<p>034</p>
-<p>PowerState = 0;
-035</p>
-<p>PowerSupplyState = 3;</p>
-<p>036</p>
-<p>PrimaryOwnerName =</p>
-<p>&quot;nak&quot;</p>
-<p>;
-037</p>
-<p>ResetCapability = 1;</p>
-<p>038</p>
-<p>ResetCount = -1;
-039</p>
-<p>ResetLimit = -1;</p>
-<p>040</p>
-<p>Roles = {</p>
-<p>&quot;LM_Workstation&quot;</p>
-<p>,</p>
-<p>&quot;LM_Server&quot;</p>
-<p>,</p>
-<p>&quot;NT&quot;</p>
-<p>,</p>
-<p>&quot;Potential_Browser&quot;</p>
-<p>,</p>
-<p>&quot;Master_Browser&quot;</p>
-<p>};
-041</p>
-<p>Status =</p>
-<p>&quot;OK&quot;</p>
-<p>;</p>
-<p>042</p>
-<p>SystemStartupDelay = 0;
-043</p>
-<p>SystemStartupOptions = {</p>
-<p>&quot;\&quot;Microsoft Windows XP Professional\&quot; /noexecute=optin /fastdetect&quot;</p>
-<p>};</p>
-<p>044</p>
-<p>SystemStartupSetting = 0;
-045</p>
-<p>SystemType =</p>
-<p>&quot;X86-based PC&quot;</p>
-<p>;</p>
-<p>046</p>
-<p>ThermalState = 3;
-047</p>
-<p>TotalPhysicalMemory =</p>
-<p>&quot;1610063872&quot;</p>
-<p>;</p>
-<p>048</p>
-<p>UserName =</p>
-<p>&quot;NAK-E1A7C21EA3C\a&quot;</p>
-<p>;
-049</p>
-<p>WakeUpType = 6;</p>
-<p>050</p>
-<p>};
-051</p>
-<p>052</p>
-<p>053</p>
-<p>query:SELECT /* FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name !=</p>
-<p>&#39;_Total&#39;</p>
-<p>054</p>
-<p>(0):
-055</p>
-<p>056</p>
-<p>instance of Win32_PerfFormattedData_PerfOS_Processor
-057</p>
-<p>{</p>
-<p>058</p>
-<p>C1TransitionsPersec =</p>
-<p>&quot;77&quot;</p>
-<p>;
-059</p>
-<p>C2TransitionsPersec =</p>
-<p>&quot;0&quot;</p>
-<p>;</p>
-<p>060</p>
-<p>C3TransitionsPersec =</p>
-<p>&quot;0&quot;</p>
-<p>;
-061</p>
-<p>DPCRate = 0;</p>
-<p>062</p>
-<p>DPCsQueuedPersec = 4;
-063</p>
-<p>InterruptsPersec = 71;</p>
-<p>064</p>
-<p>Name =</p>
-<p>&quot;0&quot;</p>
-<p>;
-065</p>
-<p>PercentC1Time =</p>
-<p>&quot;96&quot;</p>
-<p>;</p>
-<p>066</p>
-<p>PercentC2Time =</p>
-<p>&quot;0&quot;</p>
-<p>;
-067</p>
-<p>PercentC3Time =</p>
-<p>&quot;0&quot;</p>
-<p>;</p>
-<p>068</p>
-<p>PercentDPCTime =</p>
-<p>&quot;0&quot;</p>
-<p>;
-069</p>
-<p>PercentIdleTime =</p>
-<p>&quot;100&quot;</p>
-<p>;</p>
-<p>070</p>
-<p>PercentInterruptTime =</p>
-<p>&quot;0&quot;</p>
-<p>;
-071</p>
-<p>PercentPrivilegedTime =</p>
-<p>&quot;0&quot;</p>
-<p>;</p>
-<p>072</p>
-<p>PercentProcessorTime =</p>
-<p>&quot;0&quot;</p>
-<p>;
-073</p>
-<p>PercentUserTime =</p>
-<p>&quot;0&quot;</p>
-<p>;</p>
-<p>074</p>
-<p>};
-075</p>
-<p>076</p>
-<p>077</p>
-<p>(1):</p>
-<p>078</p>
-<p>079</p>
-<p>instance of Win32_PerfFormattedData_PerfOS_Processor</p>
-<p>080</p>
-<p>{
-081</p>
-<p>C1TransitionsPersec =</p>
-<p>&quot;83&quot;</p>
-<p>;</p>
-<p>082</p>
-<p>C2TransitionsPersec =</p>
-<p>&quot;0&quot;</p>
-<p>;
-083</p>
-<p>C3TransitionsPersec =</p>
-<p>&quot;0&quot;</p>
-<p>;</p>
-<p>084</p>
-<p>DPCRate = 0;
-085</p>
-<p>DPCsQueuedPersec = 10;</p>
-<p>086</p>
-<p>InterruptsPersec = 67;
-087</p>
-<p>Name =</p>
-<p>&quot;1&quot;</p>
-<p>;</p>
-<p>088</p>
-<p>PercentC1Time =</p>
-<p>&quot;96&quot;</p>
-<p>;
-089</p>
-<p>PercentC2Time =</p>
-<p>&quot;0&quot;</p>
-<p>;</p>
-<p>090</p>
-<p>PercentC3Time =</p>
-<p>&quot;0&quot;</p>
-<p>;
-091</p>
-<p>PercentDPCTime =</p>
-<p>&quot;0&quot;</p>
-<p>;</p>
-<p>092</p>
-<p>PercentIdleTime =</p>
-<p>&quot;100&quot;</p>
-<p>;
-093</p>
-<p>PercentInterruptTime =</p>
-<p>&quot;0&quot;</p>
-<p>;</p>
-<p>094</p>
-<p>PercentPrivilegedTime =</p>
-<p>&quot;0&quot;</p>
-<p>;
-095</p>
-<p>PercentProcessorTime =</p>
-<p>&quot;0&quot;</p>
-<p>;</p>
-<p>096</p>
-<p>PercentUserTime =</p>
-<p>&quot;0&quot;</p>
-<p>;
-097</p>
-<p>};</p>
-<p>098</p>
-<p>099</p>
-<p>100</p>
-<p>query:SELECT /* FROM Win32_PerfFormattedData_PerfOS_Memory
-101</p>
-<p>(0):</p>
-<p>102</p>
-<p>103</p>
-<p>instance of Win32_PerfFormattedData_PerfOS_Memory</p>
-<p>104</p>
-<p>{
-105</p>
-<p>AvailableBytes =</p>
-<p>&quot;1142099968&quot;</p>
-<p>;</p>
-<p>106</p>
-<p>AvailableKBytes =</p>
-<p>&quot;1115332&quot;</p>
-<p>;
-107</p>
-<p>AvailableMBytes =</p>
-<p>&quot;1089&quot;</p>
-<p>;</p>
-<p>108</p>
-<p>CacheBytes =</p>
-<p>&quot;70725632&quot;</p>
-<p>;
-109</p>
-<p>CacheBytesPeak =</p>
-<p>&quot;72904704&quot;</p>
-<p>;</p>
-<p>110</p>
-<p>CacheFaultsPersec = 634;
-111</p>
-<p>CommitLimit =</p>
-<p>&quot;3063078912&quot;</p>
-<p>;</p>
-<p>112</p>
-<p>CommittedBytes =</p>
-<p>&quot;326488064&quot;</p>
-<p>;
-113</p>
-<p>DemandZeroFaultsPersec = 13965;</p>
-<p>114</p>
-<p>FreeSystemPageTableEntries = 159743;
-115</p>
-<p>PageFaultsPersec = 13965;</p>
-<p>116</p>
-<p>PageReadsPersec = 0;
-117</p>
-<p>PagesInputPersec = 0;</p>
-<p>118</p>
-<p>PagesOutputPersec = 0;
-119</p>
-<p>PagesPersec = 0;</p>
-<p>120</p>
-<p>PageWritesPersec = 0;
-121</p>
-<p>PercentCommittedBytesInUse = 10;</p>
-<p>122</p>
-<p>PoolNonpagedAllocs = 38040;
-123</p>
-<p>PoolNonpagedBytes =</p>
-<p>&quot;7585792&quot;</p>
-<p>;</p>
-<p>124</p>
-<p>PoolPagedAllocs = 57820;
-125</p>
-<p>PoolPagedBytes =</p>
-<p>&quot;29380608&quot;</p>
-<p>;</p>
-<p>126</p>
-<p>PoolPagedResidentBytes =</p>
-<p>&quot;28622848&quot;</p>
-<p>;
-127</p>
-<p>SystemCacheResidentBytes =</p>
-<p>&quot;40235008&quot;</p>
-<p>;</p>
-<p>128</p>
-<p>SystemCodeResidentBytes =</p>
-<p>&quot;1867776&quot;</p>
-<p>;
-129</p>
-<p>SystemCodeTotalBytes =</p>
-<p>&quot;1167360&quot;</p>
-<p>;</p>
-<p>130</p>
-<p>SystemDriverResidentBytes =</p>
-<p>&quot;0&quot;</p>
-<p>;
-131</p>
-<p>SystemDriverTotalBytes =</p>
-<p>&quot;4071424&quot;</p>
-<p>;</p>
-<p>132</p>
-<p>TransitionFaultsPersec = 0;
-133</p>
-<p>WriteCopiesPersec = 0;</p>
-<p>134</p>
-<p>};
-135</p>
-<p>136</p>
-<p>137</p>
-<p>query:SELECT /* FROM Win32_PerfRawData_PerfDisk_PhysicalDisk Where Name !=</p>
-<p>&#39;_Total&#39;</p>
-<p>138</p>
-<p>(0):
-139</p>
-<p>140</p>
-<p>instance of Win32_PerfRawData_PerfDisk_PhysicalDisk
-141</p>
-<p>{</p>
-<p>142</p>
-<p>AvgDiskBytesPerRead =</p>
-<p>&quot;138920448&quot;</p>
-<p>;
-143</p>
-<p>AvgDiskBytesPerRead_Base = 8000;</p>
-<p>144</p>
-<p>AvgDiskBytesPerTransfer =</p>
-<p>&quot;208285696&quot;</p>
-<p>;
-145</p>
-<p>AvgDiskBytesPerTransfer_Base = 13701;</p>
-<p>146</p>
-<p>AvgDiskBytesPerWrite =</p>
-<p>&quot;69365248&quot;</p>
-<p>;
-147</p>
-<p>AvgDiskBytesPerWrite_Base = 5701;</p>
-<p>148</p>
-<p>AvgDiskQueueLength =</p>
-<p>&quot;581460650&quot;</p>
-<p>;
-149</p>
-<p>AvgDiskReadQueueLength =</p>
-<p>&quot;405581626&quot;</p>
-<p>;</p>
-<p>150</p>
-<p>AvgDisksecPerRead = 2794786622;
-151</p>
-<p>AvgDisksecPerRead_Base = 8000;</p>
-<p>152</p>
-<p>AvgDisksecPerTransfer = 322083534;
-153</p>
-<p>AvgDisksecPerTransfer_Base = 13701;</p>
-<p>154</p>
-<p>AvgDisksecPerWrite = 1822264208;
-155</p>
-<p>AvgDisksecPerWrite_Base = 5701;</p>
-<p>156</p>
-<p>AvgDiskWriteQueueLength =</p>
-<p>&quot;175879024&quot;</p>
-<p>;
-157</p>
-<p>CurrentDiskQueueLength = 0;</p>
-<p>158</p>
-<p>DiskBytesPersec =</p>
-<p>&quot;208285696&quot;</p>
-<p>;
-159</p>
-<p>DiskReadBytesPersec =</p>
-<p>&quot;138920448&quot;</p>
-<p>;</p>
-<p>160</p>
-<p>DiskReadsPersec = 8000;
-161</p>
-<p>DiskTransfersPersec = 13701;</p>
-<p>162</p>
-<p>DiskWriteBytesPersec =</p>
-<p>&quot;69365248&quot;</p>
-<p>;
-163</p>
-<p>DiskWritesPersec = 5701;</p>
-<p>164</p>
-<p>Frequency_Object =</p>
-<p>&quot;0&quot;</p>
-<p>;
-165</p>
-<p>Frequency_PerfTime =</p>
-<p>&quot;3034010000&quot;</p>
-<p>;</p>
-<p>166</p>
-<p>Frequency_Sys100NS =</p>
-<p>&quot;10000000&quot;</p>
-<p>;
-167</p>
-<p>Name =</p>
-<p>&quot;0 C:&quot;</p>
-<p>;</p>
-<p>168</p>
-<p>PercentDiskReadTime =</p>
-<p>&quot;405581626&quot;</p>
-<p>;
-169</p>
-<p>PercentDiskReadTime_Base =</p>
-<p>&quot;129895856572522792&quot;</p>
-<p>;</p>
-<p>170</p>
-<p>PercentDiskTime =</p>
-<p>&quot;581460650&quot;</p>
-<p>;
-171</p>
-<p>PercentDiskTime_Base =</p>
-<p>&quot;129895856572522792&quot;</p>
-<p>;</p>
-<p>172</p>
-<p>PercentDiskWriteTime =</p>
-<p>&quot;175879024&quot;</p>
-<p>;
-173</p>
-<p>PercentDiskWriteTime_Base =</p>
-<p>&quot;129895856572522792&quot;</p>
-<p>;</p>
-<p>174</p>
-<p>PercentIdleTime =</p>
-<p>&quot;18446744072967667781&quot;</p>
-<p>;
-175</p>
-<p>PercentIdleTime_Base =</p>
-<p>&quot;129895856572522792&quot;</p>
-<p>;</p>
-<p>176</p>
-<p>SplitIOPerSec = 1074;
-177</p>
-<p>Timestamp_Object =</p>
-<p>&quot;0&quot;</p>
-<p>;</p>
-<p>178</p>
-<p>Timestamp_PerfTime =</p>
-<p>&quot;3635534093651&quot;</p>
-<p>;
-179</p>
-<p>Timestamp_Sys100NS =</p>
-<p>&quot;129895856572522792&quot;</p>
-<p>;</p>
-<p>180</p>
-<p>};&lt;span style=</p>
-<p>&quot;font-family:&#39;sans serif, tahoma, verdana, helvetica&#39;;font-size:x-small;&quot;</p>
-<blockquote>
-<p>&lt;span style=</p>
-</blockquote>
-<p>&quot;line-height:18.18181800842285px;white-space:normal;&quot;</p>
-<blockquote>
-<p></span></span></p>
-</blockquote>
-<h2 id="-">#</h2>
-<h3 id="3-">3、有可能出现的问题</h3>
-<p>报错a</p>
-<p><a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
-<p>01</p>
-<p>org.jinterop.dcom.common.JIException: Message not found</p>
-<p>for</p>
-<p>errorCode:</p>
-<p>0xC0000034</p>
-<p>02</p>
-<p>at org.jinterop.winreg.smb.JIWinRegStub.winreg_OpenHKLM(JIWinRegStub.java:</p>
-<p>115</p>
-<p>)
-03</p>
-<p>at org.jinterop.dcom.core.JIProgId.getIdFromWinReg(JIProgId.java:</p>
-<p>130</p>
-<p>)</p>
-<p>04</p>
-<p>at org.jinterop.dcom.core.JIProgId.getCorrespondingCLSID(JIProgId.java:</p>
-<p>162</p>
-<p>)
-05</p>
-<p>at org.jinterop.dcom.core.JIComServer.<init>(JIComServer.java:</p>
-<p>413</p>
-<p>)</p>
-<p>06</p>
-<p>at org.noah.wmitest.WmiService.connect(WmiService.java:</p>
-<p>122</p>
-<p>)
-07</p>
-<p>at org.noah.wmitest.WmiService.main(WmiService.java:</p>
-<p>177</p>
-<p>)</p>
-<p>08</p>
-<p>at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
-09</p>
-<p>at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:</p>
-<p>39</p>
-<p>)</p>
-<p>10</p>
-<p>at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:</p>
-<p>25</p>
-<p>)
-11</p>
-<p>at java.lang.reflect.Method.invoke(Method.java:</p>
-<p>597</p>
-<p>)</p>
-<p>12</p>
-<p>at com.intellij.rt.execution.application.AppMain.main(AppMain.java:</p>
-<p>120</p>
-<p>)
-13</p>
-<p>Caused by: jcifs.smb.SmbException: The system cannot find the file specified.</p>
-<p>14</p>
-<p>at jcifs.smb.SmbTransport.checkStatus(SmbTransport.java:</p>
-<p>522</p>
-<p>)
-15</p>
-<p>at jcifs.smb.SmbTransport.send(SmbTransport.java:</p>
-<p>622</p>
-<p>)</p>
-<p>16</p>
-<p>at jcifs.smb.SmbSession.send(SmbSession.java:</p>
-<p>239</p>
-<p>)
-17</p>
-<p>at jcifs.smb.SmbTree.send(SmbTree.java:</p>
-<p>109</p>
-<p>)</p>
-<p>18</p>
-<p>at jcifs.smb.SmbFile.send(SmbFile.java:</p>
-<p>718</p>
-<p>)
-19</p>
-<p>at jcifs.smb.SmbFile.open0(SmbFile.java:</p>
-<p>923</p>
-<p>)</p>
-<p>20</p>
-<p>at jcifs.smb.SmbFile.open(SmbFile.java:</p>
-<p>940</p>
-<p>)
-21</p>
-<p>at jcifs.smb.SmbFileOutputStream.<init>(SmbFileOutputStream.java:</p>
-<p>142</p>
-<p>)</p>
-<p>22</p>
-<p>at jcifs.smb.TransactNamedPipeOutputStream.<init>(TransactNamedPipeOutputStream.java:</p>
-<p>32</p>
-<p>)
-23</p>
-<p>at jcifs.smb.SmbNamedPipe.getNamedPipeOutputStream(SmbNamedPipe.java:</p>
-<p>187</p>
-<p>)</p>
-<p>24</p>
-<p>at rpc.ncacn_np.RpcTransport.attach(RpcTransport.java:</p>
-<p>92</p>
-<p>)
-25</p>
-<p>at rpc.Stub.attach(Stub.java:</p>
-<p>105</p>
-<p>)</p>
-<p>26</p>
-<p>at rpc.Stub.call(Stub.java:</p>
-<p>110</p>
-<p>)
-27</p>
-<p>at org.jinterop.winreg.smb.JIWinRegStub.winreg_OpenHKLM(JIWinRegStub.java:</p>
-<p>113</p>
-<p>)</p>
-<p>28</p>
-<p>...</p>
-<p>10</p>
-<p>more</p>
-<p>需要开启Remote Registry服务
-报错b</p>
-<p><a href="&quot;view source&quot;">view source</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
-<p>01</p>
-<p>org.jinterop.dcom.common.JIException: Message not found</p>
-<p>for</p>
-<p>errorCode:</p>
-<p>0xC0000001</p>
-<p>02</p>
-<p>at org.jinterop.winreg.smb.JIWinRegStub.winreg_OpenHKLM(JIWinRegStub.java:</p>
-<p>115</p>
-<p>)
-03</p>
-<p>at org.jinterop.dcom.core.JIProgId.getIdFromWinReg(JIProgId.java:</p>
-<p>130</p>
-<p>)</p>
-<p>04</p>
-<p>at org.jinterop.dcom.core.JIProgId.getCorrespondingCLSID(JIProgId.java:</p>
-<p>162</p>
-<p>)
-05</p>
-<p>at org.jinterop.dcom.core.JIComServer.<init>(JIComServer.java:</p>
-<p>413</p>
-<p>)</p>
-<p>06</p>
-<p>at org.noah.wmitest.WmiService.connect(WmiService.java:</p>
-<p>87</p>
-<p>)
-07</p>
-<p>at org.noah.wmitest.WmiService.main(WmiService.java:</p>
-<p>142</p>
-<p>)</p>
-<p>08</p>
-<p>at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
-09</p>
-<p>at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:</p>
-<p>39</p>
-<p>)</p>
-<p>10</p>
-<p>at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:</p>
-<p>25</p>
-<p>)
-11</p>
-<p>at java.lang.reflect.Method.invoke(Method.java:</p>
-<p>597</p>
-<p>)</p>
-<p>12</p>
-<p>at com.intellij.rt.execution.application.AppMain.main(AppMain.java:</p>
-<p>120</p>
-<p>)
-13</p>
-<p>Caused by: jcifs.smb.SmbException: Connection timeout</p>
-<p>14</p>
-<p>jcifs.util.transport.TransportException: Connection timeout
-15</p>
-<p>16</p>
-<p>或
-17</p>
-<p>18</p>
-<p>org.jinterop.dcom.common.JIException: Message not found</p>
-<p>for</p>
-<p>errorCode:</p>
-<p>0x8001FFFF
-19</p>
-<p>at org.jinterop.dcom.core.JIComServer.init(JIComServer.java:</p>
-<p>576</p>
-<p>)</p>
-<p>20</p>
-<p>at org.jinterop.dcom.core.JIComServer.initialise(JIComServer.java:</p>
-<p>481</p>
-<p>)
-21</p>
-<p>at org.jinterop.dcom.core.JIComServer.<init>(JIComServer.java:</p>
-<p>414</p>
-<p>)</p>
-<p>22</p>
-<p>at org.noah.wmitest.WmiService.connect(WmiService.java:</p>
-<p>87</p>
-<p>)
-23</p>
-<p>at org.noah.wmitest.WmiService.main(WmiService.java:</p>
-<p>142</p>
-<p>)</p>
-<p>24</p>
-<p>at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
-25</p>
-<p>at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:</p>
-<p>39</p>
-<p>)</p>
-<p>26</p>
-<p>at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:</p>
-<p>25</p>
-<p>)
-27</p>
-<p>at java.lang.reflect.Method.invoke(Method.java:</p>
-<p>597</p>
-<p>)</p>
-<p>28</p>
-<p>at com.intellij.rt.execution.application.AppMain.main(AppMain.java:</p>
-<p>120</p>
-<p>)
-29</p>
-<p>Caused by: java.net.ConnectException: Connection timed out</p>
-<p>需要禁用放火墙</p>
-<h3 id="4-">4、总结</h3>
-<p>j-Interop纯java跨平台，我就是linux系统。</p>
-<p>用j-Interop就可以很方便的调用windows系统com，虽然这里只演示了WMI。
-如果关心WMI与监控的话，建议去opennms-wmi看一看，他们有更好api封装（底层也是j-Interop）。
-<strong>关键字：</strong> <a href="http://www.oschina.net/search?scope=blog&amp;q=wmi" target="_blank">wmi</a> <a href="http://www.oschina.net/search?scope=blog&amp;q=windows" target="_blank">windows</a> <a href="http://www.oschina.net/search?scope=blog&amp;q=j-interop" target="_blank">j-interop</a></p>
-<p>声明：OSCHINA 博客文章版权属于作者，受法律保护。未经作者同意不得转载。</p>
+<p>另外关闭线程池后对于任务的状态应该有相应的反馈信息。</p>
+<p>图1 描述了线程池的4种状态。</p>
 <ul>
-<li><a href="http://my.oschina.net/noahxiao/blog/72861" title="上一篇：既爱又恨的VA-API(Ubuntu视频加速)" target="_blank">« 既爱又恨的VA-API(Ubuntu视频加速)</a></li>
-<li><a href="http://my.oschina.net/noahxiao/blog/75463" title="下一篇：通过javamelody监控web应用的性能指标" target="_blank">通过javamelody监控web应用的性能指标 »</a></li>
+<li>线程池在构造前（new操作）是初始状态，一旦构造完成线程池就进入了执行状态RUNNING。严格意义上讲线程池构造完成后并没有线程被立即启动，只有进行“预启动”或者接收到任务的时候才会启动线程。这个会后面线程池的原理会详细分析。但是线程池是出于运行状态，随时准备接受任务来执行。</li>
+<li>线程池运行中可以通过shutdown()和shutdownNow()来改变运行状态。shutdown()是一个平缓的关闭过程，线程池停止接受新的任务，同时等待已经提交的任务执行完毕，包括那些进入队列还没有开始的任务，这时候线程池处于SHUTDOWN状态；shutdownNow()是一个立即关闭过程，线程池停止接受新的任务，同时线程池取消所有执行的任务和已经进入队列但是还没有执行的任务，这时候线程池处于STOP状态。</li>
+<li>一旦shutdown()或者shutdownNow()执行完毕，线程池就进入TERMINATED状态，此时线程池就结束了。</li>
+<li>isTerminating()描述的是SHUTDOWN和STOP两种状态。</li>
+<li>isShutdown()描述的是非RUNNING状态，也就是SHUTDOWN/STOP/TERMINATED三种状态。</li>
 </ul>
-<p>开源中国-程序员在线工具：<a href="http://www.ostools.net/apidocs" target="_blank">API文档大全(120+)</a> <a href="http://runjs.cn/" target="_blank">JS在线编辑演示</a> <a href="http://www.ostools.net/qr" target="_blank">二维码</a> <a href="http://www.ostools.net/" target="_blank">更多&gt;&gt;</a>
-<strong>分享到：</strong> <a href="&quot;分享到新浪微博&quot;"></a> <a href="&quot;分享到腾讯微博&quot;"></a>  <a href="">顶</a>已有 <em>0</em>人顶</p>
-<h2 id="-5-"><a href=""></a>共有 5 条网友评论</h2>
+<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-part-3-Executor-_12486/Executor-Lifecycle_4.png" target="_blank"><img src="&quot;Executor-Lifecycle&quot;" alt="Executor-Lifecycle"></a></p>
+<p>图1</p>
+<p>线程池的API如下：</p>
+<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-part-3-Executor-_12486/ExecutorService-LifeCycle_2.png" target="_blank"><img src="&quot;ExecutorService-LifeCycle&quot;" alt="ExecutorService-LifeCycle"></a></p>
+<p>图2</p>
+<p>其中shutdownNow()会返回那些已经进入了队列但是还没有执行的任务列表。awaitTermination描述的是等待线程池关闭的时间，如果等待时间线程池还没有关闭将会抛出一个超时异常。</p>
+<p>对于关闭线程池期间发生的任务提交情况就会触发一个拒绝执行的操作。这是java.util.concurrent.RejectedExecutionHandler描述的任务操作。下一个小结中将描述这些任务被拒绝后的操作。</p>
+<p>总结下这个小节：</p>
+<ol>
+<li>线程池有运行、关闭、停止、结束四种状态，结束后就会释放所有资源</li>
+<li>平缓关闭线程池使用shutdown()</li>
+<li>立即关闭线程池使用shutdownNow()，同时得到未执行的任务列表</li>
+<li>检测线程池是否正处于关闭中，使用isShutdown()</li>
+<li>检测线程池是否已经关闭使用isTerminated()</li>
+<li>定时或者永久等待线程池关闭结束使用awaitTermination()操作</li>
+</ol>
+<p>来源： <a href="[http://www.blogjava.net/xylz/archive/2011/01/04/342316.html](http://www.blogjava.net/xylz/archive/2011/01/04/342316.html)">[http://www.blogjava.net/xylz/archive/2011/01/04/342316.html](http://www.blogjava.net/xylz/archive/2011/01/04/342316.html)</a></p>
+<p><strong>线程池数据结构与线程构造方法</strong></p>
+<p>由于已经看到了ThreadPoolExecutor的源码，因此很容易就看到了ThreadPoolExecutor线程池的数据结构。图1描述了这种数据结构。</p>
+<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-Java-Concurrency-32--part-5-_72AF/ThreadPoolExecutor_2.png" target="_blank"><img src="&quot;ThreadPoolExecutor&quot;" alt="ThreadPoolExecutor"></a></p>
+<p>图1 ThreadPoolExecutor 数据结构</p>
+<p>其实，即使没有上述图形描述ThreadPoolExecutor的数据结构，我们根据线程池的要求也很能够猜测出其数据结构出来。</p>
 <ul>
-<li><a href="http://my.oschina.net/u/657242" target="_blank"><img src="&quot;leehark&quot;" alt="leehark"></a> 1楼：<a href="http://my.oschina.net/u/657242" target="_blank">leehark</a>(Android) 发表于 2012-08-18 19:35 <a href="">回复此评论</a></li>
+<li>线程池需要支持多个线程并发执行，因此有一个线程集合Collection<Thread>来执行线程任务；</li>
+<li>涉及任务的异步执行，因此需要有一个集合来缓存任务队列Collection<Runnable>；</li>
+<li>很显然在多个线程之间协调多个任务，那么就需要一个线程安全的任务集合，同时还需要支持阻塞、超时操作，那么BlockingQueue是必不可少的；</li>
+<li>既然是线程池，出发点就是提高系统性能同时降低资源消耗，那么线程池的大小就有限制，因此需要有一个核心线程池大小（线程个数）和一个最大线程池大小（线程个数），有一个计数用来描述当前线程池大小；</li>
+<li>如果是有限的线程池大小，那么长时间不使用的线程资源就应该销毁掉，这样就需要一个线程空闲时间的计数来描述线程何时被销毁；</li>
+<li>前面描述过线程池也是有生命周期的，因此需要有一个状态来描述线程池当前的运行状态；</li>
+<li>线程池的任务队列如果有边界，那么就需要有一个任务拒绝策略来处理过多的任务，同时在线程池的销毁阶段也需要有一个任务拒绝策略来处理新加入的任务；</li>
+<li>上面种的线程池大小、线程空闲实际那、线程池运行状态等等状态改变都不是线程安全的，因此需要有一个全局的锁（mainLock）来协调这些竞争资源；</li>
+<li>除了以上数据结构以外，ThreadPoolExecutor还有一些状态用来描述线程池的运行计数，例如线程池运行的任务数、曾经达到的最大线程数，主要用于调试和性能分析。</li>
 </ul>
-<p>能通过代码禁止防火墙么？是都要管理员权限？</p>
+<p>对于ThreadPoolExecutor而言，一个线程就是一个Worker对象，它与一个线程绑定，当Worker执行完毕就是线程执行完毕，这个在后面详细讨论线程池中线程的运行方式。</p>
+<p>既然是线程池，那么就首先研究下线程的构造方法。
+public interface ThreadFactory {
+    Thread newThread(Runnable r);
+}</p>
+<p>ThreadPoolExecutor使用一个线程工厂来构造线程。线程池都是提交一个任务Runnable，然后在某一个线程Thread中执行，ThreadFactory 负责如何创建一个新线程。</p>
+<p>在J.U.C中有一个通用的线程工厂java.util.concurrent.Executors.DefaultThreadFactory，它的构造方式如下：
+static class DefaultThreadFactory implements ThreadFactory {
+    static final AtomicInteger poolNumber = new AtomicInteger(1);
+    final ThreadGroup group;
+    final AtomicInteger threadNumber = new AtomicInteger(1);
+    final String namePrefix;
+    DefaultThreadFactory() {
+        SecurityManager s = System.getSecurityManager();
+        group = (s != null)? s.getThreadGroup() :
+                             Thread.currentThread().getThreadGroup();
+        namePrefix = &quot;pool-&quot; +
+                      poolNumber.getAndIncrement() +
+                     &quot;-thread-&quot;;
+    }
+    public Thread newThread(Runnable r) {
+        Thread t = new Thread(group, r,
+                              namePrefix + threadNumber.getAndIncrement(),
+                              0);
+        if (t.isDaemon())
+            t.setDaemon(false);
+        if (t.getPriority() != Thread.NORM_PRIORITY)
+            t.setPriority(Thread.NORM_PRIORITY);
+        return t;
+    }
+}</p>
+<p>在这个线程工厂中，同一个线程池的所有线程属于同一个线程组，也就是创建线程池的那个线程组，同时线程池的名称都是“pool-<poolNum>-thread-<threadNum>”，其中poolNum是线程池的数量序号，threadNum是此线程池中的线程数量序号。这样如果使用jstack的话很容易就看到了系统中线程池的数量和线程池中线程的数量。另外对于线程池中的所有线程默认都转换为非后台线程，这样主线程退出时不会直接退出JVM，而是等待线程池结束。还有一点就是默认将线程池中的所有线程都调为同一个级别，这样在操作系统角度来看所有系统都是公平的，不会导致竞争堆积。</p>
+<p><strong>线程池中线程生命周期</strong></p>
+<p>一个线程Worker被构造出来以后就开始处于运行状态。以下是一个线程执行的简版逻辑。
+private final class Worker implements Runnable {
+    private final ReentrantLock runLock = new ReentrantLock();
+    private Runnable firstTask;
+    Thread thread;
+    Worker(Runnable firstTask) {
+        this.firstTask = firstTask;
+    }
+    private void runTask(Runnable task) {
+        final ReentrantLock runLock = this.runLock;
+        runLock.lock();
+        try {
+           task.run();
+        } finally {
+            runLock.unlock();
+        }
+    }
+    public void run() {
+        try {
+            Runnable task = firstTask;
+            firstTask = null;
+            while (task != null || (task = getTask()) != null) {
+                runTask(task);
+                task = null;
+            }
+        } finally {
+            workerDone(this);
+        }
+    }
+}</p>
+<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-Java-Concurrency-32--part-5-_72AF/ThreadPoolExecutor-Worker_2.png" target="_blank"><img src="&quot;ThreadPoolExecutor-Worker&quot;" alt="ThreadPoolExecutor-Worker"></a></p>
+<p>当提交一个任务时，如果需要创建一个线程（何时需要在下一节中探讨）时，就调用线程工厂创建一个线程，同时将线程绑定到Worker工作队列中。需要说明的是，Worker队列构造的时候带着一个任务Runnable，因此Worker创建时总是绑定着一个待执行任务。换句话说，创建线程的前提是有必要创建线程（任务数已经超出了线程或者强制创建新的线程，至于为何强制创建新的线程后面章节会具体分析），不会无缘无故创建一堆空闲线程等着任务。这是节省资源的一种方式。</p>
+<p>一旦线程池启动线程后（调用线程run()）方法，那么线程工作队列Worker就从第1个任务开始执行（这时候发现构造Worker时传递一个任务的好处了），一旦第1个任务执行完毕，就从线程池的任务队列中取出下一个任务进行执行。循环如此，直到线程池被关闭或者任务抛出了一个RuntimeException。</p>
+<p>由此可见，线程池的基本原理其实也很简单，无非预先启动一些线程，线程进入死循环状态，每次从任务队列中获取一个任务进行执行，直到线程池被关闭。如果某个线程因为执行某个任务发生异常而终止，那么重新创建一个新的线程而已。如此反复。</p>
+<p>其实，线程池原理看起来简单，但是复杂的是各种策略，例如何时该启动一个线程，何时该终止、挂起、唤醒一个线程，任务队列的阻塞与超时，线程池的生命周期以及任务拒绝策略等等。下一节将研究这些策略问题。</p>
+<p>来源： <a href="[http://www.blogjava.net/xylz/archive/2011/01/18/343183.html](http://www.blogjava.net/xylz/archive/2011/01/18/343183.html)">[http://www.blogjava.net/xylz/archive/2011/01/18/343183.html](http://www.blogjava.net/xylz/archive/2011/01/18/343183.html)</a> </p>
+<p><strong>线程池任务执行流程</strong></p>
+<p>我们从一个API开始接触Executor是如何处理任务队列的。</p>
+<p>java.util.concurrent.Executor.execute(Runnable)
+Executes the given task sometime in the future. The task may execute in a new thread or in an existing pooled thread. If the task cannot be submitted for execution, either because this executor has been shutdown or because its capacity has been reached, the task is handled by the current RejectedExecutionHandler.</p>
+<p>线程池中所有任务执行都依赖于此接口。这段话有以下几个意思：</p>
+<ol>
+<li>任务可能在将来某个时刻被执行，有可能不是立即执行。为什么这里有两个“可能”？继续往下面看。</li>
+<li>任务可能在一个新的线程中执行或者线程池中存在的一个线程中执行。</li>
+<li>任务无法被提交执行有以下两个原因：线程池已经关闭或者线程池已经达到了容量限制。</li>
+<li>所有失败的任务都将被“当前”的任务拒绝策略RejectedExecutionHandler 处理。</li>
+</ol>
+<p>回答上面两个“可能“。任务可能被执行，那不可能的情况就是上面说的情况3；可能不是立即执行，是因为任务可能还在队列中排队，因此还在等待分配线程执行。了解完了字面上的问题，我们再来看具体的实现。
+public void execute(Runnable command) {
+    if (command == null)
+        throw new NullPointerException();
+    if (poolSize &gt;= corePoolSize || !addIfUnderCorePoolSize(command)) {
+        if (runState == RUNNING &amp;&amp; workQueue.offer(command)) {
+            if (runState != RUNNING || poolSize == 0)
+                ensureQueuedTaskHandled(command);
+        }
+        else if (!addIfUnderMaximumPoolSize(command))
+            reject(command); // is shutdown or saturated
+    }
+}</p>
+<p>这一段代码看起来挺简单的，其实这就是线程池最重要的一部分，如果能够完全理解这一块，线程池还是挺容易的。整个执行流程是这样的：</p>
+<ol>
+<li>如果任务command为空，则抛出空指针异常，返回。否则进行2。</li>
+<li>如果当前线程池大小 大于或等于 核心线程池大小，进行4。否则进行3。</li>
+<li>创建一个新工作队列（线程，参考上一节），成功直接返回，失败进行4。</li>
+<li>如果线程池正在运行并且任务加入线程池队列成功，进行5，否则进行7。</li>
+<li>如果线程池已经关闭或者线程池大小为0，进行6，否则直接返回。</li>
+<li>如果线程池已经关闭则执行拒绝策略返回，否则启动一个新线程来进行执行任务，返回。</li>
+<li>如果线程池大小 不大于 最大线程池数量，则启动新线程来进行执行，否则进行拒绝策略，结束。</li>
+</ol>
+<p>文字描述步骤不够简单？下面图形详细表述了此过程。</p>
+<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-Java-Concurrency-34--part-7--2_BFAE/Executor.execute_8.png" target="_blank"><img src="&quot;Executor.execute&quot;" alt="Executor.execute"></a></p>
+<p>老实说这个图比上面步骤更难以理解，那么从何入手呢。</p>
+<p>流程的入口很简单，我们就是要执行一个任务（Runnable command)，那么它的结束点在哪或者有哪几个？</p>
+<p>根据左边这个图我们知道可能有以下几种出口：</p>
+<p>（1）图中的P1、P7，我们根据这条路径可以看到，仅仅是将任务加入任务队列（offer(command)）了；</p>
+<p>（2）图中的P3，这条路径不将任务加入任务队列，但是启动了一个新工作线程（Worker）进行扫尾操作，用户处理为空的任务队列；</p>
+<p>（3）图中的P4，这条路径没有将任务加入任务队列，但是启动了一个新工作线程（Worker），并且工作现场的第一个任务就是当前任务；</p>
+<p>（4）图中的P5、P6，这条路径没有将任务加入任务队列，也没有启动工作线程，仅仅是抛给了任务拒绝策略。P2是任务加入了任务队列却因为线程池已经关闭于是又从任务队列中删除，并且抛给了拒绝策略。</p>
+<p>如果上面的解释还不清楚，可以去研究下面两段代码：
+java.util.concurrent.ThreadPoolExecutor.addIfUnderCorePoolSize(Runnable)
+java.util.concurrent.ThreadPoolExecutor.addIfUnderMaximumPoolSize(Runnable)
+java.util.concurrent.ThreadPoolExecutor.ensureQueuedTaskHandled(Runnable)</p>
+<p>那么什么时候一个任务被立即执行呢？</p>
+<p>在线程池运行状态下，如果线程池大小 小于 核心线程池大小或者线程池已满（任务队列已满）并且线程池大小 小于 最大线程池大小（此时线程池大小 大于 核心线程池大小的），用程序描述为：
+runState == RUNNING &amp;&amp; ( poolSize &lt; corePoolSize || poolSize &lt; maxnumPoolSize &amp;&amp; workQueue.isFull())</p>
+<p>上面的条件就是一个任务能够被立即执行的条件。</p>
+<p>有了execute的基础，我们看看ExecutorService中的几个submit方法的实现。
+    public Future&lt;?&gt; submit(Runnable task) {
+        if (task == null) throw new NullPointerException();
+        RunnableFuture<Object> ftask = newTaskFor(task, null);
+        execute(ftask);
+        return ftask;
+    }
+    public <T> Future<T> submit(Runnable task, T result) {
+        if (task == null) throw new NullPointerException();
+        RunnableFuture<T> ftask = newTaskFor(task, result);
+        execute(ftask);
+        return ftask;
+    }
+    public <T> Future<T> submit(Callable<T> task) {
+        if (task == null) throw new NullPointerException();
+        RunnableFuture<T> ftask = newTaskFor(task);
+        execute(ftask);
+        return ftask;
+    }</p>
+<p>很简单，不是么？对于一个线程池来说复杂的地方也就在execute方法的执行流程。在下一节中我们来讨论下如何获取任务的执行结果，也就是Future类的使用和原理。</p>
+<p>来源： <a href="[http://www.blogjava.net/xylz/archive/2011/02/11/344091.html](http://www.blogjava.net/xylz/archive/2011/02/11/344091.html)">[http://www.blogjava.net/xylz/archive/2011/02/11/344091.html](http://www.blogjava.net/xylz/archive/2011/02/11/344091.html)</a> </p>
+<p><strong>线程池任务执行结果</strong></p>
+<p>这一节来探讨下线程池中任务执行的结果以及如何阻塞线程、取消任务等等。
+1 package info.imxylz.study.concurrency.future;
+2 
+3 public class SleepForResultDemo implements Runnable {
+4 
+5     static boolean result = false;
+6 
+7     static void sleepWhile(long ms) {
+8         try {
+9             Thread.sleep(ms);
+10         } catch (Exception e) {}
+11     }
+12 
+13     @Override
+14     public void run() {
+15         //do work
+16         System.out.println(&quot;Hello, sleep a while.&quot;);
+17         sleepWhile(2000L);
+18         result = true;
+19     }
+20 
+21     public static void main(String[] args) {
+22         SleepForResultDemo demo = new SleepForResultDemo();
+23         Thread t = new Thread(demo);
+24         t.start();
+25         sleepWhile(3000L);
+26         System.out.println(result);
+27     }
+28 
+29 }
+30 </p>
+<p>在没有线程池的时代里面，使用Thread.sleep(long)去获取线程执行完毕的场景很多。显然这种方式很笨拙，他需要你事先知道任务可能的执行时间，并且还会阻塞主线程，不管任务有没有执行完毕。</p>
+<p>1 package info.imxylz.study.concurrency.future;
+2 
+3 public class SleepLoopForResultDemo implements Runnable {
+4 
+5     boolean result = false;
+6 
+7     volatile boolean finished = false;
+8 
+9     static void sleepWhile(long ms) {
+10         try {
+11             Thread.sleep(ms);
+12         } catch (Exception e) {}
+13     }
+14 
+15     @Override
+16     public void run() {
+17         //do work
+18         try {
+19             System.out.println(&quot;Hello, sleep a while.&quot;);
+20             sleepWhile(2000L);
+21             result = true;
+22         } finally {
+23             finished = true;
+24         }
+25     }
+26 
+27     public static void main(String[] args) {
+28         SleepLoopForResultDemo demo = new SleepLoopForResultDemo();
+29         Thread t = new Thread(demo);
+30         t.start();
+31         while (!demo.finished) {
+32             sleepWhile(10L);
+33         }
+34         System.out.println(demo.result);
+35     }
+36 
+37 }
+38 </p>
+<p>使用volatile与while死循环的好处就是等待的时间可以稍微小一点，但是依然有CPU负载高并且阻塞主线程的问题。最简单的降低CPU负载的方式就是使用Thread.join().</p>
+<pre><code>    SleepLoopForResultDemo demo = new SleepLoopForResultDemo();
+    Thread t = new Thread(demo);
+    t.start();
+    t.join();
+    System.out.println(demo.result);
+</code></pre><p>显然这也是一种不错的方式，另外还有自己写锁使用wait/notify的方式。其实join()从本质上讲就是利用while和wait来实现的。</p>
+<p>上面的方式中都存在一个问题，那就是会阻塞主线程并且任务不能被取消。为了解决这个问题，线程池中提供了一个Future接口。</p>
+<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-Java-Concurrency-35--part-8--2_BFEA/ThreadPoolExecutor-Future_2.png" target="_blank"><img src="&quot;ThreadPoolExecutor-Future&quot;" alt="ThreadPoolExecutor-Future"></a></p>
+<p>在Future接口中提供了5个方法。</p>
 <ul>
-<li><a href="http://my.oschina.net/mingyuejingque" target="_blank"><img src="&quot;明月惊鹊&quot;" alt="明月惊鹊"></a> 2楼：<a href="http://my.oschina.net/mingyuejingque" target="_blank">明月惊鹊</a> 发表于 2012-08-19 14:40 <a href="">回复此评论</a></li>
+<li>V get() throws InterruptedException, ExecutionException： 等待计算完成，然后获取其结果。</li>
+<li>V get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException。最多等待为使计算完成所给定的时间之后，获取其结果（如果结果可用）。</li>
+<li>boolean cancel(boolean mayInterruptIfRunning)：试图取消对此任务的执行。</li>
+<li>boolean isCancelled()：如果在任务正常完成前将其取消，则返回 true。</li>
+<li>boolean isDone()：如果任务已完成，则返回 true。 可能由于正常终止、异常或取消而完成，在所有这些情况中，此方法都将返回 true。</li>
 </ul>
-<p>WMI里应该就有控制防火墙的。这种操作肯定需要管理员权限了。</p>
+<p>API看起来容易，来研究下异常吧。get()请求获取一个结果会阻塞当前进程，并且可能抛出以下三种异常：</p>
 <ul>
-<li><a href="http://my.oschina.net/u/124197" target="_blank"><img src="&quot;黄金比&quot;" alt="黄金比"></a> 3楼：<a href="http://my.oschina.net/u/124197" target="_blank">黄金比</a>(iPhone) 发表于 2012-08-21 07:06 <a href="">回复此评论</a></li>
+<li>InterruptedException：执行任务的线程被中断则会抛出此异常，此时不能知道任务是否执行完毕，因此其结果是无用的，必须处理此异常。</li>
+<li>ExecutionException：任务执行过程中(Runnable/#run()）方法可能抛出RuntimeException，如果提交的是一个java.util.concurrent.Callable<V>接口任务，那么java.util.concurrent.Callable.call()方法有可能抛出任意异常。</li>
+<li>CancellationException：实际上get()方法还可能抛出一个CancellationException的RuntimeException，也就是任务被取消了但是依然去获取结果。</li>
 </ul>
-<p>不知道远程调用行不行呢?请博主明确一下。</p>
+<p>对于get(long timeout, TimeUnit unit)而言，除了get()方法的异常外，由于有超时机制，因此还可能得到一个TimeoutException。</p>
+<p>boolean cancel(boolean mayInterruptIfRunning)方法比较复杂，各种情况比较多：</p>
+<ol>
+<li>如果任务已经执行完毕，那么返回false。</li>
+<li>如果任务已经取消，那么返回false。</li>
+<li>循环直到设置任务为取消状态，对于未启动的任务将永远不再执行，对于正在运行的任务，将根据mayInterruptIfRunning是否中断其运行，如果不中断那么任务将继续运行直到结束。</li>
+<li>此方法返回后任务要么处于运行结束状态，要么处于取消状态。isDone()将永远返回true，如果cancel()方法返回true，isCancelled()始终返回true。</li>
+</ol>
+<p>来看看Future接口的实现类java.util.concurrent.FutureTask<V>具体是如何操作的。</p>
+<p>在FutureTask中使用了一个<a href="http://www.blogjava.net/xylz/archive/2010/07/06/325390.html" target="_blank">AQS</a>数据结构来完成各种状态以及加锁、阻塞的实现。</p>
+<p>在此AQS类java.util.concurrent.FutureTask.Sync中一个任务用4中状态：</p>
+<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-Java-Concurrency-35--part-8--2_BFEA/ThreadPoolExecutor-FutureTask-state_2.png" target="_blank"><img src="&quot;ThreadPoolExecutor-FutureTask-state&quot;" alt="ThreadPoolExecutor-FutureTask-state"></a></p>
+<p>初始情况下任务状态state=0，任务执行(innerRun)后状态变为运行状态RUNNING(state=1)，执行完毕后变成运行结束状态RAN(state=2)。任务在初始状态或者执行状态被取消后就变为状态CANCELLED(state=4)。<a href="http://www.blogjava.net/xylz/archive/2010/07/06/325390.html" target="_blank">AQS</a>最擅长无锁情况下处理几种简单的状态变更的。
+        void innerRun() {
+            if (!compareAndSetState(0, RUNNING))
+                return;
+            try {
+                runner = Thread.currentThread();
+                if (getState() == RUNNING) // recheck after setting thread
+                    innerSet(callable.call());
+                else
+                    releaseShared(0); // cancel
+            } catch (Throwable ex) {
+                innerSetException(ex);
+            }
+        }</p>
+<p>执行一个任务有四步：设置运行状态、设置当前线程（AQS需要）、执行任务(Runnable/#run或者Callable/#call）、设置执行结果。这里也可以看到，一个任务只能执行一次，因为执行完毕后它的状态不在为初始值0，要么为CANCELLED，要么为RAN。</p>
+<p>取消一个任务(cancel)又是怎样进行的呢？对比下前面取消任务的描述是不是很简单，这里无非利用AQS的状态来改变任务的执行状态，最终达到放弃未启动或者正在执行的任务的目的。
+boolean innerCancel(boolean mayInterruptIfRunning) {
+    for (;;) {
+        int s = getState();
+        if (ranOrCancelled(s))
+            return false;
+        if (compareAndSetState(s, CANCELLED))
+            break;
+    }
+    if (mayInterruptIfRunning) {
+        Thread r = runner;
+        if (r != null)
+            r.interrupt();
+    }
+    releaseShared(0);
+    done();
+    return true;
+}</p>
+<p>到目前为止我们依然没有说明到底是如何阻塞获取一个结果的。下面四段代码描述了这个过程。</p>
+<p>1     V innerGet() throws InterruptedException, ExecutionException {
+2         acquireSharedInterruptibly(0);
+3         if (getState() == CANCELLED)
+4             throw new CancellationException();
+5         if (exception != null)
+6             throw new ExecutionException(exception);
+7         return result;
+8     }
+9     //AQS/#acquireSharedInterruptibly
+10     public final void acquireSharedInterruptibly(int arg) throws InterruptedException {
+11         if (Thread.interrupted())
+12             throw new InterruptedException();
+13         if (tryAcquireShared(arg) &lt; 0)
+14             doAcquireSharedInterruptibly(arg); //park current Thread for result
+15     }
+16     protected int tryAcquireShared(int ignore) {
+17         return innerIsDone()? 1 : -1;
+18     }
+19 
+20     boolean innerIsDone() {
+21         return ranOrCancelled(getState()) &amp;&amp; runner == null;
+22     }</p>
+<p>当调用Future/#get()的时候尝试去获取一个共享变量。这就涉及到AQS的使用方式了。这里获取一个共享变量的状态是任务是否结束(innerIsDone())，也就是任务是否执行完毕或者被取消。如果不满足条件，那么在AQS中就会doAcquireSharedInterruptibly(arg)挂起当前线程，直到满足条件。AQS前面讲过，挂起线程使用的是LockSupport的park方式，因此性能消耗是很低的。</p>
+<p>至于将Runnable接口转换成Callable接口，java.util.concurrent.Executors.callable(Runnable, T)也提供了一个简单实现。
+    static final class RunnableAdapter<T> implements Callable<T> {
+        final Runnable task;
+        final T result;
+        RunnableAdapter(Runnable  task, T result) {
+            this.task = task;
+            this.result = result;
+        }
+        public T call() {
+            task.run();
+            return result;
+        }
+    }</p>
+<p><strong>延迟、周期性任务调度的实现</strong></p>
+<p>java.util.concurrent.ScheduledThreadPoolExecutor是默认的延迟、周期性任务调度的实现。</p>
+<p>有了整个线程池的实现，再回头来看延迟、周期性任务调度的实现应该就很简单了，因为所谓的延迟、周期性任务调度，无非添加一系列有序的任务队列，然后按照执行顺序的先后来处理整个任务队列。如果是周期性任务，那么在执行完毕的时候加入下一个时间点的任务即可。</p>
+<p>由此可见，ScheduledThreadPoolExecutor和ThreadPoolExecutor的唯一区别在于任务是有序（按照执行时间顺序）的，并且需要到达时间点（临界点）才能执行，并不是任务队列中有任务就需要执行的。也就是说唯一不同的就是任务队列BlockingQueue<Runnable> workQueue不一样。ScheduledThreadPoolExecutor的任务队列是java.util.concurrent.ScheduledThreadPoolExecutor.DelayedWorkQueue，它是基于java.util.concurrent.DelayQueue<RunnableScheduledFuture>队列的实现。</p>
+<p>DelayQueue是基于有序队列<a href="http://www.blogjava.net/xylz/archive/2010/07/30/327582.html" target="_blank">PriorityQueue</a>实现的。<a href="http://www.blogjava.net/xylz/archive/2010/07/30/327582.html" target="_blank">PriorityQueue</a> 也叫优先级队列，按照自然顺序对元素进行排序，类似于TreeMap/Collections.sort一样。</p>
+<p>同样是有序队列，DelayQueue和<a href="http://www.blogjava.net/xylz/archive/2010/07/30/327582.html" target="_blank">PriorityQueue</a>区别在什么地方？</p>
+<p>由于DelayQueue在获取元素时需要检测元素是否“可用”，也就是任务是否达到“临界点”（指定时间点），因此加入元素和移除元素会有一些额外的操作。</p>
+<p>典型的，移除元素需要检测元素是否达到“临界点”，增加元素的时候如果有一个元素比“头元素”更早达到临界点，那么就需要通知任务队列。因此这需要一个条件变量final Condition available 。</p>
+<p>移除元素（出队列）的过程是这样的：</p>
 <ul>
-<li><a href="http://my.oschina.net/noahxiao" target="_blank"><img src="&quot;肖国颖&quot;" alt="肖国颖"></a> 4楼：<a href="http://my.oschina.net/noahxiao" target="_blank">肖国颖</a>(iPhone) 发表于 2012-08-21 08:23 <a href="">回复此评论</a></li>
+<li>总是检测队列的头元素（顺序最小元素，也是最先达到临界点的元素）</li>
+<li>检测头元素与当前时间的差，如果大于0，表示还未到底临界点，因此等待响应时间（使用条件变量available)</li>
+<li>如果小于或者等于0，说明已经到底临界点或者已经过了临界点，那么就移除头元素，并且唤醒其它等待任务队列的线程。
+  public E take() throws InterruptedException {<pre><code>  final ReentrantLock lock = this.lock;
+  lock.lockInterruptibly();
+  try {
+      for (;;) {
+          E first = q.peek();
+          if (first == null) {
+              available.await();
+          } else {
+              long delay =  first.getDelay(TimeUnit.NANOSECONDS);
+              if (delay &gt; 0) {
+                  long tl = available.awaitNanos(delay);
+              } else {
+                  E x = q.poll();
+                  assert x != null;
+                  if (q.size() != 0)
+                      available.signalAll(); // wake up other takers
+                  return x;
+              }
+          }
+      }
+  } finally {
+      lock.unlock();
+  }
+</code></pre>  }</li>
 </ul>
-<h3 id="-">引用来自“黄金比”的评论</h3>
-<p>不知道远程调用行不行呢?请博主明确一下。
-你指的是非本机吗？我测试的方式就是一台linux运行程序指定ip调用另一台win服务器的wmi</p>
-<ul>
-<li><a href="http://my.oschina.net/u/124197" target="_blank"><img src="&quot;黄金比&quot;" alt="黄金比"></a> 5楼：<a href="http://my.oschina.net/u/124197" target="_blank">黄金比</a>(iPhone) 发表于 2012-08-21 12:47 <a href="">回复此评论</a></li>
-</ul>
-<h3 id="-">引用来自“肖国颖”的评论</h3>
-<h3 id="-">引用来自“黄金比”的评论</h3>
-<p>不知道远程调用行不行呢?请博主明确一下。
-你指的是非本机吗？我测试的方式就是一台linux运行程序指定ip调用另一台win服务器的wmi</p>
-<p>收到，谢博主，试下先!</p>
-<p>文明上网，理性发言
-<a href=""></a></p>
-<p><img src="" alt=""> 文明上网，理性发言  <a href="">回到页首</a> | <a href="">回到评论列表</a></p>
-<p><strong><a href="">关闭</a>相关文章阅读</strong></p>
-<ul>
-<li>2012/08/16 <a href="http://my.oschina.net/u/581475/blog/73199" title="100%纯java调用windows的wmi获取监控数据" target="_blank">100%纯java调用windows的wmi获取监控...</a></li>
-<li>2011/07/06 <a href="http://my.oschina.net/veterans/blog/27840" title="使用WMI修改文件文件夹的NTFS权限" target="_blank">使用WMI修改文件文件夹的NTFS权限...</a></li>
-<li>2013/04/24 <a href="http://my.oschina.net/fenlog/blog/124859" title="利用WMI实现ring3进程监控 - vc" target="_blank">利用WMI实现ring3进程监控 - vc...</a></li>
-<li>2012/03/22 <a href="http://my.oschina.net/zhajiang/blog/50524" title="py2exe打包包含wmi模块的脚本后，运行时出现win32api.pyd错误的解决办法。" target="_blank">py2exe打包包含wmi模块的脚本后，运...</a></li>
-<li>2011/09/02 <a href="http://my.oschina.net/u/129490/blog/30675" title="在windows下使用OpenSSH（上）" target="_blank">在windows下使用OpenSSH（上）...</a></li>
-</ul>
-<p>© 开源中国(OsChina.NET) | <a href="http://www.oschina.net/home/about" target="_blank">关于我们</a> | <a href="mailto:oschina.net@gmail.com">广告联系</a> | <a href="http://weibo.com/oschina2010" target="_blank">@新浪微博</a> | <a href="http://m.oschina.net/" target="_blank">开源中国手机版</a> | <a href="http://www.miitbeian.gov.cn/" target="_blank">粤ICP备12009483号-3</a> 开源中国手机客户端： <a href="http://www.oschina.net/app" title="Android客户端" target="_blank">Android</a> <a href="http://www.oschina.net/app" title="iPhone 客户端" target="_blank">iPhone</a> <a href="http://www.oschina.net/app" title="Windows Phone 客户端" target="_blank">WP7</a></p>
-<p><a href=""></a><a href=""></a><a href=""></a>
-<img src="" alt=""></p>
+<p>同样加入元素也会有相应的条件变量操作。当前仅当队列为空或者要加入的元素比队列中的头元素还小的时候才需要唤醒“等待线程”去检测元素。因为头元素都没有唤醒那么比头元素更延迟的元素就更加不会唤醒。</p>
+<pre><code>public boolean offer(E e) {
+    final ReentrantLock lock = this.lock;
+    lock.lock();
+    try {
+        E first = q.peek();
+        q.offer(e);
+        if (first == null || e.compareTo(first) &lt; 0)
+            available.signalAll();
+        return true;
+    } finally {
+        lock.unlock();
+    }
+}
+</code></pre><p>有了任务队列后再来看Future在ScheduledThreadPoolExecutor中是如何操作的。</p>
+<p>java.util.concurrent.ScheduledThreadPoolExecutor.ScheduledFutureTask<V>是继承java.util.concurrent.FutureTask<V>的，区别在于执行任务是否是周期性的。
+        private void runPeriodic() {
+            boolean ok = ScheduledFutureTask.super.runAndReset();
+            boolean down = isShutdown();
+            // Reschedule if not cancelled and not shutdown or policy allows
+            if (ok &amp;&amp; (!down ||
+                       (getContinueExistingPeriodicTasksAfterShutdownPolicy() &amp;&amp;
+                        !isStopped()))) {
+                long p = period;
+                if (p &gt; 0)
+                    time += p;
+                else
+                    time = now() - p;
+                ScheduledThreadPoolExecutor.super.getQueue().add(this);
+            }
+            // This might have been the final executed delayed
+            // task.  Wake up threads to check.
+            else if (down)
+                interruptIdleWorkers();
+        }
+        //<em>/</em>
+         /<em> Overrides FutureTask version so as to reset/requeue if periodic.
+         /</em>/
+        public void run() {
+            if (isPeriodic())
+                runPeriodic();
+            else
+                ScheduledFutureTask.super.run();
+        }
+    }</p>
+<p>如果不是周期性任务调度，那么就和java.util.concurrent.FutureTask.Sync的调度方式是一样的。如果是周期性任务（isPeriodic()）那么就稍微有所不同的。</p>
+<p><a href="http://www.blogjava.net/images/blogjava_net/xylz/Windows-Live-Writer/-Java-Concurrency-35--part-8--2_BFEA/ScheduledThreadPoolExecutor-ScheduledFutureTask_4.png" target="_blank"><img src="&quot;ScheduledThreadPoolExecutor-ScheduledFutureTask&quot;" alt="ScheduledThreadPoolExecutor-ScheduledFutureTask"></a></p>
+<p>先从功能/结构上分析下。第一种情况假设提交的任务每次执行花费10s，间隔（delay/period)为20s，对于scheduleAtFixedRate而言，每次执行开始时间20s，对于scheduleWithFixedDelay来说每次执行开始时间30s。第二种情况假设提交的任务每次执行时间花费20s，间隔（delay/period)为10s，对于scheduleAtFixedRate而言，每次执行开始时间10s，对于scheduleWithFixedDelay来说每次执行开始时间30s。（具体分析可以参考<a href="http://www.blogjava.net/xylz/archive/2011/01/10/342738.html" target="_blank">这里</a>）</p>
+<p>也就是说scheduleWithFixedDelay的执行开始时间为(delay+cost)，而对于scheduleAtFixedRate来说执行开始时间为max(period,cost)。</p>
+<p>回头再来看上面源码runPeriodic()就很容易了。但特别要提醒的，如果任务的任何一个执行遇到异常，则后续执行都会被取消，这从runPeriodic()就能看出。要强调的第二点就是<strong>同一个周期性任务不会被同时执行</strong>。就比如说尽管上面第二种情况的scheduleAtFixedRate任务每隔10s执行到达一个时间点，但是由于每次执行时间花费为20s，因此每次执行间隔为20s，只不过执行的任务次数会多一点。但从本质上讲就是每隔20s执行一次，如果任务队列不取消的话。</p>
+<p>为什么不会同时执行？</p>
+<p>这是因为ScheduledFutureTask执行的时候会将任务从队列中移除来，执行完毕以后才会添加下一个同序列的任务，因此任务队列中其实最多只有同序列的任务的一份副本，所以永远不会同时执行（尽管要执行的时间在过去）。</p>
+<p>ScheduledThreadPoolExecutor使用一个无界（容量无限，整数的最大值）的容器（DelayedWorkQueue队列），根据<a href="http://www.blogjava.net/xylz/archive/2011/02/11/344091.html" target="_blank">ThreadPoolExecutor</a>的原理，只要当容器满的时候才会启动一个大于corePoolSize的线程数。因此实际上ScheduledThreadPoolExecutor是一个固定线程大小的线程池，固定大小为corePoolSize，构造函数里面的Integer.MAX_VALUE其实是不生效的（尽管<a href="http://www.blogjava.net/xylz/archive/2010/07/30/327582.html" target="_blank">PriorityQueue</a>使用数组实现有<a href="http://www.blogjava.net/xylz/archive/2010/07/30/327582.html" target="_blank">PriorityQueue</a>大小限制，如果你的任务数超过了2147483647就会导致OutOfMemoryError，这个参考<a href="http://www.blogjava.net/xylz/archive/2010/07/30/327582.html" target="_blank">PriorityQueue</a>的grow方法）。</p>
+<p>再回头看scheduleAtFixedRate等方法就容易多了。无非就是往任务队列中添加一个未来某一时刻的ScheduledFutureTask任务，如果是scheduleAtFixedRate那么period/delay就是正数，如果是scheduleWithFixedDelay那么period/delay就是一个负数，如果是0那么就是一次性任务。直接调用父类<a href="http://www.blogjava.net/xylz/archive/2011/02/11/344091.html" target="_blank">ThreadPoolExecutor</a>的execute/submit等方法就相当于period/delay是0，并且initialDelay也是0。
+    public ScheduledFuture&lt;?&gt; scheduleAtFixedRate(Runnable command,
+                                                  long initialDelay,
+                                                  long period,
+                                                  TimeUnit unit) {
+        if (command == null || unit == null)
+            throw new NullPointerException();
+        if (period &lt;= 0)
+            throw new IllegalArgumentException();
+        if (initialDelay &lt; 0) initialDelay = 0;
+        long triggerTime = now() + unit.toNanos(initialDelay);
+        RunnableScheduledFuture&lt;?&gt; t = decorateTask(command,
+            new ScheduledFutureTask<Object>(command,
+                                            null,
+                                            triggerTime,
+                                            unit.toNanos(period)));
+        delayedExecute(t);
+        return t;
+    }</p>
+<p>另外需要补充说明的一点，前面说过java.util.concurrent.FutureTask.Sync任务只能执行一次，那么在runPeriodic()里面怎么又将执行过的任务加入队列中呢？这是因为java.util.concurrent.FutureTask.Sync提供了一个innerRunAndReset()方法，此方法不仅执行任务还将任务的状态还原成0（初始状态）了，所以此任务就可以重复执行。这就是为什么runPeriodic()里面调用runAndRest()的缘故。</p>
+<pre><code>    boolean innerRunAndReset() {
+        if (!compareAndSetState(0, RUNNING))
+            return false;
+        try {
+            runner = Thread.currentThread();
+            if (getState() == RUNNING)
+                callable.call(); // don&#39;t set result
+            runner = null;
+            return compareAndSetState(RUNNING, 0);
+        } catch (Throwable ex) {
+            innerSetException(ex);
+            return false;
+        }
+    }
+</code></pre><p><strong>后话</strong></p>
+<p>整个并发实践原理和实现（源码）上的东西都讲完了，后面几个小节是一些总结和扫尾的工作，包括超时机制、异常处理等一些细节问题。也就是说大部分只需要搬出一些理论和最佳实践知识出来就好了，不会有大量费脑筋的算法分析和原理、思想探讨之类的。后面的章节也会加快一些进度。</p>
+<p>老实说从刚开始的好奇到中间的兴奋，再到现在的彻悟，收获还是很多，个人觉得这是最认真、最努力也是自我最满意的一次技术研究和探讨，同时在这个过程中将很多技术细节都串联起来了，慢慢就有了那种技术相通的感觉。原来有了理论以后再去实践、再去分析问题、解决问题和那种纯解决问题得到的经验完全不一样。整个专辑下来不仅仅是并发包这一点点知识，设计到硬件、软件、操作系统、网络、安全、性能、算法、理论等等，总的来说这也算是一次比较成功的研究切入点，这比<a href="http://www.blogjava.net/xylz/archive/2009/12/22/306955.html" target="_blank">Guice</a>那次探讨要深入和持久的多。
+来源： <a href="[http://www.blogjava.net/xylz/archive/2011/02/13/344207.html](http://www.blogjava.net/xylz/archive/2011/02/13/344207.html)">[http://www.blogjava.net/xylz/archive/2011/02/13/344207.html](http://www.blogjava.net/xylz/archive/2011/02/13/344207.html)</a> </p>
+<p><a href="http://www.blogjava.net/xylz/archive/2011/07/12/354206.html" target="_blank">并发操作异常体系</a> </p>
+<p>并发包引入的工具类很多方法都会抛出一定的异常，这些异常描述了任务在线程池中执行时发生的例外情况，而通常这些例外需要应用程序进行捕捉和处理。</p>
+<p>例如在Future接口中有如下一个API：</p>
+<p>java.util.concurrent.Future.get(long, TimeUnit) throws InterruptedException, ExecutionException, TimeoutException;</p>
+<p>在<a href="http://www.blogjava.net/xylz/archive/2011/02/13/344207.html" target="_blank">前面的章节</a>中描述了Future类的具体实现原理。这里不再讨论，但是比较好奇的抛出的三个异常。</p>
+<p>这里有一篇文章（<a href="http://www.ibm.com/developerworks/cn/java/j-jtp05236.html" target="_blank">Java 理论与实践: 处理 InterruptedException</a>）描述了InterruptedException的来源和处理方式。简单的说就是线程在执行的过程中被自己或者别人中断了。这时候为了响应中断就需要处理当前的异常。</p>
+<p>对于java.lang.Thread而言，InterruptedException也是一个很诡异的问题。</p>
+<p>中断一个线程Thread.<strong>interrupt()</strong>时会触发下面一种情况：
+如果线程在调用 Object 类的 wait()、wait(long) 或 wait(long, int) 方法，或者该类的 join()、join(long)、join(long, int)、sleep(long) 或 sleep(long, int) 方法过程中受阻，则其中断状态将被清除，它还将收到一个 InterruptedException。</p>
+<p>检测一个线程的中断状态描述是这样的Thread.<strong>interrupted()：</strong></p>
+<p>测试当前线程是否已经中断。线程的<em>中断状态</em> 由该方法清除。换句话说，如果连续两次调用该方法，则第二次调用将返回 false（在第一次调用已清除了其中断状态之后，且第二次调用检验完中断状态前，当前线程再次中断的情况除外）。 </p>
+<p>也就是说如果检测到一个线程已经被中断了，那么线程的使用方（挂起、等待或者正在执行）都将应该得到一个中断异常，同时将会清除异常中断状态。</p>
+<p>V innerGet(long nanosTimeout) throws InterruptedException, ExecutionException, TimeoutException {
+    if (!tryAcquireSharedNanos(0, nanosTimeout))
+        throw new TimeoutException();
+    if (getState() == CANCELLED)
+        throw new CancellationException();
+    if (exception != null)
+        throw new ExecutionException(exception);
+    return result;
+}</p>
+<p>上面获取任务结果的方法实现中，将在获取锁的过程中得到一个中断异常。代码java.util.concurrent.locks.AbstractQueuedSynchronizer.tryAcquireSharedNanos(int, long)描述了这种情况：
+    public final boolean tryAcquireSharedNanos(int arg, long nanosTimeout) throws InterruptedException {
+    if (Thread.interrupted())
+        throw new InterruptedException();
+    return tryAcquireShared(arg) &gt;= 0 ||
+        doAcquireSharedNanos(arg, nanosTimeout);
+    }</p>
+<p>这里在获取锁的时候检测线程中断情况，如果被中断则清除中断位，同时抛出一个中断异常。为什么如此做？因为我们的线程在线程池中是被重复执行的，所以一旦线程被中断后并不会退出线程，而是设置中断位，等候任务队列自己处理线程，从而达到线程被重复利用的目的。有兴趣的可以参考代码java.util.concurrent.ThreadPoolExecutor.Worker.runTask(Runnable)。这里在关闭线程池时就会导致中断所有线程。</p>
+<p>除了InterruptedException 异常我们还发现了一个全新的异常java.util.concurrent.TimeoutException，此异常是用来描述任务执行时间超过了期望等待时间，也许是一直没有获取到锁，也许是还没有执行完成。</p>
+<p>在innerGet代码片段中我们看到，如果线程在指定的时间无法获取到锁，那么就会得到一个超时异常。这个很好理解，比如如果执行一个非常耗时的网络任务，我们不希望任务一直等待从而占用大量的资源，可能在一定时间后就会希望取消此操作。此时超时异常很好的描述了这种需求。</p>
+<p>与此同时，如果取消了一个任务，那么再次从任务中获取执行结果，那么将会得到一个任务被取消的异常java.util.concurrent.CancellationException。</p>
+<p>除了上述异常外，还将得到一个java.util.concurrent.ExecutionException异常，</p>
+<p>这是因为我们的提交的任务java.util.concurrent.Callable在call()方法中允许抛出任何异常，另外常规的线程执行也可能抛出一个RuntimeException，所以这里简单包装了下所有异常，当作执行过程中发生的异常ExecutionException抛出。</p>
+<p>以上就是整个异常体系，所有并发操作的异常都可以归结于上述几类。</p>
+<p>很多情况下处理时间长度都是用<strong>java.util.concurrent.TimeUnit</strong>，这是一个枚举类型，用来描述时间长度。其中内置了一些长度的单位。其中包括纳秒、微秒、毫秒、秒、分、时、天。例如超时操作5秒，可以使用</p>
+<p>Future.get(5,TimeUnit.SECONDS) 或者 Future.get(5000L,TimeUnit.MILLISECONDS)</p>
+<p>当然一种单位的时间转换成另一种单位的时间也是非常方便的。另外还有线程的sleep/join以及对象的wait操作的便捷操作。
+来源： <a href="[http://www.blogjava.net/xylz/archive/2011/07/12/354206.html](http://www.blogjava.net/xylz/archive/2011/07/12/354206.html)">[http://www.blogjava.net/xylz/archive/2011/07/12/354206.html](http://www.blogjava.net/xylz/archive/2011/07/12/354206.html)</a> </p>
 
       
     </div>
@@ -1616,8 +720,8 @@ var _js2load = [];
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/java-com/">java-com</a></li><li><a href="/categories/Java&J2EE/java-com/wmi-监控/">wmi-监控</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/java-com/" class="label label-success">java-com</a><a href="/tags/wmi-监控/" class="label label-info">wmi-监控</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-java-com-wmi-监控--100-纯java调用windows的wmi获取监控数据-肖国颖的个人页面-开源中国社区/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-java-com-wmi-监控--100-纯java调用windows的wmi获取监控数据-肖国颖的个人页面-开源中国社区" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_多线程/">Java_多线程</a></li><li><a href="/categories/Java&J2EE/Java_多线程/并发/">并发</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_多线程/" class="label label-success">Java_多线程</a><a href="/tags/并发/" class="label label-info">并发</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency28-线程池/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency28-线程池" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1632,682 +736,445 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-NIO--Javaaio异步网络IO初探/">Java aio(异步网络IO)初探</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--JavaAnnotation详解/">Java Annotation详解</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-NIO--Javaaio异步网络IO初探/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--JavaAnnotation详解/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="java-aio-io-">Java aio(异步网络IO)初探</h1>
-<p><a href="">&lt;</a> <a href="">&gt;</a>  猎头职位: <a href="http://www.iteye.com/jobs/2509" target="_blank">上海:  Junior Product Manager</a></p>
-<p>相关文章: <a href="&quot;关闭&quot;"> </a></p>
-<ul>
-<li><a href="http://www.iteye.com/topic/1113611" title="JDK7 AIO 初体验" target="_blank">JDK7 AIO 初体验</a></li>
-<li><a href="http://www.iteye.com/topic/446298" title="JavaSE7新特性 异步非阻塞I/O 网络通信 AIO" target="_blank">JavaSE7新特性 异步非阻塞I/O 网络通信 AIO</a></li>
-<li><p><a href="http://www.iteye.com/topic/834447" title="JAVA NIO 简介" target="_blank">JAVA NIO 简介</a>
-推荐群组: <a href="http://dlang.group.iteye.com/" target="_blank">D语言</a>
-<a href="http://www.iteye.com/wiki/topic/472333" target="_blank">更多相关推荐</a>
-<a href="http://www.iteye.com/forums/tag/%E4%BC%81%E4%B8%9A%E5%BA%94%E7%94%A8" target="_blank">企业应用</a></p>
-<p>  按照《Unix网络编程》的划分，IO模型可以分为：阻塞IO、非阻塞IO、IO复用、信号驱动IO和异步IO，按照POSIX标准来划分只分为两类：同步IO和异步IO。如何区分呢？首先一个IO操作其实分成了两个步骤：发起IO请求和实际的IO操作，同步IO和异步IO的区别就在于第二个步骤是否阻塞，如果实际的IO读写阻塞请求进程，那么就是同步IO，因此阻塞IO、非阻塞IO、IO服用、信号驱动IO都是同步IO，如果不阻塞，而是操作系统帮你做完IO操作再将结果返回给你，那么就是异步IO。阻塞IO和非阻塞IO的区别在于第一步，发起IO请求是否会被阻塞，如果阻塞直到完成那么就是传统的阻塞IO，如果不阻塞，那么就是非阻塞IO。
- Java nio 2.0的主要改进就是引入了异步IO（包括文件和网络），这里主要介绍下异步网络IO API的使用以及框架的设计，以TCP服务端为例。首先看下为了支持AIO引入的新的类和接口：
-<strong>java.nio.channels.AsynchronousChannel</strong></p>
-<pre><code> 标记一个channel支持异步IO操作。
-</code></pre><p><strong> java.nio.channels.AsynchronousServerSocketChannel</strong></p>
-<pre><code> ServerSocket的aio版本，创建TCP服务端，绑定地址，监听端口等。
-</code></pre><p><strong> java.nio.channels.AsynchronousSocketChannel</strong></p>
-<pre><code> 面向流的异步socket channel，表示一个连接。
-</code></pre><p><strong> java.nio.channels.AsynchronousChannelGroup</strong></p>
-<pre><code> 异步channel的分组管理，目的是为了资源共享。一个AsynchronousChannelGroup绑定一个线程池，这个线程池执行两个任务：处理IO事件和派发CompletionHandler。AsynchronousServerSocketChannel创建的时候可以传入一个 AsynchronousChannelGroup，那么通过AsynchronousServerSocketChannel创建的 AsynchronousSocketChannel将同属于一个组，共享资源。
-</code></pre><p><strong> java.nio.channels.CompletionHandler</strong></p>
-<pre><code> 异步IO操作结果的回调接口，用于定义在IO操作完成后所作的回调工作。AIO的API允许两种方式来处理异步操作的结果：返回的Future模式或者注册CompletionHandler，我更推荐用CompletionHandler的方式，这些handler的调用是由 AsynchronousChannelGroup的线程池派发的。显然，线程池的大小是性能的关键因素。AsynchronousChannelGroup允许绑定不同的线程池，通过三个静态方法来创建：
-</code></pre></li>
-</ul>
-<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public static AsynchronousChannelGroup withFixedThreadPool(int nThreads,  </li>
-<li>ThreadFactory threadFactory)  </li>
-<li>throws IOException  </li>
-<li></li>
-<li>public static AsynchronousChannelGroup withCachedThreadPool(ExecutorService executor,  </li>
-<li>int initialSize)  </li>
-<li></li>
-<li>public static AsynchronousChannelGroup withThreadPool(ExecutorService executor)  </li>
-<li>throws IOException  </li>
-</ol>
-<p>public static AsynchronousChannelGroup withFixedThreadPool(int nThreads,</p>
-<pre><code>                                                           ThreadFactory threadFactory)
-    throws IOException
-</code></pre><p>public static AsynchronousChannelGroup withCachedThreadPool(ExecutorService executor,</p>
-<pre><code>                                                            int initialSize)
-</code></pre><p>public static AsynchronousChannelGroup withThreadPool(ExecutorService executor)
-        throws IOException</p>
-<pre><code> 需要根据具体应用相应调整，从框架角度出发，需要暴露这样的配置选项给用户。
- 在介绍完了aio引入的TCP的主要接口和类之后，我们来设想下一个aio框架应该怎么设计。参考非阻塞nio框架的设计，一般都是采用**Reactor**模式，Reacot负责事件的注册、select、事件的派发；相应地，异步IO有个**Proactor**模式，Proactor负责 CompletionHandler的派发，查看一个典型的IO写操作的流程来看两者的区别：
- Reactor:  send(msg) -&gt; 消息队列是否为空，如果为空  -&gt; 向Reactor注册OP_WRITE，然后返回 -&gt; Reactor select -&gt; 触发Writable，通知用户线程去处理 -&gt;先注销Writable(很多人遇到的cpu 100%的问题就在于没有注销）,处理Writeable，如果没有完全写入，继续注册OP_WRITE。注意到，写入的工作还是用户线程在处理。
- Proactor: send(msg) -&gt; 消息队列是否为空，如果为空,发起read异步调用，并注册CompletionHandler，然后返回。 -&gt; 操作系统负责将你的消息写入，并返回结果（写入的字节数）给Proactor -&gt; Proactor派发CompletionHandler。可见，写入的工作是操作系统在处理，无需用户线程参与。事实上在aio的API 中,**AsynchronousChannelGroup就扮演了Proactor的角色**。
-CompletionHandler有三个方法，分别对应于处理成功、失败、被取消（通过返回的Future)情况下的回调处理：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public interface CompletionHandler<V,A> {  </li>
-<li></li>
-<li>void completed(V result, A attachment);  </li>
-<li></li>
-<li>void failed(Throwable exc, A attachment);  </li>
-<li></li>
-<li></li>
-<li>void cancelled(A attachment);  </li>
-<li>}  </li>
-</ol>
-<p>public interface CompletionHandler<V,A> {</p>
-<pre><code> void completed(V result, A attachment);
-
-
-void failed(Throwable exc, A attachment);
-
-
-
-
-void cancelled(A attachment);
-</code></pre><p>}</p>
-<pre><code>其中的泛型参数V表示IO调用的结果，而A是发起调用时传入的attchment。
-在初步介绍完aio引入的类和接口后，我们看看一个典型的tcp服务端是怎么启动的，怎么接受连接并处理读和写，这里引用的代码都是yanf4j 的aio分支中的代码，可以从svn checkout，svn地址: [http://yanf4j.googlecode.com/svn/branches/yanf4j-aio](http://yanf4j.googlecode.com/svn/branches/yanf4j-aio)
-第一步，创建一个AsynchronousServerSocketChannel，创建之前先创建一个 AsynchronousChannelGroup，上文提到AsynchronousServerSocketChannel可以绑定一个 AsynchronousChannelGroup，那么通过这个AsynchronousServerSocketChannel建立的连接都将同属于一个AsynchronousChannelGroup并共享资源：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>this.asynchronousChannelGroup = AsynchronousChannelGroup  </li>
-<li>.withCachedThreadPool(Executors.newCachedThreadPool(),  </li>
-<li>this.threadPoolSize);  </li>
-</ol>
-<p>this.asynchronousChannelGroup = AsynchronousChannelGroup</p>
-<pre><code>                .withCachedThreadPool(Executors.newCachedThreadPool(),
-                        this.threadPoolSize);
-
- 然后初始化一个AsynchronousServerSocketChannel，通过open方法：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>this.serverSocketChannel = AsynchronousServerSocketChannel  </li>
-<li>.open(this.asynchronousChannelGroup);  </li>
-</ol>
-<p>this.serverSocketChannel = AsynchronousServerSocketChannel</p>
-<pre><code>            .open(this.asynchronousChannelGroup);
-
-
-通过nio 2.0引入的SocketOption类设置一些TCP选项：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>this.serverSocketChannel  </li>
-<li>.setOption(  </li>
-<li>StandardSocketOption.SO_REUSEADDR,true);  </li>
-<li>this.serverSocketChannel  </li>
-<li>.setOption(  </li>
-<li>StandardSocketOption.SO_RCVBUF,16/*1024);  </li>
-</ol>
-<p>this.serverSocketChannel</p>
-<pre><code>                .setOption(
-                        StandardSocketOption.SO_REUSEADDR,true);
-</code></pre><p>this.serverSocketChannel
-                    .setOption(</p>
-<pre><code>                        StandardSocketOption.SO_RCVBUF,16/*1024);
-
-
-绑定本地地址：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>this.serverSocketChannel  </li>
-<li>.bind(new InetSocketAddress(&quot;localhost&quot;,8080), 100);  </li>
-</ol>
-<p>this.serverSocketChannel</p>
-<pre><code>                .bind(new InetSocketAddress(&quot;localhost&quot;,8080), 100);
-
-
-
-其中的100用于指定等待连接的队列大小(backlog)。完了吗？还没有，最重要的**监听**工作还没开始，监听端口是为了等待连接上来以便accept产生一个AsynchronousSocketChannel来表示一个新建立的连接，因此需要发起一个accept调用，调用是异步的，操作系统将在连接建立后，将最后的结果——**AsynchronousSocketChannel**返回给你：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public void pendingAccept() {  </li>
-<li>if (this.started &amp;&amp; this.serverSocketChannel.isOpen()) {  </li>
-<li>this.acceptFuture = this.serverSocketChannel.accept(null,  </li>
-<li>new AcceptCompletionHandler());  </li>
-<li></li>
-<li>} else {  </li>
-<li>throw new IllegalStateException(&quot;Controller has been closed&quot;);  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>public void pendingAccept() {</p>
-<pre><code>    if (this.started &amp;&amp; this.serverSocketChannel.isOpen()) {
-        this.acceptFuture = this.serverSocketChannel.accept(null,
-
-                new AcceptCompletionHandler());
-
-
-    } else {
-        throw new IllegalStateException(&quot;Controller has been closed&quot;);
-
-    }
-}
-</code></pre><p>   注意，重复的accept调用将会抛出PendingAcceptException，后文提到的read和write也是如此。accept方法的第一个参数是你想传给CompletionHandler的attchment，第二个参数就是注册的用于回调的CompletionHandler，最后返回结果Future<AsynchronousSocketChannel>。你可以对future做处理，这里采用更推荐的方式就是注册一个CompletionHandler。那么accept的CompletionHandler中做些什么工作呢？显然一个赤裸裸的 AsynchronousSocketChannel是不够的，我们需要将它封装成session，一个session表示一个连接（mina里就叫 IoSession了），里面带了一个缓冲的消息队列以及一些其他资源等。在连接建立后，除非你的服务器只准备接受一个连接，不然你需要在后面<strong>继续调用pendingAccept来发起另一个accept请求</strong>：</p>
-<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>private final class AcceptCompletionHandler implements  </li>
-<li>CompletionHandler<AsynchronousSocketChannel, Object> {  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void cancelled(Object attachment) {  </li>
-<li>logger.warn(&quot;Accept operation was canceled&quot;);  </li>
-<li>}  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void completed(AsynchronousSocketChannel socketChannel,  </li>
-<li>Object attachment) {  </li>
-<li>try {  </li>
-<li>logger.debug(&quot;Accept connection from &quot;  </li>
-<li><ul>
-<li>socketChannel.getRemoteAddress());  </li>
-</ul>
-</li>
-<li>configureChannel(socketChannel);  </li>
-<li>AioSessionConfig sessionConfig = buildSessionConfig(socketChannel);  </li>
-<li>Session session = new AioTCPSession(sessionConfig,  </li>
-<li>AioTCPController.this.configuration  </li>
-<li>.getSessionReadBufferSize(),  </li>
-<li>AioTCPController.this.sessionTimeout);  </li>
-<li>session.start();  </li>
-<li>registerSession(session);  </li>
-<li>} catch (Exception e) {  </li>
-<li>e.printStackTrace();  </li>
-<li>logger.error(&quot;Accept error&quot;, e);  </li>
-<li>notifyException(e);  </li>
-<li>} finally {  </li>
-<li><strong>pendingAccept</strong>();  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void failed(Throwable exc, Object attachment) {  </li>
-<li>logger.error(&quot;Accept error&quot;, exc);  </li>
-<li>try {  </li>
-<li>notifyException(exc);  </li>
-<li>} finally {  </li>
-<li><strong>pendingAccept</strong>();  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>private final class AcceptCompletionHandler implements</p>
-<pre><code>        CompletionHandler&lt;AsynchronousSocketChannel, Object&gt; {
-
-
-    @Override
-    public void cancelled(Object attachment) {
-
-        logger.warn(&quot;Accept operation was canceled&quot;);
-    }
-
-
-    @Override
-
-    public void completed(AsynchronousSocketChannel socketChannel,
-            Object attachment) {
-
-        try {
-            logger.debug(&quot;Accept connection from &quot;
-
-                    + socketChannel.getRemoteAddress());
-            configureChannel(socketChannel);
-
-            AioSessionConfig sessionConfig = buildSessionConfig(socketChannel);
-            Session session = new AioTCPSession(sessionConfig,
-
-                    AioTCPController.this.configuration
-                            .getSessionReadBufferSize(),
-
-                    AioTCPController.this.sessionTimeout);
-            session.start();
-
-            registerSession(session);
-        } catch (Exception e) {
-
-            e.printStackTrace();
-            logger.error(&quot;Accept error&quot;, e);
-
-            notifyException(e);
-        } finally {
-</code></pre><p><strong>pendingAccept</strong></p>
-<p>();
-            }</p>
-<pre><code>    }
-
-
-    @Override
-    public void failed(Throwable exc, Object attachment) {
-
-        logger.error(&quot;Accept error&quot;, exc);
-        try {
-
-            notifyException(exc);
-        } finally {
-</code></pre><p><strong>pendingAccept</strong></p>
-<p>();
-            }</p>
-<pre><code>    }
-}
-
-
-
-注意到了吧，我们在failed和completed方法中在最后都调用了pendingAccept来继续发起accept调用，等待新的连接上来。有的同学可能要说了，这样搞是不是递归调用，会不会堆栈溢出？实际上不会，因为发起accept调用的线程与CompletionHandler回调的线程并非同一个，不是一个上下文中，两者之间没有耦合关系。要注意到，CompletionHandler的回调共用的是 AsynchronousChannelGroup绑定的线程池，因此**千万别在CompletionHandler回调方法中调用阻塞或者长时间的操作**，例如sleep，回调方法最好能支持超时，防止线程池耗尽。
-连接建立后，怎么读和写呢？回忆下在nonblocking nio框架中，连接建立后的第一件事是干什么？注册OP_READ事件等待socket可读。异步IO也同样如此，连接建立后马上发起一个异步read调用，等待socket可读，这个是Session.start方法中所做的事情：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public class AioTCPSession {  </li>
-<li>protected void start0() {  </li>
-<li>pendingRead();  </li>
-<li>}  </li>
-<li></li>
-<li>protected final void pendingRead() {  </li>
-<li>if (!isClosed() &amp;&amp; this.asynchronousSocketChannel.isOpen()) {  </li>
-<li>if (!this.readBuffer.hasRemaining()) {  </li>
-<li>this.readBuffer = ByteBufferUtils  </li>
-<li>.increaseBufferCapatity(this.readBuffer);  </li>
-<li>}  </li>
-<li>this.readFuture = this.asynchronousSocketChannel.read(  </li>
-<li>this.readBuffer, this, this.readCompletionHandler);  </li>
-<li>} else {  </li>
-<li>throw new IllegalStateException(  </li>
-<li>&quot;Session Or Channel has been closed&quot;);  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>}  </li>
-</ol>
-<p>public class AioTCPSession {</p>
-<pre><code>protected void start0() {
-    pendingRead();
-
-}
-
-
-protected final void pendingRead() {
-    if (!isClosed() &amp;&amp; this.asynchronousSocketChannel.isOpen()) {
-
-        if (!this.readBuffer.hasRemaining()) {
-            this.readBuffer = ByteBufferUtils
-
-                    .increaseBufferCapatity(this.readBuffer);
-        }
-
-        this.readFuture = this.asynchronousSocketChannel.read(
-                this.readBuffer, this, this.readCompletionHandler);
-
-    } else {
-        throw new IllegalStateException(
-
-                &quot;Session Or Channel has been closed&quot;);
-    }
-
-}
-</code></pre><p>}</p>
-<pre><code> AsynchronousSocketChannel的read调用与AsynchronousServerSocketChannel的accept调用类似，同样是非阻塞的，返回结果也是一个Future，但是写的结果是整数，表示写入了多少字节，因此read调用返回的是 **Future&lt;Integer&gt;**，方法的第一个参数是读的缓冲区，操作系统将IO读到数据拷贝到这个缓冲区，第二个参数是传递给 CompletionHandler的attchment，第三个参数就是注册的用于回调的CompletionHandler。这里保存了read的结果Future，这是为了在关闭连接的时候能够主动取消调用，accept也是如此。现在可以看看read的CompletionHandler的实现：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public final class ReadCompletionHandler implements  </li>
-<li>CompletionHandler<Integer, AbstractAioSession> {  </li>
-<li></li>
-<li>private static final Logger log = LoggerFactory  </li>
-<li>.getLogger(ReadCompletionHandler.class);  </li>
-<li>protected final AioTCPController controller;  </li>
-<li></li>
-<li>public ReadCompletionHandler(AioTCPController controller) {  </li>
-<li>this.controller = controller;  </li>
-<li>}  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void cancelled(AbstractAioSession session) {  </li>
-<li>log.warn(&quot;Session(&quot; + session.getRemoteSocketAddress()  </li>
-<li><ul>
-<li>&quot;) read operation was canceled&quot;);  </li>
-</ul>
-</li>
-<li>}  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void completed(Integer result, AbstractAioSession session) {  </li>
-<li>if (log.isDebugEnabled())  </li>
-<li>log.debug(&quot;Session(&quot; + session.getRemoteSocketAddress()  </li>
-<li><ul>
-<li>&quot;) read +&quot; + result + &quot; bytes&quot;);  </li>
-</ul>
-</li>
-<li>if (result &lt; 0) {  </li>
-<li>session.close();  </li>
-<li>return;  </li>
-<li>}  </li>
-<li>try {  </li>
-<li>if (result &gt; 0) {  </li>
-<li>session.updateTimeStamp();  </li>
-<li>session.getReadBuffer().flip();  </li>
-<li>session.decode();  </li>
-<li>session.getReadBuffer().compact();  </li>
-<li>}  </li>
-<li>} finally {  </li>
-<li>try {  </li>
-<li>session.pendingRead();  </li>
-<li>} catch (IOException e) {  </li>
-<li>session.onException(e);  </li>
-<li>session.close();  </li>
-<li>}  </li>
-<li>}  </li>
-<li>controller.checkSessionTimeout();  </li>
-<li>}  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void failed(Throwable exc, AbstractAioSession session) {  </li>
-<li>log.error(&quot;Session read error&quot;, exc);  </li>
-<li>session.onException(exc);  </li>
-<li>session.close();  </li>
-<li>}  </li>
-<li></li>
-<li>}  </li>
-</ol>
-<p>public final class ReadCompletionHandler implements</p>
-<pre><code>    CompletionHandler&lt;Integer, AbstractAioSession&gt; {
-
-
-private static final Logger log = LoggerFactory
-        .getLogger(ReadCompletionHandler.class);
-
-protected final AioTCPController controller;
-
-
-public ReadCompletionHandler(AioTCPController controller) {
-    this.controller = controller;
-
-}
-
-
-@Override
-public void cancelled(AbstractAioSession session) {
-
-    log.warn(&quot;Session(&quot; + session.getRemoteSocketAddress()
-            + &quot;) read operation was canceled&quot;);
-
-}
-
-
-@Override
-public void completed(Integer result, AbstractAioSession session) {
-
-    if (log.isDebugEnabled())
-        log.debug(&quot;Session(&quot; + session.getRemoteSocketAddress()
-
-                + &quot;) read +&quot; + result + &quot; bytes&quot;);
-    if (result &lt; 0) {
-
-        session.close();
-        return;
-
-    }
-    try {
-
-        if (result &gt; 0) {
-            session.updateTimeStamp();
-
-            session.getReadBuffer().flip();
-            session.decode();
-
-            session.getReadBuffer().compact();
-        }
-
-    } finally {
-        try {
-
-            session.pendingRead();
-        } catch (IOException e) {
-
-            session.onException(e);
-            session.close();
-
-        }
-    }
-
-    controller.checkSessionTimeout();
-}
-
-
-@Override
-
-public void failed(Throwable exc, AbstractAioSession session) {
-    log.error(&quot;Session read error&quot;, exc);
-
-    session.onException(exc);
-    session.close();
-
-}
-</code></pre><p>}</p>
-<p>   如果IO读失败，会返回失败产生的异常，这种情况下我们就主动关闭连接，通过session.close()方法，这个方法干了两件事情：关闭channel和取消read调用：</p>
-<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>if (null != this.readFuture) {  </li>
-<li>this.readFuture.cancel(true);  </li>
-<li>}  </li>
-<li>this.asynchronousSocketChannel.close();  </li>
-</ol>
-<p>if (null != this.readFuture) {</p>
-<pre><code>        this.readFuture.cancel(true);
-    }
-</code></pre><p>this.asynchronousSocketChannel.close();</p>
-<p>   在读成功的情况下，我们还需要判断结果result是否小于0，<strong>如果小于0就表示对端关闭了</strong>，这种情况下我们也主动关闭连接并返回。如果读到一定字节，也就是result大于0的情况下，我们就尝试从读缓冲区中decode出消息，并派发给业务处理器的回调方法，最终<strong>通过pendingRead继续发起read调用等待socket的下一次可读</strong>。可见，我们并不需要自己去调用channel来进行IO读，而是操作系统帮你直接读到了缓冲区，然后给你一个结果表示读入了多少字节，你处理这个结果即可。而nonblocking IO框架中，是reactor通知用户线程socket可读了，然后用户线程自己去调用read进行实际读操作。这里还有个需要注意的地方，就是decode出来的消息的派发给业务处理器工作最好交给一个线程池来处理，避免阻塞group绑定的线程池。</p>
-<p>   IO写的操作与此类似，不过通常写的话我们会在session中关联一个缓冲队列来处理，没有完全写入或者等待写入的消息都存放在队列中，队列为空的情况下发起write调用：</p>
-<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>protected void write0(WriteMessage message) {  </li>
-<li>boolean needWrite = false;  </li>
-<li>synchronized (this.writeQueue) {  </li>
-<li>needWrite = this.writeQueue.isEmpty();  </li>
-<li>this.writeQueue.offer(message);  </li>
-<li>}  </li>
-<li>if (needWrite) {  </li>
-<li>pendingWrite(message);  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>protected final void pendingWrite(WriteMessage message) {  </li>
-<li>message = preprocessWriteMessage(message);  </li>
-<li>if (!isClosed() &amp;&amp; this.asynchronousSocketChannel.isOpen()) {  </li>
-<li>this.asynchronousSocketChannel.write(message.getWriteBuffer(),  </li>
-<li>this, this.writeCompletionHandler);  </li>
-<li>} else {  </li>
-<li>throw new IllegalStateException(  </li>
-<li>&quot;Session Or Channel has been closed&quot;);  </li>
-<li>}  </li>
-<li><p>}  </p>
-<p>protected void write0(WriteMessage message) {</p>
-<p>   boolean needWrite = false;
-   synchronized (this.writeQueue) {</p>
-<pre><code>   needWrite = this.writeQueue.isEmpty();
-   this.writeQueue.offer(message);
-</code></pre><p>   }
-   if (needWrite) {</p>
-<pre><code>   pendingWrite(message);
-</code></pre><p>   }</p>
+        <h1 id="java-annotation-">Java Annotation详解</h1>
+<p><strong>元数据的作用</strong></p>
+<p>如果要对于元数据的作用进行分类，目前还没有明确的定义，不过我们可以根据它所起的作用，大致可分为三类：</p>
+<p>l          编写文档：通过代码里标识的元数据生成文档。</p>
+<p>l          代码分析：通过代码里标识的元数据对代码进行分析。</p>
+<p>l          编译检查：通过代码里标识的元数据让编译器能实现基本的编译检查。</p>
+<p><strong>基本内置注释</strong></p>
+<pre><code>**@Override** 注释能实现编译时检查，你可以为你的方法添加该注释，以声明该方法是用于覆盖父类中的方法。如果该方法不是覆盖父类的方法，将会在编译时报错。例如我们为某类重写toString() 方法却写成了tostring() ，并且我们为该方法添加了@Override 注释；
+
+ **@Deprecated** 的作用是对不应该在使用的方法添加注释，当编程人员使用这些方法时，将会在编译时显示提示信息，它与javadoc 里的 @deprecated 标记有相同的功能，准确的说，它还不如javadoc @deprecated ，因为它不支持参数，
+</code></pre><p>注意：要了解详细信息，请使用 -Xlint:deprecation 重新编译。</p>
+<pre><code>**@SuppressWarnings** 与前两个注释有所不同，你需要添加一个参数才能正确使用，这些参数值都是已经定义好了的，我们选择性的使用就好了，参数如下：
+</code></pre><p>deprecation   使用了过时的类或方法时的警告</p>
+<p>unchecked  执行了未检查的转换时的警告，例如当使用集合时没有用泛型 (Generics) 来指定集合保存的类型</p>
+<p>fallthrough   当 Switch 程序块直接通往下一种情况而没有 Break 时的警告</p>
+<p>path   在类路径、源文件路径等中有不存在的路径时的警告</p>
+<p>serial 当在可序列化的类上缺少 serialVersionUID 定义时的警告</p>
+<p>finally    任何 finally 子句不能正常完成时的警告</p>
+<p>all 关于以上所有情况的警告</p>
+<p>注意：要了解详细信息，请使用 -Xlint:unchecked 重新编译。</p>
+<hr>
+<p><strong>定制注释类型</strong></p>
+<pre><code>好的，让我们创建一个自己的注释类型（annotation type ）吧。它类似于新创建一个接口类文件，但为了区分，我们需要将它声明为@interface, 如下例：
+</code></pre><p>public @interface NewAnnotation {</p>
 <p>}</p>
-</li>
-</ol>
-<pre><code>protected final void pendingWrite(WriteMessage message) {
-    message = preprocessWriteMessage(message);
+<p><strong>使用定制的注释类型</strong></p>
+<pre><code>我们已经成功地创建好一个注释类型NewAnnotation ，现在让我们来尝试使用它吧，如果你还记得本文的第一部分，那你应该知道他是一个标记注释，使用也很容易，如下例：
+</code></pre><p>public class AnnotationTest {</p>
+<pre><code>@NewAnnotation
 
-    if (!isClosed() &amp;&amp; this.asynchronousSocketChannel.isOpen()) {
-        this.asynchronousSocketChannel.write(message.getWriteBuffer(),
+public static void main(String[] args) {
 
-                this, this.writeCompletionHandler);
-    } else {
 
-        throw new IllegalStateException(
-                &quot;Session Or Channel has been closed&quot;);
 
-    }
+}
+</code></pre><p>}</p>
+<p><strong>添加变量</strong></p>
+<pre><code>J2SE 5.0 里，我们了解到内置注释@SuppressWarnings() 是可以使用参数的，那么自定义注释能不能定义参数个数和类型呢？答案是当然可以，但参数类型只允许为基本类型、String 、Class 、枚举类型等，并且参数不能为空。我们来扩展NewAnnotation ，为之添加一个String 类型的参数，示例代码如下：
+</code></pre><p>public @interface NewAnnotation {</p>
+<pre><code>String value();
+</code></pre><p>}</p>
+<pre><code>使用该注释的代码如下：正如你所看到的，该注释的使用有两种写法，这也是在之前的文章里所提到过的。如果你忘了这是怎么回事，那就再去翻翻吧。
+</code></pre><p>public class AnnotationTest {</p>
+<pre><code>@NewAnnotation(&quot;Just a Test.&quot;)
+
+public static void main(String[] args) {
+
+    sayHello();
+
 }
 
 
 
+@NewAnnotation(value=&quot;Hello NUMEN.&quot;)
 
-write调用返回的结果与read一样是一个Future&lt;Integer&gt;，而write的CompletionHandler处理的核心逻辑大概是这样：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>@Override  </li>
-<li>public void completed(Integer result, AbstractAioSession session) {  </li>
-<li>if (log.isDebugEnabled())  </li>
-<li>log.debug(&quot;Session(&quot; + session.getRemoteSocketAddress()  </li>
-<li><ul>
-<li>&quot;) writen &quot; + result + &quot; bytes&quot;);  </li>
-</ul>
-</li>
-<li></li>
-<li>WriteMessage writeMessage;  </li>
-<li>Queue<WriteMessage> writeQueue = session.getWriteQueue();  </li>
-<li>synchronized (writeQueue) {  </li>
-<li>writeMessage = writeQueue.peek();  </li>
-<li>if (writeMessage.getWriteBuffer() == null  </li>
-<li>|| !writeMessage.getWriteBuffer().hasRemaining()) {  </li>
-<li>writeQueue.remove();  </li>
-<li>if (writeMessage.getWriteFuture() != null) {  </li>
-<li>writeMessage.getWriteFuture().setResult(Boolean.TRUE);  </li>
-<li>}  </li>
-<li>try {  </li>
-<li>session.getHandler().onMessageSent(session,  </li>
-<li>writeMessage.getMessage());  </li>
-<li>} catch (Exception e) {  </li>
-<li>session.onException(e);  </li>
-<li>}  </li>
-<li>writeMessage = writeQueue.peek();  </li>
-<li>}  </li>
-<li>}  </li>
-<li>if (writeMessage != null) {  </li>
-<li>try {  </li>
-<li>session.pendingWrite(writeMessage);  </li>
-<li>} catch (IOException e) {  </li>
-<li>session.onException(e);  </li>
-<li>session.close();  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>@Override</p>
-<pre><code>public void completed(Integer result, AbstractAioSession session) {
-    if (log.isDebugEnabled())
+public static void sayHello() {
 
-        log.debug(&quot;Session(&quot; + session.getRemoteSocketAddress()
-                + &quot;) writen &quot; + result + &quot; bytes&quot;);
-
-
-    WriteMessage writeMessage;
-
-    Queue&lt;WriteMessage&gt; writeQueue = session.getWriteQueue();
-    synchronized (writeQueue) {
-
-        writeMessage = writeQueue.peek();
-        if (writeMessage.getWriteBuffer() == null
-
-                || !writeMessage.getWriteBuffer().hasRemaining()) {
-            writeQueue.remove();
-
-            if (writeMessage.getWriteFuture() != null) {
-                writeMessage.getWriteFuture().setResult(Boolean.TRUE);
-
-            }
-            try {
-
-                session.getHandler().onMessageSent(session,
-                        writeMessage.getMessage());
-
-            } catch (Exception e) {
-                session.onException(e);
-
-            }
-            writeMessage = writeQueue.peek();
-
-        }
-    }
-
-    if (writeMessage != null) {
-        try {
-
-            session.pendingWrite(writeMessage);
-        } catch (IOException e) {
-
-            session.onException(e);
-            session.close();
-
-        }
-    }
+    // do something
 
 }
-</code></pre><p>   compete方法中的result就是实际写入的字节数，然后我们判断消息的缓冲区是否还有剩余，如果没有就将消息从队列中移除，如果队列中还有消息，那么继续发起write调用。
-   重复一下，这里引用的代码都是yanf4j aio分支中的源码，感兴趣的朋友可以直接check out出来看看: <a href="http://yanf4j.googlecode.com/svn/branches/yanf4j-aio" target="_blank"><a href="http://yanf4j.googlecode.com/svn/branches/yanf4j-aio">http://yanf4j.googlecode.com/svn/branches/yanf4j-aio</a></a>。
-   在引入了aio之后，java对于网络层的支持已经非常完善，该有的都有了，java也已经成为服务器开发的首选语言之一。java的弱项在于对内存的管理上，由于这一切都交给了GC，因此在高性能的网络服务器上还是Cpp的天下。java这种单一堆模型比之erlang的进程内堆模型还是有差距，很难做到高效的垃圾回收和细粒度的内存管理。
-   这里仅仅是介绍了aio开发的核心流程，对于一个网络框架来说，还需要考虑超时的处理、缓冲buffer的处理、业务层和网络层的切分、可扩展性、性能的可调性以及一定的通用性要求。</p>
-<p>刚看了一点，第一行有个错别字，不是IO服用，是复用，嘿嘿
-老大终于开始介绍java NIO了。。
-还有一点，看过一些源代码，对事件驱动还是理解不深，也请老大介绍下把。
-rain2005 写道</p>
-<p>刚看了一点，第一行有个错别字，不是IO服用，是复用，嘿嘿
-老大终于开始介绍java NIO了。。
-还有一点，看过一些源代码，对事件驱动还是理解不深，也请老大介绍下把。
-多谢指正，关于事件机制，我会画个UML图可能比较清晰</p>
-<p>上面提到几个类 怎么在jdk6中没发现那
-是不是要下载第三方框架
-正好想研究一下
-收藏啦
-xly_971223 写道</p>
-<p>上面提到几个类 怎么在jdk6中没发现那
-是不是要下载第三方框架
-正好想研究一下
-收藏啦
-aio是在jdk7引入的，请下载JDK7 preview1版本，或者open jdk</p>
-<p>dennis_zane 写道</p>
-<p>xly_971223 写道</p>
-<p>上面提到几个类 怎么在jdk6中没发现那
-是不是要下载第三方框架
-正好想研究一下
-收藏啦
-aio是在jdk7引入的，请下载JDK7 preview1版本，或者open jdk
-是不是这个意思。
-jdk7以前的nio是非阻塞IO,操作系统底层比方说linux,是用IO复用select实现的
-jdk7用的是真正的异步IO,操作系统底层是用epoll实现的
-是这样的吗？
-rain2005 写道</p>
-<p>dennis_zane 写道</p>
-<p>xly_971223 写道</p>
-<p>上面提到几个类 怎么在jdk6中没发现那
-是不是要下载第三方框架
-正好想研究一下
-收藏啦
-aio是在jdk7引入的，请下载JDK7 preview1版本，或者open jdk
-是不是这个意思。
-jdk7以前的nio是非阻塞IO,操作系统底层比方说linux,是用IO复用select实现的
-jdk7用的是真正的异步IO,操作系统底层是用epoll实现的
-是这样的吗？
-epoll也不是异步IO啊。异步IO在linux上目前仅限于文件系统，并且还没有得到广泛应用，很多平台都没有这玩意。
-java aio在windows上是利用iocp实现的，这是真正的异步IO。而在linux上，是通过epoll模拟的。</p>
-<p>楼主，你好，我写的server是p2p的应用，恩，想请教一下，因为我对数据库这一块的操作并不是特别的多，基本是客户自己也有很多是服务器，不知道是否可以在事件响应的当前线程来对数据库操作呢？前提是把线程池子的数目设的大些？或者用那个JDK提供的可自己增加线程的池子？
-因为如果在弄个池子来处理数据库的话，担心线程太多了，
-你如果时间充分心情好的话，真希望你能讲解一下和别人公用一台服务器（主机）是怎么用的呢。。。
-总之要谢谢你对这段代码的讲解，kang sang mi da
-wujingsong 写道</p>
-<p>楼主，你好，我写的server是p2p的应用，恩，想请教一下，因为我对数据库这一块的操作并不是特别的多，基本是客户自己也有很多是服务器，不知道是否可以在事件响应的当前线程来对数据库操作呢？前提是把线程池子的数目设的大些？或者用那个JDK提供的可自己增加线程的池子？
-因为如果在弄个池子来处理数据库的话，担心线程太多了，
-你如果时间充分心情好的话，真希望你能讲解一下和别人公用一台服务器（主机）是怎么用的呢。。。
-总之要谢谢你对这段代码的讲解，kang sang mi da
-按我的经验来说，类似数据库操作这样的IO操作，最好还是起个线程池来处理，防止阻塞框架内部的处理线程。如果这样的操作不是特别多，那么直接在响应线程处理也未尝不可，还是建议你自己搞两个版本性能对比一下。
-wujingsong 写道</p>
-<p>和别人公用一台是怎么用的呢？
-我还真不明白什么意思，现在我们的应用基本都跑在虚拟机上了，几个应用跑在一个物理机上。虚拟化我不懂，就不乱弹了。</p>
-<p>kang sa mi da,谢谢楼主的回复,确实是个很好的建议.
-闲聊啊,今天无意看到Google 上一个音乐的图片链接,点进去后,看到了一个不大容易理解的词,说什么
-            &quot;在南中国常年保持高收听率的极有个性的节目&quot;,
-费解.....广东那边是这么叫的吗?不大可能吧..</p>
+</code></pre><p>}</p>
+<p><strong>为变量赋默认值</strong></p>
+<pre><code>我们对Java 自定义注释的了解正在不断的增多，不过我们还需要更过，在该条目里我们将了解到如何为变量设置默认值，我们再对NewAnnotaion 进行修改，看看它会变成什么样子，不仅参数多了几个，连类名也变了。但还是很容易理解的，我们先定义一个枚举类型，然后将参数设置为该枚举类型，并赋予默认值。
+</code></pre><p>public @interface Greeting {</p>
+<pre><code>public enum FontColor {RED, GREEN, BLUE};
+
+
+
+String name();
+
+
+
+String content();
+
+
+
+FontColor fontColor() default FontColor.BLUE;
+</code></pre><p>}</p>
+<p><strong>限定注释使用范围</strong></p>
+<pre><code>当我们的自定义注释不断的增多也比较复杂时，就会导致有些开发人员使用错误，主要表现在不该使用该注释的地方使用。为此，Java 提供了一个ElementType 枚举类型来控制每个注释的使用范围，比如说某些注释只能用于普通方法，而不能用于构造函数等。下面是Java 定义的ElementType 枚举：
+</code></pre><p>package java.lang.annotation;</p>
+<p>public enum ElementType {</p>
+<p>  TYPE,         // Class, interface, or enum (but not annotation)</p>
+<p>  FIELD,        // Field (including enumerated values)</p>
+<p>  METHOD,       // Method (does not include constructors)</p>
+<p>  PARAMETER,        // Method parameter</p>
+<p>  CONSTRUCTOR,      // Constructor</p>
+<p>  LOCAL_VARIABLE,   // Local variable or catch clause</p>
+<p>  ANNOTATION_TYPE,  // Annotation Types (meta-annotations)</p>
+<p>  PACKAGE       // Java package</p>
+<p>}</p>
+<pre><code>下面我们来修改Greeting 注释，为之添加限定范围的语句，这里我们称它为目标（Target ）使用方法也很简单，如下：
+</code></pre><p>@Target( { ElementType.METHOD, ElementType.CONSTRUCTOR })</p>
+<p>public @interface Greeting {</p>
+<p>}</p>
+<p>正如上面代码所展示的，我们只允许Greeting 注释标注在普通方法和构造函数上，使用在包申明、类名等时，会提示错误信息。</p>
+<p><strong>注释保持性策略</strong></p>
+<p>public enum RetentionPolicy {</p>
+<p>  SOURCE,// Annotation is discarded by the compiler</p>
+<p>  CLASS,// Annotation is stored in the class file, but ignored by the VM</p>
+<p>  RUNTIME// Annotation is stored in the class file and read by the VM</p>
+<p>}</p>
+<pre><code>RetentionPolicy 的使用方法与ElementType 类似，简单代码示例如下：
+</code></pre><p>@Retention(RetentionPolicy.RUNTIME)</p>
+<p>@Target( { ElementType.METHOD, ElementType.CONSTRUCTOR })</p>
+<p><strong>文档化功能</strong></p>
+<pre><code>Java 提供的Documented 元注释跟Javadoc 的作用是差不多的，其实它存在的好处是开发人员可以定制Javadoc 不支持的文档属性，并在开发中应用。它的使用跟前两个也是一样的，简单代码示例如下：
+</code></pre><p>@Documented</p>
+<p>@Retention(RetentionPolicy.RUNTIME)</p>
+<p>@Target( { ElementType.METHOD, ElementType.CONSTRUCTOR })</p>
+<p>public @interface Greeting {</p>
+<p>}</p>
+<p>值得大家注意的是，如果你要使用@Documented 元注释，你就得为该注释设置RetentionPolicy.RUNTIME 保持性策略。为什么这样做，应该比较容易理解，这里就不提了。</p>
+<p><a href=""><em>**</em></a> </p>
+<p><a href=""><strong>标注继承</strong></a></p>
+<p><a href="">继承应该是Java 提供的最复杂的一个元注释了，它的作用是控制注释是否会影响到子类，简单代码示例如下：</a></p>
+<p><a href="">@Inherited</a></p>
+<p><a href="">@Documented</a></p>
+<p><a href="">@Retention(RetentionPolicy.RUNTIME)</a></p>
+<p><a href="">@Target( { ElementType.METHOD, ElementType.CONSTRUCTOR })</a></p>
+<p><a href="">public @interface Greeting {</a></p>
+<p><a href="">}</a></p>
+<p><a href=""></a> </p>
+<p><a href=""><strong>读取注释信息</strong></a></p>
+<p><a href="">    </a><a href="">当我们想读取某个注释信息时，我们是在运行时通过反射来实现的，如果你对元注释还有点印象，那你应该记得我们需要将保持性策略设置为RUNTIME ，也就是说只有注释标记了@Retention(RetentionPolicy.RUNTIME)</a><a href="">的，我们才能通过反射来获得相关信息，下面的例子我们将沿用前面几篇文章中出现的代码，并实现读取AnnotationTest 类所有方法标记的注释并打印到控制台。好了，我们来看看是如何实现的吧：</a></p>
+<p><a href="">public class AnnotationIntro {</a></p>
+<p><a href=""></a> </p>
+<p><a href="">    public static void main(String[] args) throws Exception {</a></p>
+<p><a href=""></a> </p>
+<p><a href="">        Method[] methods = Class.forName(</a></p>
+<p><a href="">                &quot;com.gelc.annotation.demo.customize.AnnotationTest&quot;)</a></p>
+<p><a href="">                .getDeclaredMethods();</a></p>
+<p><a href="">        Annotation[] annotations;</a></p>
+<p><a href=""></a> </p>
+<p><a href="">        for (Method method : methods) {</a></p>
+<p><a href="">            annotations = method.getAnnotations();</a></p>
+<p><a href="">            for (Annotation annotation : annotations) {</a></p>
+<p><a href="">                System.out.println(method.getName() + &quot; : &quot;</a></p>
+<p><a href="">                        + annotation.annotationType().getName());</a></p>
+<p><a href="">            }</a></p>
+<p>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em></p>
+<p>Annotation(注解)</p>
+<p>Annotation对于程序运行没有影响,它的目的在于对编译器或分析工具说明程序的某些信息,您可以
+在包,类,方法,域成员等加上Annotation.每一个Annotation对应于一个实际的Annotation类型.</p>
+<p>1  限定Override父类方法@Override
+  java.lang.Override是J2SE5.0中标准的Annotation类型之一,它对编译器说明某个方法必须
+  是重写父类中的方法.编译器得知这项信息后,在编译程序时如果发现被@Override标示的方法
+  并非重写父类中的方法,就会报告错误.
+  例,如果在定义新类时想要重写Object类的toString()方法,可能会写成这样:
+  public class CustomClass{
+    public String ToString(){
+      return &quot;customObject&quot;;
+    }
+  }
+  在编写toString()方法时,因为输入错误或其他的疏忽,将之写成ToString()了,编译这个类时
+  并不会出现任何的错误,编译器不会知道您是想重写toString()方法,只会以为是定义了一个新
+  的ToString()方法.
+  可以使用java.lang.Override这个Annotation类型,在方法上加一个@Override的Annotation
+  这可以告诉编译器现在定义的这个方法,必须是重写父类中的同包方法.
+  public class CustomClass{
+    @Override
+    public String toString(){
+      return &quot;coustomObject&quot;;
+    }
+  }
+  java.lang.Override是一个Marker Annotation,简单地说就是用于标示的Annotation，Annotation
+  名称本身表示了要给工具程序的信息。</p>
+<p>  Annotation类型与Annotation实际上是有区分的，Annotation是Annotation类型的实例，例如
+  @Override是个Annotation，它是java.lang.Override类型的一个实例，一个文件中可以有很多
+  个@Override，但它们都是属于java.lang.Override类型。</p>
+<p>2  标示方法为Deprecated @Deprecated
+  java.lang.Deprecated也是J2SE5.0中标准的Annotation类型之一。它对编译器说明某个方法已经不
+  建议使用。如果有开发人员试图使用或重写被@Deprecated标示的方法，编译器必须提出警告信息。
+  例:
+  public class Something{
+    @Deprecated
+    public Something getSomething(){
+      return new Something();
+    }
+  }
+  如果有人试图在继承这个类后重写getSomething()方法，或是在程序中调用getSomething()方法，
+  则编译时会有警告出现。
+  java.lang.Deprecated也是一个Marker Annotation简单地说就是用于标示。</p>
+<p>3  抑制编译器警告 @SuppressWarnings
+  java.lang.SuppressWarnings也是J2SE5.0中标准的Annotation类型之一，它对编译器说明某个方法
+  中若有警告信息，则加以抑制，不用在编译完成后出现警告。
+  例:
+  public class SomeClass2{
+    @SuppressWarnings(value={&quot;unchecked&quot;});
+    public void doSomething(){
+      Map map = new HashMap();
+      map.put(&quot;some&quot;,&quot;thing&quot;);
+    }
+  }
+  这样，编译器将忽略unchecked的警告，您也可以指定忽略多个警告:
+  @SuppressWarnings(value={&quot;unchecked&quot;,&quot;deprecation&quot;});
+  @SuppressWarnings是所谓的Single-Value Annotation，因为这样的Annotation只有一个成员，称为
+  value成员，可在使用Annotation时作额外的信息指定。</p>
+<p>自定义Annotation类型
+  可以自定义Annotation类型，并使用这些自定义的Annotation类型在程序代码中使用Annotation，这些
+  Annotation将提供信息给程序代码分析工具。
+  首先来看看如何定义Marker Annotation，也就是Annotation名称本身即提供信息。对于程序分析工具来
+  说，主要是检查是否有Marker Annotation的出现,并做出对应的动作。要定义一个Annotation所需的动作
+  ,就类似于定义一个接口，只不过使用的是@interface。
+  例:
+  public @interface Debug{}</p>
+<p>  由于是一个Marker Annotation，所以没有任何成员在Annotation定义中。编译完成后，就可以在程序代码
+  中使用这个Annotation。
+  public class SomeObject{
+    @Debug
+    public void doSomething(){
+     ......
+    }
+  }
+  稍后可以看到如何在Java程序中取得Annotation信息(因为要使用Java程序取得信息，所以还要设置
+  meta-annotation,稍后会谈到）</p>
+<p>  接着来看看如何定义一个Single-Value Annotation，它只有一个Value成员。
+  例:
+  public @interface UnitTest{
+    String value();
+  }
+  实际上定义了value()方法，编译器在编译时会自动产生一个value的域成员,接着在使用UnitTest 
+  Annotation时要指定值。如：
+  public class MathTool{
+   @UnitTest(&quot;GCD&quot;)
+   public static int gcdOf(int num1,int num2){
+     ...............
+   }
+  }
+  @UnitTest(&quot;GCD&quot;)实际上是@UnitTest(value=&quot;GCD&quot;)的简便写法,value也可以是数组值。如：
+  public @interface FunctionTest{
+    String[] value();
+  }
+  在使用时，可以写成@FunctionTest({&quot;method1&quot;,&quot;method2&quot;})这样的简便形式。或是
+  @FunctionTest(value={&quot;method1&quot;,&quot;method2&quot;})这样的详细形式.</p>
+<p>  也可以对value成员设置默认值,使用default关键词即可。
+  例:
+  public @interface UnitTest2{
+    String value() default &quot;noMethod&quot;;
+  }
+  这样如果使用@UnitTest2时没有指定value值，则value默认就是noMethod.</p>
+<p>  也可以为Annotation定义额外的成员，以提供额外的信息给分析工具，如：
+  public @interface Process{
+    public enum Current{NONE,REQUIRE,ANALYSIS,DESIGN,SYSTEM};
+    Current current() default Current.NONE;
+    String tester();
+    boolean ok();
+  }
+  运用:
+  public class Application{
+    @process(
+      current = Process.Current.ANALYSIS,
+      tester = &quot;Justin Lin&quot;,
+      ok = true
+    )
+    public void doSomething(){
+      ...........
+    }
+  }
+  当使用@interface自行定义Annotation类型时，实际上是自动继承了
+  java.lang.annotation接口，并由编译器自动完成其他产生的细节，并且在定义Annotation类型时,
+  不能继承其他的Annotation类型或接口.
+  定义Annotation类型时也可以使用包机制来管理类。由于范例所设置的包都是onlyfun.caterpillar,
+  所以可以直接使用Annotation类型名称而不指定包名，但如果是在别的包下使用这些自定义的Annotation
+  ，记得使用import告诉编译器类型的包们置。
+  如:
+  import onlyfun.caterpillar.Debug;
+  public class Test{
+    @Debug
+    public void doTest(){
+      ......
+    }
+  }
+  或是使用完整的Annotation名称.如:
+  public class Test{
+    @onlyfun.caterpillar.Debug
+    public void doTest(){
+      ......
+    }
+  }</p>
+<p>meta-annotation
+  所谓neta-annotation就是Annotation类型的数据，也就是Annotation类型的Annotation。在定义
+  Annotation类型时，为Annotation类型加上Annotation并不奇怪，这可以为处理Annotation类型
+  的分析工具提供更多的信息。</p>
+<p>1  告知编译器如何处理annotation @Retention
+  java.lang.annotation.Retention类型可以在您定义Annotation类型时，指示编译器该如何对待自定
+  义的Annotation类型，编译器默认会将Annotation信息留在.class文件中，但不被虚拟机读取，而仅用
+  于编译器或工具程序运行时提供信息。</p>
+<p>  在使用Retention类型时，需要提供java.lang.annotation.RetentionPolicy的枚举类型。
+  RetentionPolicy的定义如下所示:
+  package java.lang.annotation;
+  public enum RetentionPolicy{
+    SOURCE,//编译器处理完Annotation信息后就没有事了
+    CLASS,//编译器将Annotation存储于class文件中，默认
+    RUNTIME //编译器将Annotation存储于class文件中，可由VM读入</p>
+<p>  }</p>
+<p>  RetentionPolicy为SOURCE的例子是@SuppressWarnings,这个信息的作用仅在编译时期告知
+  编译器来抑制警告，所以不必将这个信息存储在.class文件中。</p>
+<p>  RetentionPolicy为RUNTIME的时机，可以像是您使用Java设计一个程序代码分析工具，您必须让VM能读出
+  Annotation信息，以便在分析程序时使用，搭配反射机制，就可以达到这个目的。\</p>
+<p>  J2SE6.0的java.lang.reflect.AnnotatedElement接口中定义有4个方法:
+  public Annotation getAnnotation(Class annotationType)
+  public Annotation[] getAnnotations();
+  public Annotation[] getDeclaredAnnotations()
+  public boolean isAnnotationPresent(Class annotationType);</p>
+<p>  Class,Constructor,field,Method,Package等类，都实现了AnnotatedElement接口，所以可以从这些
+  类的实例上，分别取得标示于其上的Annotation与相关信息。由于在执行时读取Annotation信息，所以定
+  义Annotation时必须设置RetentionPolicy为RUNTIME,也就是可以在VM中读取Annotation信息。
+  例:
+  package onlyfun.caterpillar;
+  import java.lang.annotation.Retention;
+  import java.lang.annotation.RetentionPllicy;</p>
+<p>  @Retention(RetentionPolicy.RUNTIME)
+  public @interface SomeAnnotation{
+    String value();
+    String name();
+  }
+  由于RetentionPolicy为RUNTIME，编译器在处理SomeAnnotation时，会将Annotation及给定的相关信息
+  编译至.class文件中，并设置为VM可以读出Annotation信息。接下来：
+  package onlyfun.caterpillar;
+  public class SomeClass3{
+    @SomeAnotation{
+      value=&quot;annotation value1&quot;,
+      name=&quot;annotation name1&quot;
+    }
+    public void doSomething(){
+      ......
+    }
+  }</p>
+<p>  现在假设要设计一个源代码分析工具来分析所设计的类，一些分析时所需的信息已经使用Annotation标示于类
+  中了，可以在执行时读取这些Annotation的相关信息。例:</p>
+<p>  package onlyfun.caterpillar;</p>
+<p>  import java.lang.annotation.Annotation;
+  import java.lang.reflect.Method;</p>
+<p>  public class AnalysisApp{
+    public static void main(String [] args) throws NoSuchMethodException{
+      Class<SomeClass3> c = SomeClass3.class;
+      //因为SomeAnnotation标示于doSomething()方法上
+      //所以要取得doSomething()方法的Method实例
+      Method method = c.getMethod(&quot;doSomething&quot;);
+      //如果SomeAnnotation存在
+      if(method.isAnnotationPresent(SomeAnnotation.class){
+        System.out.println(&quot;找到@SomeAnnotation&quot;);
+        //取得SomeAnnotation
+        SomeAnnotation annotation = method.getAnnotation(SomeAnnotation.class);
+        //取得vlaue成员值
+        System.out.println(annotation.value);
+        //取得name成员值
+        System.out.println(annotation.name());
+      }else{
+        System.out.println(&quot;找不到@SomeAnnotation&quot;);
+      }
+      //取得doSomething()方法上所有的Annotation
+      Annotation[] annotations = method.getAnnotations();
+      //显示Annotation名称
+      for(Annotation annotation : annotations){
+        System.out.println(&quot;Annotation名称:&quot;+annotation.annotationType().getName());
+      }
+    }
+  }
+  若Annotation标示于方法上，就要取得方法的Method代表实例，同样的，如果Annotation标示于类或包上,
+  就要分别取得类的Class代表的实例或是包的Package代表的实例。之后可以使用实例上的getAnnotation()
+  等相关方法，以测试是否可取得Annotation或进行其他操作。</p>
+<p>2  限定annotation使用对象 @Target
+  在定义Annotation类型时，使用java.lang.annotation.Target可以定义其适用的时机，在定义时要指定
+  java.lang.annotation.ElementType的枚举值之一。
+  public enum elementType{
+    TYPE,//适用class,interface,enum
+    FIELD,//适用于field
+    METHOD,//适用于method
+    PARAMETER,//适用method上之parameter
+    CONSTRUCTOR,//适用constructor
+    LOCAL_VARIABLE,//适用于区域变量
+    ANNOTATION_TYPE,//适用于annotation类型
+    PACKAGE,//适用于package
+  }</p>
+<p>  举例，假设定义Annotation类型时，要限定它只能适用于构造函数与方法成员，则:
+  package onlyfun.caterpillar;</p>
+<p>  import java.lang.annotation.Target;
+  import java.lang.annotation.ElementType;</p>
+<p>  @Target({ElementType.CONSTRUCTOR,ElementType.METHOD})
+  public @interface MethodAnnotation{}</p>
+<p>  将MethodAnnotation标示于方法之上，如：</p>
+<p>  public class SomeoneClass{
+    @onlyfun.caterpillar.MethodAnnotation
+    public void doSomething(){
+      ......
+    }
+  }</p>
+<p>3  要求为API文件的一部分 @Documented</p>
+<p>  在制作Java Doc文件时，并不会默认将Annotation的数据加入到文件中.Annnotation用于标示程序代码以便
+  分析工具使用相关信息，有时Annotation包括了重要的信息，您也许会想要在用户制作Java Doc文件的同时,
+  也一并将Annotation的信息加入到API文件中。所以在定义Annotation类型时，可以使用
+  java.lang.annotation.Documented.例:</p>
+<p>  package onlyfun.caterpillar;</p>
+<p>  import java.lang.annotation.Documented;
+  import java.lang.annotation.Retention;
+  import java.lang.annotation.RetentionPolicy;</p>
+<p>  @Documented
+  @Retention(RetentionPolicy.RUNTIME)
+  public @interface TwoAnnotation{}</p>
+<p>  使用java.lang.annotation.Documented为定义的Annotation类型加上Annotation时，必须同时使用Retention
+  来指定编译器将信息加入.class文件，并可以由VM读取，也就是要设置RetentionPolicy为RUNTIME。接着可以使
+  用这个Annotation，并产生Java Doc文件,这样可以看到文件中包括了@TwoAnnotation的信息.</p>
+<p>4  子类是否可以继承父类的annotation @Inherited
+  在定义Annotation类型并使用于程序代码上后，默认父类中的Annotation并不会被继承到子类中。可以在定义
+  Annotation类型时加上java.lang.annotation.Inherited类型的Annotation，这让您定义的Annotation类型在
+  被继承后仍可以保留至子类中。
+  例:
+  package onlyfun.caterpillar;</p>
+<p>  import java.lang.annotation.Retention;
+  import java.lang.annotation.RetentionPolicy;
+  import java.lang.annotation.Inherited;</p>
+<p>  @Retention(RetentionPolicy.RUNTIME)
+  @Inherited
+  public @interface ThreeAnnotation{
+    String value();
+    String name();
+  }
+  可以在下面的程序中使用@ThreeAnnotation:
+  public class SomeoneClass{
+    @onlyfun.caterpillar.ThreeAnnotation(
+      value = &quot;unit&quot;,
+      name = &quot;debug1&quot;
+    )
+    public void doSomething(){
+      .....
+    }
+  }
+  如果有一个类继承了SomeoneClass类，则@ThreeAnnotation也会被继承下来。
+来源： <a href="[http://djjchobits.iteye.com/blog/569000](http://djjchobits.iteye.com/blog/569000)">[http://djjchobits.iteye.com/blog/569000](http://djjchobits.iteye.com/blog/569000)</a> </p>
 
       
     </div>
@@ -2317,8 +1184,8 @@ wujingsong 写道</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/NIO/">NIO</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/NIO/" class="label label-success">NIO</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-NIO--Javaaio异步网络IO初探/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-NIO--Javaaio异步网络IO初探" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/java深入分析/">java深入分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/java深入分析/" class="label label-success">java深入分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--JavaAnnotation详解/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-java深入分析--JavaAnnotation详解" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -2630,6 +1497,244 @@ TestClass.testMethod7(Map<String,TestBean>);
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
 <a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--DWR如何获得返回对象listMapSetlist" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结/">JAVA集合小结</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-">JAVA集合小结</h1>
+<pre><code>[首页](http://www.blogjava.net/EvanLiu/)    [新随笔](http://www.blogjava.net/EvanLiu/admin/EditPosts.aspx?opt=1)    [联系](http://www.blogjava.net/EvanLiu/contact.aspx?id=1)    [聚合](http://www.blogjava.net/EvanLiu/rss)[![]()](http://www.blogjava.net/EvanLiu/rss)    [管理](http://www.blogjava.net/EvanLiu/admin/EditPosts.aspx)
+</code></pre><p>随笔 - 37  文章 - 11  trackbacks - 0</p>
+<h3 id="-">常用链接</h3>
+<ul>
+<li><a href="http://www.blogjava.net/EvanLiu/MyPosts.html" target="_blank">我的随笔</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/MyComments.html" target="_blank">我的评论</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/OtherPosts.html" target="_blank">我的参与</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/RecentComments.html" target="_blank">最新评论</a></li>
+</ul>
+<h3 id="-2-">留言簿(2)</h3>
+<ul>
+<li><a href="http://www.blogjava.net/EvanLiu/Contact.aspx?id=1" target="_blank">给我留言</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/default.aspx?opt=msg" target="_blank">查看公开留言</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/admin/MyMessages.aspx" target="_blank">查看私人留言</a></li>
+</ul>
+<h1 id="-">随笔分类</h1>
+<ul>
+<li><a href="http://www.blogjava.net/EvanLiu/category/28081.html" target="_blank">CSS(3)</a><a href="http://www.blogjava.net/EvanLiu/category/28081.html/rss" title="Subscribe to CSS(3)" target="_blank"><img src="&quot;Subscribe to CSS(3" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/30287.html" target="_blank">DB(3)</a><a href="http://www.blogjava.net/EvanLiu/category/30287.html/rss" title="Subscribe to DB(3)" target="_blank"><img src="&quot;Subscribe to DB(3" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/32587.html" target="_blank">EJB</a><a href="http://www.blogjava.net/EvanLiu/category/32587.html/rss" title="Subscribe to EJB" target="_blank"><img src="&quot;Subscribe to EJB&quot;" alt=""></a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/39491.html" target="_blank">Hibernate</a><a href="http://www.blogjava.net/EvanLiu/category/39491.html/rss" title="Subscribe to Hibernate" target="_blank"><img src="&quot;Subscribe to Hibernate&quot;" alt=""></a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/27635.html" target="_blank">HTML(3)</a><a href="http://www.blogjava.net/EvanLiu/category/27635.html/rss" title="Subscribe to HTML(3)" target="_blank"><img src="&quot;Subscribe to HTML(3" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/39492.html" target="_blank">ibatis</a><a href="http://www.blogjava.net/EvanLiu/category/39492.html/rss" title="Subscribe to ibatis" target="_blank"><img src="&quot;Subscribe to ibatis&quot;" alt=""></a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/27270.html" target="_blank">Java基础(11)</a><a href="http://www.blogjava.net/EvanLiu/category/27270.html/rss" title="Subscribe to Java基础(11)" target="_blank"><img src="&quot;Subscribe to Java基础(11" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/27535.html" target="_blank">JS(3)</a><a href="http://www.blogjava.net/EvanLiu/category/27535.html/rss" title="Subscribe to JS(3)" target="_blank"><img src="&quot;Subscribe to JS(3" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/27568.html" target="_blank">JSP(1)</a><a href="http://www.blogjava.net/EvanLiu/category/27568.html/rss" title="Subscribe to JSP(1)" target="_blank"><img src="&quot;Subscribe to JSP(1" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/26865.html" target="_blank">Spring(1)</a><a href="http://www.blogjava.net/EvanLiu/category/26865.html/rss" title="Subscribe to Spring(1)" target="_blank"><img src="&quot;Subscribe to Spring(1" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/26866.html" target="_blank">Struts(2)</a><a href="http://www.blogjava.net/EvanLiu/category/26866.html/rss" title="Subscribe to Struts(2)" target="_blank"><img src="&quot;Subscribe to Struts(2" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/26867.html" target="_blank">Struts2(1)</a><a href="http://www.blogjava.net/EvanLiu/category/26867.html/rss" title="Subscribe to Struts2(1)" target="_blank"><img src="&quot;Subscribe to Struts2(1" alt="">&quot;)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/32696.html" target="_blank">Swing</a><a href="http://www.blogjava.net/EvanLiu/category/32696.html/rss" title="Subscribe to Swing" target="_blank"><img src="&quot;Subscribe to Swing&quot;" alt=""></a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/category/29139.html" target="_blank">设计模式(7)</a><a href="http://www.blogjava.net/EvanLiu/category/29139.html/rss" title="Subscribe to 设计模式(7)" target="_blank"><img src="&quot;Subscribe to 设计模式(7" alt="">&quot;)</a></li>
+</ul>
+<h1 id="-">随笔档案</h1>
+<ul>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/03.html" target="_blank">2009年3月 (1)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/02.html" target="_blank">2009年2月 (1)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/08.html" target="_blank">2008年8月 (5)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/06.html" target="_blank">2008年6月 (2)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/05.html" target="_blank">2008年5月 (1)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/04.html" target="_blank">2008年4月 (1)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/03.html" target="_blank">2008年3月 (1)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/02.html" target="_blank">2008年2月 (2)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/01.html" target="_blank">2008年1月 (7)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/12.html" target="_blank">2007年12月 (1)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11.html" target="_blank">2007年11月 (4)</a></li>
+</ul>
+<h3 id="-http-www-blogjava-net-evanliu-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/EvanLiu/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
+<ul>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/11/17/188042.html#302714" target="_blank">1. re: Oracle分页SQL[未登录]</a></li>
+<li>@aegean
+select /* from bill_account_book where rownum &gt; 10 这个是明显的错误</li>
+<li>--test</li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/11/16/188042.html#302607" target="_blank">2. re: Oracle分页SQL</a></li>
+<li>我觉得你现在的第一条语句没什么错误啊</li>
+<li>--aegean</li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/08/22/162799.html#292193" target="_blank">3. re: 一个失败了的需求--button模拟file提交数据</a></li>
+<li>grdgvf</li>
+<li>--htf</li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/04/27/188042.html#267749" target="_blank">4. re: Oracle分页SQL</a></li>
+<li>收下了 正在愁人呢 不错 谢啦</li>
+<li>--路人甲</li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/03/04/255272.html#257900" target="_blank">5. re: ThreadLocal学习</a></li>
+<li>ThreadLocal的文章小弟这是第一次看到...
+之前学hibernate的时候, myeclipse自动生成的SessionFactory里也看到这个方法, 呵 学习学习</li>
+<li>--gouflv</li>
+</ul>
+<h3 id="-">阅读排行榜</h3>
+<ul>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/08/31/224453.html" target="_blank">1. java.util.ConcurrentModificationException(5307)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/03/23/188042.html" target="_blank">2. Oracle分页SQL(3697)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html" target="_blank">3. JAVA集合小结(2831)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/06/15/207964.html" target="_blank">4. struts validate之ValidatorActionForm(709)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/06/16/208276.html" target="_blank">5. struts validate之ApplicationResources.properties内容读取乱码(570)</a></li>
+</ul>
+<h3 id="-">评论排行榜</h3>
+<ul>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/03/23/188042.html" target="_blank">1. Oracle分页SQL(6)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/04/08/189602.html" target="_blank">2. String StringBuffer(2)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/24/162799.html" target="_blank">3. 一个失败了的需求--button模拟file提交数据(1)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html" target="_blank">4. JAVA集合小结(1)</a></li>
+<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/02/18/255272.html" target="_blank">5. ThreadLocal学习(1)</a>
+<a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html" target="_blank">JAVA集合小结</a></li>
+</ul>
+<p><img src="" alt="">
+<img src="" alt=""></p>
+<p>下面是我自己画的，关系画得没上面好，但我自己看着清楚些</p>
+<p><img src="" alt="">
+还有一张下载来的：
+<img src="" alt="">
+有序否</p>
+<p>允许元素重复否 Collection</p>
+<p>否</p>
+<p>是 List</p>
+<p>是</p>
+<p>是 Set</p>
+<p>AbstractSet</p>
+<p>否</p>
+<p>否 HashSet TreeSet</p>
+<p>是（用二叉树排序） Map</p>
+<p>AbstractMap</p>
+<p>否</p>
+<p>使用key-value来映射和存储数据，Key必须惟一，value可以重复 HashMap TreeMap</p>
+<p>是（用二叉树排序）</p>
+<p>几个面试常见问题：
+1.Q:ArrayList和Vector有什么区别？HashMap和HashTable有什么区别？
+   A:Vector和HashTable是线程同步的（synchronized）。性能上，ArrayList和HashMap分别比Vector和Hashtable要好。
+2.Q:大致讲解java集合的体系结构
+   A:List、Set、Map是这个集合体系中最主要的三个接口。
+      其中List和Set继承自Collection接口。
+      Set不允许元素重复。HashSet和TreeSet是两个主要的实现类。
+      List有序且允许元素重复。ArrayList、LinkedList和Vector是三个主要的实现类。
+      Map也属于集合系统，但和Collection接口不同。Map是key对value的映射集合，其中key列就是一个集合。key不能重复，但是value可以重复。HashMap、TreeMap和Hashtable是三个主要的实现类。
+      SortedSet和SortedMap接口对元素按指定规则排序，SortedMap是对key列进行排序。
+3.Q：Comparable和Comparator区别
+    A:调用java.util.Collections.sort(List list)方法来进行排序的时候，List内的Object都必须实现了Comparable接口。
+        java.util.Collections.sort(List list，Comparator c)，可以临时声明一个Comparator 来实现排序。
+        Collections.sort(imageList, new Comparator() {
+            public int compare(Object a, Object b) {
+                int orderA = Integer.parseInt( ( (Image) a).getSequence());
+                int orderB = Integer.parseInt( ( (Image) b).getSequence());
+                return orderA - orderB;
+           }
+        });
+        如果需要改变排列顺序
+        改成return orderb - orderA 即可。
+4.Q:简述equals()和hashCode()
+    A:...不知道。下回分解
+public interface
+Collection
+            extends Iterable
+public interface
+List
+            extends Collection
+public abstract class
+AbstractList
+            extends AbstractCollection
+            implements List
+public class
+Vector
+            extends AbstractList
+            implements List,
+                                   RandomAccess,
+                                   java.lang.Cloneable,
+                                   java.io.Serializable
+<strong>基于Array</strong>
+<strong>是“sychronized”的
+public class
+ArrayList
+       </strong>extends <strong>AbstractList
+       </strong>implements <strong>List,
+                          RandomAccess,
+                          Cloneable,
+                          java.io.Serializable
+**</strong>基于Array<strong>
+</strong>ArrayList是非同步的。所以在性能上要比Vector优越一些
+public class
+LinkedList
+        extends AbstractSequentialList
+        implements List,
+                          Queue,
+                          Cloneable,
+                          java.io.Serializable
+不基于Array
+<strong><strong>基于Array的List（Vector，ArrayList）适合查询，而LinkedList（链表）适合添加，删除操作
+</strong></strong>List基本上都是以Array为基础。但是Set则是在HashMap的基础上来实现的，这个就是Set和List的根本区别<strong>
+</strong>public abstract class AbstractSet
+    extends AbstractCollection
+    implements Set
+<strong><strong>public class HashSet
+    extends AbstractSet
+    implements Set, Cloneable, java.io.Serializable
+</strong></strong>HashSet的存储方式是把HashMap中的Key作为Set的对应存储项<strong>
+</strong>public class LinkedHashSet
+    extends HashSet
+    implements Set, Cloneable, java.io.Serializable
+public class TreeSet
+    extends AbstractSet
+    implements SortedSet, Cloneable, java.io.Serializable
+<strong>**它是通过SortedMap来实现的</strong>
+<strong>public interface Map<K,V>
+public abstract class AbstractMap<K,V>
+    implements Map<K,V>
+public class HashMap<K,V>
+    extends AbstractMap<K,V>
+    implements Map<K,V>, Cloneable, Serializable
+public class TreeMap<K,V>
+    extends AbstractMap<K,V>
+    implements SortedMap<K,V>, Cloneable, java.io.Serializable
+</strong>HashMap通过hashcode对其内容进行快速查找，而TreeMap中所有的元素都保持着某种固定的顺序，如果你需要得到一个有序的结果你就应该使用TreeMap（HashMap中元素的排列顺序是不固定的）
+<strong>**</strong>更详细的可以看：
+<a href="http://www.frontfree.net/view/article_695.html" target="_blank"><a href="http://www.frontfree.net/view/article_695.html">http://www.frontfree.net/view/article_695.html</a></a>
+<a href="http://blog.csdn.net/happyzhm5/archive/2007/03/17/1532101.aspx" target="_blank"><a href="http://blog.csdn.net/happyzhm5/archive/2007/03/17/1532101.aspx">http://blog.csdn.net/happyzhm5/archive/2007/03/17/1532101.aspx</a></a>
+<a href="http://blog.csdn.net/Java_apprentice/archive/2007/07/20/1700351.aspx" target="_blank"><a href="http://blog.csdn.net/Java_apprentice/archive/2007/07/20/1700351.aspx">http://blog.csdn.net/Java_apprentice/archive/2007/07/20/1700351.aspx</a></a>
+**</p>
+<h1 id="-java-equals-hashcode-http-www-blogjava-net-evanliu-archive-2007-11-12-tmsoft-lsxy-com-index-php-id-82-load-read-http-www-blogjava-net-evanliu-archive-2007-11-12-tmsoft-lsxy-com-index-php-id-82-load-read-"><strong>**</strong>解析Java对象的equals()和hashCode()的使用: <a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/tmsoft.lsxy.com/index.php?id=82&amp;load=read" target="_blank"><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/tmsoft.lsxy.com/index.php?id=82&amp;load=read">http://www.blogjava.net/EvanLiu/archive/2007/11/12/tmsoft.lsxy.com/index.php?id=82&amp;load=read</a></a>**</h1>
+<hr>
+<p>posted on 2007-11-12 10:06 <a href="http://www.blogjava.net/EvanLiu/" target="_blank">EvanLiu</a> 阅读(2831) <a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html#Post" target="_blank">评论(1)</a>  <a href="http://www.blogjava.net/EvanLiu/admin/EditPosts.aspx?postid=159884" target="_blank">编辑</a>  <a href="http://www.blogjava.net/EvanLiu/AddToFavorite.aspx?id=159884" target="_blank">收藏</a> 所属分类: <a href="http://www.blogjava.net/EvanLiu/category/27270.html" target="_blank">Java基础</a><img src="" alt=""></p>
+<p><a href=""></a>
+<strong>FeedBack:</strong></p>
+<p><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html#188079" title="permalink: re: JAVA集合小结" target="_blank">/#</a> <a href=""></a>re: JAVA集合小结<a href=""></a> 2008-03-23 20:49 <a href="http://www.blogjava.net/zhukuanglong/" target="_blank">矿矿</a></p>
+<p>不 大 懂
+我是新手！！  <a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html#post" target="_blank">回复</a>  <a href="http://www.blogjava.net/comment?author=%e7%9f%bf%e7%9f%bf" title="查看该作者发表过的评论" target="_blank">更多评论</a>
+<a href=""></a>  <a href=""></a>
+Copyright ©2010 EvanLiu Powered by: <a href="http://www.cnblogs.com/" target="_blank">博客园</a> 模板提供：<a href="http://blog.hjenglish.com/" target="_blank">沪江博客</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -3210,248 +2315,10 @@ return true;
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结/">JAVA集合小结</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-">JAVA集合小结</h1>
-<pre><code>[首页](http://www.blogjava.net/EvanLiu/)    [新随笔](http://www.blogjava.net/EvanLiu/admin/EditPosts.aspx?opt=1)    [联系](http://www.blogjava.net/EvanLiu/contact.aspx?id=1)    [聚合](http://www.blogjava.net/EvanLiu/rss)[![]()](http://www.blogjava.net/EvanLiu/rss)    [管理](http://www.blogjava.net/EvanLiu/admin/EditPosts.aspx)
-</code></pre><p>随笔 - 37  文章 - 11  trackbacks - 0</p>
-<h3 id="-">常用链接</h3>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/MyPosts.html" target="_blank">我的随笔</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/MyComments.html" target="_blank">我的评论</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/OtherPosts.html" target="_blank">我的参与</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/RecentComments.html" target="_blank">最新评论</a></li>
-</ul>
-<h3 id="-2-">留言簿(2)</h3>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/Contact.aspx?id=1" target="_blank">给我留言</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/default.aspx?opt=msg" target="_blank">查看公开留言</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/admin/MyMessages.aspx" target="_blank">查看私人留言</a></li>
-</ul>
-<h1 id="-">随笔分类</h1>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/category/28081.html" target="_blank">CSS(3)</a><a href="http://www.blogjava.net/EvanLiu/category/28081.html/rss" title="Subscribe to CSS(3)" target="_blank"><img src="&quot;Subscribe to CSS(3" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/30287.html" target="_blank">DB(3)</a><a href="http://www.blogjava.net/EvanLiu/category/30287.html/rss" title="Subscribe to DB(3)" target="_blank"><img src="&quot;Subscribe to DB(3" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/32587.html" target="_blank">EJB</a><a href="http://www.blogjava.net/EvanLiu/category/32587.html/rss" title="Subscribe to EJB" target="_blank"><img src="&quot;Subscribe to EJB&quot;" alt=""></a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/39491.html" target="_blank">Hibernate</a><a href="http://www.blogjava.net/EvanLiu/category/39491.html/rss" title="Subscribe to Hibernate" target="_blank"><img src="&quot;Subscribe to Hibernate&quot;" alt=""></a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/27635.html" target="_blank">HTML(3)</a><a href="http://www.blogjava.net/EvanLiu/category/27635.html/rss" title="Subscribe to HTML(3)" target="_blank"><img src="&quot;Subscribe to HTML(3" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/39492.html" target="_blank">ibatis</a><a href="http://www.blogjava.net/EvanLiu/category/39492.html/rss" title="Subscribe to ibatis" target="_blank"><img src="&quot;Subscribe to ibatis&quot;" alt=""></a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/27270.html" target="_blank">Java基础(11)</a><a href="http://www.blogjava.net/EvanLiu/category/27270.html/rss" title="Subscribe to Java基础(11)" target="_blank"><img src="&quot;Subscribe to Java基础(11" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/27535.html" target="_blank">JS(3)</a><a href="http://www.blogjava.net/EvanLiu/category/27535.html/rss" title="Subscribe to JS(3)" target="_blank"><img src="&quot;Subscribe to JS(3" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/27568.html" target="_blank">JSP(1)</a><a href="http://www.blogjava.net/EvanLiu/category/27568.html/rss" title="Subscribe to JSP(1)" target="_blank"><img src="&quot;Subscribe to JSP(1" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/26865.html" target="_blank">Spring(1)</a><a href="http://www.blogjava.net/EvanLiu/category/26865.html/rss" title="Subscribe to Spring(1)" target="_blank"><img src="&quot;Subscribe to Spring(1" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/26866.html" target="_blank">Struts(2)</a><a href="http://www.blogjava.net/EvanLiu/category/26866.html/rss" title="Subscribe to Struts(2)" target="_blank"><img src="&quot;Subscribe to Struts(2" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/26867.html" target="_blank">Struts2(1)</a><a href="http://www.blogjava.net/EvanLiu/category/26867.html/rss" title="Subscribe to Struts2(1)" target="_blank"><img src="&quot;Subscribe to Struts2(1" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/32696.html" target="_blank">Swing</a><a href="http://www.blogjava.net/EvanLiu/category/32696.html/rss" title="Subscribe to Swing" target="_blank"><img src="&quot;Subscribe to Swing&quot;" alt=""></a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/category/29139.html" target="_blank">设计模式(7)</a><a href="http://www.blogjava.net/EvanLiu/category/29139.html/rss" title="Subscribe to 设计模式(7)" target="_blank"><img src="&quot;Subscribe to 设计模式(7" alt="">&quot;)</a></li>
-</ul>
-<h1 id="-">随笔档案</h1>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/03.html" target="_blank">2009年3月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/02.html" target="_blank">2009年2月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/08.html" target="_blank">2008年8月 (5)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/06.html" target="_blank">2008年6月 (2)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/05.html" target="_blank">2008年5月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/04.html" target="_blank">2008年4月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/03.html" target="_blank">2008年3月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/02.html" target="_blank">2008年2月 (2)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/01.html" target="_blank">2008年1月 (7)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/12.html" target="_blank">2007年12月 (1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11.html" target="_blank">2007年11月 (4)</a></li>
-</ul>
-<h3 id="-http-www-blogjava-net-evanliu-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/EvanLiu/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/11/17/188042.html#302714" target="_blank">1. re: Oracle分页SQL[未登录]</a></li>
-<li>@aegean
-select /* from bill_account_book where rownum &gt; 10 这个是明显的错误</li>
-<li>--test</li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/11/16/188042.html#302607" target="_blank">2. re: Oracle分页SQL</a></li>
-<li>我觉得你现在的第一条语句没什么错误啊</li>
-<li>--aegean</li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/08/22/162799.html#292193" target="_blank">3. re: 一个失败了的需求--button模拟file提交数据</a></li>
-<li>grdgvf</li>
-<li>--htf</li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/04/27/188042.html#267749" target="_blank">4. re: Oracle分页SQL</a></li>
-<li>收下了 正在愁人呢 不错 谢啦</li>
-<li>--路人甲</li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/03/04/255272.html#257900" target="_blank">5. re: ThreadLocal学习</a></li>
-<li>ThreadLocal的文章小弟这是第一次看到...
-之前学hibernate的时候, myeclipse自动生成的SessionFactory里也看到这个方法, 呵 学习学习</li>
-<li>--gouflv</li>
-</ul>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/08/31/224453.html" target="_blank">1. java.util.ConcurrentModificationException(5307)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/03/23/188042.html" target="_blank">2. Oracle分页SQL(3697)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html" target="_blank">3. JAVA集合小结(2831)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/06/15/207964.html" target="_blank">4. struts validate之ValidatorActionForm(709)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/06/16/208276.html" target="_blank">5. struts validate之ApplicationResources.properties内容读取乱码(570)</a></li>
-</ul>
-<h3 id="-">评论排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/03/23/188042.html" target="_blank">1. Oracle分页SQL(6)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2008/04/08/189602.html" target="_blank">2. String StringBuffer(2)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/24/162799.html" target="_blank">3. 一个失败了的需求--button模拟file提交数据(1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html" target="_blank">4. JAVA集合小结(1)</a></li>
-<li><a href="http://www.blogjava.net/EvanLiu/archive/2009/02/18/255272.html" target="_blank">5. ThreadLocal学习(1)</a>
-<a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html" target="_blank">JAVA集合小结</a></li>
-</ul>
-<p><img src="" alt="">
-<img src="" alt=""></p>
-<p>下面是我自己画的，关系画得没上面好，但我自己看着清楚些</p>
-<p><img src="" alt="">
-还有一张下载来的：
-<img src="" alt="">
-有序否</p>
-<p>允许元素重复否 Collection</p>
-<p>否</p>
-<p>是 List</p>
-<p>是</p>
-<p>是 Set</p>
-<p>AbstractSet</p>
-<p>否</p>
-<p>否 HashSet TreeSet</p>
-<p>是（用二叉树排序） Map</p>
-<p>AbstractMap</p>
-<p>否</p>
-<p>使用key-value来映射和存储数据，Key必须惟一，value可以重复 HashMap TreeMap</p>
-<p>是（用二叉树排序）</p>
-<p>几个面试常见问题：
-1.Q:ArrayList和Vector有什么区别？HashMap和HashTable有什么区别？
-   A:Vector和HashTable是线程同步的（synchronized）。性能上，ArrayList和HashMap分别比Vector和Hashtable要好。
-2.Q:大致讲解java集合的体系结构
-   A:List、Set、Map是这个集合体系中最主要的三个接口。
-      其中List和Set继承自Collection接口。
-      Set不允许元素重复。HashSet和TreeSet是两个主要的实现类。
-      List有序且允许元素重复。ArrayList、LinkedList和Vector是三个主要的实现类。
-      Map也属于集合系统，但和Collection接口不同。Map是key对value的映射集合，其中key列就是一个集合。key不能重复，但是value可以重复。HashMap、TreeMap和Hashtable是三个主要的实现类。
-      SortedSet和SortedMap接口对元素按指定规则排序，SortedMap是对key列进行排序。
-3.Q：Comparable和Comparator区别
-    A:调用java.util.Collections.sort(List list)方法来进行排序的时候，List内的Object都必须实现了Comparable接口。
-        java.util.Collections.sort(List list，Comparator c)，可以临时声明一个Comparator 来实现排序。
-        Collections.sort(imageList, new Comparator() {
-            public int compare(Object a, Object b) {
-                int orderA = Integer.parseInt( ( (Image) a).getSequence());
-                int orderB = Integer.parseInt( ( (Image) b).getSequence());
-                return orderA - orderB;
-           }
-        });
-        如果需要改变排列顺序
-        改成return orderb - orderA 即可。
-4.Q:简述equals()和hashCode()
-    A:...不知道。下回分解
-public interface
-Collection
-            extends Iterable
-public interface
-List
-            extends Collection
-public abstract class
-AbstractList
-            extends AbstractCollection
-            implements List
-public class
-Vector
-            extends AbstractList
-            implements List,
-                                   RandomAccess,
-                                   java.lang.Cloneable,
-                                   java.io.Serializable
-<strong>基于Array</strong>
-<strong>是“sychronized”的
-public class
-ArrayList
-       </strong>extends <strong>AbstractList
-       </strong>implements <strong>List,
-                          RandomAccess,
-                          Cloneable,
-                          java.io.Serializable
-**</strong>基于Array<strong>
-</strong>ArrayList是非同步的。所以在性能上要比Vector优越一些
-public class
-LinkedList
-        extends AbstractSequentialList
-        implements List,
-                          Queue,
-                          Cloneable,
-                          java.io.Serializable
-不基于Array
-<strong><strong>基于Array的List（Vector，ArrayList）适合查询，而LinkedList（链表）适合添加，删除操作
-</strong></strong>List基本上都是以Array为基础。但是Set则是在HashMap的基础上来实现的，这个就是Set和List的根本区别<strong>
-</strong>public abstract class AbstractSet
-    extends AbstractCollection
-    implements Set
-<strong><strong>public class HashSet
-    extends AbstractSet
-    implements Set, Cloneable, java.io.Serializable
-</strong></strong>HashSet的存储方式是把HashMap中的Key作为Set的对应存储项<strong>
-</strong>public class LinkedHashSet
-    extends HashSet
-    implements Set, Cloneable, java.io.Serializable
-public class TreeSet
-    extends AbstractSet
-    implements SortedSet, Cloneable, java.io.Serializable
-<strong>**它是通过SortedMap来实现的</strong>
-<strong>public interface Map<K,V>
-public abstract class AbstractMap<K,V>
-    implements Map<K,V>
-public class HashMap<K,V>
-    extends AbstractMap<K,V>
-    implements Map<K,V>, Cloneable, Serializable
-public class TreeMap<K,V>
-    extends AbstractMap<K,V>
-    implements SortedMap<K,V>, Cloneable, java.io.Serializable
-</strong>HashMap通过hashcode对其内容进行快速查找，而TreeMap中所有的元素都保持着某种固定的顺序，如果你需要得到一个有序的结果你就应该使用TreeMap（HashMap中元素的排列顺序是不固定的）
-<strong>**</strong>更详细的可以看：
-<a href="http://www.frontfree.net/view/article_695.html" target="_blank"><a href="http://www.frontfree.net/view/article_695.html">http://www.frontfree.net/view/article_695.html</a></a>
-<a href="http://blog.csdn.net/happyzhm5/archive/2007/03/17/1532101.aspx" target="_blank"><a href="http://blog.csdn.net/happyzhm5/archive/2007/03/17/1532101.aspx">http://blog.csdn.net/happyzhm5/archive/2007/03/17/1532101.aspx</a></a>
-<a href="http://blog.csdn.net/Java_apprentice/archive/2007/07/20/1700351.aspx" target="_blank"><a href="http://blog.csdn.net/Java_apprentice/archive/2007/07/20/1700351.aspx">http://blog.csdn.net/Java_apprentice/archive/2007/07/20/1700351.aspx</a></a>
-**</p>
-<h1 id="-java-equals-hashcode-http-www-blogjava-net-evanliu-archive-2007-11-12-tmsoft-lsxy-com-index-php-id-82-load-read-http-www-blogjava-net-evanliu-archive-2007-11-12-tmsoft-lsxy-com-index-php-id-82-load-read-"><strong>**</strong>解析Java对象的equals()和hashCode()的使用: <a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/tmsoft.lsxy.com/index.php?id=82&amp;load=read" target="_blank"><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/tmsoft.lsxy.com/index.php?id=82&amp;load=read">http://www.blogjava.net/EvanLiu/archive/2007/11/12/tmsoft.lsxy.com/index.php?id=82&amp;load=read</a></a>**</h1>
-<hr>
-<p>posted on 2007-11-12 10:06 <a href="http://www.blogjava.net/EvanLiu/" target="_blank">EvanLiu</a> 阅读(2831) <a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html#Post" target="_blank">评论(1)</a>  <a href="http://www.blogjava.net/EvanLiu/admin/EditPosts.aspx?postid=159884" target="_blank">编辑</a>  <a href="http://www.blogjava.net/EvanLiu/AddToFavorite.aspx?id=159884" target="_blank">收藏</a> 所属分类: <a href="http://www.blogjava.net/EvanLiu/category/27270.html" target="_blank">Java基础</a><img src="" alt=""></p>
-<p><a href=""></a>
-<strong>FeedBack:</strong></p>
-<p><a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html#188079" title="permalink: re: JAVA集合小结" target="_blank">/#</a> <a href=""></a>re: JAVA集合小结<a href=""></a> 2008-03-23 20:49 <a href="http://www.blogjava.net/zhukuanglong/" target="_blank">矿矿</a></p>
-<p>不 大 懂
-我是新手！！  <a href="http://www.blogjava.net/EvanLiu/archive/2007/11/12/159884.html#post" target="_blank">回复</a>  <a href="http://www.blogjava.net/comment?author=%e7%9f%bf%e7%9f%bf" title="查看该作者发表过的评论" target="_blank">更多评论</a>
-<a href=""></a>  <a href=""></a>
-Copyright ©2010 EvanLiu Powered by: <a href="http://www.cnblogs.com/" target="_blank">博客园</a> 模板提供：<a href="http://blog.hjenglish.com/" target="_blank">沪江博客</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--JAVA集合小结" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
 
 
 <ul id="pagination" class="pagination pagination-lg">
-  <li><a class="extend prev" href="/page/64/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/62/">62</a></li><li><a class="page-number" href="/page/63/">63</a></li><li><a class="page-number" href="/page/64/">64</a></li><li class="active"><li><span class="page-number current">65</span></li><li><a class="page-number" href="/page/66/">66</a></li><li><a class="page-number" href="/page/67/">67</a></li><li><a class="page-number" href="/page/68/">68</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="page-number" href="/page/164/">164</a></li><li><a class="extend next" href="/page/66/">&raquo;</a></li>
+  <li><a class="extend prev" href="/page/64/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/62/">62</a></li><li><a class="page-number" href="/page/63/">63</a></li><li><a class="page-number" href="/page/64/">64</a></li><li class="active"><li><span class="page-number current">65</span></li><li><a class="page-number" href="/page/66/">66</a></li><li><a class="page-number" href="/page/67/">67</a></li><li><a class="page-number" href="/page/68/">68</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/162/">162</a></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="extend next" href="/page/66/">&raquo;</a></li>
   <div class="clearfix"></div>
 </ul></div><!--wapper-->
        </div><!-- ID main-col END -->
@@ -3518,7 +2385,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-29 22:06:56</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-30 14:30:15</em></span></div>
 </div>
 <div class="clearfix"></div>
 

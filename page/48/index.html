@@ -110,6 +110,713 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM内存管理：深入Java内存区域与OOM-高级语言虚拟机/">JVM内存管理：深入Java内存区域与OOM </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM内存管理：深入Java内存区域与OOM-高级语言虚拟机/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="jvm-java-oom-">JVM内存管理：深入Java内存区域与OOM - 高级语言虚拟机</h1>
+<p><a href="http://hllvm.group.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://hllvm.group.iteye.com/login" target="_blank">登录</a> <a href="http://hllvm.group.iteye.com/signup" target="_blank">注册</a></p>
+<p><a href="http://www.iteye.com/" target="_blank"><img src="&quot;ITeye-最棒的软件开发交流社区&quot;" alt="ITeye3.0"></a></p>
+<p><a href=""></a></p>
+<p><a href="http://www.iteye.com/groups" target="_blank">群组首页</a> → <a href="http://hllvm.group.iteye.com/groups/category/language" target="_blank">编程语言</a> → <a href="http://hllvm.group.iteye.com/" target="_blank">高级语言虚拟机</a> → <a href="http://hllvm.group.iteye.com/group/wiki" target="_blank">知识库</a> → <a href="http://hllvm.group.iteye.com/group/wiki?category_id=316" target="_blank">JVM基础</a> → <a href="">JVM内存管理：深入Java内存区域与OOM</a>
+原创作者: <a href="http://www.javaeye.com/topic/802573" target="_blank">IcyFenix</a>   阅读:10325次   评论:5条   更新时间:2011-05-26    </p>
+<p>Java与C++之间有一堵由内存动态分配和垃圾收集技术所围成的高墙，墙外面的人想进去，墙里面的人却想出来。</p>
+<h2 id="-">概述：</h2>
+<p>对于从事C、C++程序开发的开发人员来说，在内存管理领域，他们即是拥有最高权力的皇帝又是执行最基础工作的劳动人民——拥有每一个对象的“所有权”，又担负着每一个对象生命开始到终结的维护责任。</p>
+<p>对于Java程序员来说，不需要在为每一个new操作去写配对的delete/free，不容易出现内容泄漏和内存溢出错误，看起来由JVM管理内存一切都很美好。不过，也正是因为Java程序员把内存控制的权力交给了JVM，一旦出现泄漏和溢出，如果不了解JVM是怎样使用内存的，那排查错误将会是一件非常困难的事情。</p>
+<h2 id="vm-">VM运行时数据区域</h2>
+<p>JVM执行Java程序的过程中，会使用到各种数据区域，这些区域有各自的用途、创建和销毁时间。根据《Java虚拟机规范（第二版）》（下文称VM Spec）的规定，JVM包括下列几个运行时数据区域：</p>
+<p>1.程序计数器（Program Counter Register）：</p>
+<p>每一个Java线程都有一个程序计数器来用于保存程序执行到当前方法的哪一个指令，对于非Native方法，这个区域记录的是正在执行的VM原语的地址，如果正在执行的是Natvie方法，这个区域则为空（undefined）。此内存区域是唯一一个在VM Spec中没有规定任何OutOfMemoryError情况的区域。</p>
+<p>2.Java虚拟机栈（Java Virtual Machine Stacks）</p>
+<p>与程序计数器一样，VM栈的生命周期也是与线程相同。VM栈描述的是Java方法调用的内存模型：每个方法被执行的时候，都会同时创建一个帧（Frame）用于存储本地变量表、操作栈、动态链接、方法出入口等信息。每一个方法的调用至完成，就意味着一个帧在VM栈中的入栈至出栈的过程。在后文中，我们将着重讨论VM栈中本地变量表部分。</p>
+<p>经常有人把Java内存简单的区分为堆内存（Heap）和栈内存（Stack），实际中的区域远比这种观点复杂，这样划分只是说明与变量定义密切相关的内存区域是这两块。其中所指的“堆”后面会专门描述，而所指的“栈”就是VM栈中各个帧的本地变量表部分。本地变量表存放了编译期可知的各种标量类型（boolean、byte、char、short、int、float、long、double）、对象引用（不是对象本身，仅仅是一个引用指针）、方法返回地址等。其中long和double会占用2个本地变量空间（32bit），其余占用1个。本地变量表在进入方法时进行分配，当进入一个方法时，这个方法需要在帧中分配多大的本地变量是一件完全确定的事情，在方法运行期间不改变本地变量表的大小。</p>
+<p>在VM Spec中对这个区域规定了2中异常状况：如果线程请求的栈深度大于虚拟机所允许的深度，将抛出StackOverflowError异常；如果VM栈可以动态扩展（VM Spec中允许固定长度的VM栈），当扩展时无法申请到足够内存则抛出OutOfMemoryError异常。</p>
+<p>3.本地方法栈（Native Method Stacks）</p>
+<p>本地方法栈与VM栈所发挥作用是类似的，只不过VM栈为虚拟机运行VM原语服务，而本地方法栈是为虚拟机使用到的Native方法服务。它的实现的语言、方式与结构并没有强制规定，甚至有的虚拟机（譬如Sun Hotspot虚拟机）直接就把本地方法栈和VM栈合二为一。和VM栈一样，这个区域也会抛出StackOverflowError和OutOfMemoryError异常。</p>
+<p>4.Java堆（Java Heap）</p>
+<p>对于绝大多数应用来说，Java堆是虚拟机管理最大的一块内存。Java堆是被所有线程共享的，在虚拟机启动时创建。Java堆的唯一目的就是存放对象实例，绝大部分的对象实例都在这里分配。这一点在VM Spec中的描述是：所有的实例以及数组都在堆上分配（原文：The heap is the runtime data area from which memory for all class instances and arrays is allocated），但是在逃逸分析和标量替换优化技术出现后，VM Spec的描述就显得并不那么准确了。</p>
+<p>Java堆内还有更细致的划分：新生代、老年代，再细致一点的：eden、from survivor、to survivor，甚至更细粒度的本地线程分配缓冲（TLAB）等，无论对Java堆如何划分，目的都是为了更好的回收内存，或者更快的分配内存，在本章中我们仅仅针对内存区域的作用进行讨论，Java堆中的上述各个区域的细节，可参见本文第二章《JVM内存管理：深入垃圾收集器与内存分配策略》。</p>
+<p>根据VM Spec的要求，Java堆可以处于物理上不连续的内存空间，它逻辑上是连续的即可，就像我们的磁盘空间一样。实现时可以选择实现成固定大小的，也可以是可扩展的，不过当前所有商业的虚拟机都是按照可扩展来实现的（通过-Xmx和-Xms控制）。如果在堆中无法分配内存，并且堆也无法再扩展时，将会抛出OutOfMemoryError异常。</p>
+<p>5.方法区（Method Area）</p>
+<p>叫“方法区”可能认识它的人还不太多，如果叫永久代（Permanent Generation）它的粉丝也许就多了。它还有个别名叫做Non-Heap（非堆），但是VM Spec上则描述方法区为堆的一个逻辑部分（原文：the method area is logically part of the heap），这个名字的问题还真容易令人产生误解，我们在这里就不纠结了。</p>
+<p>方法区中存放了每个Class的结构信息，包括常量池、字段描述、方法描述等等。VM Space描述中对这个区域的限制非常宽松，除了和Java堆一样不需要连续的内存，也可以选择固定大小或者可扩展外，甚至可以选择不实现垃圾收集。相对来说，垃圾收集行为在这个区域是相对比较少发生的，但并不是某些描述那样永久代不会发生GC（至少对当前主流的商业JVM实现来说是如此），这里的GC主要是对常量池的回收和对类的卸载，虽然回收的“成绩”一般也比较差强人意，尤其是类卸载，条件相当苛刻。</p>
+<p>6.运行时常量池（Runtime Constant Pool）</p>
+<p>Class文件中除了有类的版本、字段、方法、接口等描述等信息外，还有一项信息是常量表(constant_pool table)，用于存放编译期已可知的常量，这部分内容将在类加载后进入方法区（永久代）存放。但是Java语言并不要求常量一定只有编译期预置入Class的常量表的内容才能进入方法区常量池，运行期间也可将新内容放入常量池（最典型的String.intern()方法）。</p>
+<p>运行时常量池是方法区的一部分，自然受到方法区内存的限制，当常量池无法在申请到内存时会抛出OutOfMemoryError异常。</p>
+<p>7.本机直接内存（Direct Memory）</p>
+<p>直接内存并不是虚拟机运行时数据区的一部分，它根本就是本机内存而不是VM直接管理的区域。但是这部分内存也会导致OutOfMemoryError异常出现，因此我们放到这里一起描述。</p>
+<p>在JDK1.4中新加入了NIO类，引入一种基于渠道与缓冲区的I/O方式，它可以通过本机Native函数库直接分配本机内存，然后通过一个存储在Java堆里面的DirectByteBuffer对象作为这块内存的引用进行操作。这样能在一些场景中显著提高性能，因为避免了在Java对和本机堆中来回复制数据。</p>
+<p>显然本机直接内存的分配不会受到Java堆大小的限制，但是即然是内存那肯定还是要受到本机物理内存（包括SWAP区或者Windows虚拟内存）的限制的，一般服务器管理员配置JVM参数时，会根据实际内存设置-Xmx等参数信息，但经常忽略掉直接内存，使得各个内存区域总和大于物理内存限制（包括物理的和操作系统级的限制），而导致动态扩展时出现OutOfMemoryError异常。</p>
+<h2 id="-outofmemoryerror">实战OutOfMemoryError</h2>
+<p>上述区域中，除了程序计数器，其他在VM Spec中都描述了产生OutOfMemoryError（下称OOM）的情形，那我们就实战模拟一下，通过几段简单的代码，令对应的区域产生OOM异常以便加深认识，同时初步介绍一些与内存相关的虚拟机参数。下文的代码都是基于Sun Hotspot虚拟机1.6版的实现，对于不同公司的不同版本的虚拟机，参数与程序运行结果可能结果会有所差别。</p>
+<p><strong>Java**</strong>堆**</p>
+<p>Java堆存放的是对象实例，因此只要不断建立对象，并且保证GC Roots到对象之间有可达路径即可产生OOM异常。测试中限制Java堆大小为20M，不可扩展，通过参数-XX:+HeapDumpOnOutOfMemoryError让虚拟机在出现OOM异常的时候Dump出内存映像以便分析。（关于Dump映像文件分析方面的内容，可参见本文第三章《JVM内存管理：深入JVM内存异常分析与调优》。）</p>
+<p>清单1：Java堆OOM测试
+//<em>/</em></p>
+<p> /* VM Args：-Xms20m -Xmx20m -XX:+HeapDumpOnOutOfMemoryError</p>
+<p> /* @author zzm</p>
+<p> /*/</p>
+<p>public class HeapOOM {</p>
+<pre><code>   static class OOMObject {
+
+   }
+
+
+
+   public static void main(String[] args) {
+
+          List&lt;OOMObject&gt; list = new ArrayList&lt;OOMObject&gt;();
+
+
+
+          while (true) {
+
+                 list.add(new OOMObject());
+
+          }
+
+   }
+</code></pre><p>}</p>
+<p>运行结果：
+java.lang.OutOfMemoryError: Java heap space</p>
+<p>Dumping heap to java_pid3404.hprof ...</p>
+<p>Heap dump file created [22045981 bytes in 0.663 secs]</p>
+<p><strong>VM**</strong>栈和本地方法栈**</p>
+<p>Hotspot虚拟机并不区分VM栈和本地方法栈，因此-Xoss参数实际上是无效的，栈容量只由-Xss参数设定。关于VM栈和本地方法栈在VM Spec描述了两种异常：StackOverflowError与OutOfMemoryError，当栈空间无法继续分配分配时，到底是内存太小还是栈太大其实某种意义上是对同一件事情的两种描述而已，在笔者的实验中，对于单线程应用尝试下面3种方法均无法让虚拟机产生OOM，全部尝试结果都是获得SOF异常。</p>
+<p>1.使用-Xss参数削减栈内存容量。结果：抛出SOF异常时的堆栈深度相应缩小。</p>
+<p>2.定义大量的本地变量，增大此方法对应帧的长度。结果：抛出SOF异常时的堆栈深度相应缩小。</p>
+<p>3.创建几个定义很多本地变量的复杂对象，打开逃逸分析和标量替换选项，使得JIT编译器允许对象拆分后在栈中分配。结果：实际效果同第二点。</p>
+<p>清单2：VM栈和本地方法栈OOM测试（仅作为第1点测试程序）
+//<em>/</em></p>
+<p> /* VM Args：-Xss128k</p>
+<p> /* @author zzm</p>
+<p> /*/</p>
+<p>public class JavaVMStackSOF {</p>
+<pre><code>   private int stackLength = 1;
+
+
+
+   public void stackLeak() {
+
+          stackLength++;
+
+          stackLeak();
+
+   }
+
+
+
+   public static void main(String[] args) throws Throwable {
+
+          JavaVMStackSOF oom = new JavaVMStackSOF();
+
+          try {
+
+                 oom.stackLeak();
+
+          } catch (Throwable e) {
+
+                 System.out.println(&quot;stack length:&quot; + oom.stackLength);
+
+                 throw e;
+
+          }
+
+   }
+</code></pre><p>}</p>
+<p>运行结果：
+stack length:2402</p>
+<p>Exception in thread &quot;main&quot; java.lang.StackOverflowError</p>
+<pre><code>    at org.fenixsoft.oom.JavaVMStackSOF.stackLeak(JavaVMStackSOF.java:20)
+
+    at org.fenixsoft.oom.JavaVMStackSOF.stackLeak(JavaVMStackSOF.java:21)
+
+    at org.fenixsoft.oom.JavaVMStackSOF.stackLeak(JavaVMStackSOF.java:21)
+</code></pre><p>如果在多线程环境下，不断建立线程倒是可以产生OOM异常，但是基本上这个异常和VM栈空间够不够关系没有直接关系，甚至是给每个线程的VM栈分配的内存越多反而越容易产生这个OOM异常。</p>
+<p>原因其实很好理解，操作系统分配给每个进程的内存是有限制的，譬如32位Windows限制为2G，Java堆和方法区的大小JVM有参数可以限制最大值，那剩余的内存为2G（操作系统限制）-Xmx（最大堆）-MaxPermSize（最大方法区），程序计数器消耗内存很小，可以忽略掉，那虚拟机进程本身耗费的内存不计算的话，剩下的内存就供每一个线程的VM栈和本地方法栈瓜分了，那自然每个线程中VM栈分配内存越多，就越容易把剩下的内存耗尽。</p>
+<p>清单3：创建线程导致OOM异常
+//<em>/</em></p>
+<p> /* VM Args：-Xss2M （这时候不妨设大些）</p>
+<p> /* @author zzm</p>
+<p> /*/</p>
+<p>public class JavaVMStackOOM {</p>
+<pre><code>   private void dontStop() {
+
+          while (true) {
+
+          }
+
+   }
+
+
+
+   public void stackLeakByThread() {
+
+          while (true) {
+
+                 Thread thread = new Thread(new Runnable() {
+
+                        @Override
+
+                        public void run() {
+
+                               dontStop();
+
+                        }
+
+                 });
+
+                 thread.start();
+
+          }
+
+   }
+
+
+
+   public static void main(String[] args) throws Throwable {
+
+          JavaVMStackOOM oom = new JavaVMStackOOM();
+
+          oom.stackLeakByThread();
+
+   }
+</code></pre><p>}</p>
+<p>特别提示一下，如果读者要运行上面这段代码，记得要存盘当前工作，上述代码执行时有很大令操作系统卡死的风险。</p>
+<p>运行结果：
+Exception in thread &quot;main&quot; java.lang.OutOfMemoryError: unable to create new native thread</p>
+<p><strong>运行时常量池</strong></p>
+<hr>
+<p>要在常量池里添加内容，最简单的就是使用String.intern()这个Native方法。由于常量池分配在方法区内，我们只需要通过-XX:PermSize和-XX:MaxPermSize限制方法区大小即可限制常量池容量。实现代码如下：</p>
+<p>清单4：运行时常量池导致的OOM异常
+//<em>/</em></p>
+<p> /* VM Args：-XX:PermSize=10M -XX:MaxPermSize=10M</p>
+<p> /* @author zzm</p>
+<p> /*/</p>
+<p>public class RuntimeConstantPoolOOM {</p>
+<pre><code>   public static void main(String[] args) {
+
+          // 使用List保持着常量池引用，压制Full GC回收常量池行为
+
+          List&lt;String&gt; list = new ArrayList&lt;String&gt;();
+
+          // 10M的PermSize在integer范围内足够产生OOM了
+
+          int i = 0;
+
+          while (true) {
+
+                 list.add(String.valueOf(i++).intern());
+
+          }
+
+   }
+</code></pre><p>}</p>
+<p>运行结果：
+Exception in thread &quot;main&quot; java.lang.OutOfMemoryError: PermGen space</p>
+<pre><code>   at java.lang.String.intern(Native Method)
+
+   at org.fenixsoft.oom.RuntimeConstantPoolOOM.main(RuntimeConstantPoolOOM.java:18)
+</code></pre><p><strong>方法区</strong></p>
+<p>上文讲过，方法区用于存放Class相关信息，所以这个区域的测试我们借助CGLib直接操作字节码动态生成大量的Class，值得注意的是，这里我们这个例子中模拟的场景其实经常会在实际应用中出现：当前很多主流框架，如Spring、Hibernate对类进行增强时，都会使用到CGLib这类字节码技术，当增强的类越多，就需要越大的方法区用于保证动态生成的Class可以加载入内存。</p>
+<p>清单5：借助CGLib使得方法区出现OOM异常
+//<em>/</em></p>
+<p> /* VM Args： -XX:PermSize=10M -XX:MaxPermSize=10M</p>
+<p> /* @author zzm</p>
+<p> /*/</p>
+<p>public class JavaMethodAreaOOM {</p>
+<pre><code>   public static void main(String[] args) {
+
+          while (true) {
+
+                 Enhancer enhancer = new Enhancer();
+
+                 enhancer.setSuperclass(OOMObject.class);
+
+                 enhancer.setUseCache(false);
+
+                 enhancer.setCallback(new MethodInterceptor() {
+
+                        public Object intercept(Object obj, Method method, Object[] args, MethodProxy proxy) throws Throwable {
+
+                               return proxy.invokeSuper(obj, args);
+
+                        }
+
+                 });
+
+                 enhancer.create();
+
+          }
+
+   }
+
+
+
+   static class OOMObject {
+
+
+
+   }
+</code></pre><p>}</p>
+<p>运行结果：
+Caused by: java.lang.OutOfMemoryError: PermGen space</p>
+<pre><code>   at java.lang.ClassLoader.defineClass1(Native Method)
+
+   at java.lang.ClassLoader.defineClassCond(ClassLoader.java:632)
+
+   at java.lang.ClassLoader.defineClass(ClassLoader.java:616)
+
+   ... 8 more
+</code></pre><p><strong>本机直接内存</strong></p>
+<p>DirectMemory容量可通过-XX:MaxDirectMemorySize指定，不指定的话默认与Java堆（-Xmx指定）一样，下文代码越过了DirectByteBuffer，直接通过反射获取Unsafe实例进行内存分配（Unsafe类的getUnsafe()方法限制了只有引导类加载器才会返回实例，也就是基本上只有rt.jar里面的类的才能使用），因为DirectByteBuffer也会抛OOM异常，但抛出异常时实际上并没有真正向操作系统申请分配内存，而是通过计算得知无法分配既会抛出，真正申请分配的方法是unsafe.allocateMemory()。</p>
+<p>//<em>/</em></p>
+<p> /* VM Args：-Xmx20M -XX:MaxDirectMemorySize=10M</p>
+<p> /* @author zzm</p>
+<p> /*/</p>
+<p>public class DirectMemoryOOM {</p>
+<pre><code>   private static final int _1MB = 1024 /* 1024;
+
+
+
+   public static void main(String[] args) throws Exception {
+
+          Field unsafeField = Unsafe.class.getDeclaredFields()[0];
+
+          unsafeField.setAccessible(true);
+
+          Unsafe unsafe = (Unsafe) unsafeField.get(null);
+
+          while (true) {
+
+                 unsafe.allocateMemory(_1MB);
+
+          }
+
+   }
+</code></pre><p>}</p>
+<p>运行结果：
+Exception in thread &quot;main&quot; java.lang.OutOfMemoryError</p>
+<pre><code>   at sun.misc.Unsafe.allocateMemory(Native Method)
+
+   at org.fenixsoft.oom.DirectMemoryOOM.main(DirectMemoryOOM.java:20)
+</code></pre><h1 id="-">总结</h1>
+<p>到此为止，我们弄清楚虚拟机里面的内存是如何划分的，哪部分区域，什么样的代码、操作可能导致OOM异常。虽然Java有垃圾收集机制，但OOM仍然离我们并不遥远，本章内容我们只是知道各个区域OOM异常出现的原因，下一章我们将看看Java垃圾收集机制为了避免OOM异常出现，做出了什么样的努力。
+<a href="http://hllvm.group.iteye.com/group/wiki/2859-JVM" title="JVM内存管理：深入垃圾收集器与内存分配策略" target="_blank">JVM内存管理：深入垃圾收集器与内存分配策 ...</a> | <a href="http://hllvm.group.iteye.com/group/wiki/2871-JVM" title="深入理解JVM" target="_blank">深入理解JVM</a></p>
+<p>评论 共 5 条 请<a href="http://hllvm.group.iteye.com/login" target="_blank">登录</a>后发表评论 <a href=""></a></p>
+<h3 id="5-http-bahaihe-iteye-com-2013-06-26-21-38">5 楼 <a href="http://bahaihe.iteye.com/" title="巴海和" target="_blank">巴海和</a> 2013-06-26 21:38</h3>
+<p>前辈，能够讲一下关于类被加载到内存后，它运行过程是什么？就是讲一下方法区、栈区、程序计数器是如何相互配合完成类的运行的？谢谢</p>
+<h3 id="4-zhifeidie12-http-zhifeidie12-iteye-com-zhifeidie12-2013-02-26-23-58">4 楼 <a href="http://zhifeidie12.iteye.com/" title="zhifeidie12" target="_blank">zhifeidie12</a> 2013-02-26 23:58</h3>
+<p><img src="" alt=""></p>
+<h3 id="3-java-http-pinefantasy-iteye-com-java-2011-04-14-13-19">3 楼 <a href="http://pinefantasy.iteye.com/" title="独爱Java" target="_blank">独爱Java</a> 2011-04-14 13:19</h3>
+<p>谢谢作者的好文章，受教了!!!</p>
+<h3 id="2-nathanyu-http-nathanyu-iteye-com-nathanyu-2011-04-11-12-32">2 楼 <a href="http://nathanyu.iteye.com/" title="Nathanyu" target="_blank">Nathanyu</a> 2011-04-11 12:32</h3>
+<p>  有了这资料 正好把基础打好点.</p>
+<h3 id="1-sd6733531-http-sd6733531-iteye-com-sd6733531-2011-02-22-11-20">1 楼 <a href="http://sd6733531.iteye.com/" title="sd6733531" target="_blank">sd6733531</a> 2011-02-22 11:20</h3>
+<p><img src="" alt="">
+看了前辈的讲解对JVM有了更深入的了解了</p>
+<h3 id="-">发表评论</h3>
+<p><a href="http://hllvm.group.iteye.com/login" target="_blank"><img src="" alt=""> 您还没有登录,请您登录后再发表评论</a></p>
+<p><a href="http://hllvm.group.iteye.com/group/wiki/new" target="_blank"><img src="" alt="New-page"></a></p>
+<h3 id="-">文章信息</h3>
+<p><a href="http://hllvm.group.iteye.com/group/wiki/" target="_blank">知识库: 高级语言虚拟机</a></p>
+<ul>
+<li>由<a href="http://kiral.iteye.com/" title="fantasy" target="_blank">fantasy</a>在2010-11-08创建</li>
+<li><p>由<a href="http://kiral.iteye.com/" title="fantasy" target="_blank">fantasy</a>在2011-05-26更新</p>
+<h3 id="-">相关新闻</h3>
+</li>
+<li><p><a href="http://hllvm.group.iteye.com/news/27958-JVM" target="_blank">你必须知道的5个JVM命令行标志</a></p>
+</li>
+<li><a href="http://hllvm.group.iteye.com/news/16601" target="_blank">Azul Systems将要开源Managed Runtime Initiative中的重要技术</a></li>
+<li><a href="http://hllvm.group.iteye.com/news/2823" target="_blank">推荐风轻扬：Java 6中的性能优化</a></li>
+</ul>
+<h3 id="-">相关讨论</h3>
+<ul>
+<li><a href="http://hllvm.group.iteye.com/topic/802573" target="_blank">JVM内存管理：深入Java内存区域与OOM</a></li>
+<li><a href="http://hllvm.group.iteye.com/topic/966928" target="_blank">jvm的各个运行时数据区域的理解</a></li>
+<li><a href="http://hllvm.group.iteye.com/topic/622488" target="_blank">[JVM-翻译]揭开java.lang.OutOfMemoryError面纱之一</a></li>
+<li><a href="http://hllvm.group.iteye.com/topic/808550" target="_blank">线程安全总结（二）</a></li>
+<li><p><a href="http://hllvm.group.iteye.com/topic/1120656" target="_blank">java内存区域与内存溢出异常</a></p>
+<h3 id="-">相关博客</h3>
+</li>
+<li><p><a href="http://tomyz0223.iteye.com/blog/803943" target="_blank">JVM 运行时区域划分（转载）</a></p>
+</li>
+<li><a href="http://zhuyuehua.iteye.com/blog/930058" target="_blank">JVM运行时数据区结构</a></li>
+<li><a href="http://alanlhy.iteye.com/blog/1165044" target="_blank">VM运行时数据区域</a></li>
+<li><a href="http://tanghongjun1985.iteye.com/blog/1748159" target="_blank">jdk优化和配置</a></li>
+<li><a href="http://wujianjun12315.iteye.com/blog/1683962" target="_blank">深入了解Java运行时的内存区域</a></li>
+<li><a href="http://www.iteye.com/" target="_blank">首页</a></li>
+<li><a href="http://www.iteye.com/news" target="_blank">资讯</a></li>
+<li><a href="http://www.iteye.com/magazines" target="_blank">精华</a></li>
+<li><a href="http://www.iteye.com/forums" target="_blank">论坛</a></li>
+<li><a href="http://www.iteye.com/ask" target="_blank">问答</a></li>
+<li><a href="http://www.iteye.com/blogs" target="_blank">博客</a></li>
+<li><a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a></li>
+<li><a href="http://www.iteye.com/groups" target="_blank">群组</a></li>
+<li><a href="http://job.iteye.com/iteye" target="_blank">招聘</a></li>
+<li><a href="http://www.iteye.com/search" target="_blank">搜索</a></li>
+<li><a href="http://hllvm.group.iteye.com/index/service" target="_blank">广告服务</a></li>
+<li><a href="http://webmaster.iteye.com/" target="_blank">ITeye黑板报</a></li>
+<li><a href="http://hllvm.group.iteye.com/index/contactus" target="_blank">联系我们</a></li>
+<li><a href="http://hllvm.group.iteye.com/index/friend_links" target="_blank">友情链接</a></li>
+</ul>
+<p>© 2003-2012 ITeye.com. [ <a href="http://www.miibeian.gov.cn/" target="_blank">京ICP证110151号</a> 京公网安备110105010620 ]
+百联优力(北京)投资有限公司 版权所有 <img src="http://stat.iteye.com/?url=http%3A%2F%2Fhllvm.group.iteye.com%2Fgroup%2Fwiki%2F2857-JVM&amp;referrer=http%3A%2F%2Fhllvm.group.iteye.com%2Fgroup%2Fwiki%2F%3Fcategory_id%3D316&amp;user_id=" alt=""></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM内存管理：深入Java内存区域与OOM-高级语言虚拟机/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM内存管理：深入Java内存区域与OOM-高级语言虚拟机" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结-Xms-Xmx-Xmn-Xss/">JVM调优总结 </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结-Xms-Xmx-Xmn-Xss/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="jvm-xms-xmx-xmn-xss">JVM调优总结 -Xms -Xmx -Xmn -Xss</h1>
+<ol>
+<li><strong>堆大小设置
+</strong>JVM 中最大堆大小有三方面限制：相关操作系统的数据模型（32-bt还是64-bit）限制；系统的可用虚拟内存限制；系统的可用物理内存限制。32位系统下，一般限制在1.5G~2G；64为操作系统对内存无限制。我在Windows Server 2003 系统，3.5G物理内存，JDK5.0下测试，最大可设置为1478m。
+<strong>典型设置：</strong></li>
+</ol>
+<ul>
+<li>java <strong>-Xmx3550m -Xms3550m -Xmn2g</strong> <strong>-Xss128k</strong>
+<strong>-**</strong>Xmx3550m<strong>：设置JVM最大可用内存为3550M。
+</strong>-Xms3550m<strong>：设置JVM促使内存为3550m。此值可以设置与-Xmx相同，以避免每次垃圾回收完成后JVM重新分配内存。
+</strong>-Xmn2g<strong>：设置年轻代大小为2G。</strong>整个JVM内存大小=年轻代大小 + 年老代大小 + 持久代大小<strong>。持久代一般固定大小为64m，所以增大年轻代后，将会减小年老代大小。此值对系统性能影响较大，Sun官方推荐配置为整个堆的3/8。
+</strong>-Xss128k**：设置每个线程的堆栈大小。JDK5.0以后每个线程堆栈大小为1M，以前每个线程堆栈大小为256K。更具应用的线程所需内存大小进行调整。在相同物理内存下，减小这个值能生成更多的线程。但是操作系统对一个进程内的线程数还是有限制的，不能无限生成，经验值在3000~5000左右。</li>
+<li>java -Xmx3550m -Xms3550m -Xss128k <strong>-XX:NewRatio=4 -XX:SurvivorRatio=4 -XX:MaxPermSize=16m -XX:MaxTenuringThreshold=0</strong>
+<strong>-XX:NewRatio=4</strong>:设置年轻代（包括Eden和两个Survivor区）与年老代的比值（除去持久代）。设置为4，则年轻代与年老代所占比值为1：4，年轻代占整个堆栈的1/5
+<strong>-XX:SurvivorRatio=4</strong>：设置年轻代中Eden区与Survivor区的大小比值。设置为4，则两个Survivor区与一个Eden区的比值为2:4，一个Survivor区占整个年轻代的1/6
+<strong>-XX:MaxPermSize=16m</strong>:设置持久代大小为16m。
+<strong>-XX:MaxTenuringThreshold=0</strong>：设置垃圾最大年龄。<strong>如果设置为0的话，则年轻代对象不经过Survivor区，直接进入年老代</strong>。对于年老代比较多的应用，可以提高效率。<strong>如果将此值设置为一个较大值，则年轻代对象会在Survivor区进行多次复制，这样可以增加对象再年轻代的存活时间</strong>，增加在年轻代即被回收的概论。</li>
+<li><strong>回收器选择
+</strong>JVM给了三种选择：<strong>串行收集器、并行收集器、并发收集器</strong>，但是串行收集器只适用于小数据量的情况，所以这里的选择主要针对并行收集器和并发收集器。默认情况下，JDK5.0以前都是使用串行收集器，如果想使用其他收集器需要在启动时加入相应参数。JDK5.0以后，JVM会根据当前<a href="http://java.sun.com/j2se/1.5.0/docs/guide/vm/server-class.html" target="_blank">系统配置</a>进行判断。</li>
+</ul>
+<ol>
+<li><strong>吞吐量优先</strong>的并行收集器
+如上文所述，并行收集器主要以到达一定的吞吐量为目标，适用于科学技术和后台处理等。
+<strong>典型配置</strong>：</li>
+</ol>
+<ul>
+<li>java -Xmx3800m -Xms3800m -Xmn2g -Xss128k <strong>-XX:+UseParallelGC -XX:ParallelGCThreads=20</strong>
+<strong>-XX:+UseParallelGC</strong>：选择垃圾收集器为并行收集器。<strong>此配置仅对年轻代有效。即上述配置下，年轻代使用并发收集，而年老代仍旧使用串行收集。
+**</strong>-XX:ParallelGCThreads=20**：配置并行收集器的线程数，即：同时多少个线程一起进行垃圾回收。此值最好配置与处理器数目相等。</li>
+<li>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseParallelGC -XX:ParallelGCThreads=20 <strong>-XX:+UseParallelOldGC
+**</strong>-XX:+UseParallelOldGC**：配置年老代垃圾收集方式为并行收集。JDK6.0支持对年老代并行收集。</li>
+<li>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseParallelGC  <strong>-XX:MaxGCPauseMillis=100
+**</strong>-XX:MaxGCPauseMillis=100<strong>**:</strong>设置每次年轻代垃圾回收的最长时间，如果无法满足此时间，JVM会自动调整年轻代大小，以满足此值。</li>
+<li>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseParallelGC  -XX:MaxGCPauseMillis=100 <strong>-XX:+UseAdaptiveSizePolicy
+-XX:+UseAdaptiveSizePolicy</strong>：设置此选项后，并行收集器会自动选择年轻代区大小和相应的Survivor区比例，以达到目标系统规定的最低相应时间或者收集频率等，此值建议使用并行收集器时，一直打开。</li>
+<li><p><strong>响应时间优先</strong>的并发收集器
+如上文所述，并发收集器主要是保证系统的响应时间，减少垃圾收集时的停顿时间。适用于应用服务器、电信领域等。
+<strong>典型配置</strong>：</p>
+</li>
+<li><p>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:ParallelGCThreads=20 <strong>-XX:+UseConcMarkSweepGC -XX:+UseParNewGC
+**</strong>-XX:+UseConcMarkSweepGC<strong>：设置年老代为并发收集。测试中配置这个以后，-XX:NewRatio=4的配置失效了，原因不明。所以，此时年轻代大小最好用-Xmn设置。
+</strong>-XX:+UseParNewGC**:设置年轻代为并行收集。可与CMS收集同时使用。JDK5.0以上，JVM会根据系统配置自行设置，所以无需再设置此值。</p>
+</li>
+<li>java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:+UseConcMarkSweepGC <strong>-XX:CMSFullGCsBeforeCompaction=5 -XX:+UseCMSCompactAtFullCollection</strong>
+<strong>-XX:CMSFullGCsBeforeCompaction</strong>：由于并发收集器不对内存空间进行压缩、整理，所以运行一段时间以后会产生“碎片”，使得运行效率降低。此值设置运行多少次GC以后对内存空间进行压缩、整理。
+<strong>-XX:+UseCMSCompactAtFullCollection</strong>：打开对年老代的压缩。可能会影响性能，但是可以消除碎片</li>
+<li><p><strong>辅助信息
+</strong>JVM提供了大量命令行参数，打印信息，供调试使用。主要有以下一些：</p>
+</li>
+<li><p><strong>-XX:+PrintGC
+</strong>输出形式<strong>：[GC 118250K-&gt;113543K(130112K), 0.0094143 secs]</strong></p>
+</li>
+</ul>
+<p><strong>                [Full GC 121376K-&gt;10414K(130112K), 0.0650971 secs]</strong></p>
+<ul>
+<li><strong>-XX:+PrintGCDetails
+</strong>输出形式<strong>：[GC [DefNew: 8614K-&gt;781K(9088K), 0.0123035 secs] 118250K-&gt;113543K(130112K), 0.0124633 secs]</strong></li>
+</ul>
+<p><strong>                [GC [DefNew: 8614K-&gt;8614K(9088K), 0.0000665 secs][Tenured: 112761K-&gt;10414K(121024K), 0.0433488 secs] 121376K-&gt;10414K(130112K), 0.0436268 secs]</strong></p>
+<ul>
+<li><strong>-XX:+PrintGCTimeStamps</strong> -XX:+PrintGC：PrintGCTimeStamps可与上面两个混合使用
+输出形式：<strong>11.851: [GC 98328K-&gt;93620K(130112K), 0.0082960 secs]
+</strong></li>
+<li><strong>-XX:+PrintGCApplicationConcurrentTime:</strong>打印每次垃圾回收前，程序未中断的执行时间。可与上面混合使用
+输出形式：<strong>Application time: 0.5291524 seconds
+</strong></li>
+<li><strong>-XX:+PrintGCApplicationStoppedTime</strong>：打印垃圾回收期间程序暂停的时间。可与上面混合使用
+输出形式：<strong>Total time for which application threads were stopped: 0.0468229 seconds
+</strong></li>
+<li><strong>-XX:PrintHeapAtGC</strong>:打印GC前后的详细堆栈信息
+输出形式：
+34.702: [GC {Heap before gc invocations=7:
+def new generation   total 55296K, used 52568K [0x1ebd0000, 0x227d0000, 0x227d0000)
+<strong>eden space 49152K,  99% used</strong> [0x1ebd0000, 0x21bce430, 0x21bd0000)
+<strong>from space 6144K,  55% used</strong> [0x221d0000, 0x22527e10, 0x227d0000)
+to   space 6144K,   0% used [0x21bd0000, 0x21bd0000, 0x221d0000)
+tenured generation   total 69632K, used 2696K [0x227d0000, 0x26bd0000, 0x26bd0000)
+<strong>the space 69632K,   3% used</strong> [0x227d0000, 0x22a720f8, 0x22a72200, 0x26bd0000)
+compacting perm gen  total 8192K, used 2898K [0x26bd0000, 0x273d0000, 0x2abd0000)
+ the space 8192K,  35% used [0x26bd0000, 0x26ea4ba8, 0x26ea4c00, 0x273d0000)
+  ro space 8192K,  66% used [0x2abd0000, 0x2b12bcc0, 0x2b12be00, 0x2b3d0000)
+  rw space 12288K,  46% used [0x2b3d0000, 0x2b972060, 0x2b972200, 0x2bfd0000)
+34.735: [DefNew: 52568K-&gt;3433K(55296K), 0.0072126 secs] 55264K-&gt;6615K(124928K)<strong>Heap after gc invocations=8:
+</strong> def new generation   total 55296K, used 3433K [0x1ebd0000, 0x227d0000, 0x227d0000)
+<strong>eden space 49152K,   0% used</strong> [0x1ebd0000, 0x1ebd0000, 0x21bd0000)
+from space 6144K,  55% used [0x21bd0000, 0x21f2a5e8, 0x221d0000)
+to   space 6144K,   0% used [0x221d0000, 0x221d0000, 0x227d0000)
+tenured generation   total 69632K, used 3182K [0x227d0000, 0x26bd0000, 0x26bd0000)
+<strong>the space 69632K,   4% used</strong>[0x227d0000, 0x22aeb958, 0x22aeba00, 0x26bd0000)
+compacting perm gen  total 8192K, used 2898K [0x26bd0000, 0x273d0000, 0x2abd0000)
+ the space 8192K,  35% used [0x26bd0000, 0x26ea4ba8, 0x26ea4c00, 0x273d0000)
+  ro space 8192K,  66% used [0x2abd0000, 0x2b12bcc0, 0x2b12be00, 0x2b3d0000)
+  rw space 12288K,  46% used [0x2b3d0000, 0x2b972060, 0x2b972200, 0x2bfd0000)
+}
+, 0.0757599 secs]</li>
+<li><strong>-Xloggc:filename</strong>:与上面几个配合使用，把相关日志信息记录到文件以便分析。</li>
+<li><strong>常见配置汇总</strong></li>
+</ul>
+<ol>
+<li>堆设置</li>
+</ol>
+<ul>
+<li><strong>-Xms</strong>:初始堆大小</li>
+<li><strong>-Xmx</strong>:最大堆大小</li>
+<li><strong>-XX:NewSize=n</strong>:设置年轻代大小</li>
+<li><strong>-XX:NewRatio=n:</strong>设置年轻代和年老代的比值。如:为3，表示年轻代与年老代比值为1：3，年轻代占整个年轻代年老代和的1/4</li>
+<li><strong>-XX:SurvivorRatio=n</strong>:年轻代中Eden区与两个Survivor区的比值。注意Survivor区有两个。如：3，表示Eden：Survivor=3：2，一个Survivor区占整个年轻代的1/5</li>
+<li><strong>-XX:MaxPermSize=n</strong>:设置持久代大小</li>
+<li><p>收集器设置</p>
+</li>
+<li><p><strong>-XX:+UseSerialGC</strong>:设置串行收集器</p>
+</li>
+<li><strong>-XX:+UseParallelGC</strong>:设置并行收集器</li>
+<li><strong>-XX:+UseParalledlOldGC</strong>:设置并行年老代收集器</li>
+<li><strong>-XX:+UseConcMarkSweepGC</strong>:设置并发收集器</li>
+<li><p>垃圾回收统计信息</p>
+</li>
+<li><p><strong>-XX:+PrintGC</strong></p>
+</li>
+<li><strong>-XX:+PrintGCDetails</strong></li>
+<li><strong>-XX:+PrintGCTimeStamps</strong></li>
+<li><strong>-Xloggc:filename</strong></li>
+<li><p>并行收集器设置</p>
+</li>
+<li><p><strong>-XX:ParallelGCThreads=n</strong>:设置并行收集器收集时使用的CPU数。并行收集线程数。</p>
+</li>
+<li><strong>-XX:MaxGCPauseMillis=n</strong>:设置并行收集最大暂停时间</li>
+<li><strong>-XX:GCTimeRatio=n</strong>:设置垃圾回收时间占程序运行时间的百分比。公式为1/(1+n)</li>
+<li><p>并发收集器设置</p>
+</li>
+<li><p><strong>-XX:+CMSIncrementalMode</strong>:设置为增量模式。适用于单CPU情况。</p>
+</li>
+<li><strong>-XX:ParallelGCThreads=n</strong>:设置并发收集器年轻代收集方式为并行收集时，使用的CPU数。并行收集线程数。</li>
+</ul>
+<p><strong>四、调优总结</strong></p>
+<ol>
+<li><strong>年轻代大小选择</strong></li>
+</ol>
+<ul>
+<li><strong>响应时间优先的应用</strong>：<strong>尽可能设大，直到接近系统的最低响应时间限制</strong>（根据实际情况选择）。在此种情况下，年轻代收集发生的频率也是最小的。同时，减少到达年老代的对象。</li>
+<li><strong>吞吐量优先的应用</strong>：尽可能的设置大，可能到达Gbit的程度。因为对响应时间没有要求，垃圾收集可以并行进行，一般适合8CPU以上的应用。</li>
+<li><p><strong>年老代大小选择</strong></p>
+</li>
+<li><p><strong>响应时间优先的应用</strong>：年老代使用并发收集器，所以其大小需要小心设置，一般要考虑<strong>并发会话率</strong>和<strong>会话持续时间</strong>等一些参数。如果堆设置小了，可以会造成内存碎片、高回收频率以及应用暂停而使用传统的标记清除方式；如果堆大了，则需要较长的收集时间。最优化的方案，一般需要参考以下数据获得：</p>
+</li>
+<li><p>并发垃圾收集信息</p>
+</li>
+<li>持久代并发收集次数</li>
+<li>传统GC信息</li>
+<li>花在年轻代和年老代回收上的时间比例
+减少年轻代和年老代花费的时间，一般会提高应用的效率</li>
+<li><strong>吞吐量优先的应用</strong>：一般吞吐量优先的应用都有一个很大的年轻代和一个较小的年老代。原因是，这样可以尽可能回收掉大部分短期对象，减少中期的对象，而年老代尽存放长期存活对象。</li>
+<li><p><strong>较小堆引起的碎片问题
+</strong>因为年老代的并发收集器使用标记、清除算法，所以不会对堆进行压缩。当收集器回收时，他会把相邻的空间进行合并，这样可以分配给较大的对象。但是，当堆空间较小时，运行一段时间以后，就会出现“碎片”，如果并发收集器找不到足够的空间，那么并发收集器将会停止，然后使用传统的标记、清除方式进行回收。如果出现“碎片”，可能需要进行如下配置：</p>
+</li>
+<li><p><strong>-XX:+UseCMSCompactAtFullCollection</strong>：使用并发收集器时，开启对年老代的压缩。</p>
+</li>
+<li><strong>-XX:CMSFullGCsBeforeCompaction=0</strong>：上面配置开启的情况下，这里设置多少次Full GC后，对年老代进行压缩</li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结-Xms-Xmx-Xmn-Xss/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结-Xms-Xmx-Xmn-Xss" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（三）-基本垃圾回收算法/">JVM调优总结（三）</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（三）-基本垃圾回收算法/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="jvm-">JVM调优总结（三）-基本垃圾回收算法</h1>
+<p>可以从不同的的角度去划分垃圾回收算法：</p>
+<h2 id="-">按照基本回收策略分</h2>
+<p><strong>引用计数（Reference Counting）:</strong></p>
+<p>比较古老的回收算法。原理是此对象有一个引用，即增加一个计数，删除一个引用则减少一个计数。垃圾回收时，只用收集计数为0的对象。此算法最致命的是无法处理循环引用的问题。</p>
+<p><strong>标记-清除（Mark-Sweep）:</strong></p>
+<p><img src="" alt=""></p>
+<p>此算法执行分两阶段。第一阶段从引用根节点开始标记所有被引用的对象，第二阶段遍历整个堆，把未标记的对象清除。此算法需要暂停整个应用，同时，会产生内存碎片。</p>
+<p><strong>复制（Copying）:</strong></p>
+<p><img src="" alt=""></p>
+<p>此算法把内存空间划为两个相等的区域，每次只使用其中一个区域。垃圾回收时，遍历当前使用区域，把正在使用中的对象复制到另外一个区域中。次算法每次只处理正在使用中的对象，因此复制成本比较小，同时复制过去以后还能进行相应的内存整理，不会出现“碎片”问题。当然，此算法的缺点也是很明显的，就是需要两倍内存空间。</p>
+<p><strong>标记-整理（Mark-Compact）:</strong></p>
+<p><img src="" alt=""></p>
+<p>此算法结合了“标记-清除”和“复制”两个算法的优点。也是分两阶段，第一阶段从根节点开始标记所有被引用对象，第二阶段遍历整个堆，把清除未标记对象并且把存活对象“压缩”到堆的其中一块，按顺序排放。此算法避免了“标记-清除”的碎片问题，同时也避免了“复制”算法的空间问题。</p>
+<h2 id="-">按分区对待的方式分</h2>
+<p><strong>增量收集（Incremental Collecting）:</strong>实时垃圾回收算法，即：在应用进行的同时进行垃圾回收。不知道什么原因JDK5.0中的收集器没有使用这种算法的。</p>
+<p><strong>分代收集（Generational Collecting）:</strong>基于对对象生命周期分析后得出的垃圾回收算法。把对象分为年青代、年老代、持久代，对不同生命周期的对象使用不同的算法（上述方式中的一个）进行回收。现在的垃圾回收器（从J2SE1.2开始）都是使用此算法的。</p>
+<h2 id="-">按系统线程分</h2>
+<p><strong>串行收集:</strong>串行收集使用单线程处理所有垃圾回收工作，因为无需多线程交互，实现容易，而且效率比较高。但是，其局限性也比较明显，即无法使用多处理器的优势，所以此收集适合单处理器机器。当然，此收集器也可以用在小数据量（100M左右）情况下的多处理器机器上。</p>
+<p><strong>并行收集:</strong>并行收集使用多线程处理垃圾回收工作，因而速度快，效率高。而且理论上CPU数目越多，越能体现出并行收集器的优势。</p>
+<p><strong>并发收集:</strong>相对于串行收集和并行收集而言，前面两个在进行垃圾回收工作时，需要暂停整个运行环境，而只有垃圾回收程序在运行，因此，系统在垃圾回收时会有明显的暂停，而且暂停时间会因为堆越大而越长。</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（三）-基本垃圾回收算法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（三）-基本垃圾回收算法" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（九）-新一代的垃圾回收算法/">JVM调优总结（九）</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（九）-新一代的垃圾回收算法/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="jvm-">JVM调优总结（九）-新一代的垃圾回收算法</h1>
+<h2 id="-">垃圾回收的瓶颈</h2>
+<pre><code>传统分代垃圾回收方式，已经在一定程度上把垃圾回收给应用带来的负担降到了最小，把应用的吞吐量推到了一个极限。但是他无法解决的一个问题，就是Full GC所带来的应用暂停。在一些对实时性要求很高的应用场景下，GC暂停所带来的请求堆积和请求失败是无法接受的。这类应用可能要求请求的返回时间在几百甚至几十毫秒以内，如果分代垃圾回收方式要达到这个指标，只能把最大堆的设置限制在一个相对较小范围内，但是这样有限制了应用本身的处理能力，同样也是不可接收的。
+
+分代垃圾回收方式确实也考虑了实时性要求而提供了并发回收器，支持最大暂停时间的设置，但是受限于分代垃圾回收的内存划分模型，其效果也不是很理想。
+
+为了达到实时性的要求（其实Java语言最初的设计也是在嵌入式系统上的），一种新垃圾回收方式呼之欲出，它既支持短的暂停时间，又支持大的内存空间分配。可以很好的解决传统分代方式带来的问题。
+</code></pre><h2 id="-">增量收集的演进</h2>
+<pre><code>增量收集的方式在理论上可以解决传统分代方式带来的问题。增量收集把对堆空间划分成一系列内存块，使用时，先使用其中一部分（不会全部用完），垃圾收集时把之前用掉的部分中的存活对象再放到后面没有用的空间中，这样可以实现一直边使用边收集的效果，避免了传统分代方式整个使用完了再暂停的回收的情况。
+
+当然，传统分代收集方式也提供了并发收集，但是他有一个很致命的地方，就是把整个堆做为一个内存块，这样一方面会造成碎片（无法压缩），另一方面他的每次收集都是对整个堆的收集，无法进行选择，在暂停时间的控制上还是很弱。而增量方式，通过内存空间的分块，恰恰可以解决上面问题。
+</code></pre><h2 id="garbage-firest-g1-">Garbage Firest（G1）</h2>
+<p>这部分的内容主要参考<a href="http://www.blogjava.net/BlueDavy/archive/2009/03/11/259230.html" target="_blank">这里</a>，这篇文章算是对G1算法论文的解读。我也没加什么东西了。</p>
+<p><strong>目标</strong></p>
+<p>从设计目标看G1完全是为了大型应用而准备的。
+<strong>支持很大的堆</strong></p>
+<p><strong>高吞吐量</strong></p>
+<p>  --支持多CPU和垃圾回收线程</p>
+<p>  --在主线程暂停的情况下，使用并行收集</p>
+<p>  --在主线程运行的情况下，使用并发收集</p>
+<p><strong>实时目标：</strong>可配置在N毫秒内最多只占用M毫秒的时间进行垃圾回收</p>
+<p>当然G1要达到实时性的要求，相对传统的分代回收算法，在性能上会有一些损失。</p>
+<p><strong>算法详解</strong></p>
+<p><img src="" alt=""></p>
+<pre><code>G1可谓博采众家之长，力求到达一种完美。他吸取了增量收集优点，把整个堆划分为一个一个等大小的区域（region）。内存的回收和划分都以region为单位；同时，他也吸取了CMS的特点，把这个垃圾回收过程分为几个阶段，分散一个垃圾回收过程；而且，G1也认同分代垃圾回收的思想，认为不同对象的生命周期不同，可以采取不同收集方式，因此，它也支持分代的垃圾回收。为了达到对回收时间的可预计性，G1在扫描了region以后，对其中的活跃对象的大小进行排序，首先会收集那些活跃对象小的region，以便快速回收空间（要复制的活跃对象少了），因为活跃对象小，里面可以认为多数都是垃圾，所以这种方式被称为Garbage First（G1）的垃圾回收算法，即：垃圾优先的回收。
+</code></pre><p>回收步骤：</p>
+<p><strong>初始标记（Initial Marking）</strong></p>
+<pre><code>G1对于每个region都保存了两个标识用的bitmap，一个为previous marking bitmap，一个为next marking bitmap，bitmap中包含了一个bit的地址信息来指向对象的起始点。
+
+开始Initial Marking之前，首先并发的清空next marking bitmap，然后停止所有应用线程，并扫描标识出每个region中root可直接访问到的对象，将region中top的值放入next top at mark start（TAMS）中，之后恢复所有应用线程。
+
+触发这个步骤执行的条件为：
+G1定义了一个JVM Heap大小的百分比的阀值，称为h，另外还有一个H，H的值为(1-h)/*Heap Size，目前这个h的值是固定的，后续G1也许会将其改为动态的，根据jvm的运行情况来动态的调整，在分代方式下，G1还定义了一个u以及soft limit，soft limit的值为H-u/*Heap Size，当Heap中使用的内存超过了soft limit值时，就会在一次clean up执行完毕后在应用允许的GC暂停时间范围内尽快的执行此步骤；
+
+在pure方式下，G1将marking与clean up组成一个环，以便clean up能充分的使用marking的信息，当clean up开始回收时，首先回收能够带来最多内存空间的regions，当经过多次的clean up，回收到没多少空间的regions时，G1重新初始化一个新的marking与clean up构成的环。
+</code></pre><p><strong>并发标记（Concurrent Marking）</strong></p>
+<pre><code>按照之前Initial Marking扫描到的对象进行遍历，以识别这些对象的下层对象的活跃状态，对于在此期间应用线程并发修改的对象的以来关系则记录到remembered set logs中，新创建的对象则放入比top值更高的地址区间中，这些新创建的对象默认状态即为活跃的，同时修改top值。
+</code></pre><p><strong>最终标记暂停（Final Marking Pause）</strong></p>
+<pre><code>当应用线程的remembered set logs未满时，是不会放入filled RS buffers中的，在这样的情况下，这些remebered set logs中记录的card的修改就会被更新了，因此需要这一步，这一步要做的就是把应用线程中存在的remembered set logs的内容进行处理，并相应的修改remembered sets，这一步需要暂停应用，并行的运行。
+</code></pre><p><strong>存活对象计算及清除（Live Data Counting and Cleanup）</strong></p>
+<pre><code>值得注意的是，在G1中，并不是说Final Marking Pause执行完了，就肯定执行Cleanup这步的，由于这步需要暂停应用，G1为了能够达到准实时的要求，需要根据用户指定的最大的GC造成的暂停时间来合理的规划什么时候执行Cleanup，另外还有几种情况也是会触发这个步骤的执行的：
+G1采用的是复制方法来进行收集，必须保证每次的”to space”的空间都是够的，因此G1采取的策略是当已经使用的内存空间达到了H时，就执行Cleanup这个步骤；
+
+对于full-young和partially-young的分代模式的G1而言，则还有情况会触发Cleanup的执行，full-young模式下，G1根据应用可接受的暂停时间、回收young regions需要消耗的时间来估算出一个yound regions的数量值，当JVM中分配对象的young regions的数量达到此值时，Cleanup就会执行；partially-young模式下，则会尽量频繁的在应用可接受的暂停时间范围内执行Cleanup，并最大限度的去执行non-young regions的Cleanup。
+</code></pre><h2 id="-">展望</h2>
+<pre><code>以后JVM的调优或许跟多需要针对G1算法进行调优了。
+</code></pre>
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（九）-新一代的垃圾回收算法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（九）-新一代的垃圾回收算法" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（七）-典型配置举例1/">JVM调优总结（七）</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（七）-典型配置举例1/">feb. 2 2014</a></time></span>      
@@ -211,285 +918,10 @@ java -Xmx3550m -Xms3550m -Xmn2g -Xss128k -XX:ParallelGCThreads=20 <strong>-XX:+U
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2/">JVM调优总结（六）</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="jvm-2">JVM调优总结（六）-分代垃圾回收详述2</h1>
-<h2 id="-">分代垃圾回收流程示意</h2>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<h2 id="-">选择合适的垃圾收集算法</h2>
-<p><strong>串行收集器</strong></p>
-<p><img src="" alt=""></p>
-<p>用单线程处理所有垃圾回收工作，因为无需多线程交互，所以效率比较高。但是，也无法使用多处理器的优势，所以此收集器适合单处理器机器。当然，此收集器也可以用在小数据量（100M左右）情况下的多处理器机器上。可以使用-XX:+UseSerialGC打开。</p>
-<p><strong>并行收集器</strong></p>
-<p><img src="" alt=""></p>
-<p>对年轻代进行并行垃圾回收，因此可以减少垃圾回收时间。一般在多线程多处理器机器上使用。使用-XX:+UseParallelGC.打开。并行收集器在J2SE5.0第六6更新上引入，在Java SE6.0中进行了增强--可以对年老代进行并行收集。如果年老代不使用并发收集的话，默认是使用单线程进行垃圾回收，因此会制约扩展能力。使用-XX:+UseParallelOldGC打开。</p>
-<p>使用-XX:ParallelGCThreads=<N>设置并行垃圾回收的线程数。此值可以设置与机器处理器数量相等。</p>
-<p>此收集器可以进行如下配置：
-<strong>最大垃圾回收暂停:</strong>指定垃圾回收时的最长暂停时间，通过-XX:MaxGCPauseMillis=<N>指定。<N>为毫秒.如果指定了此值的话，堆大小和垃圾回收相关参数会进行调整以达到指定值。设定此值可能会减少应用的吞吐量。</p>
-<p><strong>吞吐量:</strong>吞吐量为垃圾回收时间与非垃圾回收时间的比值，通过-XX:GCTimeRatio=<N>来设定，公式为1/（1+N）。例如，-XX:GCTimeRatio=19时，表示5%的时间用于垃圾回收。默认情况为99，即1%的时间用于垃圾回收。</p>
-<p><strong>并发收集器</strong></p>
-<p>可以保证大部分工作都并发进行（应用不停止），垃圾回收只暂停很少的时间，此收集器适合对响应时间要求比较高的中、大规模应用。使用-XX:+UseConcMarkSweepGC打开。</p>
-<p><img src="" alt=""></p>
-<pre><code>并发收集器主要减少年老代的暂停时间，他在应用不停止的情况下使用独立的垃圾回收线程，跟踪可达对象。在每个年老代垃圾回收周期中，在收集初期并发收集器 会对整个应用进行简短的暂停，在收集中还会再暂停一次。第二次暂停会比第一次稍长，在此过程中多个线程同时进行垃圾回收工作。
-
-并发收集器使用处理器换来短暂的停顿时间。在一个N个处理器的系统上，并发收集部分使用K/N个可用处理器进行回收，一般情况下1&lt;=K&lt;=N/4。
-
-在只有一个处理器的主机上使用并发收集器，设置为incremental mode模式也可获得较短的停顿时间。
-
-
-
-**浮动垃圾：**由于在应用运行的同时进行垃圾回收，所以有些垃圾可能在垃圾回收进行完成时产生，这样就造成了“Floating Garbage”，这些垃圾需要在下次垃圾回收周期时才能回收掉。所以，并发收集器一般需要20%的预留空间用于这些浮动垃圾。
-
-
-
-**Concurrent Mode Failure：**并发收集器在应用运行时进行收集，所以需要保证堆在垃圾回收的这段时间有足够的空间供程序使用，否则，垃圾回收还未完成，堆空间先满了。这种情况下将会发生“并发模式失败”，此时整个应用将会暂停，进行垃圾回收。
-
-
-
-**启动并发收集器：**因为并发收集在应用运行时进行收集，所以必须保证收集完成之前有足够的内存空间供程序使用，否则会出现“Concurrent Mode Failure”。通过设置-XX:CMSInitiatingOccupancyFraction=&lt;N&gt;指定还有多少剩余堆时开始执行并发收集
-</code></pre><h2 id="-">小结</h2>
-<p><strong>串行处理器：</strong></p>
-<p>--适用情况：数据量比较小（100M左右）；单处理器下并且对响应时间无要求的应用。
---缺点：只能用于小型应用</p>
-<p><strong>并行处理器：</strong></p>
-<p>--适用情况：“对吞吐量有高要求”，多CPU、对应用响应时间无要求的中、大型应用。举例：后台处理、科学计算。
---缺点：垃圾收集过程中应用响应时间可能加长</p>
-<p><strong>并发处理器：</strong></p>
-<p>--适用情况：“对响应时间有高要求”，多CPU、对应用响应时间有较高要求的中、大型应用。举例：Web服务器/应用服务器、电信交换、集成开发环境。</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（六）-分代垃圾回收详述2" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（八）-典型配置举例2/">JVM调优总结（八）</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（八）-典型配置举例2/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="jvm-2">JVM调优总结（八）-典型配置举例2</h1>
-<h2 id="-">常见配置汇总</h2>
-<p><strong>堆设置</strong></p>
-<p>  <strong>-Xms:</strong>初始堆大小</p>
-<p>  <strong>-Xmx:</strong>最大堆大小</p>
-<p>  <strong>-XX:NewSize=n:</strong>设置年轻代大小</p>
-<p>  <strong>-XX:NewRatio=n:</strong>设置年轻代和年老代的比值。如:为3，表示年轻代与年老代比值为1：3，年轻代占整个年轻代年老代和的1/4</p>
-<p>  <strong>-XX:SurvivorRatio=n:</strong>年轻代中Eden区与两个Survivor区的比值。注意Survivor区有两个。如：3，表示Eden：Survivor=3：2，一个Survivor区占整个年轻代的1/5</p>
-<p>  <strong>-XX:MaxPermSize=n:</strong>设置持久代大小</p>
-<p><strong>收集器设置</strong></p>
-<p>  <strong>-XX:+UseSerialGC:</strong>设置串行收集器</p>
-<p>  <strong>-XX:+UseParallelGC:</strong>设置并行收集器</p>
-<p>  <strong>-XX:+UseParalledlOldGC:</strong>设置并行年老代收集器</p>
-<p>  <strong>-XX:+UseConcMarkSweepGC:</strong>设置并发收集器</p>
-<p><strong>垃圾回收统计信息</strong></p>
-<p>  <strong>-XX:+PrintGC</strong></p>
-<p><strong>  -XX:+PrintGCDetails</strong></p>
-<p><strong>  -XX:+PrintGCTimeStamps</strong></p>
-<p><strong>  -Xloggc:filename</strong></p>
-<p><strong>并行收集器设置</strong></p>
-<p>  <strong>-XX:ParallelGCThreads=n</strong>:设置并行收集器收集时使用的CPU数。并行收集线程数。</p>
-<p>  <strong>-XX:MaxGCPauseMillis=n</strong>:设置并行收集最大暂停时间</p>
-<p>  <strong>-XX:GCTimeRatio=n</strong>:设置垃圾回收时间占程序运行时间的百分比。公式为1/(1+n)</p>
-<p><strong>并发收集器设置</strong></p>
-<p>  <strong>-XX:+CMSIncrementalMode:</strong>设置为增量模式。适用于单CPU情况。</p>
-<p>  <strong>-XX:ParallelGCThreads=n:</strong>设置并发收集器年轻代收集方式为并行收集时，使用的CPU数。并行收集线程数。</p>
-<h2 id="-">调优总结</h2>
-<p><strong>年轻代大小选择</strong></p>
-<p><strong>响应时间优先的应用：</strong>尽可能设大，直到接近系统的最低响应时间限制（根据实际情况选择）。在此种情况下，年轻代收集发生的频率也是最小的。同时，减少到达年老代的对象。</p>
-<p><strong>吞吐量优先的应用：</strong>尽可能的设置大，可能到达Gbit的程度。因为对响应时间没有要求，垃圾收集可以并行进行，一般适合8CPU以上的应用。</p>
-<p><strong>年老代大小选择</strong></p>
-<p><strong>响应时间优先的应用：</strong>年老代使用并发收集器，所以其大小需要小心设置，一般要考虑<strong>并发会话率</strong>和<strong>会话持续时间</strong>等一些参数。如果堆设置小了，可以会造成内存碎片、高回收频率以及应用暂停而使用传统的标记清除方式；如果堆大了，则需要较长的收集时间。最优化的方案，一般需要参考以下数据获得：</p>
-<ol>
-<li><p>并发垃圾收集信息</p>
-</li>
-<li><p>持久代并发收集次数</p>
-</li>
-<li><p>传统GC信息</p>
-</li>
-<li><p>花在年轻代和年老代回收上的时间比例</p>
-</li>
-</ol>
-<p>减少年轻代和年老代花费的时间，一般会提高应用的效率</p>
-<p><strong>吞吐量优先的应用</strong></p>
-<p>一般吞吐量优先的应用都有一个很大的年轻代和一个较小的年老代。原因是，这样可以尽可能回收掉大部分短期对象，减少中期的对象，而年老代尽存放长期存活对象。</p>
-<p><strong>较小堆引起的碎片问题</strong></p>
-<p>因为年老代的并发收集器使用标记、清除算法，所以不会对堆进行压缩。当收集器回收时，他会把相邻的空间进行合并，这样可以分配给较大的对象。但是，当堆空间较小时，运行一段时间以后，就会出现“碎片”，如果并发收集器找不到足够的空间，那么并发收集器将会停止，然后使用传统的标记、清除方式进行回收。如果出现“碎片”，可能需要进行如下配置：</p>
-<pre><code>1. **-XX:+UseCMSCompactAtFullCollection：**使用并发收集器时，开启对年老代的压缩。
-
-2. **-XX:CMSFullGCsBeforeCompaction=0：**上面配置开启的情况下，这里设置多少次Full GC后，对年老代进行压缩
-</code></pre>
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（八）-典型配置举例2/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（八）-典型配置举例2" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/">JVM调优总结（五）</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="jvm-1">JVM调优总结（五）-分代垃圾回收详述1</h1>
-<h2 id="-">为什么要分代</h2>
-<pre><code>分代的垃圾回收策略，是基于这样一个事实：**不同的对象的生命周期是不一样的**。因此，不同生命周期的对象可以采取不同的收集方式，以便提高回收效率。
-
-
-
-在Java程序运行的过程中，会产生大量的对象，其中有些对象是与业务信息相关，比如Http请求中的Session对象、线程、Socket连接，这类对象跟业务直接挂钩，因此生命周期比较长。但是还有一些对象，主要是程序运行过程中生成的临时变量，这些对象生命周期会比较短，比如：String对象，由于其不变类的特性，系统会产生大量的这些对象，有些对象甚至只用一次即可回收。
-
-
-
-试想，在不进行对象存活时间区分的情况下，每次垃圾回收都是对整个堆空间进行回收，花费时间相对会长，同时，因为每次回收都需要遍历所有存活对象，但实际上，对于生命周期长的对象而言，这种遍历是没有效果的，因为可能进行了很多次遍历，但是他们依旧存在。因此，分代垃圾回收采用分治的思想，进行代的划分，把不同生命周期的对象放在不同代上，不同代上采用最适合它的垃圾回收方式进行回收。
-</code></pre><h2 id="-">如何分代</h2>
-<p><img src="" alt=""></p>
-<p>如图所示：</p>
-<pre><code>虚拟机中的共划分为三个代：**年轻代（Young Generation）、年老点（Old Generation）和持久代（Permanent Generation）**。其中持久代主要存放的是Java类的类信息，与垃圾收集要收集的Java对象关系不大。年轻代和年老代的划分是对垃圾收集影响比较大的。
-</code></pre><p><strong>年轻代:</strong></p>
-<pre><code>所有新生成的对象首先都是放在年轻代的。年轻代的目标就是尽可能快速的收集掉那些生命周期短的对象。年轻代分三个区。一个Eden区，两个Survivor区(一般而言)。大部分对象在Eden区中生成。当Eden区满时，还存活的对象将被复制到Survivor区（两个中的一个），当这个Survivor区满时，此区的存活对象将被复制到另外一个Survivor区，当这个Survivor去也满了的时候，从第一个Survivor区复制过来的并且此时还存活的对象，将被复制“年老区(Tenured)”。需要注意，Survivor的两个区是对称的，没先后关系，所以同一个区中可能同时存在从Eden复制过来 对象，和从前一个Survivor复制过来的对象，而复制到年老区的只有从第一个Survivor去过来的对象。而且，Survivor区总有一个是空的。同时，根据程序需要，Survivor区是可以配置为多个的（多于两个），这样可以增加对象在年轻代中的存在时间，减少被放到年老代的可能。
-</code></pre><p><strong>年老代:</strong></p>
-<pre><code>在年轻代中经历了N次垃圾回收后仍然存活的对象，就会被放到年老代中。因此，可以认为年老代中存放的都是一些生命周期较长的对象。
-</code></pre><p><strong>持久代:</strong></p>
-<pre><code>用于存放静态文件，如今Java类、方法等。持久代对垃圾回收没有显著影响，但是有些应用可能动态生成或者调用一些class，例如Hibernate等，在这种时候需要设置一个比较大的持久代空间来存放这些运行过程中新增的类。持久代大小通过-XX:MaxPermSize=&lt;N&gt;进行设置。
-</code></pre><h2 id="-">什么情况下触发垃圾回收</h2>
-<pre><code>由于对象进行了分代处理，因此垃圾回收区域、时间也不一样。GC有两种类型：**Scavenge GC**和**Full GC**。
-</code></pre><p><strong>Scavenge GC</strong></p>
-<pre><code>一般情况下，当新对象生成，并且在Eden申请空间失败时，就会触发Scavenge GC，对Eden区域进行GC，清除非存活对象，并且把尚且存活的对象移动到Survivor区。然后整理Survivor的两个区。这种方式的GC是对年轻代的Eden区进行，不会影响到年老代。因为大部分对象都是从Eden区开始的，同时Eden区不会分配的很大，所以Eden区的GC会频繁进行。因而，一般在这里需要使用速度快、效率高的算法，使Eden去能尽快空闲出来。
-</code></pre><p><strong>Full GC</strong></p>
-<pre><code>对整个堆进行整理，包括Young、Tenured和Perm。Full GC因为需要对整个对进行回收，所以比Scavenge GC要慢，因此应该尽可能减少Full GC的次数。在对JVM调优的过程中，很大一部分工作就是对于FullGC的调节。有如下原因可能导致Full GC：
-</code></pre><p>· 年老代（Tenured）被写满</p>
-<p>· 持久代（Perm）被写满 </p>
-<p>· System.gc()被显示调用 </p>
-<p>·上一次GC之后Heap的各域分配策略动态变化</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/">JVM调优总结（十二）</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="jvm-">JVM调优总结（十二）-参考资料</h1>
-<pre><code>能整理出上面一些东西，也是因为站在巨人的肩上。下面是一些参考资料，供大家学习，大家有更好的，可以继续完善：）
-</code></pre><p>· <a href="http://www.ibm.com/developerworks/cn/java/j-jtp10283/" target="_blank">Java 理论与实践: 垃圾收集简史</a></p>
-<p>· <a href="http://pengjiaheng.iteye.com/admin/blogs/#resources" target="_blank">Java SE 6 HotSpot[tm] Virtual Machine Garbage Collection Tuning</a></p>
-<p>· <a href="http://pengjiaheng.iteye.com/admin/blogs/#16.2.6" target="_blank">Improving Java Application Performance and Scalability by Reducing Garbage Collection Times and Sizing Memory Using JDK 1.4.1</a></p>
-<p>· <a href="https://java.sun.com/j2se/reference/whitepapers/memorymanagement_whitepaper.pdf" target="_blank">Hotspot memory management whitepaper</a></p>
-<p>· <a href="http://java.sun.com/performance/reference/whitepapers/tuning.html" target="_blank">Java Tuning White Paper</a></p>
-<p>· <a href="http://java.sun.com/docs/hotspot/gc1.4.2/example.html" target="_blank">Diagnosing a Garbage Collection problem</a></p>
-<p>· <a href="http://java.sun.com/javase/technologies/hotspot/vmoptions.jsp" target="_blank">Java HotSpot VM Options</a></p>
-<p>· <a href="http://blogs.sun.com/watt/resource/jvm-options-list.html" target="_blank">A Collection of JVM Options</a></p>
-<p>· <a href="http://research.sun.com/jtech/pubs/04-g1-paper-ismm.pdf" target="_blank">Garbage-First Garbage Collection</a></p>
-<p>· <a href="http://java.sun.com/docs/hotspot/gc1.4.2/faq.html" target="_blank">Frequently Asked Questions about Garbage Collection in the HotspotTM JavaTM Virtual Machine</a></p>
-<p>· <a href="http://pengjiaheng.spaces.live.com/blog/cns!2DAA368B386E6AEA!685.entry" target="_blank">JProfiler试用手记</a></p>
-<p>· <a href="http://kenwu.me/java6-jvm-options-chinese-edition-published" target="_blank">Java6 JVM参数选项大全</a></p>
-<p>· <a href="http://www.douban.com/subject/1138768/" target="_blank">《深入Java虚拟机》</a>。虽然过去了很多年，但这本书依旧是经典。</p>
-<pre><code>这里是本系列的最后一篇了，很高兴大家能够喜欢这系列的文章。期间也提了很多问题，其中有些是我之前没有想到的或者考虑欠妥的，感谢提出这些问题的朋友，我也学到的不少东西。
-</code></pre>
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
 
 
 <ul id="pagination" class="pagination pagination-lg">
-  <li><a class="extend prev" href="/page/47/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/45/">45</a></li><li><a class="page-number" href="/page/46/">46</a></li><li><a class="page-number" href="/page/47/">47</a></li><li class="active"><li><span class="page-number current">48</span></li><li><a class="page-number" href="/page/49/">49</a></li><li><a class="page-number" href="/page/50/">50</a></li><li><a class="page-number" href="/page/51/">51</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="page-number" href="/page/164/">164</a></li><li><a class="extend next" href="/page/49/">&raquo;</a></li>
+  <li><a class="extend prev" href="/page/47/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/45/">45</a></li><li><a class="page-number" href="/page/46/">46</a></li><li><a class="page-number" href="/page/47/">47</a></li><li class="active"><li><span class="page-number current">48</span></li><li><a class="page-number" href="/page/49/">49</a></li><li><a class="page-number" href="/page/50/">50</a></li><li><a class="page-number" href="/page/51/">51</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/162/">162</a></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="extend next" href="/page/49/">&raquo;</a></li>
   <div class="clearfix"></div>
 </ul></div><!--wapper-->
        </div><!-- ID main-col END -->
@@ -556,7 +988,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-29 22:06:56</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-30 14:30:15</em></span></div>
 </div>
 <div class="clearfix"></div>
 

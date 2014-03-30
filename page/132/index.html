@@ -110,87 +110,138 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--MySQL语句级避免重复插入——InsertSelectNotExist/">MySQL 语句级避免重复插入—— Insert Select Not Exist</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--一个备份MySQL数据库的简单Shell脚本/">一个备份MySQL数据库的简单Shell脚本</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--MySQL语句级避免重复插入——InsertSelectNotExist/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--一个备份MySQL数据库的简单Shell脚本/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="mysql-insert-select-not-exist">MySQL 语句级避免重复插入—— Insert Select Not Exist</h1>
-<p>想要插入一条数据，要避免重复插入，又不想折腾两回数据库连接操作，可以参考如下办法。<img src="" alt="">
-Sql代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>INSERT INTO table(column1,column2,column3 ...columnN)  </li>
-<li>SELECT value1,value2,value3 ...valueN  </li>
-<li>FROM dual  </li>
-<li>WHERE NOT EXISTS(  </li>
-<li>SELECT /*  </li>
-<li>FROM table  </li>
-<li>WHERE value = ?  </li>
-<li>);  </li>
-</ol>
-<p>INSERT INTO table(column1,column2,column3 ...columnN)</p>
-<p>SELECT value1,value2,value3 ...valueN
-FROM dual</p>
-<p>WHERE NOT EXISTS(
-      SELECT /*</p>
-<pre><code>  FROM table
-  WHERE value = ?
-</code></pre><p>);
-<strong>dual</strong>是为了构建查询语句而存在的表,Oracle中很常见,配合<strong>INSERT ... SELECT</strong>构建成我们需要的表,并指定了数据项.
-<strong>EXISTS</strong>通过这个判断是否存在的函数,就免去了我们做IF-ELSE的冗繁操作.<img src="" alt="">
-例:
-Sql代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>INSERT INTO content (  </li>
-<li>detail,  </li>
-<li>status,  </li>
-<li>beginTime,  </li>
-<li>endTime)   </li>
-<li>SELECT  </li>
-<li>@detail,  </li>
-<li>1,  </li>
-<li>NULL,  </li>
-<li>NULL  </li>
-<li>FROM DUAL  </li>
-<li>WHERE NOT EXISTS(  </li>
-<li>SELECT contentId   </li>
-<li>FROM content   </li>
-<li><p>WHERE detail=@detail);  </p>
-<p> INSERT INTO content (</p>
-<pre><code> detail,
- status,
-
- beginTime,
- endTime)
-</code></pre><p> SELECT</p>
-<pre><code> @detail,
-
- 1,
- NULL,
-
- NULL
-</code></pre><p> FROM DUAL</p>
-<p>  WHERE NOT EXISTS(</p>
-<pre><code>  SELECT contentId
-
-  FROM content
-  WHERE detail=@detail);
-</code></pre><p><strong>@detail</strong>是要存入的内容，这里对内容进行了检索，如果要这么做，最好对该字段做唯一约束，或加索引。<img src="" alt="">
-省掉了IF-ELSE，在iBatis配置一下就ok了，哈！<img src="" alt="">
-还有个更坚决的办法——replace into：
-Sql代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>replace into blacklist(userInfoId,uid)  </p>
-</li>
-<li>select userInfoId,uid from user_info u where uid in(  </li>
-<li>&#39;u303565440&#39;,&#39;u303566922&#39;,&#39;u303515112&#39;,&#39;u303559738&#39;);  </li>
-</ol>
-<p>replace into blacklist(userInfoId,uid)</p>
-<p>select userInfoId,uid from user_info u where uid in(
-&#39;u303565440&#39;,&#39;u303566922&#39;,&#39;u303515112&#39;,&#39;u303559738&#39;);</p>
+        <h1 id="-mysql-shell-">一个备份MySQL数据库的简单Shell脚本</h1>
+<p>本文翻译自 <a href="http://isystemadmin.com/" target="_blank">iSystemAdmin</a> 的 《<a href="http://isystemadmin.com/a-simple-shell-script-to-backup-mysql-database" target="_blank">A Simple Shell Script to Backup MySQL Database</a>》</p>
+<p>Shell脚本是我们写不同类型命令的一种脚本，这些命令在这一个文件中就可以执行。我们也可以逐一敲入命令手动执行。如果我们要使用shell脚本就必须在一开始把这些命令写到一个文本文件中，以后就可以随意反复运行这些命令了。</p>
+<p>我首先要在本文带给你的是完整脚本。后面会对该脚本做说明。我假定你已经知道<strong>shell scripting、</strong> <strong>mysqldump和**</strong>crontab。**</p>
+<p>适用操作系统：任何Linux或UNIX。</p>
+<p><a href="http://cdn2.jobbole.com/2012/04/a-simple-shell-script-to-backup-mysql-database.jpg" title="a-simple-shell-script-to-backup-mysql-database" target="_blank"><img src="&quot;a-simple-shell-script-to-backup-mysql-database&quot;" alt="a-simple-shell-script-to-backup-mysql-database"></a></p>
+<p><strong>主脚本（用于备份mysql数据库）：</strong></p>
+<p>该Shell脚本可以自动备份数据库。只要复制粘贴本脚本到文本编辑器中，输入数据库用户名、密码以及数据库名即可。我备份数据库使用的是<strong>mysqlump</strong> 命令。后面会对每行脚本命令进行说明。</p>
+<p><strong>1. 分别建立目录“backup”和“oldbackup”</strong>
+1</p>
+<p>2
+ /#mkdir /backup</p>
+<p>/#mkdir /oldbackup</p>
+<p><strong>2. 现在使用你喜欢的编辑软件创建并编辑“backup.sh”</strong></p>
+<p>这里我用的是 vi
+1 /# vi /backup/backup.sh</p>
+<p>现在把以下几行命令输入到 backup.sh 文件中：</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9 /#!bin/bash</p>
+<p>cd</p>
+<p>/backup
+echo</p>
+<p>“You are In Backup Directory”</p>
+<p>mv</p>
+<p>backup/*</p>
+<p>/oldbackup
+echo</p>
+<p>“Old Databases are Moved to oldbackup folder”</p>
+<p>Now=$(</p>
+<p>date</p>
+<p>+”%d-%m-%Y--%H:%M:%S”)
+File=backup-$Now.sql</p>
+<p>mysqldump –u user-name  –p ‘password’ database-name &gt; $File
+echo</p>
+<p>“Your Database Backup Successfully Completed”</p>
+<p><strong>脚本说明：</strong></p>
+<p>切记，在第8行命令中，在mysqldump命令后要输入自己的数据库用户名、密码及数据库名。</p>
+<p>执行该脚本，首先会进入 <em>/backup</em> 目录，然后该脚本会把原有的旧数据库备份移动到 <em>/oldbackup</em> 文件夹中，接着根据系统的日期及时间生成一个文件名，在最后 <strong>mysqldump</strong> 命令会生成一个“.sql”格式的数据库备份文件。</p>
+<p><strong>3. 设置 backup.sh 脚本文件的可执行许可</strong>
+1 /# chmod +x /backup/backup.sh</p>
+<p><strong>4. 执行脚本</strong></p>
+<p>1 /#./backup.sh</p>
+<p>脚本运行结束后会得到以下输入。</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5 root@Server1:</p>
+<p>/download</p>
+<p>/#./backup.sh</p>
+<p>You areinDownload Directory
+Old Backup DatabaseisMoved to oldbackup folder</p>
+<p>database backup successful completed
+root@Server1:</p>
+<p>/download</p>
+<p>/#</p>
+<p>注：首次执行该脚本会有一个“no such file”的提示信息，这是由于旧备份文件还不存在。只要再次执行该脚本就没有问题了，这个问题已经不存在了。</p>
+<p><strong>5. 使用cron制订备份计划</strong></p>
+<p>使用Cron可以定时执行该脚本，备份会自动完成。使用 <strong>crontab</strong> 命令编辑cron 执行的计划任务。
+1 /#crontab –e</p>
+<p>只要在编辑器上加入下面这一行代码保存即可。</p>
+<p>1 013/<em> /</em> /<em> /</em></p>
+<p>/backup/backup</p>
+<p>.sh</p>
+<p>本任务表示的是在每天下午1点钟把数据库备份到指定的文件夹。有关cron任务设置的详细内容可以查阅crontab手册。</p>
+<p>对初学者而言，这是非常基础的脚本。希望你能举一反三写出更复杂的备份脚本。我们会努力提供更自动化的新脚本。请大家不吝赐教，我们会尽力解决你们的问题。感谢与我们相伴。
+来源： <a href="[http://blog.jobbole.com/18005/](http://blog.jobbole.com/18005/)">[http://blog.jobbole.com/18005/](http://blog.jobbole.com/18005/)</a> </p>
+<p>A Simple Shell Script to Backup MySQL DataBase</p>
+<p>The Shell script is a script where we are writing different types of commands and executing those commands from a single file.  We can execute that command manually, by entering command one by one. But if we use shell script we have to write those commands into a text file for the first time and then we can run those commands as many times as required.</p>
+<p>In this article first I will show you, Complete Script. Later on, you will get a description of that script.  I assumed that you know about <strong>shell scripting</strong>, <strong>mysqldump</strong> and <strong>crontab</strong>.</p>
+<p>Operating System: Any Linux or UNIX.</p>
+<p><strong>Main Script (for backup your <a href="http://resources.isystemadmin.com/mysql/" title="MySQL Introduction" target="_blank">MySQL</a> database):</strong></p>
+<p>This shell script will make the backup process of a database automatic. Just copy and paste this script in a text editor, put database user name, password, and database name. I will use <strong>mysqlump</strong> command to backup the database. Later on you will get description of each line.
+<strong>1. Make a directory name “backup” and “oldbackup”</strong></p>
+<p>1</p>
+<p>2
+ /#mkdir /backup</p>
+<p>/#mkdir /oldbackup
+<strong>2. Now make file name “backup.sh” and edit with any editor you like</strong></p>
+<p>I’m using vi here-</p>
+<p>1 /# vi /backup/backup.sh</p>
+<p>Now write these lines into backup.sh file:</p>
+<p>/#!bin/bash</p>
+<p>cd /backup
+echo “You are In Backup Directory”</p>
+<p>mv backup/* /oldbackup
+echo “Old Databases are Moved to oldbackup folder”</p>
+<p>Now=$(date +”%d-%m-%Y--%H:%M:%S”)
+File=backup-$Now.sql</p>
+<p>mysqldump –u user-name  –p ‘password’ database-name &gt; $File
+echo “Your Database Backup Successfully Completed”</p>
+<p><strong>Script Description:</strong></p>
+<p>Remember, in line number 8: Put your Database username, Password, database name after mysqldump command.</p>
+<p>When we run this script, first it goes to a <em>/backup</em> directory. Then it will move old database backup files to <em>/oldbackup</em> folder. Next it generates a file name from system date and time. And finally <strong>mysqldump</strong> command will generate a database backup file with “.sql” format
+<strong>3. Set permission to backup.sh file executable</strong></p>
+<p>1 /# chmod +x /backup/backup.sh
+<strong>4. Running the Script</strong></p>
+<p>1 /#./backup.sh</p>
+<p>You will get following output after executing the script.
+root@Server1:/download/#./backup.sh</p>
+<p>You are in Download Directory
+Old Backup Database is Moved to oldbackup folder</p>
+<p>database backup successful completed
+root@Server1:/download/#</p>
+<p>NB: first time when you run this script you will get a message “no such file”, because you don’t have old backup file. No problem just runs again this script, problem will be solved.</p>
+<p><strong>5. Schedule the Backup using cron</strong></p>
+<p>Using Cron job you can execute this script in a certain time, and all works will be done automatically. Use <strong>crontab</strong> command to edit editing cron schedules.</p>
+<p>/#crontab –e</p>
+<p>Just add below line in the editor and save it.
+0 13 /<em> /</em> /<em> /</em> /backup/backup.sh</p>
+<p>In this way every day 1PM your database will back up in your desired folder. Please visit crontab manuals for more details about setting the cron jobs.</p>
+<p>This is a very basic script for the beginners. Hope you can use the same idea for more complex backup. We will try to come up with new scripts to automate further. Please ask any question you have. We will try our best to address your questions. Thanks for staying with us.</p>
+<p><strong>No Related Posts</strong></p>
+<h2 id="-">#</h2>
+<p>Sifat is a veteran System Administrator who still loves to make his hand dirty with text consoles. Sifat has 14 years of Operations and Management experience in IT and telecommunication industries.He has proven record of IT planning, Policy Development, IT Process Management, Cost Control and successful leadership for effective and efficient IT organization. He is effective in reducing Capital and Operation Expense by H/W &amp; Software consolidation and virtualization. Sifat is a certified ITIL and VMWare Professional.</p>
+<p><a href="http://isystemadmin.com/author/sifat" target="_blank">View all posts by Sifat →</a></p>
+<p>来源： <a href="[http://isystemadmin.com/a-simple-shell-script-to-backup-mysql-database](http://isystemadmin.com/a-simple-shell-script-to-backup-mysql-database)">[http://isystemadmin.com/a-simple-shell-script-to-backup-mysql-database](http://isystemadmin.com/a-simple-shell-script-to-backup-mysql-database)</a></p>
 
       
     </div>
@@ -201,7 +252,7 @@ Sql代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a>
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--MySQL语句级避免重复插入——InsertSelectNotExist/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--MySQL语句级避免重复插入——InsertSelectNotExist" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--一个备份MySQL数据库的简单Shell脚本/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--一个备份MySQL数据库的简单Shell脚本" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -216,311 +267,793 @@ Sql代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--MySQL报错：TheMySQLserverisrunningwiththe--ski/">MySQL报错：The MySQL server is running with the </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--mysql性能的检查和调优方法-sudonecom服务器系统架构分析日志/">mysql性能的检查和调优方法 </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--MySQL报错：TheMySQLserverisrunningwiththe--ski/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--mysql性能的检查和调优方法-sudonecom服务器系统架构分析日志/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="mysql-the-mysql-server-is-running-with-the-skip-grant-tables-option-so-it-cannot-execute-this">MySQL报错：The MySQL server is running with the --skip-grant-tables option so it cannot execute this</h1>
+        <h1 id="mysql-sudone-com-">mysql性能的检查和调优方法 - sudone.com服务器系统架构分析日志</h1>
+<h1 id="-sudone-com-http-www-sudone-com-"><a href="http://www.sudone.com/" target="_blank">sudone.com</a> 服务器系统架构分析日志</h1>
+<h1 id="mysql-">mysql性能的检查和调优方法</h1>
+<p>[2012-08-02 15:22:04]</p>
+<p>我一直是使用mysql这个数据库软件，它工作比较稳定，效率也很高。在遇到严重性能问题时，一般都有这么几种可能：
+1、索引没有建好；
+2、sql写法过于复杂；
+3、配置错误；
+4、机器实在负荷不了；
+1、索引没有建好
+如果看到mysql消耗的cpu很大，可以用mysql的client工具来检查。
+在linux下执行
+/usr/local/mysql/bin/mysql -hlocalhost -uroot -p
+输入密码，如果没有密码，则不用-p参数就可以进到客户端界面中。
+看看当前的运行情况
+show full processlist
+可以多运行几次
+这个命令可以看到当前正在执行的sql语句，它会告知执行的sql、数据库名、执行的状态、来自的客户端ip、所使用的帐号、运行时间等信息
+在我的cache后端，这里面大部分时间是看不到显示任何sql语句的，我认为这样才算比较正常。如果看到有很多sql语句，那么这台mysql就一定会有性能问题
+如果出现了性能问题，则可以进行分析：
+1、是不是有sql语句卡住了？
+这是出现比较多的情况，如果数据库是采用myisam，那么有可能有一个写入的线程会把数据表给锁定了，如果这条语句不结束，则其它语句也无法运行。
+查看processlist里的time这一项，看看有没有执行时间很长的语句，要留意这些语句。
+2、大量相同的sql语句正在执行
+如果出现这种情况，则有可能是该sql语句执行的效率低下，同样要留意这些语句。
+然后把你所怀疑的语句统统集合一下，用desc（explain）来检查这些语句。
+首先看看一个正常的desc输出：
+mysql&gt; desc select /<em> from imgs where imgid=1651768337;
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-------+
+| id | select_type | table | type  | possible_keys | key     | key_len | ref   | rows | Extra |
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-------+
+|  1 | SIMPLE      | imgs  | const | PRIMARY       | PRIMARY | 8       | const |    1 |       |
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-------+
+1 row in set (0.00 sec)
+注意key、rows和Extra这三项，这条语句返回的结果说明了该sql会使用PRIMARY主键索引来查询，结果集数量为1条，Extra没有显示，证明没有用到排序或其他操作。由此结果可以推断，mysql会从索引中查询imgid=1651768337这条记录，然后再到真实表中取出所有字段，是很简单的操作。
+key是指明当前sql会使用的索引，mysql执行一条简单语句时只能使用到一条索引，注意这个限制；rows是返回的结果集大小，结果集就是使用该索引进行一次搜索的所有匹配结果；Extra一般会显示查询和排序的方式，。
+如果没有使用到key，或者rows很大而用到了filesort排序，一般都会影响到效率，例如：
+mysql&gt; desc select /</em> from imgs where userid=&quot;7mini&quot; order by clicks desc limit 10;
++----+-------------+-------+------+---------------+------+---------+------+-------+-----------------------------+
+| id | select_type | table | type | possible_keys | key  | key_len | ref  | rows  | Extra                       |
++----+-------------+-------+------+---------------+------+---------+------+-------+-----------------------------+
+|  1 | SIMPLE      | imgs  | ALL  | NULL          | NULL | NULL    | NULL | 12506 | Using where; Using filesort |
++----+-------------+-------+------+---------------+------+---------+------+-------+-----------------------------+
+1 row in set (0.00 sec)
+这条sql结果集会有12506条，用到了filesort，所以执行起来会非常消耗效率的。这时mysql执行时会把整个表扫描一遍，一条一条去找到匹配userid=&quot;7mini&quot;的记录，然后还要对这些记录的clicks进行一次排序，效率可想而知。真实执行时如果发现还比较快的话，那是因为服务器内存还足够将12506条比较短小的记录全部读入内存，所以还比较快，但是并发多起来或者表大起来的话，效率问题就严重了。
+这时我把userid加入索引：
+create index userid on imgs (userid);
+然后再检查：
+mysql&gt; desc select /<em> from imgs where userid=&quot;7mini&quot; order by clicks desc limit 10;
++----+-------------+-------+------+---------------+--------+---------+-------+------+-----------------------------+
+| id | select_type | table | type | possible_keys | key    | key_len | ref   | rows | Extra                       |
++----+-------------+-------+------+---------------+--------+---------+-------+------+-----------------------------+
+|  1 | SIMPLE      | imgs  | ref  | userid        | userid | 51      | const |    8 | Using where; Using filesort |
++----+-------------+-------+------+---------------+--------+---------+-------+------+-----------------------------+
+1 row in set (0.00 sec)
+嗯，这时可以看到mysql使用了userid这个索引搜索了，用userid索引一次搜索后，结果集有8条。然后虽然使用了filesort一条一条排序，但是因为结果集只有区区8条，效率问题得以缓解。
+但是，如果我用别的userid查询，结果又会有所不同：
+mysql&gt; desc select /</em> from imgs where userid=&quot;admin&quot; order by clicks desc limit 10;
++----+-------------+-------+------+---------------+--------+---------+-------+------+-----------------------------+
+| id | select_type | table | type | possible_keys | key    | key_len | ref   | rows | Extra                       |
++----+-------------+-------+------+---------------+--------+---------+-------+------+-----------------------------+
+|  1 | SIMPLE      | imgs  | ref  | userid        | userid | 51      | const | 2944 | Using where; Using filesort |
++----+-------------+-------+------+---------------+--------+---------+-------+------+-----------------------------+
+1 row in set (0.00 sec)
+这个结果和userid=&quot;7mini&quot;的结果基本相同，但是mysql用userid索引一次搜索后结果集的大小达到2944条，这2944条记录都会加入内存进行filesort，效率比起7mini那次来说就差很多了。这时可以有两种办法可以解决，第一种办法是再加一个索引和判断条件，因为我只需要根据点击量取最大的10条数据，所以有很多数据我根本不需要加进来排序，比如点击量小于10的，这些数据可能占了很大部分。
+我对clicks加一个索引，然后加入一个where条件再查询：
+create index clicks on imgs(clicks);
+mysql&gt; desc select /<em> from imgs where userid=&quot;admin&quot; order by clicks desc limit 10;
++----+-------------+-------+------+---------------+--------+---------+-------+------+-----------------------------+
+| id | select_type | table | type | possible_keys | key    | key_len | ref   | rows | Extra                       |
++----+-------------+-------+------+---------------+--------+---------+-------+------+-----------------------------+
+|  1 | SIMPLE      | imgs  | ref  | userid,clicks | userid | 51      | const | 2944 | Using where; Using filesort |
++----+-------------+-------+------+---------------+--------+---------+-------+------+-----------------------------+
+1 row in set (0.00 sec)
+这时可以看到possible_keys变成了userid,clicks，possible_keys是可以匹配的所有索引，mysql会从possible_keys中自己判断并取用其中一个索引来执行语句，值得注意的是，mysql取用的这个索引未必是最优化的。这次查询mysql还是使用userid这个索引来查询的，并没有按照我的意愿，所以结果还是没有什么变化。改一下sql加上use index强制mysql使用clicks索引：
+mysql&gt; desc select /</em> from imgs use index (clicks) where userid=&#39;admin&#39; and clicks&gt;10 order by clicks desc limit 10
++----+-------------+-------+-------+---------------+--------+---------+------+------+-------------+
+| id | select_type | table | type  | possible_keys | key    | key_len | ref  | rows | Extra       |
++----+-------------+-------+-------+---------------+--------+---------+------+------+-------------+
+|  1 | SIMPLE      | imgs  | range | clicks        | clicks | 4       | NULL | 5455 | Using where |
++----+-------------+-------+-------+---------------+--------+---------+------+------+-------------+
+1 row in set (0.00 sec)
+这时mysql用到了clicks索引进行查询，但是结果集比userid还要大！看来还要再进行限制：
+mysql&gt; desc select /<em> from imgs use index (clicks) where userid=&#39;admin&#39; and clicks&gt;1000 order by clicks desc limit 10
++----+-------------+-------+-------+---------------+--------+---------+------+------+-------------+
+| id | select_type | table | type  | possible_keys | key    | key_len | ref  | rows | Extra       |
++----+-------------+-------+-------+---------------+--------+---------+------+------+-------------+
+|  1 | SIMPLE      | imgs  | range | clicks        | clicks | 4       | NULL |  312 | Using where |
++----+-------------+-------+-------+---------------+--------+---------+------+------+-------------+
+1 row in set (0.00 sec)
+加到1000的时候结果集变成了312条，排序效率应该是可以接受。
+不过，采用换索引这种优化方式需要取一个采样点，比如这个例子中的1000这个数字，这样，对userid的每个数值，都要去找一个采样点，这样对程序来说是很难办的。如果按1000取样的话，那么userid=&#39;7mini&#39;这个例子中，取到的结果将不会是8条，而是2条，给用户造成了困惑。
+当然还有另一种办法，加入双索引：
+create index userid_clicks on imgs (userid, clicks)
+mysql&gt; desc select /</em> from imgs where userid=&quot;admin&quot; order by clicks desc limit 10;
++----+-------------+-------+------+----------------------+---------------+---------+-------+------+-------------+
+| id | select_type | table | type | possible_keys        | key           | key_len | ref   | rows | Extra       |
++----+-------------+-------+------+----------------------+---------------+---------+-------+------+-------------+
+|  1 | SIMPLE      | imgs  | ref  | userid,userid_clicks | userid_clicks | 51      | const | 2944 | Using where |
++----+-------------+-------+------+----------------------+---------------+---------+-------+------+-------------+
+1 row in set (0.00 sec)
+这时可以看到，结果集还是2944条，但是Extra中的filesort不见了。这时mysql使用userid_clicks这个索引去查询，这不但能快速查询到userid=&quot;admin&quot;的所有记录，并且结果是根据clicks排好序的！所以不用再把这个结果集读入内存一条一条排序了，效率上会高很多。
+但是用多字段索引这种方式有个问题，如果查询的sql种类很多的话，就得好好规划一下了，否则索引会建得非常多，不但会影响到数据insert和update的效率，而且数据表也容易损坏。
+以上是对索引优化的办法，因为原因可能会比较复杂，所以写得比较的长，一般好好优化了索引之后，mysql的效率会提升n个档次，从而也不需要考虑增加机器来解决问题了。
+但是，mysql甚至所有数据库，可能都不好解决limit的问题。在mysql中，limit 0,10只要索引合适，是没有问题的，但是limit 100000,10就会很慢了，因为mysql会扫描排好序的结果，然后找到100000这个点，取出10条返回。要找到100000这个点，就要扫描100000条记录，这个循环是比较耗时的。不知道会不会有什么好的算法可以优化这个扫描引擎，我冥思苦想也想不出有什么好办法。对于limit，目前直至比较久远的将来，我想只能通过业务、程序和数据表的规划来优化，我想到的这些优化办法也都还没有一个是万全之策，往后再讨论。
+2、sql写法过于复杂
+sql写法假如用到一些特殊的功能，比如groupby、或者多表联合查询的话，mysql用到什么方式来查询也可以用desc来分析，我这边用复杂sql的情况还不算多，所以不常分析，暂时就没有好的建议。
+3、配置错误
+配置里主要参数是key_buffer、sort_buffer_size/myisam_sort_buffer_size，这两个参数意思是：
+key_buffer=128M：全部表的索引都会尽可能放在这块内存区域内，索引比较大的话就开稍大点都可以，我一般设为128M，有个好的建议是把很少用到并且比较大的表想办法移到别的地方去，这样可以显著减少mysql的内存占用。
+sort_buffer_size=1M：单个线程使用的用于排序的内存，查询结果集都会放进这内存里，如果比较小，mysql会多放几次，所以稍微开大一点就可以了，重要是优化好索引和查询语句，让他们不要生成太大的结果集。
+另外一些配置：
+thread_concurrency=8：这个配置标配=cpu数量x2
+interactive_timeout=30
+wait_timeout=30：这两个配置使用10-30秒就可以了，这样会尽快地释放内存资源，注意：一直在使用的连接是不会断掉的，这个配置只是断掉了长时间不动的连接。
+query_cache：这个功能不要使用，现在很多人看到cache这几个字母就像看到了宝贝，这是不唯物主义的。mysql的query_cache在每次表数据有变化的时候都会重新清理连至该表的所有缓存，如果更新比较频繁，query_cache不但帮不上忙，而且还会对效率影响很大。这个参数只适合只读型的数据库，如果非要用，也只能用query_cache_type=2自行用SQL_CACHE指定一些sql进行缓存。
+max_connections：默认为100，一般情况下是足够用的，但是一般要开大一点，开到400-600就可以了，能超过600的话一般就有效率问题，得另找对策，光靠增加这个数字不是办法。
+其它配置可以按默认就可以了，个人觉得问题还不是那么的大，提醒一下：1、配置虽然很重要，但是在绝大部分情况下都不是效率问题的罪魁祸首。2、mysql是一个数据库，对于数据库最重要考究的不应是效率，而是稳定性和数据准确性。
+4、机器实在负荷不了
+如果做了以上调整，服务器还是不能承受，那就只能通过架构级调整来优化了。
+1、mysql同步。
+通过mysql同步功能将数据同步到数台从数据库，由主数据库写入，从数据库提供读取。
+我个人不是那么乐意使用mysql同步，因为这个办法会增加程序的复杂性，并常常会引起数据方面的错误。在高负荷的服务中，死机了还可以快速重启，但数据错误的话要恢复就比较麻烦。
+2、加入缓存
+加入缓存之后，就可以解决并发的问题，效果很明显。如果是实时系统，可以考虑用刷新缓存方式使缓存保持最新。
+在前端加入squid的架构比较提倡使用，在命中率比较高的应用中，基本上可以解决问题。
+如果是在程序逻辑层里面进行缓存，会增加很多复杂性，问题会比较多而且难解决，不建议在这一层面进行调整。
+3、程序架构调整，支持同时连接多个数据库
+如果web加入缓存后问题还是比较严重，只能通过程序架构调整，把应用拆散，用多台的机器同时提供服务。
+如果拆散的话，对业务是有少许影响，如果业务当中有部分功能必须使用所有的数据，可以用一个完整库+n个分散库这样的架构，每次修改都在完整库和分散库各操作一次，或定期整理完整库。
+当然，还有一种最笨的，把数据库整个完完整整的做拷贝，然后程序每次都把完整的sql在这些库执行一遍，访问时轮询访问，我认为这样要比mysql同步的方式安全。
+4、使用 mysql proxy 代理
+mysql proxy 可以通过代理把数据库中的各个表分散到数台服务器，但是它的问题是没有能解决热门表的问题，如果热门内容散在多个表中，用这个办法是比较轻松就能解决问题。
+我没有用过这个软件也没有认真查过，不过我对它的功能有一点点怀疑，就是它怎么实现多个表之间的联合查询？如果能实现，那么效率如何呢？
+5、使用memcachedb
+数据库换用支持mysql的memcachedb，是可以一试的想法，从memcachedb的实现方式和层面来看对数据没有什么影响，不会对用户有什么困扰。
+为我现在因为数据库方面问题不多，没有试验过这个玩意。不过，只要它支持mysql的大部分主要的语法，而且本身稳定，可用性是无需置疑的。
+  站名：<a href="http://www.sudone.com/" target="_blank">sudone.com</a>; 站长：<a href="http://www.sudone.com/ayou.html" target="_blank">Ayou</a>; 服务器：ubuntu+nginx+squid+php</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--mysql性能的检查和调优方法-sudonecom服务器系统架构分析日志/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--mysql性能的检查和调优方法-sudonecom服务器系统架构分析日志" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--为MySQL选择合适的备份方式/">为MySQL选择合适的备份方式</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--为MySQL选择合适的备份方式/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-mysql-">为MySQL选择合适的备份方式</h1>
+<p>[<img src="" alt=""></p>
+<p>mysql 5.1同步到5.5卡库问题一则
+](<a href="http://nettedfish.sinaapp.com/blog/2013/02/22/51-55-slave-sql-thread-error/" target="_blank">http://nettedfish.sinaapp.com/blog/2013/02/22/51-55-slave-sql-thread-error/</a> &quot;mysql 5.1同步到5.5卡库问题一则&quot;)[<img src="" alt=""></p>
+<p>一键搭建blackhole从库
+](<a href="http://nettedfish.sinaapp.com/blog/2012/10/19/auto-build-blackhole-slave" target="_blank">http://nettedfish.sinaapp.com/blog/2012/10/19/auto-build-blackhole-slave</a> &quot;一键搭建blackhole从库&quot;)[<img src="" alt=""></p>
+<p>如何产生唯一的server id
+](<a href="http://nettedfish.sinaapp.com/blog/2013/07/24/how-to-generate-unique-server_id/" target="_blank">http://nettedfish.sinaapp.com/blog/2013/07/24/how-to-generate-unique-server_id/</a> &quot;如何产生唯一的server id&quot;)[<img src="" alt=""></p>
+<p>如何生成唯一的server id
+](<a href="http://nettedfish.sinaapp.com//blog/2013/07/24/how-to-generate-unique-server_id/" target="_blank">http://nettedfish.sinaapp.com//blog/2013/07/24/how-to-generate-unique-server_id/</a> &quot;如何生成唯一的server id&quot;)</p>
+<p><a href="http://www.ujian.cc/index2" title="友荐是什么？" target="_blank">友荐[?]</a></p>
+<p><a href="&quot;返回顶部&quot;">返回顶部</a><a href="&quot;猜你喜欢&quot;">猜你喜欢</a>
+[<img src="" alt=""></p>
+<p>mysql 5.1同步到5.5卡库问题一则
+](<a href="http://nettedfish.sinaapp.com/blog/2013/02/22/51-55-slave-sql-thread-error/" target="_blank">http://nettedfish.sinaapp.com/blog/2013/02/22/51-55-slave-sql-thread-error/</a> &quot;mysql 5.1同步到5.5卡库问题一则&quot;)[<img src="" alt=""></p>
+<p>金泫雅清新素颜照
+](<a href="http://www.cmsbs.com/pic/zp/4993.html" target="_blank">http://www.cmsbs.com/pic/zp/4993.html</a> &quot;金泫雅清新素颜照&quot;)[<img src="" alt=""></p>
+<p>学生办理签证重要的标准
+](<a href="http://www.cmsbs.com/eut/luixue/5105.html" target="_blank">http://www.cmsbs.com/eut/luixue/5105.html</a> &quot;学生办理签证重要的标准&quot;)[<img src="" alt=""></p>
+<p>深田恭子艳丽沙滩迷情写真
+](<a href="http://www.cmsbs.com/pic/hot/5228.html" target="_blank">http://www.cmsbs.com/pic/hot/5228.html</a> &quot;深田恭子艳丽沙滩迷情写真&quot;)[<img src="" alt=""></p>
+<p>李颖芝穿金色比基尼与保时捷亲密接触
+](<a href="http://www.cmsbs.com/pic/xg/5166.html" target="_blank">http://www.cmsbs.com/pic/xg/5166.html</a> &quot;李颖芝穿金色比基尼与保时捷亲密接触&quot;)</p>
+<p><a href="http://www.ujian.cc/index2" title="友荐是什么？" target="_blank">友荐[?]</a></p>
+<p><a href="&quot;返回顶部&quot;">返回顶部</a><a href="&quot;猜你喜欢&quot;">猜你喜欢</a></p>
+<h1 id="-learn-and-share-http-nettedfish-sinaapp-com-"><a href="http://nettedfish.sinaapp.com/" target="_blank">Learn and Share</a></h1>
+<h2 id="-">陌上发花，可以缓缓醉矣， 忍把浮名，换了浅酌低唱</h2>
+<ul>
+<li><p><a href="http://nettedfish.sinaapp.com/atom.xml" title="RSS订阅" target="_blank">RSS</a>
+Navigate…» 首页» 文章归档» 资料分享» 去哪儿招聘» 关于我» RSS</p>
+</li>
+<li><p><a href="http://nettedfish.sinaapp.com/" target="_blank">首页</a></p>
+</li>
+<li><a href="http://nettedfish.sinaapp.com/blog/archives" target="_blank">文章归档</a></li>
+<li><a href="http://nettedfish.sinaapp.com/my_share.html" target="_blank">资料分享</a></li>
+<li><a href="http://nettedfish.sinaapp.com/enroll.html" target="_blank">去哪儿招聘</a></li>
+<li><a href="http://nettedfish.sinaapp.com/about.html" target="_blank">关于我</a><h1 id="-mysql-">为MySQL选择合适的备份方式</h1>
+</li>
+</ul>
+<p>2013年-05月-31日 16:01:00
+数据库的备份是极其重要的事情。如果没有备份，遇到下列情况就会抓狂：</p>
+<h3 id="update-or-delete-whitout-where-">UPDATE or DELETE whitout where…</h3>
+<h3 id="table-was-dropped-accidentally-">table was DROPPed accidentally…</h3>
+<h3 id="innodb-was-corrupt-">INNODB was corrupt…</h3>
+<h3 id="entire-datacenter-loses-power-">entire datacenter loses power…</h3>
+<p>从数据安全的角度来说，服务器磁盘都会做raid，MySQL本身也有主从、drbd等容灾机制，但它们都无法完全取代备份。容灾和高可用能帮我们有效的应对物理的、硬件的、机械的故障，而对我们犯下的逻辑错误却无能为力。每一种逻辑错误发生的概率都极低，但是当多种可能性叠加的时候，小概率事件就放大成很大的安全隐患，这时候备份的必要性就凸显了。那么在众多的MySQL备份方式中，哪一种才是适合我们的呢？</p>
+<h2 id="-">常见的备份方式</h2>
+<p>MySQL本身为我们提供了mysqldump、mysqlbinlog远程备份工具，percona也为我们提供了强大的Xtrabackup，加上开源的mydumper，还有基于主从同步的延迟备份、从库冷备等方式，以及基于文件系统快照的备份，其实选择已经多到眼花缭乱。而备份本身是为了恢复，所以能够让我们在出现故障后迅速、准确恢复的备份方式，就是最适合我们的，当然，同时能够省钱、省事，那就非常完美。下面就我理解的几种备份工具进行一些比较，探讨下它们各自的适用场景。</p>
+<h3 id="1-mysqldump-mydumper">1. mysqldump &amp; mydumper</h3>
+<p>mysqldump是最简单的逻辑备份方式。在备份myisam表的时候，如果要得到一致的数据，就需要锁表，简单而粗暴。而在备份innodb表的时候，加上–master-data=1 –single-transaction 选项，在事务开始时刻，记录下binlog pos点，然后利用mvcc来获取一致的数据，由于是一个长事务，在写入和更新量很大的数据库上，将产生非常多的undo，显著影响性能，所以要慎用。 <img src="" alt=""></p>
+<ul>
+<li>优点：简单，可针对单表备份，在全量导出表结构的时候尤其有用。</li>
+<li>缺点：简单粗暴，单线程，备份慢而且恢复慢，跨IDC有可能遇到时区问题。
+mydumper是mysqldump的加强版。相比mysqldump：</li>
+<li>内置支持压缩，可以节省2-4倍的存储空间。</li>
+<li>支持并行备份和恢复，因此速度比mysqldump快很多，但是由于是逻辑备份，仍不是很快。</li>
+</ul>
+<h3 id="2-">2. 基于文件系统的快照</h3>
+<p>基于文件系统的快照，是物理备份的一种。在备份前需要进行一些复杂的设置，在备份开始时刻获得快照并记录下binlog pos点，然后采用类似copy-on-write的方式，把快照进行转储。转储快照本身会消耗一定的IO资源，而且在写入压力较大的实例上，保存被更改数据块的前印象也会消耗IO，最终表现为整体性能的下降。而且服务器还要为copy-on-write快照预留较多的磁盘空间，这本身对资源也是一种浪费。因此这种备份方式我们使用的不多。 <img src="" alt=""></p>
+<h3 id="3-xtrabackup">3. Xtrabackup</h3>
+<p>这或许是最为广泛的备份方式。percona之所以家喻户晓，Xtrabackup应该功不可没。它实际上是物理备份+逻辑备份的组合。在备份innodb表的时候，它拷贝ibd文件，并一刻不停的监视redo log的变化，append到自己的事务日志文件。在拷贝ibd文件过程中，ibd文件本身可能被写”花”，这都不是问题，因为在拷贝完成后的第一个prepare阶段，Xtrabackup采用类似于innodb崩溃恢复的方法，把数据文件恢复到与日志文件一致的状态，并把未提交的事务回滚。如果同时需要备份myisam表以及innodb表结构等文件，那么就需要用flush tables with lock来获得全局锁，开始拷贝这些不再变化的文件，同时获得binlog位置，拷贝结束后释放锁，也停止对redo log的监视。
+它的工作原理如下：
+<img src="" alt="">
+由于mysql中不可避免的含有myisam表，同时innobackup并不备份表结构等文件，因此想要完整的备份mysql实例，就少不了要执行flush tables with read lock，而这个语句会被任何查询(包括select)阻塞，在阻塞过程中，它又反过来阻塞任何查询(包括select)。如果碰巧备份实例上有长查询先于flush tables with read lock执行，数据库就会hang住。而当flush tables with read lock获得全局锁后，虽然查询可以执行，但是仍会阻塞更新，所以，我们希望flush tables with read lock从发起到结束，持续的时间越短越好。
+为了解决这个问题，有两种比较有效的方法：</p>
+<h3 id="1-myisam-">1. 尽量不用myisam表。</h3>
+<h3 id="2-xtrabackup-rsync-rsync-">2. Xtrabackup增加了–rsync选项，通过两次rsync来减少持有全局锁的时间。</h3>
+<p>优化后的备份过程如下：
+<img src="" alt=""></p>
+<ul>
+<li>优点：在线热备，全备+增备+流备，支持限速，支持压缩，支持加密。</li>
+<li>缺点：需要获取全局锁，如果遇到长查询，等待时间将不可控，因此要做好监控，必要时杀死长查询或自杀；遇到超大的实例，备份过程较长，redo log太大会影响恢复速度，这种情况下最好采用延迟备份。</li>
+</ul>
+<h3 id="4-mysqlbinlog-5-6">4. mysqlbinlog 5.6</h3>
+<p>上述所有的备份方式，都只能把数据库恢复到备份的某个时间点：mysqldump和mydumper，以及snapshot是备份开始的时间点；Xtrabackup是备份结束的时间点。要想实现point in time的恢复，还必须备份binlog。同时binlog也是实现增备的宝贵资源。
+幸运的是，mysql 5.6为我们提供了远程备份binlog的选项：</p>
+<p>mysqlbinlog --raw --read-from-remote-server --stop-never
+它会伪装成mysql从库，从远程获取binlog然后进行转储。这对线上主库容量不够无法保存较多binlog的场景非常有用。但是，它毕竟不像真正的mysql从库实例，状态监控和同步都需要单独部署。因此个人觉得采用blackhole来备份全量的binlog是更好的选择。笔者曾经实现过一个<a href="https://github.com/nettedfish/create_blackhole_slave" target="_blank">自动搭建blackhole从库的工具</a>，稍加修改，就可以完美搭建出blackhole从库。一旦同步起来，基本一劳永逸，很少出问题，主从切换的时候跟着切了就行。</p>
+<h3 id="-">提示：</h3>
+<ul>
+<li>不要小看binlog的备份。当5.6的多线程复制大规模使用后，从库追赶主库命令点的耗时将被极大缩短，这样我们把每天一次的全量备份改为每3天一次、甚至每周一次的全量备份，和持续的binlog增量备份。遇到故障需要恢复数据的时候，重放3、5天的binlog也是极快的。降低备份频率最直接的好处是，省钱、省事。</li>
+<li>blackhole对于备份binlog是极好的。一方面可以长久的备份binlog用于恢复数据库，另一方面，在其上配置半同步复制，可以有效防止主库的binlog丢失。</li>
+</ul>
+<h2 id="-">总结</h2>
+<p>备份方式各有千秋，而对我们来说，面对数千实例，选择合适的备份工具来实现统一配置、统一规划，构建智能调度的备份云平台才是王道。毕竟，多种备份方式共存的运维成本是不容忽视的。
+从使用经验来看，用Xtrabackup全备数据，用blackhole增备binlog，并定期对备份数据的有效性进行验证，是当下比较好的选择。</p>
+<p>Posted by nettedfish 2013年-05月-31日 16:01:00  <a href="http://nettedfish.sinaapp.com/blog/categories/mysql/" target="_blank">mysql</a></p>
+<p><a href="http://nettedfish.sinaapp.com/blog/2013/02/22/51-55-slave-sql-thread-error/" title="Previous Post: mysql 5.1同步到5.5卡库问题一则" target="_blank">« mysql 5.1同步到5.5卡库问题一则</a> <a href="http://nettedfish.sinaapp.com/blog/2013/06/04/check-replication-consistency-by-pt-table-checksum/" title="Next Post: 用pt-table-checksum校验数据一致性" target="_blank">用pt-table-checksum校验数据一致性 »</a>
+<a href="http://www.ujian.cc/" target="_blank"><img src="" alt="友荐云推荐"></a></p>
+<p><a href=""><img src="" alt=""></a><a href=""><img src="" alt=""></a></p>
+<p>共有1人喜欢  共3条评论
+<a href="">登录</a><a href="">社区</a></p>
 <p><a href=""></a></p>
-<h1 id="-_-http-www-cnblogs-com-xionghui-"><a href="http://www.cnblogs.com/xionghui/" target="_blank">_安静</a></h1>
-<h2 id="-mysql-the-mysql-server-is-running-with-the-skip-grant-tables-option-so-it-cannot-execute-this-statement-http-www-cnblogs-com-xionghui-archive-2013-03-01-2939342-html-"><a href="http://www.cnblogs.com/xionghui/archive/2013/03/01/2939342.html" target="_blank">MySQL报错：The MySQL server is running with the --skip-grant-tables option so it cannot execute this statement</a></h2>
-<p>The MySQL server is running with the --skip-grant-tables option so it cannot execute this statement</p>
-<p>解决办法：</p>
-<p>mysql&gt; set global read_only=0;
-（关掉新主库的只读属性）</p>
-<p> flush privileges;</p>
-<p>set global read_only=1;(读写属相)</p>
-<p> flush privileges;</p>
-<p>Cannot execute statement: impossible to write to binary log since BINLOG_FORMAT = STATEMENT and at least one table uses a storage engine limited to row-based logging. InnoDB is limited to row-logging when transaction isolation level is READ COMMITTED or READ UNCOMMITTED.</p>
-<p>  mysql&gt; SET SESSION binlog_format = &#39;ROW&#39;;
-   mysql&gt; SET GLOBAL binlog_format = &#39;ROW&#39;;</p>
-<h2 id="mysql5-1-binlogformat">MYSQL5.1复制参数binlogformat</h2>
-<p>MySQL 5.1 中，在复制方面的改进即便引进了新的复制技巧：基于行的复制。简言之，这种新技巧即便关怀表中发生改变的登记，而非过去的照抄 binlog 形式。从 MySQL 5.1.12 开始，能够用以下三种形式来告终：基于SQL语句的复制(statement-based replication, SBR)，基于行的复制(row-based replication, RBR)，混杂形式复制(mixed-based replication, MBR)。相应地，binlog的款式也有三种：STATEMENT，ROW，MIXED。MBR 形式中，SBR 形式是默认的。
-在运行时能够动态低改换binlog的款式，除非以下几种情形：</p>
-<ol>
-<li>存储过程可能引发器其中</li>
-<li>启用了NDB</li>
-<li>目前会话试用 RBR 形式，并且已敞开了临时表
-万一binlog批准了 MIXED 形式，那么在以下几种情形下会积极将binlog的形式由 SBR 形式改成 RBR 形式。</li>
-<li>当DML语句更新一个NDB表时</li>
-<li>当函数中包括 UUID() 时</li>
-<li>2个及以上包括 AUTO_INCREMENT 字段的表被更新时</li>
-<li>行任何 INSERT DELAYED 语句时</li>
-<li>用 UDF 时</li>
-<li>视图中定然要求利用 RBR 时，例如创立视图是利用了 UUID() 函数
-设定主从复制形式的措施极其容易，凡是在过去设定复制搭配的基础上，再加一个参数：
-binlog_format=&quot;STATEMENT&quot;
-/#binlog_format=&quot;ROW&quot;
-/#binlog_format=&quot;MIXED&quot;
-当然了，也能够在运行时动态修正binlog的款式。例如
-mysql&gt; SET SESSION binlog_format = &#39;STATEMENT&#39;;
-mysql&gt; SET SESSION binlog_format = &#39;ROW&#39;;
-mysql&gt; SET SESSION binlog_format = &#39;MIXED&#39;;
-mysql&gt; SET GLOBAL binlog_format = &#39;STATEMENT&#39;;
-mysql&gt; SET GLOBAL binlog_format = &#39;ROW&#39;;
-mysql&gt; SET GLOBAL binlog_format = &#39;MIXED&#39;;
-目前来比拟以下 SBR 和 RBR 2中形式各自的优缺点
-SBR 的优点：</li>
-<li>历史悠久，技巧成熟</li>
-<li>binlog文件较小</li>
-<li>binlog中包括了所有数据库改动消息，能够据此来核实数据库的平安等情形</li>
-<li>binlog能够用于实时的还原，而不但仅用于复制</li>
-<li>主从版本能够不一样，从服务器版本能够比主服务器版本高
-SBR 的缺点：</li>
-<li>不是所有的UPDATE语句都能被复制，尤其是包括不确定垄断的时候。</li>
-<li>调用具有不确定因素的 UDF 时复制也可能出问题</li>
-<li>利用以下函数的语句也无法被复制：
-/<em> LOAD_FILE()
-/</em> UUID()
-/<em> USER()
-/</em> FOUND_ROWS()
-/* SYSDATE() (除非启用时启用了 --sysdate-is-now 选项)</li>
-<li>INSERT ... SELECT 会发生比 RBR 更多的行级锁</li>
-<li>复制必需举行全表扫描(WHERE 语句中没利于用到索引)的 UPDATE 时，必需比 RBR 哀求更多的行级锁</li>
-<li>对于有 AUTO_INCREMENT 字段的 InnoDB表而言，INSERT 语句会阻塞其他 INSERT 语句</li>
-<li>对于一些混杂的语句，在从服务器上的耗资源情形会更严重，而 RBR 形式下，只会对那个发生改变的登记发生波及</li>
-<li>存储函数(不是存储过程)在被调用的同时也会厉行顺次 NOW() 函数，这个能够说是坏事也可能是好事</li>
-<li>确定了的 UDF 也必需在从服务器上厉行</li>
-<li>数据表定然几乎和主服务器坚持统一才行，否则可能会导致复制出错</li>
-<li>厉行混杂语句万一出错的话，会花费更多资源
-RBR 的优点：</li>
-<li>任何情形都能够被复制，这对复制来说是最平安可靠的</li>
-<li>和其他大多数数据库系统的复制技巧一样</li>
-<li>多数情形下，从服务器上的表万一有主键的话，复制就会快了许多</li>
-<li>复制以下几种语句时的行锁更少：
-/<em> INSERT ... SELECT
-/</em> 包括 AUTO_INCREMENT 字段的 INSERT
-/* 未曾附带条件可能并未曾修正许多登记的 UPDATE 或 DELETE 语句</li>
-<li>厉行 INSERT，UPDATE，DELETE 语句时锁更少</li>
-<li>从服务器上批准多线程来厉行复制成为可能
-RBR 的缺点：</li>
-<li>binlog 大了许多</li>
-<li>混杂的回滚时 binlog 中会包括许多的数据</li>
-<li>主服务器上厉行 UPDATE 语句时，所有发生改变的登记都会写到 binlog 中，而 SBR 只会写顺次，这会导致频繁发生
-binlog 的并发写问题</li>
-<li>UDF 发生的大 BLOB 值会导致复制变慢</li>
-<li>无法从 binlog 中看到都复制了写什么语句</li>
-<li>当在非事务表上厉行一段堆积的SQL语句时，良好批准 SBR 形式，否则很轻率导致主从服务器的数据不统一情形发生
-另外，针对系统库 mysql 里面的表发生改变时的处理法定如下：</li>
-<li>万一是批准 INSERT，UPDATE，DELETE 直接垄断表的情形，则日志款式依据 binlog_format 的设定而登记</li>
-<li>万一是批准 GRANT，REVOKE，SET PASSWORD 等管教语句来做的话，那么无论如何都批准 SBR 形式登记
-注：批准 RBR 形式后，能处理许多本来揭示的主键重复问题例如Pro Publica，SunlightFoundation和维基解密，开始添补鞭策媒体滑坡留下的空白。</li>
-</ol>
-<h2 id="mysql5-5mysql-5-5-binlog-3-mixed-statement-row-statement-">MYSQL5.5MySQL 5.5 中对于二进制日志 (binlog) 有 3 种不同的格式可选：Mixed,Statement,Row，默认格式是 Statement。总结一下这三种格式日志的优缺点。</h2>
-<p>MySQL Replication 复制可以是基于一条语句 (Statement Level) ，也可以是基于一条记录 (Row Level)，可以在 MySQL 的配置参数中设定这个复制级别，不同复制级别的设置会影响到 Master 端的 bin-log 日志格式。</p>
-<p><strong>1. Row</strong>
-日志中会记录成每一行数据被修改的形式，然后在 slave 端再对相同的数据进行修改。</p>
-<p><strong>优点</strong>： 在 row 模式下，bin-log 中可以不记录执行的 SQL 语句的上下文相关的信息，仅仅只需要记录那一条记录被修改了，修改成什么样了。所以 row 的日志内容会非常清楚的记录下每一行数据修改的细节，非常容易理解。而且不会出现某些特定情况下的存储过程或 function ，以及 trigger 的调用和触发无法被正确复制的问题。</p>
-<p><strong>缺点</strong>：在 row 模式下，所有的执行的语句当记录到日志中的时候，都将以每行记录的修改来记录，这样可能会产生大量的日志内容，比如有这样一条 update 语句：
-1 UPDATE product SET owner_member_id = &#39;b&#39; WHERE owner_member_id = &#39;a&#39;</p>
-<p>执 行之后，日志中记录的不是这条 update 语句所对应的事件 (MySQL 以事件的形式来记录 bin-log 日志) ，而是这条语句所更新的每一条记录的变化情况，这样就记录成很多条记录被更新的很多个事件。自然，bin-log 日志的量就会很大。尤其是当执行 alter table 之类的语句的时候，产生的日志量是惊人的。因为 MySQL 对于 alter table 之类的表结构变更语句的处理方式是整个表的每一条记录都需要变动，实际上就是重建了整个表。那么该表的每一条记录都会被记录到日志中。</p>
-<p><strong>2. Statement</strong>
-每一条会修改数据的 SQL 都会记录到 master 的 bin-log 中。slave 在复制的时候 SQL 进程会解析成和原来 master 端执行过的相同的 SQL 再次执行。</p>
-<p><strong>优点</strong>：在 statement 模式下，首先就是解决了 row 模式的缺点，不需要记录每一行数据的变化，减少了 bin-log 日志量，节省 I/O 以及存储资源，提高性能。因为他只需要记录在 master 上所执行的语句的细节，以及执行语句时候的上下文的信息。</p>
-<p><strong>缺点</strong>： 在 statement 模式下，由于他是记录的执行语句，所以，为了让这些语句在 slave 端也能正确执行，那么他还必须记录每条语句在执行的时候的一些相关信息，也就是上下文信息，以保证所有语句在 slave 端杯执行的时候能够得到和在 master 端执行时候相同的结果。另外就是，由于 MySQL 现在发展比较快，很多的新功能不断的加入，使 MySQL 的复制遇到了不小的挑战，自然复制的时候涉及到越复杂的内容，bug 也就越容易出现。在 statement 中，目前已经发现的就有不少情况会造成 MySQL 的复制出现问题，主要是修改数据的时候使用了某些特定的函数或者功能的时候会出现，比如：sleep() 函数在有些版本中就不能被正确复制，在存储过程中使用了 last_insert_id() 函数，可能会使 slave 和 master 上得到不一致的 id 等等。由于 row 是基于每一行来记录的变化，所以不会出现类似的问题。</p>
-<p><strong>3. Mixed</strong>
-从 官方文档中看到，之前的 MySQL 一直都只有基于 statement 的复制模式，直到 5.1.5 版本的 MySQL 才开始支持 row 复制。从 5.0 开始，MySQL 的复制已经解决了大量老版本中出现的无法正确复制的问题。但是由于存储过程的出现，给 MySQL Replication 又带来了更大的新挑战。另外，看到官方文档说，从 5.1.8 版本开始，MySQL 提供了除 Statement 和 Row 之外的第三种复制模式：Mixed，实际上就是前两种模式的结合。在 Mixed 模式下，MySQL 会根据执行的每一条具体的 SQL 语句来区分对待记录的日志形式，也就是在 statement 和 row 之间选择一种。新版本中的 statment 还是和以前一样，仅仅记录执行的语句。而新版本的 MySQL 中对 row 模式也被做了优化，并不是所有的修改都会以 row 模式来记录，比如遇到表结构变更的时候就会以 statement 模式来记录，如果 SQL 语句确实就是 update 或者 delete 等修改数据的语句，那么还是会记录所有行的变更。</p>
-<p><strong>其他参考信息</strong></p>
-<p><strong>除以下几种情况外，在运行时可以动态改变 binlog 的格式</strong>：
-. 存储流程或者触发器中间；
-. 启用了 NDB；
-. 当前会话使用 row 模式，并且已打开了临时表；</p>
-<p><strong>如果 binlog 采用了 Mixed 模式，那么在以下几种情况下会自动将 binlog 的模式由 statement 模式变为 row 模式</strong>：
-. 当 DML 语句更新一个 NDB 表时；
-. 当函数中包含 UUID() 时；
-. 2 个及以上包含 AUTO_INCREMENT 字段的表被更新时；
-. 执行 INSERT DELAYED 语句时；
-. 用 UDF 时；
-. 视图中必须要求运用 row 时，例如建立视图时使用了 UUID() 函数；</p>
-<p><strong>设定主从复制模式</strong>：
-1 2 3 4 log-bin=mysql-bin /#binlog_format=&quot;STATEMENT&quot; /#binlog_format=&quot;ROW&quot; binlog_format=&quot;MIXED&quot;</p>
-<p><strong>也可以在运行时动态修改 binlog 的格式。例如</strong>：</p>
-<p>1 2 3 4 5 6 mysql&gt; SET SESSION binlog_format = &#39;STATEMENT&#39;; mysql&gt; SET SESSION binlog_format = &#39;ROW&#39;; mysql&gt; SET SESSION binlog_format = &#39;MIXED&#39;; mysql&gt; SET GLOBAL binlog_format = &#39;STATEMENT&#39;; mysql&gt; SET GLOBAL binlog_format = &#39;ROW&#39;; mysql&gt; SET GLOBAL binlog_format = &#39;MIXED&#39;;</p>
-<p><strong>两种模式的对比</strong>：
-<strong>Statement 优点</strong>
-历史悠久，技术成熟；
-产生的 binlog 文件较小；
-binlog 中包含了所有数据库修改信息，可以据此来审核数据库的安全等情况；
-binlog 可以用于实时的还原，而不仅仅用于复制；
-主从版本可以不一样，从服务器版本可以比主服务器版本高；</p>
-<p><strong>Statement 缺点</strong>：
-不是所有的 UPDATE 语句都能被复制，尤其是包含不确定操作的时候；
-调用具有不确定因素的 UDF 时复制也可能出现问题；
-运用以下函数的语句也不能被复制：
-/<em> LOAD_FILE()
-/</em> UUID()
-/<em> USER()
-/</em> FOUND_ROWS()
-/* SYSDATE() (除非启动时启用了 –sysdate-is-now 选项)
-INSERT … SELECT 会产生比 RBR 更多的行级锁；
-复制须要执行全表扫描 (WHERE 语句中没有运用到索引) 的 UPDATE 时，须要比 row 请求更多的行级锁；
-对于有 AUTO_INCREMENT 字段的 InnoDB 表而言，INSERT 语句会阻塞其他 INSERT 语句；
-对于一些复杂的语句，在从服务器上的耗资源情况会更严重，而 row 模式下，只会对那个发生变化的记录产生影响；
-存储函数(不是存储流程 )在被调用的同时也会执行一次 NOW() 函数，这个可以说是坏事也可能是好事；
-确定了的 UDF 也须要在从服务器上执行；
-数据表必须几乎和主服务器保持一致才行，否则可能会导致复制出错；
-执行复杂语句如果出错的话，会消耗更多资源；</p>
-<p><strong>Row 优点</strong>
-任何情况都可以被复制，这对复制来说是最安全可靠的；
-和其他大多数数据库系统的复制技能一样；
-多数情况下，从服务器上的表如果有主键的话，复制就会快了很多；
-复制以下几种语句时的行锁更少：
-/<em> INSERT … SELECT
-/</em> 包含 AUTO_INCREMENT 字段的 INSERT
-/* 没有附带条件或者并没有修改很多记录的 UPDATE 或 DELETE 语句
-执行 INSERT，UPDATE，DELETE 语句时锁更少；
-从服务器上采用多线程来执行复制成为可能；</p>
-<p><strong>Row 缺点</strong>
-生成的 binlog 日志体积大了很多；
-复杂的回滚时 binlog 中会包含大量的数据；
-主服务器上执行 UPDATE 语句时，所有发生变化的记录都会写到 binlog 中，而 statement 只会写一次，这会导致频繁发生 binlog 的写并发请求；
-UDF 产生的大 BLOB 值会导致复制变慢；
-不能从 binlog 中看到都复制了写什么语句(加密过的)；
-当在非事务表上执行一段堆积的 SQL 语句时，最好采用 statement 模式，否则很容易导致主从服务器的数据不一致情况发生；
-另外，针对系统库 MySQL 里面的表发生变化时的处理准则如下：
-如果是采用 INSERT，UPDATE，DELETE 直接操作表的情况，则日志格式根据 binlog_format 的设定而记录；
-如果是采用 GRANT，REVOKE，SET PASSWORD 等管理语句来做的话，那么无论如何都要使用 statement 模式记录；
-使用 statement 模式后，能处理很多原先出现的主键重复问题；</p>
-<p>分类: <a href="http://www.cnblogs.com/xionghui/category/341683.html" target="_blank">mysql</a></p>
-<p>绿色通道： <a href="">好文要顶</a> <a href="">关注我</a> <a href="">收藏该文</a><a href="http://space.cnblogs.com/msg/send/_%e5%ae%89%e9%9d%99" target="_blank">与我联系</a> <a href="&quot;分享至新浪微博&quot;"><img src="" alt=""></a>
-<a href="http://home.cnblogs.com/u/xionghui/" target="_blank">_安静</a>
-<a href="http://home.cnblogs.com/u/xionghui/followees" target="_blank">关注 - 5</a>
-<a href="http://home.cnblogs.com/u/xionghui/followers" target="_blank">粉丝 - 8</a></p>
-<p><a href="">+加关注</a></p>
-<p>0</p>
-<p>0
-(请您对文章做出评价)</p>
-<p><a href="http://www.cnblogs.com/xionghui/archive/2012/07/15/2592876.html" target="_blank">«</a> 上一篇：<a href="http://www.cnblogs.com/xionghui/archive/2012/07/15/2592876.html" title="发布于2012-07-15 23:50" target="_blank">vs2005下配置OGRE</a>
-<a href="http://www.cnblogs.com/xionghui/archive/2013/03/07/2947384.html" target="_blank">»</a> 下一篇：<a href="http://www.cnblogs.com/xionghui/archive/2013/03/07/2947384.html" title="发布于2013-03-07 09:13" target="_blank">Cubic Spline三次样条曲线</a></p>
-<p>posted on 2013-03-01 19:37 <a href="http://www.cnblogs.com/xionghui/" target="_blank">_安静</a> 阅读(641) 评论(0) <a href="http://www.cnblogs.com/xionghui/admin/EditPosts.aspx?postid=2939342" target="_blank">编辑</a> <a href="">收藏</a></p>
-<p><a href="">刷新评论</a><a href="">刷新页面</a><a href="">返回顶部</a></p>
-<p>注册用户登录后才能发表评论，请 <a href="">登录</a> 或 <a href="">注册</a>，<a href="http://www.cnblogs.com/" target="_blank">访问</a>网站首页。
-<a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园首页</a><a href="http://q.cnblogs.com/" title="程序员问答社区" target="_blank">博问</a><a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">新闻</a><a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a><a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a><a href="http://kb.cnblogs.com/" target="_blank">知识库</a></p>
-<p><strong>最新IT新闻</strong>:
-· <a href="http://news.cnblogs.com/n/185243/" target="_blank">烧钱不断的Ubuntu——一个理想主义者的故事</a>
-· <a href="http://news.cnblogs.com/n/185242/" target="_blank">配4100万像素摄像头 Hyetis Crossbow智能手表</a>
-· <a href="http://news.cnblogs.com/n/185241/" target="_blank">金正恩都说好的朝鲜手机是国产山寨？</a>
-· <a href="http://news.cnblogs.com/n/185240/" target="_blank">3D视差效果：23张iOS 7壁纸免费下载</a>
-· <a href="http://news.cnblogs.com/n/185239/" target="_blank">免费！广告屏蔽插件Adblock正式发布IE版</a>
-» <a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">更多新闻...</a></p>
-<p><strong>最新知识库文章</strong>:
-· <a href="http://kb.cnblogs.com/page/180323/" target="_blank">我现在是这样编程的</a>
-· <a href="http://kb.cnblogs.com/page/178891/" target="_blank">如何做到 jQuery-free？</a>
-· <a href="http://kb.cnblogs.com/page/185000/" target="_blank">如何成为一位优秀的创业CEO</a>
-· <a href="http://kb.cnblogs.com/page/184977/" target="_blank">十年前的Java企业应用开发世界</a>
-· <a href="http://kb.cnblogs.com/page/184935/" target="_blank">专注做好一件事</a>
-» <a href="http://kb.cnblogs.com/" target="_blank">更多知识库文章...</a>
-<strong>历史上的今天:</strong>
-2012-03-01 <a href="http://www.cnblogs.com/xionghui/archive/2012/03/01/2375513.html" target="_blank">Eclipse中web-inf和meta-inf文件夹的信息</a>
-2012-03-01 <a href="http://www.cnblogs.com/xionghui/archive/2012/03/01/2375503.html" target="_blank">在Eclipse中创建WEB工程步骤</a></p>
-<h3 id="-">公告</h3>
-<p>昵称：<a href="http://home.cnblogs.com/u/xionghui/" target="_blank">_安静</a>
-园龄：<a href="http://home.cnblogs.com/u/xionghui/" title="入园时间：2011-12-07" target="_blank">1年8个月</a>
-粉丝：<a href="http://home.cnblogs.com/u/xionghui/followers/" target="_blank">8</a>
-关注：<a href="http://home.cnblogs.com/u/xionghui/followees/" target="_blank">5</a></p>
-<p><a href="">+加关注</a></p>
-<h3 id="-">导航</h3>
+<p>头衔:<a href="">确定</a><a href="">取消</a></p>
+<p><a href="">编辑头衔</a>
+邮箱:<a href="">确定</a><a href="">取消</a></p>
+<p><a href="">跟踪回复</a></p>
+<p>0条评论</p>
+<p>0次被喜欢
+发表评论</p>
+<p><a href=""></a><a href=""></a><a href=""></a><a href=""></a><a href=""></a>
+<a href=""></a><a href=""></a><a href=""></a><a href=""></a><a href=""></a></p>
+<p><img src="" alt=""></p>
+<p>请输入你的评论
+        表情</p>
 <ul>
-<li><a href="http://www.cnblogs.com/" target="_blank">博客园</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/" target="_blank">首页</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a></li>
-<li><a href="http://space.cnblogs.com/msg/send/_%e5%ae%89%e9%9d%99" target="_blank">联系</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/rss" target="_blank">订阅</a><a href="http://www.cnblogs.com/xionghui/rss" target="_blank"><img src="" alt="订阅"></a></li>
-<li><a href="http://www.cnblogs.com/xionghui/admin/EditPosts.aspx" target="_blank">管理</a>
-<a href="">&lt;</a>2013年3月<a href="">&gt;</a>日一二三四五六2425262728<a href="http://www.cnblogs.com/xionghui/archive/2013/03/01.html" target="_blank">1</a>23456<a href="http://www.cnblogs.com/xionghui/archive/2013/03/07.html" target="_blank">7</a>8910111213141516171819202122232425262728293031123456</li>
+<li>默认表情</li>
+<li>阿狸</li>
 </ul>
-<h3 id="-">统计</h3>
+<p>140
+<a href="">发  布</a></p>
+<p><img src="" alt=""></p>
+<p><img src="" alt="">
+<img src="" alt="">
+<a href="">按时间排序</a></p>
+<p>排序方式:<a href="">按时间排序</a><a href="">按热度排序</a>
+<a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F1774036133" target="_blank"><img src="" alt=""></a>  <a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F1774036133" title="新浪微博"></a></p>
+<p><a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F1774036133" target="_blank">jianfengye110</a> (<a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F1774036133" target="_blank">新浪微博</a>)</p>
+<p>推荐～～<img src="" alt="">
+<a href="">回复</a><a href=""></a> <a href="">踩</a> <a href=""></a> <a href="">顶</a> <a href=""></a></p>
+<p>22小时前</p>
+<p><a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F1642647770" target="_blank"><img src="" alt=""></a>  <a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F1642647770" title="新浪微博"></a></p>
+<p><a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F1642647770" target="_blank">sin30_net</a> (<a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F1642647770" target="_blank">新浪微博</a>)</p>
+<p>微博转发：转发微博
+<a href="">回复</a><a href=""></a> <a href="">踩</a> <a href=""></a> <a href="">顶</a> <a href=""></a></p>
+<p>22小时前
+<a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F2000702247" target="_blank"><img src="" alt=""></a>  <a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F2000702247" title="新浪微博"></a></p>
+<p><a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F2000702247" target="_blank">vvsherry</a> (<a href="http://s.uyan.cc/?u=http%3A%2F%2Fweibo.com%2F2000702247" target="_blank">新浪微博</a>)</p>
+<p><img src="" alt="">
+<a href="">回复</a><a href=""></a> <a href="">踩</a> <a href=""></a> <a href="">顶1</a> <a href=""></a></p>
+<p>6月1日 00:44</p>
+<p>更多热评文章</p>
+<p>[* <img src="" alt=""></p>
+<p>mysql 5.1同步到5.5卡库问题一则](<a href="http://nettedfish.sinaapp.com/blog/2013/02/22/51-55-slave-sql-thread-error/" target="_blank">http://nettedfish.sinaapp.com/blog/2013/02/22/51-55-slave-sql-thread-error/</a> &quot;mysql 5.1同步到5.5卡库问题一则&quot;)</p>
+<p>[* <img src="" alt=""></p>
+<p>一键搭建blackhole从库](<a href="http://nettedfish.sinaapp.com/blog/2012/10/19/auto-build-blackhole-slave" target="_blank">http://nettedfish.sinaapp.com/blog/2012/10/19/auto-build-blackhole-slave</a> &quot;一键搭建blackhole从库&quot;)
+[* <img src="" alt=""></p>
+<p>如何产生唯一的server id](<a href="http://nettedfish.sinaapp.com/blog/2013/07/24/how-to-generate-unique-server_id/" target="_blank">http://nettedfish.sinaapp.com/blog/2013/07/24/how-to-generate-unique-server_id/</a> &quot;如何产生唯一的server id&quot;)</p>
+<p>[* <img src="" alt=""></p>
+<p>如何生成唯一的server id](<a href="http://nettedfish.sinaapp.com//blog/2013/07/24/how-to-generate-unique-server_id/" target="_blank">http://nettedfish.sinaapp.com//blog/2013/07/24/how-to-generate-unique-server_id/</a> &quot;如何生成唯一的server id&quot;)
+<a href="http://www.uyan.cc/" title="社会化评论是什么？" target="_blank">友言[?]</a></p>
+<p><img src="" alt=""></p>
+<p>请输入你的评论
+        表情</p>
 <ul>
-<li>随笔 - 63</li>
-<li>文章 - 0</li>
-<li>评论 - 2</li>
-<li>引用 - 0<h3 id="-">搜索</h3>
+<li>默认表情</li>
+<li>阿狸
+140</li>
+</ul>
+<p><a href="">回  复</a>
+<img src="" alt=""></p>
+<p><img src="" alt="">
+<img src="" alt="">
+nettedfish.sinaapp.com</p>
+<p>43
+评论数</p>
+<p>8
+喜欢数
+21
+用户数
+数据正在加载中...</p>
+<p><a href="http://www.uyan.cc/" target="_blank">友言</a></p>
+<p>社会化帐号登录</p>
+<h2 id="-">点击按钮，使用社交帐号评论</h2>
+<p><a href="&quot;用新浪微博账号登陆&quot;"><img src="&quot;用新浪微博账号登陆&quot;" alt="">  新浪微博</a><a href="&quot;用腾讯微博账号登陆&quot;"><img src="&quot;用腾讯微博账号登陆&quot;" alt="">  腾讯微博</a><a href="&quot;用人人网账号登陆&quot;"><img src="&quot;用人人网账号登陆&quot;" alt="">  人人网</a><a href="&quot;用网易微博账号登陆&quot;"><img src="&quot;用网易微博账号登陆&quot;" alt="">  网易微博</a><a href="&quot;用搜狐微博账号登陆&quot;"><img src="&quot;用搜狐微博账号登陆&quot;" alt="">  搜狐微博</a><a href="&quot;用开心网账号登陆&quot;"><img src="&quot;用开心网账号登陆&quot;" alt="">  开心网</a></p>
+<h2 id="-">作为游客留言</h2>
+<p>Email /*</p>
+<p>昵  称
+顶并分享到:</p>
+<p>新浪微博
+新浪微博</p>
+<p>新浪微博
+<a href="">顶</a><a href="">取消</a></p>
+<h2 id="-qunar-mysql-dba-http-nettedfish-sinaapp-com-enroll-html-"><a href="http://nettedfish.sinaapp.com/enroll.html" target="_blank">qunar诚招MySQL DBA</a></h2>
+<h1 id="-">最新发表</h1>
+<ul>
+<li><a href="http://nettedfish.sinaapp.com/blog/2013/08/05/deep-into-git-with-diagrams/" target="_blank">图解GIT</a></li>
+<li><a href="http://nettedfish.sinaapp.com/blog/2013/07/24/how-to-generate-unique-server_id/" target="_blank">如何生成唯一的server id</a></li>
+<li><a href="http://nettedfish.sinaapp.com/blog/2013/06/05/synchronizes-data-efficiently-by-pt-table-sync/" target="_blank">用pt-table-sync修复不一致的数据</a></li>
+<li><a href="http://nettedfish.sinaapp.com/blog/2013/06/04/check-replication-consistency-by-pt-table-checksum/" target="_blank">用pt-table-checksum校验数据一致性</a></li>
+<li><a href="">为MySQL选择合适的备份方式</a></li>
+<li><a href="http://nettedfish.sinaapp.com/blog/2013/02/22/51-55-slave-sql-thread-error/" target="_blank">mysql 5.1同步到5.5卡库问题一则</a></li>
+<li><a href="http://nettedfish.sinaapp.com/blog/2013/01/30/python-encode-decode/" target="_blank">python 字符串编解码研究</a></li>
+<li><a href="http://nettedfish.sinaapp.com/blog/2013/01/07/disk-throughtput/" target="_blank">test disk throughtput with dd</a></li>
+</ul>
+<h1 id="-">分类目录</h1>
+<ul>
+<li><a href="http://nettedfish.sinaapp.com/blog/categories/linux" target="_blank">linux (1)</a></li>
+<li><a href="http://nettedfish.sinaapp.com/blog/categories/mysql" target="_blank">mysql (7)</a></li>
+<li><a href="http://nettedfish.sinaapp.com/blog/categories/python" target="_blank">python (1)</a></li>
+<li><a href="http://nettedfish.sinaapp.com/blog/categories/tools" target="_blank">tools (3)</a></li>
+<li><a href="http://nettedfish.sinaapp.com/blog/categories/生活札记" target="_blank">生活札记 (1)</a></li>
+</ul>
+<h1 id="github-repos">GitHub Repos</h1>
+<ul>
+<li><a href="https://github.com/nettedfish/dzpk" target="_blank">dzpk</a></li>
+</ul>
+<p>德州扑克筹码计算工具</p>
+<ul>
+<li><a href="https://github.com/nettedfish/gnuplot" target="_blank">gnuplot</a></li>
+</ul>
+<p>gnuplot作图的一些例子</p>
+<ul>
+<li><a href="https://github.com/nettedfish/create_blackhole_slave" target="_blank">create_blackhole_slave</a></li>
+</ul>
+<p>一键搭建blackhole从库</p>
+<ul>
+<li><a href="https://github.com/nettedfish/psutil" target="_blank">psutil</a></li>
+</ul>
+<p>psutil</p>
+<ul>
+<li><a href="https://github.com/nettedfish/codernitydb" target="_blank">codernitydb</a></li>
+</ul>
+<p>开源的纯python写的nosql数据库,学习
+<a href="https://github.com/nettedfish" target="_blank">@nettedfish</a> on GitHub</p>
+<h1 id="-">友情链接</h1>
+<ul>
+<li><a href="http://www.orczhou.com/" target="_blank">淘宝周振兴</a></li>
+<li><a href="http://papaisadba.puyu.me/" target="_blank">去哪儿周彦伟</a></li>
+<li><a href="https://blogs.oracle.com/MySQL/" target="_blank">oracle innodb 官方</a></li>
+<li><a href="http://www.cnblogs.com/shenguanpu/" target="_blank">坚毅的刀刀</a></li>
+<li><a href="http://blog.csdn.net/liuben" target="_blank">存储专栏</a></li>
+<li><a href="http://huoding.com/" target="_blank">火丁笔记</a></li>
+<li><a href="http://blog.yufeng.info/" target="_blank">淘宝褚霸</a></li>
+<li><a href="http://dinglin.iteye.com/" target="_blank">淘宝丁奇</a></li>
+<li><a href="http://www.mysqlops.com/" target="_blank">mysql ops</a></li>
+<li><a href="http://www.penglixun.com/" target="_blank">plinux</a></li>
+<li><a href="http://www.hellodb.net/" target="_blank">hellodba</a></li>
+<li><a href="http://timyang.net/" target="_blank">timyang</a></li>
+<li><a href="http://www.ningoo.net/" target="_blank">ningoo</a></li>
+<li><a href="http://www.mysqlperformanceblog.com/" target="_blank">performanceblog</a></li>
+<li><a href="http://www.xaprb.com/blog/" target="_blank">Xaprb</a></li>
+<li><a href="http://hedengcheng.com/" target="_blank">登博</a></li>
+<li><a href="http://dom.as/" target="_blank">Domas Mituzas</a></li>
+<li><a href="http://hackmysql.com/" target="_blank">hack mysql</a></li>
+<li><a href="http://www.dbsnake.com/" target="_blank">dbsnake</a></li>
+<li><a href="http://blog.cydu.net/" target="_blank">dcy</a></li>
+<li><a href="http://code.openark.org/blog/" target="_blank">Shlomi Noach</a></li>
+<li><a href="http://www.yankay.com/" target="_blank">yankay</a></li>
+<li><a href="http://www.mysqlsupport.cn/" target="_blank">吴炳锡</a></li>
+<li><a href="http://coolshell.cn/" target="_blank">左耳朵耗子</a></li>
+<li><a href="http://www.realzyy.com/" target="_blank">张云杨</a></li>
+<li><a href="http://www.iamcjd.com/" target="_blank">最醉红楼</a></li>
+<li><a href="http://dbahacker.com/" target="_blank">杨德华</a></li>
+<li><a href="http://huoding.com/" target="_blank">火丁笔记</a></li>
+<li><a href="http://isky000.com/" target="_blank">简朝阳</a></li>
+<li><a href="http://www.mysqlab.net/" target="_blank">谭俊青</a></li>
+<li><a href="http://blog.csdn.net/lanphaday" target="_blank">赖永浩</a></li>
+<li><a href="http://www.alidba.net/" target="_blank">阿里巴巴DBA</a></li>
+</ul>
+<p>Copyright © 2013 - nettedfish - Powered by <a href="http://octopress.org/" target="_blank">Octopress</a>   <a href="http://tongji.baidu.com/hm-web/welcome/ico?s=e0f5d44e4da361e95c65c951fc44fec6" target="_blank"><img src="" alt=""></a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:34"datetime="2014-03-07 09:54:34"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--为MySQL选择合适的备份方式/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--为MySQL选择合适的备份方式" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mariadb--MySQL-56-和-MariaDB-100-的性能比较测试/">MySQL</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mariadb--MySQL-56-和-MariaDB-100-的性能比较测试/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="mysql-5-6-mariadb-10-0-">MySQL-5.6-和-MariaDB-10.0-的性能比较测试</h1>
+<p>[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_07a0c0d02f0ff9b5eb35_120_120.jpg" alt=""></p>
+<p>上使用MySQL的简单总结
+](<a href="http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20+Jexus+MySQL+mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93" target="_blank">http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20+Jexus+MySQL+mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93</a> &quot;上使用MySQL的简单总结&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/21.jpg" alt=""></p>
+<p>php与mysql
+](<a href="http://www.xiuxiandou.com/content-blog-3114-php%E4%B8%8Emysql-web-%E5%BC%80%E5%8F%91%E6%8A%80%E6%9C%AF%E8%AF%A6%E8%A7%A3---php%E6%8E%A7%E5%88%B6%E7%BB%93%E6%9E%84%E5%92%8C%E5%87%BD%E6%95%B0" target="_blank">http://www.xiuxiandou.com/content-blog-3114-php%E4%B8%8Emysql-web-%E5%BC%80%E5%8F%91%E6%8A%80%E6%9C%AF%E8%AF%A6%E8%A7%A3---php%E6%8E%A7%E5%88%B6%E7%BB%93%E6%9E%84%E5%92%8C%E5%87%BD%E6%95%B0</a> &quot;php与mysql&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/4.jpg" alt=""></p>
+<p>LJMM平台（
+](<a href="http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20%20Jexus%20MySQL%20mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93" target="_blank">http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20%20Jexus%20MySQL%20mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93</a> &quot;LJMM平台（&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/42.jpg" alt=""></p>
+<p>JDeveloper
+](<a href="http://www.xiuxiandou.com/content-blog-220-How-to-Run-Standard-OA-Framework-Pages-from-JDeveloper" target="_blank">http://www.xiuxiandou.com/content-blog-220-How-to-Run-Standard-OA-Framework-Pages-from-JDeveloper</a> &quot;JDeveloper&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/33.jpg" alt=""></p>
+<p>《审计学习题集》扫描版<a href="http://www.xiuxiandou.com/content-book-38684-%E3%80%8A%E5%AE%A1%E8%AE%A1%E5%AD%A6%E4%B9%A0%E9%A2%98%E9%9B%86%E3%80%8B%E6%89%AB%E6%8F%8F%E7%89%88[PDF]" title="《审计学习题集》扫描版[PDF]">PDF]
+</a>[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/26.jpg" alt=""></p>
+<p>盖茨扎克伯格现身说法：讲述编程之酷
+](<a href="http://www.xiuxiandou.com/content-it-14757-%E7%9B%96%E8%8C%A8%E6%89%8E%E5%85%8B%E4%BC%AF%E6%A0%BC%E7%8E%B0%E8%BA%AB%E8%AF%B4%E6%B3%95%EF%BC%9A%E8%AE%B2%E8%BF%B0%E7%BC%96%E7%A8%8B%E4%B9%8B%E9%85%B7" target="_blank">http://www.xiuxiandou.com/content-it-14757-%E7%9B%96%E8%8C%A8%E6%89%8E%E5%85%8B%E4%BC%AF%E6%A0%BC%E7%8E%B0%E8%BA%AB%E8%AF%B4%E6%B3%95%EF%BC%9A%E8%AE%B2%E8%BF%B0%E7%BC%96%E7%A8%8B%E4%B9%8B%E9%85%B7</a> &quot;盖茨扎克伯格现身说法：讲述编程之酷&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_5d312b52998536eb1b8b_120_120.jpg" alt=""></p>
+<p>360黑匣子之谜，你怎么看？
+](<a href="http://www.1ban.com.cn/zh-CN/surveys/extend_info?survey_id=97" target="_blank">http://www.1ban.com.cn/zh-CN/surveys/extend_info?survey_id=97</a> &quot;360黑匣子之谜，你怎么看？&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_4e33b31aa1a9b82f7701_120_120.jpg" alt=""></p>
+<p>云访问-企业网站全球云加速服务
+](<a href="http://www.yunfangwen.com/?ujian" target="_blank">http://www.yunfangwen.com/?ujian</a> &quot;云访问-企业网站全球云加速服务&quot;)</p>
+<p><a href="http://www.ujian.cc/index2" title="友荐是什么？" target="_blank">友荐[?]</a></p>
+<p><a href="http://www.xiuxiandou.com/#" title="返回顶部" target="_blank">返回顶部</a><a href="http://www.xiuxiandou.com/#" title="猜你喜欢" target="_blank">猜你喜欢</a>
+[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_07a0c0d02f0ff9b5eb35_120_120.jpg" alt=""></p>
+<p>上使用MySQL的简单总结
+](<a href="http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20+Jexus+MySQL+mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93" target="_blank">http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20+Jexus+MySQL+mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93</a> &quot;上使用MySQL的简单总结&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/3.jpg" alt=""></p>
+<p>php与mysql
+](<a href="http://www.xiuxiandou.com/content-blog-3114-php%E4%B8%8Emysql-web-%E5%BC%80%E5%8F%91%E6%8A%80%E6%9C%AF%E8%AF%A6%E8%A7%A3---php%E6%8E%A7%E5%88%B6%E7%BB%93%E6%9E%84%E5%92%8C%E5%87%BD%E6%95%B0" target="_blank">http://www.xiuxiandou.com/content-blog-3114-php%E4%B8%8Emysql-web-%E5%BC%80%E5%8F%91%E6%8A%80%E6%9C%AF%E8%AF%A6%E8%A7%A3---php%E6%8E%A7%E5%88%B6%E7%BB%93%E6%9E%84%E5%92%8C%E5%87%BD%E6%95%B0</a> &quot;php与mysql&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/13.jpg" alt=""></p>
+<p>LJMM平台（
+](<a href="http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20%20Jexus%20MySQL%20mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93" target="_blank">http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20%20Jexus%20MySQL%20mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93</a> &quot;LJMM平台（&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/19.jpg" alt=""></p>
+<p>JDeveloper
+](<a href="http://www.xiuxiandou.com/content-blog-220-How-to-Run-Standard-OA-Framework-Pages-from-JDeveloper" target="_blank">http://www.xiuxiandou.com/content-blog-220-How-to-Run-Standard-OA-Framework-Pages-from-JDeveloper</a> &quot;JDeveloper&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/7.jpg" alt=""></p>
+<p>《审计学习题集》扫描版<a href="http://www.xiuxiandou.com/content-book-38684-%E3%80%8A%E5%AE%A1%E8%AE%A1%E5%AD%A6%E4%B9%A0%E9%A2%98%E9%9B%86%E3%80%8B%E6%89%AB%E6%8F%8F%E7%89%88[PDF]" title="《审计学习题集》扫描版[PDF]">PDF]
+</a>[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/43.jpg" alt=""></p>
+<p>盖茨扎克伯格现身说法：讲述编程之酷
+](<a href="http://www.xiuxiandou.com/content-it-14757-%E7%9B%96%E8%8C%A8%E6%89%8E%E5%85%8B%E4%BC%AF%E6%A0%BC%E7%8E%B0%E8%BA%AB%E8%AF%B4%E6%B3%95%EF%BC%9A%E8%AE%B2%E8%BF%B0%E7%BC%96%E7%A8%8B%E4%B9%8B%E9%85%B7" target="_blank">http://www.xiuxiandou.com/content-it-14757-%E7%9B%96%E8%8C%A8%E6%89%8E%E5%85%8B%E4%BC%AF%E6%A0%BC%E7%8E%B0%E8%BA%AB%E8%AF%B4%E6%B3%95%EF%BC%9A%E8%AE%B2%E8%BF%B0%E7%BC%96%E7%A8%8B%E4%B9%8B%E9%85%B7</a> &quot;盖茨扎克伯格现身说法：讲述编程之酷&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_a897a95cdb5fc07444b6_120_120.jpg" alt=""></p>
+<p>【爱慕20周年庆】新品首次特惠 8折体验
+](<a href="http://www.aimer.com.cn/interface.php?u_id=20016&amp;sub_id=tongtou&amp;m=4&amp;url=http://www.aimer.com.cn/z/es/38new20130301.shtml" target="_blank">http://www.aimer.com.cn/interface.php?u_id=20016&amp;sub_id=tongtou&amp;m=4&amp;url=http://www.aimer.com.cn/z/es/38new20130301.shtml</a> &quot;【爱慕20周年庆】新品首次特惠 8折体验&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_f142ed01aae662177abf_120_120.jpg" alt=""></p>
+<p>中高考冲刺计时 早一天抓住“核心要点” 就多一分制胜把握
+](<a href="http://rrurl.cn/pNQDfO" target="_blank">http://rrurl.cn/pNQDfO</a> &quot;中高考冲刺计时 早一天抓住“核心要点” 就多一分制胜把握&quot;)</p>
+<p><a href="http://www.ujian.cc/index2" title="友荐是什么？" target="_blank">友荐[?]</a></p>
+<p><a href="http://www.xiuxiandou.com/#" title="返回顶部" target="_blank">返回顶部</a><a href="http://www.xiuxiandou.com/#" title="猜你喜欢" target="_blank">猜你喜欢</a>
+<a href="">设为首页</a> <a href="">收藏本站</a></p>
+<h2 id="-mysql-5-6-mariadb-10-0-"><a href="&quot;MySQL-5.6-和-MariaDB-10.0-的性能比较测试&quot;"></a></h2>
+<p>用户名 暂时未开放注册密码<em>登录</em></p>
+<p><a href=""></a></p>
+<ul>
+<li><a href="http://www.xiuxiandou.com/indexs" title="BT电影高清种子,下载" target="_blank">今日更新</a></li>
+<li><a href="http://www.xiuxiandou.com/indexs" title="BT电影高清种子,下载" target="_blank">今日兼职</a></li>
+<li><a href="http://www.xiuxiandou.com/blog" title="Blog-界面来源于&lt;水平凡&gt;" target="_blank">日志Blog</a></li>
+<li><a href="http://www.xiuxiandou.com/jiji" title="记记,每天记录一点" target="_blank">记记JiJi</a></li>
+<li><a href="http://www.xiuxiandou.com/me" title="给我留言" target="_blank">留言Blog</a>
+电影 游戏 电子书 资讯 IT博客  <strong>搜索</strong></li>
+</ul>
+<p>今日 资讯:<em>90</em> 条| 电影:<em>1</em>部|书籍: <em>5</em> 本|游戏: <em>5</em> 款|IT博客:<em>46</em>条|评论: <em>1</em> 条| 留言: <em>0</em> 条</p>
+<h1 id="-">某鲜花店的广告：今日本店的玫瑰售价最为低廉，甚至可以买几朵送给太太。</h1>
+<h1 id="-">我不是随便的人！但随便起来就不是人！</h1>
+<h1 id="mysql-5-6-mariadb-10-0-">MySQL 5.6 和 MariaDB-10.0 的性能比较测试</h1>
+<p><a href="http://www.xiuxiandou.com/" title="休闲豆-MySQL 5.6 和 MariaDB-10.0 的性能比较测试" target="_blank">休闲豆</a> 已有 33 次阅读 2013-02-14 10:41:24 来源 <strong><a href="http://www.oschina.net/question/12_90065" title="点击查看来源: 开源中国社区" target="_blank">开源中国社区</a></strong></p>
+<p>JetBrains 开发工具全场2折，<a href="http://www.oschina.net/shop/jetbrains" target="_blank">详情»</a></p>
+<p>Oracle 刚刚发布了 <a href="http://www.oschina.net/news/37438/oracle-mysql-5-6-final" target="_blank">MySQL 5.6.10 GA</a> 版本，所以是时候更新下之前的性能测试数据了，此次的测试包括以下几个版本：</p>
+<ul>
+<li>MySQL-5.5.29 </li>
+<li>MySQL-5.6.10 </li>
+<li>MariaDB-5.5.28a </li>
+<li>MariaDB-10.0.1 </li>
+</ul>
+<p>此次测试还保留了 5.5 版本是为了进行回归测试。之前我们经常发现新版本在性能上反倒而落后的情况。</p>
+<p>此次测试在不同的环境下执行，主要的不同是没用 SSD 而是使用高性能的带 512 兆 battery-backed 缓存的 RAID-5 存储。此外测试的机器具有 16 核，其中 12 核运行 mysqld ，另外 4 核运行 sysbench。</p>
+<p>测试使用 sysbench-0.5 OLTP ，包好 8 个表和 10G 的数据。InnoDB 的缓冲池大小是 16G，日志 4G。不同的磁盘系统要求不同的 InnoDB 配置：</p>
+<ul>
+<li>innodb_io_capacity = 1000 (was 20000 for SSD) </li>
+<li>innodb_flush_neighbors = 1 (was 0 for SSD) </li>
+</ul>
+<p>下面是测试结果，首先是 OLTP 只读：</p>
+<p><a href="http://blog.mariadb.org/wp-content/uploads/2013/02/20130213-sb-ro-tps.png"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/14101044_u5Dc.png" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a></p>
+<p>非常奇怪，MySQL 5.6 在此轮测试中居然表现异常。在 8 个线程时相差不大，在 16 个线程时变现最佳。但更高的并发下性能就迅速下降，甚至比 MySQL 5.5 还差。而 MariaDB 10.0 则比 MariaDB 5.5 表现上要差一些，但没那么明显。</p>
+<p>而响应时间图表则表示比较好而且平滑：</p>
+<p><a href="http://blog.mariadb.org/wp-content/uploads/2013/02/20130213-sb-ro-rt.png"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/14101044_1vV1.png" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a></p>
+<p>MySQL-5.6 和 MariaDB-10.0 看起来要稍微好一些，意味着它们能更好的分配 CPU 周期。</p>
+<p>声明: 此次测试没有使用线程池。Oracle 的线程池实现已经闭源了，因此没法进行测试和使用，如果在 MariaDB 上使用线程池的话就显得有点不公平。</p>
+<p>如果你想了解线程池对性能的影响，可查看之前的两篇文章：</p>
+<ul>
+<li><a href="http://blog.mariadb.org/mariadb-5-5-thread-pool-performance/" target="_blank">MariaDB-5.5 thread pool performance</a> </li>
+<li><a href="http://blog.mariadb.org/mariadb-5-5-performance-on-windows/" target="_blank">MariaDB-5.5 performance on Windows</a> </li>
+</ul>
+<p>第二个测试：OLTP 读写测试</p>
+<p><a href="http://blog.mariadb.org/wp-content/uploads/2013/02/20130213-sb-rw-tps.png"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/14101045_l8vb.png" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a></p>
+<p>这个图跟前一个测试差不多，MySQL 5.6 和 MariaDB 10.0 在性能表现上都比 5.5 版本要下滑不少，在高负载的情况下，下滑了 10% 左右。</p>
+<p>这是一个人所共知的事实，MySQL 5.5 在高负载下因为同步的 flush 操作导致的性能下滑。</p>
+<p>响应时间图相对要好一些：</p>
+<p><a href="http://blog.mariadb.org/wp-content/uploads/2013/02/20130213-sb-rw-rt.png"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/14101045_7ZB4.png" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a></p>
+<p>这是一个好消息，5.5 版本在 64 个线程或者更多线程的情况下响应时间差了很多。而 MySQL 5.6 和 MariaDB 10.0 的适应性 flush 算法似乎工作良好。</p>
+<p>这里还有一个问题：如果你使用多个缓冲池实例，你将会看到写操作延迟更厉害。上面的结果中，只读测试使用了 16 个缓冲池，而读写测试只用了 1个。</p>
+<p>结论：</p>
+<ul>
+<li>MySQL-5.6 性能表现比前一个版本要差，特别是高并发的情况下。这与 Oracle 发布的测试结果不符。我只能推测为什么结果差异那么大，我猜是 Oracle 闭源的线程池以及 Oracle 在更大的机器上进行测试导致。 </li>
+<li>使用单个缓冲池情况下不需要担心写延迟的问题。同时 MySQL 5.6 允许高达 512G 的 redo 日志可降低同步 flush 操作。 </li>
+</ul>
+<p>此次测试的脚本可通过下面地址访问：
+<a href="http://bazaar.launchpad.net/~ahel/maria/mariadb-benchmarks/revision/20" target="_blank"><a href="http://bazaar.launchpad.net/~ahel/maria/mariadb-benchmarks/revision/20">http://bazaar.launchpad.net/~ahel/maria/mariadb-benchmarks/revision/20</a></a></p>
+<p>欢迎大家重做这个测试并与我们分享测试结果。</p>
+<p>via <a href="http://blog.mariadb.org/sysbench-oltp-mysql-5-6-vs-mariadb-10-0/" target="_blank">mariadb</a></p>
+<p>  <strong>标签：</strong>   <a href="http://www.oschina.net/question/tag/mysql" title="数据库服务器 MySQL" target="_blank">MySQL</a> <a href="http://www.oschina.net/question/tag/mariadb" title="MySQL 分支 MariaDB" target="_blank">MariaDB</a> <a href="http://www.oschina.net/question/tag/sysbench" title="性能测试工具 SysBench" target="_blank">SysBench</a>
+    <a href="">补充话题说明»</a> </p>
+<p><strong>分享到</strong> <a href="&quot;分享到新浪微博&quot;"></a><a href="&quot;分享到腾讯微博&quot;"></a>**</p>
+<p><a href="&quot;收藏此话题&quot;">收藏</a>
+**</p>
+<p>9
+**</p>
+<p><a href="">举报</a>
+**</p>
+<pre><code>    [踩]( &quot;踩：这问题不知道在说什么，或者没什么用&quot;)  0  |        [顶]( &quot;顶：这问题很有用或者很清晰明了&quot;)  0 
+</code></pre><p>  ** </p>
+<h2 id="-http-www-oschina-net-question-12_90065-answers-http-www-xiuxiandou-com-sort-time-answers-http-www-xiuxiandou-com-top-6-http-www-xiuxiandou-com-answerform-"><a href="http://www.oschina.net/question/12_90065#answers" target="_blank">按默认排序</a> |  <a href="http://www.xiuxiandou.com/?sort=time#answers" target="_blank">显示最新评论</a> | <a href="http://www.xiuxiandou.com/#top" target="_blank">回页面顶部</a>    <a href=""></a>共有<em>6</em>个评论 <a href="http://www.xiuxiandou.com/#answerform">发表评论»</a></h2>
+<ul>
+<li><a href="http://my.oschina.net/yz2yz"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/84873_50.jpg" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a></li>
+</ul>
+<p><a href="http://my.oschina.net/yz2yz" target="_blank">铂金小鬼</a> 回答于 2013-02-14 10:16</p>
+<pre><code>  [举报]()   
+</code></pre><p>哇哇，到底是好，还是差啊？！ 
+<a href="&quot;这是一个好评论，能解决问题&quot;">有帮助</a><em>(0)</em> |  <a href="&quot;这评论无法解决问题，或者模糊不清&quot;">没帮助</a><em>(0)</em> |  <a href="">评论</a><em>(0)</em> |    <a href="http://www.xiuxiandou.com/question/answer?question=90065&amp;answer=415509" target="_blank">引用此评论</a> </p>
+<ul>
+<li><a href="http://my.oschina.net/mallon"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/23734_50.jpg" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a></li>
+</ul>
+<p><a href="http://my.oschina.net/mallon" target="_blank">Mallon</a> 回答于 2013-02-14 10:25</p>
+<pre><code>  [举报]()   
+</code></pre><h3 id="-">引用来自“铂金小鬼”的答案</h3>
+<p>哇哇，到底是好，还是差啊？！</p>
+<p>半斤八两，在误差允许范围内，哈哈</p>
+<p><strong>—- 共有 1 条评论—-</strong></p>
+<ul>
+<li><a href="http://my.oschina.net/samshuai"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/130291_50.jpg" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a>    差距不大的话…我还是愿意用mysql  (11小时前 by 蟋蟀哥哥)  <a href="">回复</a>     </li>
+</ul>
+<p><a href="&quot;这是一个好评论，能解决问题&quot;">有帮助</a><em>(0)</em> |  <a href="&quot;这评论无法解决问题，或者模糊不清&quot;">没帮助</a><em>(0)</em> |  <a href="">评论</a><em>(1)</em> |    <a href="http://www.xiuxiandou.com/question/answer?question=90065&amp;answer=415510" target="_blank">引用此评论</a></p>
+<ul>
+<li><a href="http://my.oschina.net/u/569120"></a>
+<a href="http://my.oschina.net/u/569120"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/569120_50.jpg" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a></li>
+</ul>
+<p><a href="http://my.oschina.net/u/569120"></a></p>
+<p><a href="http://my.oschina.net/u/569120" target="_blank">光头程序员</a> 回答于 2013-02-14 10:45 来自 <a href="http://www.oschina.net/mobile" target="_blank">Android</a></p>
+<pre><code>  [举报]()   
+</code></pre><p>说这么多 我又看不懂 直接说应该用哪个不就行了 
+<a href="&quot;这是一个好评论，能解决问题&quot;">有帮助</a><em>(0)</em> |  <a href="&quot;这评论无法解决问题，或者模糊不清&quot;">没帮助</a><em>(0)</em> |  <a href="">评论</a><em>(0)</em> |    <a href="http://www.xiuxiandou.com/question/answer?question=90065&amp;answer=415513" target="_blank">引用此评论</a> </p>
+<ul>
+<li><a href="http://my.oschina.net/u/725743"></a>
+<a href="http://my.oschina.net/u/725743"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/725743_50.jpg" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a></li>
+</ul>
+<p><a href="http://my.oschina.net/u/725743"></a></p>
+<p><a href="http://my.oschina.net/u/725743" target="_blank">严瑾</a> 回答于 2013-02-14 13:55 来自 <a href="http://www.oschina.net/mobile" target="_blank">Android</a></p>
+<pre><code>  [举报]()   
+</code></pre><p>！！！！！！！！！！！没看懂 
+<a href="&quot;这是一个好评论，能解决问题&quot;">有帮助</a><em>(0)</em> |  <a href="&quot;这评论无法解决问题，或者模糊不清&quot;">没帮助</a><em>(0)</em> |  <a href="">评论</a><em>(0)</em> |    <a href="http://www.xiuxiandou.com/question/answer?question=90065&amp;answer=415545" target="_blank">引用此评论</a> </p>
+<ul>
+<li><a href="http://my.oschina.net/bwin"></a>
+<a href="http://my.oschina.net/bwin"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/152915_50.jpg" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a></li>
+</ul>
+<p><a href="http://my.oschina.net/bwin"></a></p>
+<p><a href="http://my.oschina.net/bwin" target="_blank">新君悦</a> 回答于 2013-02-14 14:11</p>
+<pre><code>  [举报]()   
+</code></pre><p>按照以往的&quot;经验&quot;  凡是出现Mysql的文章都会被某些人&quot;喷&quot;的,正在奇怪这篇文章怎么没人喷口水呢，拖上一看 原来作者是站长 难怪...</p>
+<p><strong>—- 共有 1 条评论—-</strong></p>
+<ul>
+<li><a href="http://my.oschina.net/javayou"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/12_50.jpg" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a>    翻译的  (8小时前 by 红薯)  <a href="">回复</a>     </li>
+</ul>
+<p><a href="&quot;这是一个好评论，能解决问题&quot;">有帮助</a><em>(0)</em> |  <a href="&quot;这评论无法解决问题，或者模糊不清&quot;">没帮助</a><em>(0)</em> |  <a href="">评论</a><em>(1)</em> |    <a href="http://www.xiuxiandou.com/question/answer?question=90065&amp;answer=415549" target="_blank">引用此评论</a></p>
+<ul>
+<li><a href="http://my.oschina.net/bootstrap"></a>
+<a href="http://my.oschina.net/bootstrap"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/736867_50.jpg" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a></li>
+</ul>
+<p><a href="http://my.oschina.net/bootstrap"></a></p>
+<p><a href="http://my.oschina.net/bootstrap" target="_blank">抓瓦Or</a> 回答于 2013-02-14 14:58</p>
+<pre><code>  [举报]()   
+</code></pre><p>mysql这么好的东西，为啥乱喷，Oracle 虽然商业化严重，但是其技术还是可以的吧 </p>
+<p><a href="&quot;这是一个好评论，能解决问题&quot;">有帮助</a><em>(0)</em> |  <a href="&quot;这评论无法解决问题，或者模糊不清&quot;">没帮助</a><em>(0)</em> |  <a href="">评论</a><em>(0)</em> |    <a href="http://www.xiuxiandou.com/question/answer?question=90065&amp;answer=415559" target="_blank">引用此评论</a> </p>
+<p><a href=""></a>
+<a href=""><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/portrait.gif" alt="xiuxiandou.com" title="xiuxiandou.com">
+</a></p>
+<p><a href=""></a></p>
+<p>  <a href="http://www.xiuxiandou.com/#answers" target="_blank">回评论顶部</a> | <a href="http://www.xiuxiandou.com/#top" target="_blank">回页面顶部</a>    </p>
+<p>资源来源互联网,版权归该下载资源的合法拥有者所有。</p>
+<p>本文链接：<a href="http://www.xiuxiandou.com/content-it-11099" target="_blank"><a href="http://www.xiuxiandou.com/content-it-11099.html">http://www.xiuxiandou.com/content-it-11099.html</a></a>
+关键字：MySQL 5.6 和 MariaDB-10.0 的性能比较测试
+若无特别注明，文章皆为<a href="http://www.xiuxiandou.com/" target="_blank">休闲豆</a>原创，转载请注明出处</p>
+<p>注:本文来源地址为 :<a href="http://www.oschina.net/question/12_90065" title="点击查看来源: 开源中国社区" target="_blank">开源中国社区</a></p>
+<p><a href="">0</a></p>
+<p><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/loading.gif" alt="正在加载推荐文章"></p>
+<p>休闲豆推荐：
+[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_07a0c0d02f0ff9b5eb35_120_120.jpg" alt=""></p>
+<p>上使用MySQL的简单总结
+](<a href="http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20+Jexus+MySQL+mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93" target="_blank">http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20+Jexus+MySQL+mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93</a> &quot;上使用MySQL的简单总结&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/1.jpg" alt=""></p>
+<p>php与mysql
+](<a href="http://www.xiuxiandou.com/content-blog-3114-php%E4%B8%8Emysql-web-%E5%BC%80%E5%8F%91%E6%8A%80%E6%9C%AF%E8%AF%A6%E8%A7%A3---php%E6%8E%A7%E5%88%B6%E7%BB%93%E6%9E%84%E5%92%8C%E5%87%BD%E6%95%B0" target="_blank">http://www.xiuxiandou.com/content-blog-3114-php%E4%B8%8Emysql-web-%E5%BC%80%E5%8F%91%E6%8A%80%E6%9C%AF%E8%AF%A6%E8%A7%A3---php%E6%8E%A7%E5%88%B6%E7%BB%93%E6%9E%84%E5%92%8C%E5%87%BD%E6%95%B0</a> &quot;php与mysql&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/6.jpg" alt=""></p>
+<p>LJMM平台（
+](<a href="http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20%20Jexus%20MySQL%20mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93" target="_blank">http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20%20Jexus%20MySQL%20mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93</a> &quot;LJMM平台（&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/11.jpg" alt=""></p>
+<p>JDeveloper
+](<a href="http://www.xiuxiandou.com/content-blog-220-How-to-Run-Standard-OA-Framework-Pages-from-JDeveloper" target="_blank">http://www.xiuxiandou.com/content-blog-220-How-to-Run-Standard-OA-Framework-Pages-from-JDeveloper</a> &quot;JDeveloper&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/23.jpg" alt=""></p>
+<p>《审计学习题集》扫描版<a href="http://www.xiuxiandou.com/content-book-38684-%E3%80%8A%E5%AE%A1%E8%AE%A1%E5%AD%A6%E4%B9%A0%E9%A2%98%E9%9B%86%E3%80%8B%E6%89%AB%E6%8F%8F%E7%89%88[PDF]" title="《审计学习题集》扫描版[PDF]">PDF]
+</a>[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/14.jpg" alt=""></p>
+<p>盖茨扎克伯格现身说法：讲述编程之酷
+](<a href="http://www.xiuxiandou.com/content-it-14757-%E7%9B%96%E8%8C%A8%E6%89%8E%E5%85%8B%E4%BC%AF%E6%A0%BC%E7%8E%B0%E8%BA%AB%E8%AF%B4%E6%B3%95%EF%BC%9A%E8%AE%B2%E8%BF%B0%E7%BC%96%E7%A8%8B%E4%B9%8B%E9%85%B7" target="_blank">http://www.xiuxiandou.com/content-it-14757-%E7%9B%96%E8%8C%A8%E6%89%8E%E5%85%8B%E4%BC%AF%E6%A0%BC%E7%8E%B0%E8%BA%AB%E8%AF%B4%E6%B3%95%EF%BC%9A%E8%AE%B2%E8%BF%B0%E7%BC%96%E7%A8%8B%E4%B9%8B%E9%85%B7</a> &quot;盖茨扎克伯格现身说法：讲述编程之酷&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_579fbfdf75e09aeb0b83_120_120.jpg" alt=""></p>
+<p>牙疼小妙招，立竿见影！
+](<a href="http://www.duobei.com/room/2831608242?utm_source=weibo&amp;utm_medium=plugin&amp;utm_campaign=UweiboA115" target="_blank">http://www.duobei.com/room/2831608242?utm_source=weibo&amp;utm_medium=plugin&amp;utm_campaign=UweiboA115</a> &quot;牙疼小妙招，立竿见影！&quot;)[<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_87b8684f627768210ab3_120_120.jpg" alt=""></p>
+<p>【爱慕官方商城】爱慕20周年庆 3.8女人节 感恩回馈3折起！
+](<a href="http://www.aimer.com.cn/interface.php?u_id=20016&amp;sub_id=tongtou&amp;url=http://www.aimer.com.cn/" target="_blank">http://www.aimer.com.cn/interface.php?u_id=20016&amp;sub_id=tongtou&amp;url=http://www.aimer.com.cn/</a> &quot;【爱慕官方商城】爱慕20周年庆 3.8女人节 感恩回馈3折起！&quot;)</p>
+<p><a href="http://www.ujian.cc/index2" title="友荐是什么？" target="_blank">友荐[?]</a>
+<a href=""></a><a href=""></a><a href=""></a><a href=""></a><a href=""></a></p>
+<p><a href="">社区</a>
+0<a href=""> 喜欢</a></p>
+<p><a href=""></a></p>
+<p>头衔:<a href="">确定</a><a href="">取消</a></p>
+<p><a href="">编辑头衔</a>
+邮箱:<a href="">确定</a><a href="">取消</a></p>
+<p><a href="">跟踪回复</a></p>
+<p>0条评论
+0次被喜欢
+<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/duface.png" alt=""></p>
+<p>请输入你的评论</p>
+<p>140</p>
+<ul>
+<li>默认表情</li>
+<li>阿狸
+<a href="">发  布</a></li>
+</ul>
+<p><a href="&quot;加入邮箱和网址信息&quot;"></a>
+<a href="&quot;使用新浪微博账号登陆&quot;"></a><a href="&quot;使用QQ账号账号登陆&quot;"></a><a href="&quot;使用腾讯微博账号登陆&quot;"></a><a href="&quot;使用人人账号登陆&quot;"></a><a href="&quot;使用搜狐微博账号登陆&quot;"></a><a href="&quot;选择更多登陆账号&quot;"></a><a href="&quot;kaixin001&quot;"></a><a href="&quot;163&quot;"></a></p>
+<p><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/kaixin001.png" alt=""></p>
+<p><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/tsohu.png" alt="">
+<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/t163.png" alt="">
+<a href="">按时间排序</a></p>
+<p>|
+<a href="">新浪微博</a></p>
+<p>|
+<a href="">腾讯微博</a></p>
+<p>排序方式:<a href="">按时间排序</a><a href="">按热度排序</a>
+还没有评论内容</p>
+<p>更多热评文章</p>
+<p>[* <img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_07a0c0d02f0ff9b5eb35_120_120.jpg" alt=""></p>
+<p>上使用MySQL的简单总结](<a href="http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20+Jexus+MySQL+mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93" target="_blank">http://www.xiuxiandou.com/content-blog-3041-LJMM%E5%B9%B3%E5%8F%B0%EF%BC%88%20Linux%20+Jexus+MySQL+mono%EF%BC%89%20%E4%B8%8A%E4%BD%BF%E7%94%A8MySQL%E7%9A%84%E7%AE%80%E5%8D%95%E6%80%BB%E7%BB%93</a> &quot;上使用MySQL的简单总结&quot;)</p>
+<p>[* <img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/3.jpg" alt=""></p>
+<p>php与mysql](<a href="http://www.xiuxiandou.com/content-blog-3114-php%E4%B8%8Emysql-web-%E5%BC%80%E5%8F%91%E6%8A%80%E6%9C%AF%E8%AF%A6%E8%A7%A3---php%E6%8E%A7%E5%88%B6%E7%BB%93%E6%9E%84%E5%92%8C%E5%87%BD%E6%95%B0" target="_blank">http://www.xiuxiandou.com/content-blog-3114-php%E4%B8%8Emysql-web-%E5%BC%80%E5%8F%91%E6%8A%80%E6%9C%AF%E8%AF%A6%E8%A7%A3---php%E6%8E%A7%E5%88%B6%E7%BB%93%E6%9E%84%E5%92%8C%E5%87%BD%E6%95%B0</a> &quot;php与mysql&quot;)
+[* <img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_5d312b52998536eb1b8b_120_120.jpg" alt=""></p>
+<p>360黑匣子之谜，你怎么看？](<a href="http://www.1ban.com.cn/zh-CN/surveys/extend_info?survey_id=97" target="_blank">http://www.1ban.com.cn/zh-CN/surveys/extend_info?survey_id=97</a> &quot;360黑匣子之谜，你怎么看？&quot;)</p>
+<p>[* <img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/mini_4e33b31aa1a9b82f7701_120_120.jpg" alt=""></p>
+<p>云访问-企业网站全球云加速服务](<a href="http://www.yunfangwen.com/?ujian" target="_blank">http://www.yunfangwen.com/?ujian</a> &quot;云访问-企业网站全球云加速服务&quot;)
+<a href="http://www.uyan.cc/" title="社会化评论是什么？" target="_blank">友言[?]</a></p>
+<p><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/duface.png" alt=""></p>
+<p>请输入你的评论</p>
+<p>140</p>
+<ul>
+<li>默认表情</li>
+<li>阿狸
+<a href="">回  复</a></li>
+</ul>
+<p><a href="&quot;加入邮箱和网址信息&quot;"></a>
+<a href="&quot;使用新浪微博账号登陆&quot;"></a><a href="&quot;使用QQ账号账号登陆&quot;"></a><a href="&quot;使用腾讯微博账号登陆&quot;"></a><a href="&quot;使用人人账号登陆&quot;"></a><a href="&quot;使用搜狐微博账号登陆&quot;"></a><a href="&quot;选择更多登陆账号&quot;"></a><a href="&quot;kaixin001&quot;"></a><a href="&quot;163&quot;"></a></p>
+<p><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/kaixin001.png" alt=""></p>
+<p><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/tsohu.png" alt="">
+<img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/t163.png" alt="">
+www.xiuxiandou.com</p>
+<p>1
+评论数</p>
+<p>-1
+喜欢数
+1
+用户数
+数据正在加载中...</p>
+<p><a href="http://www.uyan.cc/" target="_blank">友言</a></p>
+<p>社会化帐号登录</p>
+<h2 id="-">点击按钮，使用社交帐号评论</h2>
+<p><a href="&quot;用新浪微博帐号登录&quot;"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/tsina.png" alt="" title="用新浪微博帐号登录">  新浪微博</a><a href="&quot;用QQ帐号登录&quot;"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/qq.png" alt="" title="用QQ帐号登录">  QQ</a><a href="&quot;用腾讯微博帐号登录&quot;"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/tqq.png" alt="" title="用腾讯微博帐号登录">  腾讯微博</a><a href="&quot;用人人网帐号登录&quot;"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/renren.png" alt="" title="用人人网帐号登录">  人人网</a><a href="&quot;用网易微博帐号登录&quot;"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/t163.png" alt="" title="用网易微博帐号登录">  网易微博</a><a href="&quot;用搜狐微博帐号登录&quot;"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/tsohu.png" alt="" title="用搜狐微博帐号登录">  搜狐微博</a><a href="&quot;用开心网帐号登录&quot;"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/kaixin001.png" alt="" title="用开心网帐号登录">  开心网</a></p>
+<h2 id="-">作为游客留言</h2>
+<p>Email /*</p>
+<p>昵  称
+顶并分享到:</p>
+<p>新浪微博
+新浪微博</p>
+<p>新浪微博
+<a href="">顶</a><a href="">取消</a></p>
+<ul>
+<li><h3 id="-">[</h3>
+<h2 id="-">简明现代魔法</h2>
 </li>
 </ul>
-<h3 id="-">常用链接</h3>
+<p>](<a href="http://www.nowamagic.net/" target="_blank">http://www.nowamagic.net/</a> &quot;简明现代魔法&quot;)</p>
 <ul>
-<li><a href="http://www.cnblogs.com/xionghui/MyPosts.html" target="_blank">我的随笔</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/MyComments.html" target="_blank">我的评论</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/OtherPosts.html" title="我发表过评论的随笔" target="_blank">我的参与</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/RecentComments.html" target="_blank">最新评论</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/tag/" target="_blank">我的标签</a></li>
+<li><h3 id="-">[</h3>
+<h2 id="-">百度博客</h2>
+</li>
 </ul>
-<h3 id="-">我的标签</h3>
+<p>](<a href="http://hi.baidu.com/273579540" target="_blank">http://hi.baidu.com/273579540</a> &quot;我的百度博客&quot;)</p>
 <ul>
-<li><a href="http://www.cnblogs.com/xionghui/tag/redmine1.2.2%E5%AE%89%E8%A3%85    ruby1.8.7   rubygem1.6.2/" target="_blank">redmine1.2.2安装 ruby1.8.7 rubygem1.6.2</a>(5)</li>
-<li><a href="http://www.cnblogs.com/xionghui/tag/eclipse/" target="_blank">eclipse</a>(3)</li>
-<li><a href="http://www.cnblogs.com/xionghui/tag/html css javascript jquery easyui/" target="_blank">html css javascript jquery easyui</a>(3)</li>
-<li><a href="http://www.cnblogs.com/xionghui/tag/tomcat%E5%AE%89%E8%A3%85%E5%92%8C%E9%85%8D%E7%BD%AE/" target="_blank">tomcat安装和配置</a>(2)</li>
-<li><a href="http://www.cnblogs.com/xionghui/tag/xhEditor/" target="_blank">xhEditor</a>(1)</li>
-<li><a href="http://www.cnblogs.com/xionghui/tag/HTML5/" target="_blank">HTML5</a>(1)</li>
-<li><a href="http://www.cnblogs.com/xionghui/tag/jdk%E9%85%8D%E7%BD%AE/" target="_blank">jdk配置</a>(1)</li>
-<li><a href="http://www.cnblogs.com/xionghui/tag/ogre/" target="_blank">ogre</a>(1)</li>
-<li><a href="http://www.cnblogs.com/xionghui/tag/php%E5%AE%89%E8%A3%85%E5%92%8C%E9%85%8D%E7%BD%AE/" target="_blank">php安装和配置</a>(1)</li>
-<li><a href="http://www.cnblogs.com/xionghui/tag/serv-u%E5%AE%89%E8%A3%85%E9%85%8D%E7%BD%AE/" target="_blank">serv-u安装配置</a>(1)</li>
-<li><a href="http://www.cnblogs.com/xionghui/tag/" target="_blank">更多</a></li>
+<li><h3 id="-">[</h3>
+<h2 id="-">我的代码托管</h2>
+</li>
 </ul>
-<h3 id="-46-">随笔分类(46)</h3>
+<p>](<a href="https://github.com/hubs" target="_blank">https://github.com/hubs</a> &quot;代码托管&quot;)</p>
 <ul>
-<li><a href="http://www.cnblogs.com/xionghui/category/362695.html" target="_blank">ant(1)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/362804.html" target="_blank">c c++</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/341738.html" target="_blank">Coldfusion(6)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/367982.html" target="_blank">discuz(3)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/361900.html" target="_blank">easyUI</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/361898.html" target="_blank">html(1)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/367981.html" target="_blank">inno setup(2)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/362803.html" target="_blank">java(2)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/361899.html" target="_blank">javascript(4)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/361897.html" target="_blank">jquery(2)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/341683.html" target="_blank">mysql(9)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/396246.html" target="_blank">Ogre(1)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/341014.html" target="_blank">ruby redmine(4)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/357315.html" target="_blank">struts2(3)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/366403.html" target="_blank">study(2)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/361984.html" target="_blank">tomcat(1)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/362028.html" target="_blank">web(4)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/category/457545.html" target="_blank">数值分析(1)</a></li>
+<li><h3 id="-">[</h3>
+<h2 id="-">不求人薪水网</h2>
+</li>
 </ul>
-<h3 id="-63-">随笔档案(63)</h3>
+<p>](<a href="http://www.orzro.net/" target="_blank">http://www.orzro.net/</a> &quot;不求人薪水网&quot;)</p>
 <ul>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2013/03.html" target="_blank">2013年3月 (2)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/07.html" target="_blank">2012年7月 (2)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/05.html" target="_blank">2012年5月 (8)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/04.html" target="_blank">2012年4月 (5)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03.html" target="_blank">2012年3月 (28)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/02.html" target="_blank">2012年2月 (9)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12.html" target="_blank">2011年12月 (9)</a></li>
+<li><h3 id="-">[</h3>
+<h2 id="360-">360安全网址导航</h2>
+</li>
 </ul>
-<h3 id="mysql-">mysql下载</h3>
-<h3 id="-">最新评论</h3>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/01/2375503.html" target="_blank">1. 在Eclipse中创建WEB工程步骤(11416)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/09/2281827.html" target="_blank">2. redmine-1.2.2安装截图粘贴插件(7722)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/08/2281229.html" target="_blank">3. redmine-1.2.2安装代码评审插件(6289)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2390258.html" target="_blank">4. tomcat配置文件web.xml与server.xml解析--重要(6112)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/08/2280518.html" target="_blank">5. redmine-1.2.2安装服务（附图）(6089)</a></li>
-</ul>
-<h3 id="-">评论排行榜</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/10/2283229.html" target="_blank">1. Mysql安装配置(2)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/09/2281827.html" target="_blank">2. redmine-1.2.2安装截图粘贴插件(0)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2389927.html" target="_blank">3. jQuery 数据表： 将单个列导出到 Excel(0)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2389792.html" target="_blank">4. MYSQL启用日志，查看日志，利用mysqlbinlog工具恢复MySQL数据库(0)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2389790.html" target="_blank">5. mysql数据库my.ini配置文件中文详解(0)</a></li>
-</ul>
-<h3 id="-">推荐排行榜</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2389791.html" target="_blank">1. mysqldump 常用备份选项,只备份数据或结构的方法(3)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/10/2283229.html" target="_blank">2. Mysql安装配置(2)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/12/2392555.html" target="_blank">3. web绿色环境搭建(2)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2390258.html" target="_blank">4. tomcat配置文件web.xml与server.xml解析--重要(2)</a></li>
-<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/10/2283556.html" target="_blank">5. Coldfusion 7 生成验证码实例(CF验证码)(1)</a></li>
-</ul>
-<p>Powered by: <a href="http://www.cnblogs.com/" target="_blank">博客园</a> Copyright © _安静</p>
+<p>](<a href="http://hao.360.cn/" target="_blank">http://hao.360.cn/</a> &quot;360安全网址导航&quot;)</p>
+<h3 id="-828-1463-10812-950-3351-it-13-1-10-"><strong>**网站数据</strong> - <strong>828</strong> 部电影, - <strong>1463</strong> 款游戏, -<strong>10812</strong> 条资讯, -<strong>950</strong> 本电子书, -<strong>3351</strong> 条IT博客 , -<strong>13</strong> 条评论, -<strong>1</strong> 条留言, -<strong>10</strong> 个网站模板, .**</h3>
+<p><a href="http://wpa.qq.com/msgrd?v=3&amp;uin=1963612630&amp;site=qq&amp;menu=yes" target="_blank"><strong>休闲豆QQ在线</strong></a>| <a href="http://www.xiuxiandou.com/feed" target="_blank">本站RSS</a>| <a href="http://www.xiuxiandou.com/sitemap" target="_blank">网站地图</a>| <a href="http://www.xiuxiandou.com/indexs/link" target="_blank">申请友链</a>| <a href="http://www.xiuxiandou.com/indexs/about" target="_blank">关于我们</a>| <a href="http://wap.xiuxiandou.com/" target="_blank">手机版</a>| <strong><a href="http://www.xiuxiandou.com/" target="_blank">休闲豆</a></strong> ( <a href="http://www.miitbeian.gov.cn/" target="_blank">桂ICP备11002319号-1</a> )   <a href="http://tongji.baidu.com/hm-web/welcome/ico?s=cc369fcd21817e7c8c74e1ce3ee37f8f" target="_blank"><img src="http://./MySQL-5.6-和-MariaDB-10.0-的性能比较测试_files/21.gif" alt=""></a></p>
+<p>13-03-06 10:03:21</p>
+<p>Powered by <strong><a href="http://www.xiuxiandou.com/" target="_blank">Xiuxiandou.com!</a></strong></p>
+<p>© 2001-2012 <a href="http://www.comsenz.com/" target="_blank">Xiuxiandou.com</a> skin by <a href="http://www.eisdl.com/" target="_blank">eisdl</a>
+本站是一个免费提供电影资源下载的网站，本站资源均为网络免费资源搜索机器人自动搜索的结果，本站只和网友相互分享和测试电影资源搜索结果，并不存放任何资源！所有视频版权归原权利人，如有关视频侵犯了你的权益，请联系本站告之，本站将于24小时内删除！ 我们强烈建议所有影视爱好者测试后24小时内删除资源！并购买正版音像制品！</p>
 
       
     </div>
@@ -530,8 +1063,8 @@ UDF 产生的大 BLOB 值会导致复制变慢；
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--MySQL报错：TheMySQLserverisrunningwiththe--ski/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--MySQL报错：TheMySQLserverisrunningwiththe--ski" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mariadb/">mariadb</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mariadb/" class="label label-success">mariadb</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mariadb--MySQL-56-和-MariaDB-100-的性能比较测试/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mariadb--MySQL-56-和-MariaDB-100-的性能比较测试" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -546,565 +1079,15 @@ UDF 产生的大 BLOB 值会导致复制变慢；
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--MySQL命令行不同端口登录执行SQL文件创建用户赋予权限修改root密码/">MySQL命令行 不同端口登录 执行SQL文件 创建用户 赋予权限 修改root密码</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--如何优化MySQLinsert性能/">如何优化MySQL insert性能</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--MySQL命令行不同端口登录执行SQL文件创建用户赋予权限修改root密码/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--如何优化MySQLinsert性能/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="mysql-sql-root-">MySQL命令行 不同端口登录 执行SQL文件 创建用户 赋予权限 修改root密码</h1>
-<p><a href="http://www.cnblogs.com/freeliver54/" target="_blank">Love in coding...</a></p>
-<p><strong>    Free and Susan</strong></p>
-<h2 id="-mysql-sql-root-http-www-cnblogs-com-freeliver54-archive-2009-07-25-1530970-html-"><a href="http://www.cnblogs.com/freeliver54/archive/2009/07/25/1530970.html" target="_blank">MySQL命令行 不同端口登录 执行SQL文件 创建用户 赋予权限 修改root密码</a></h2>
-<p>0.安装MySQL服务</p>
-<p>1.[不同端口登录]</p>
-<p>  通过开始菜单-&gt; 程序-&gt; MySQL-&gt; MySQL Command Line Client
-  通过输入密码Enter password:/<em>/</em>/<em>/</em>/<em>/</em>进行登录 该MySQL服务端口已定</p>
-<p>  或者</p>
-<p>  通过运行命令-&gt;C:\Program Files\MySQL\MySQL Server 5.2\bin&gt;
-  然后利用mysql进行登录
-  C:\Program Files\MySQL\MySQL Server 5.2\bin&gt;mysql -uroot -h127.0.0.1 -P3307 -p
-  Enter password:/<em>/</em>/<em>/</em>/<em>/</em>
-  亦可选择登录远程MySQL</p>
-<p>2.[执行SQL文件]</p>
-<p>  创建测试数据库及数据表
-  mysql&gt; source c:/test/test.sql;</p>
-<p>  test.sql文件内容：
-  create database IF NOT EXISTS testdb;</p>
-<p>  use testdb;</p>
-<p>  create table testtable
-         (testName varchar(10));</p>
-<p>3.[创建用户]</p>
-<p>  mysql&gt; create user testuser identified by &#39;testpass&#39;;</p>
-<p>4.[赋予权限]</p>
-<p>  mysql&gt; grant all privileges on testdb./* to &#39;testuser&#39;@&#39;%&#39; identified by &#39;testpass&#39;;</p>
-<p>5.<a href="转自网络">修改root密码</a></p>
-<p>  如果已登录
-  1)use mysql 
-  2)update user set password=password(&#39;你的密码&#39;) where user=&#39;root&#39;;
-  3)flush privileges;</p>
-<p>  如果没登录，你想进数据库而没有密码</p>
-<p>  先关掉服务
-  然后以safe模式进入
-  mysqld_safe --skip-grant-tables &amp;
-  这个窗口不要关，这样进数据库就不用密码，进去后 做 “如果已登录”的 步骤
-0</p>
-<p>0
-0</p>
-<p>(请您对文章做出评价)</p>
-<p><a href="http://www.cnblogs.com/freeliver54/archive/2009/07/24/1530146.html" target="_blank">«</a>上一篇：<a href="http://www.cnblogs.com/freeliver54/archive/2009/07/24/1530146.html" title="发布于2009-07-24 13:44" target="_blank">婚姻 一辈子的幸福厮守 请不要多拿彩礼和父母说事</a>
-<a href="http://www.cnblogs.com/freeliver54/archive/2009/08/05/1539449.html" target="_blank">»</a>下一篇：<a href="http://www.cnblogs.com/freeliver54/archive/2009/08/05/1539449.html" title="发布于2009-08-05 12:49" target="_blank">[书目20090805]钻石成功法则 - 陈安之</a></p>
-<p>posted on 2009-07-25 18:02 <a href="http://www.cnblogs.com/freeliver54/" target="_blank">freeliver54</a> 阅读(407) <a href="http://www.cnblogs.com/freeliver54/archive/2009/07/25/1530970.html#commentform" target="_blank">评论(0)</a>  <a href="http://www.cnblogs.com/freeliver54/admin/EditPosts.aspx?postid=1530970" target="_blank">编辑</a> <a href="http://www.cnblogs.com/freeliver54/AddToFavorite.aspx?id=1530970" target="_blank">收藏</a> <a href="http://www.cnblogs.com/freeliver54/archive/2009/07/25/1530970.html#" target="_blank">网摘</a> 所属分类: <a href="http://www.cnblogs.com/freeliver54/category/89971.html" target="_blank">Oracle/MySQL</a>
-<img src="" alt=""></p>
-<p>注册用户登录后才能发表评论，请<a href="http://passport.cnblogs.com/login.aspx?ReturnUrl=http%3a%2f%2fwww.cnblogs.com%2ffreeliver54%2farchive%2f2009%2f07%2f25%2f1530970.html%3flogin%3d1%23commentform" target="_blank">登录</a>或<a href="http://passport.cnblogs.com/register.aspx?ReturnUrl=http%3a%2f%2fwww.cnblogs.com%2ffreeliver54%2farchive%2f2009%2f07%2f25%2f1530970.html%23Bottom2" target="_blank">注册</a>。</p>
-<p>网站导航：
-<a href="http://www.cnblogs.com/" target="_blank">博客园首页</a>  <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://home.cnblogs.com/" target="_blank">个人主页</a>  <a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a>  <a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a>  <a href="http://space.cnblogs.com/" target="_blank">社区</a>  <a href="http://space.cnblogs.com/q/" target="_blank">博问</a>  <a href="http://wz.cnblogs.com/" target="_blank">网摘</a>
-IT新闻:
-· <a href="http://news.cnblogs.com/n/54543/" target="_blank">盛大文学的下一步</a>
-· <a href="http://news.cnblogs.com/n/54542/" target="_blank">豆瓣网推出手机版 提供书影音资讯搜索服</a>
-· <a href="http://news.cnblogs.com/n/54541/" target="_blank">美国将推3D频道 6月直播世界杯</a>
-· <a href="http://news.cnblogs.com/n/54540/" target="_blank">用iPhone遥控无人直升机</a>
-· <a href="http://news.cnblogs.com/n/54539/" target="_blank">IT职业仍然是美国最好的工作之一</a></p>
-<p><a href="http://www.china-pub.com/STATIC07/0912/zh_ndcx_091212.asp" target="_blank"><img src="" alt=""></a>
-<a href="http://www.china-pub.com/itbook/" target="_blank">China-pub 计算机图书网上专卖店！6.5万品种2-8折！</a>
-<a href="http://www.china-pub.com/static07/0901/zh_jueba_090121.asp" target="_blank">China-Pub 计算机绝版图书按需印刷服务</a>
-链接：<a href="http://www.cnblogs.com/freeliver54/archive/2009/07/25/1530970.html?switchskin=1#skinlist" target="_blank">切换模板</a></p>
-<p><strong>相关搜索:</strong>
-<a href="http://zzk.cnblogs.com/s?w=Oracle%2fMySQL" target="_blank">Oracle/MySQL</a>
-<strong>在知识库中查看：</strong>
-<a href="http://kb.cnblogs.com/a/1530970/" target="_blank">MySQL命令行 不同端口登录 执行SQL文件 创建用户 赋予权限 修改root密码</a></p>
-<p>Powered by:
-<a href="http://www.cnblogs.com/" target="_blank">博客园</a>
-Copyright © freeliver54</p>
-<h3 id="-">导航</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/" target="_blank">博客园</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/" target="_blank">首页</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a></li>
-<li><a href="http://space.cnblogs.com/msg/send/freeliver54" target="_blank">联系</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/rss" target="_blank">订阅</a><a href="http://www.cnblogs.com/freeliver54/rss" target="_blank"><img src="" alt="订阅"></a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/admin/EditPosts.aspx" target="_blank">管理</a></li>
-</ul>
-<h3 id="-">统计</h3>
-<ul>
-<li>随笔 - 714</li>
-<li>文章 - 0</li>
-<li>评论 - 1245</li>
-<li>引用 - 157</li>
-</ul>
-<h3 id="-">公告</h3>
-<p>每一天都有新的开始 每一天都是新的开始 愿我们 善始善终 持之以恒 不管前方 是希望还是迷茫 我们都只有一个信念 让我们的爱 伴我们终生</p>
-<p><a href="http://home.cnblogs.com/freeliver54/" target="_blank">我的主页</a>  <a href="http://home.cnblogs.com/freeliver54/detail/" target="_blank">个人资料</a>
-<a href="http://home.cnblogs.com/freeliver54/ing/" target="_blank">我的闪存</a>  <a href="http://space.cnblogs.com/msg/send/freeliver54" target="_blank">发短消息</a></p>
-<h3 id="-">搜索</h3>
-<h3 id="-">随笔分类</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/category/76308.html" target="_blank">Ajax.Net(12)</a> <a href="http://www.cnblogs.com/freeliver54/category/76308.html/rss" title="Subscribe to Ajax.Net(12)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/121615.html" target="_blank">C++(3)</a> <a href="http://www.cnblogs.com/freeliver54/category/121615.html/rss" title="Subscribe to C++(3)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/133235.html" target="_blank">CSS/网页相关(19)</a> <a href="http://www.cnblogs.com/freeliver54/category/133235.html/rss" title="Subscribe to CSS/网页相关(19)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/110145.html" target="_blank">English(9)</a> <a href="http://www.cnblogs.com/freeliver54/category/110145.html/rss" title="Subscribe to English(9)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/111073.html" target="_blank">Java(9)</a> <a href="http://www.cnblogs.com/freeliver54/category/111073.html/rss" title="Subscribe to Java(9)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/76352.html" target="_blank">JavaScript(67)</a> <a href="http://www.cnblogs.com/freeliver54/category/76352.html/rss" title="Subscribe to JavaScript(67)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/107484.html" target="_blank">Linux(2)</a> <a href="http://www.cnblogs.com/freeliver54/category/107484.html/rss" title="Subscribe to Linux(2)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/77443.html" target="_blank">MS SQL(57)</a> <a href="http://www.cnblogs.com/freeliver54/category/77443.html/rss" title="Subscribe to MS SQL(57)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/89971.html" target="_blank">Oracle/MySQL(23)</a> <a href="http://www.cnblogs.com/freeliver54/category/89971.html/rss" title="Subscribe to Oracle/MySQL(23)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/103597.html" target="_blank">PhotoShop&amp;Flash(13)</a> <a href="http://www.cnblogs.com/freeliver54/category/103597.html/rss" title="Subscribe to PhotoShop&amp;Flash(13)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/77424.html" target="_blank">Report(13)</a> <a href="http://www.cnblogs.com/freeliver54/category/77424.html/rss" title="Subscribe to Report(13)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/172773.html" target="_blank">RFID相关(1)</a> <a href="http://www.cnblogs.com/freeliver54/category/172773.html/rss" title="Subscribe to RFID相关(1)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/104390.html" target="_blank">Visual Basic/ASP(9)</a> <a href="http://www.cnblogs.com/freeliver54/category/104390.html/rss" title="Subscribe to Visual Basic/ASP(9)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/138020.html" target="_blank">VS2008(10)</a> <a href="http://www.cnblogs.com/freeliver54/category/138020.html/rss" title="Subscribe to VS2008(10)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/47995.html" target="_blank">VS技術實踐(347)</a> <a href="http://www.cnblogs.com/freeliver54/category/47995.html/rss" title="Subscribe to VS技術實踐(347)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/90122.html" target="_blank">Windows Server(24)</a> <a href="http://www.cnblogs.com/freeliver54/category/90122.html/rss" title="Subscribe to Windows Server(24)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/88169.html" target="_blank">WinForm 开发(68)</a> <a href="http://www.cnblogs.com/freeliver54/category/88169.html/rss" title="Subscribe to WinForm 开发(68)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/77442.html" target="_blank">XML/UML(9)</a> <a href="http://www.cnblogs.com/freeliver54/category/77442.html/rss" title="Subscribe to XML/UML(9)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/86175.html" target="_blank">安全与加密(15)</a> <a href="http://www.cnblogs.com/freeliver54/category/86175.html/rss" title="Subscribe to 安全与加密(15)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/85805.html" target="_blank">安装部署(36)</a> <a href="http://www.cnblogs.com/freeliver54/category/85805.html/rss" title="Subscribe to 安装部署(36)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/132722.html" target="_blank">励志创业(25)</a> <a href="http://www.cnblogs.com/freeliver54/category/132722.html/rss" title="Subscribe to 励志创业(25)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/86343.html" target="_blank">每日文摘(122)</a> <a href="http://www.cnblogs.com/freeliver54/category/86343.html/rss" title="Subscribe to 每日文摘(122)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/84533.html" target="_blank">其他(11)</a> <a href="http://www.cnblogs.com/freeliver54/category/84533.html/rss" title="Subscribe to 其他(11)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/121011.html" target="_blank">软考(2)</a> <a href="http://www.cnblogs.com/freeliver54/category/121011.html/rss" title="Subscribe to 软考(2)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/113983.html" target="_blank">图书目录(24)</a> <a href="http://www.cnblogs.com/freeliver54/category/113983.html/rss" title="Subscribe to 图书目录(24)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/89347.html" target="_blank">项目工程(25)</a> <a href="http://www.cnblogs.com/freeliver54/category/89347.html/rss" title="Subscribe to 项目工程(25)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/47972.html" target="_blank">心灵之旅(66)</a> <a href="http://www.cnblogs.com/freeliver54/category/47972.html/rss" title="Subscribe to 心灵之旅(66)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/99498.html" target="_blank">硬件网络(14)</a> <a href="http://www.cnblogs.com/freeliver54/category/99498.html/rss" title="Subscribe to 硬件网络(14)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/83924.html" target="_blank">智能设备开发(12)</a> <a href="http://www.cnblogs.com/freeliver54/category/83924.html/rss" title="Subscribe to 智能设备开发(12)" target="_blank">(rss)</a></li>
-</ul>
-<h3 id="-">随笔档案</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2010/01.html" target="_blank">2010年1月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12.html" target="_blank">2009年12月 (10)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/11.html" target="_blank">2009年11月 (4)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/10.html" target="_blank">2009年10月 (8)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/09.html" target="_blank">2009年9月 (5)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/08.html" target="_blank">2009年8月 (9)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/07.html" target="_blank">2009年7月 (8)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/06.html" target="_blank">2009年6月 (4)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/05.html" target="_blank">2009年5月 (6)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/04.html" target="_blank">2009年4月 (4)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/03.html" target="_blank">2009年3月 (12)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/02.html" target="_blank">2009年2月 (24)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/01.html" target="_blank">2009年1月 (10)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/12.html" target="_blank">2008年12月 (14)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/11.html" target="_blank">2008年11月 (18)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/10.html" target="_blank">2008年10月 (23)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/09.html" target="_blank">2008年9月 (22)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/08.html" target="_blank">2008年8月 (9)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/07.html" target="_blank">2008年7月 (30)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/06.html" target="_blank">2008年6月 (17)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/05.html" target="_blank">2008年5月 (11)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/04.html" target="_blank">2008年4月 (45)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/03.html" target="_blank">2008年3月 (28)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/02.html" target="_blank">2008年2月 (11)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/01.html" target="_blank">2008年1月 (17)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/12.html" target="_blank">2007年12月 (15)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/11.html" target="_blank">2007年11月 (20)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/10.html" target="_blank">2007年10月 (22)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/09.html" target="_blank">2007年9月 (36)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/08.html" target="_blank">2007年8月 (23)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/07.html" target="_blank">2007年7月 (24)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/06.html" target="_blank">2007年6月 (6)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/05.html" target="_blank">2007年5月 (7)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/04.html" target="_blank">2007年4月 (32)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/03.html" target="_blank">2007年3月 (46)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/02.html" target="_blank">2007年2月 (22)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/01.html" target="_blank">2007年1月 (31)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/12.html" target="_blank">2006年12月 (45)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/11.html" target="_blank">2006年11月 (8)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/07.html" target="_blank">2006年7月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/06.html" target="_blank">2006年6月 (3)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/05.html" target="_blank">2006年5月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/04.html" target="_blank">2006年4月 (13)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/02.html" target="_blank">2006年2月 (8)</a></li>
-</ul>
-<h3 id="techlinks">techLINKS</h3>
-<ul>
-<li><a href="http://ajax.asp.net/" target="_blank">Ajax.net</a></li>
-<li><a href="http://www.asp.net/QuickStart/aspnet/" target="_blank">ASP.NET 快速入门教程</a></li>
-<li><a href="http://www.microsoft.com/china/msdn/library/default.aspx" target="_blank">MSDN</a></li>
-<li><a href="http://www.uml.org.cn/" target="_blank">UML</a></li>
-<li><a href="http://samples.gotdotnet.com/quickstart/winforms/" target="_blank">winforms</a></li>
-<li><a href="http://www.w3.org/TR/xslt" target="_blank">XSLT</a></li>
-<li><a href="http://chs.gotdotnet.com/quickstart/winforms/" target="_blank">窗体 快速入门教程</a></li>
-<li><a href="http://msdn.microsoft.com/windowsmobile/default.aspx" target="_blank">移动开发人员中心</a></li>
-</ul>
-<h3 id="-">友情链接</h3>
-<ul>
-<li><a href="http://www.cnweblog.com/homeus/" target="_blank">Sun&amp;Livia</a></li>
-<li><a href="http://www.xinhuanet.com/" target="_blank">新华网</a></li>
-<li><a href="http://blog.sina.com.cn/u/1280914171#aList_1" target="_blank">雪中路人</a></li>
-<li><a href="http://hi.baidu.com/freeliver54" target="_blank">有国才有家 爱我中华</a></li>
-<li><a href="http://www.cb.com.cn/" target="_blank">中国经营网</a></li>
-<li><a href="http://www.cgxdt.com/go.asp?user=freeliver54" target="_blank">自由 成功 富足 从容</a></li>
-</ul>
-<h3 id="-">积分与排名</h3>
-<ul>
-<li>积分 - 584146</li>
-<li>排名 - 57</li>
-</ul>
-<h3 id="-http-www-cnblogs-com-freeliver54-commentsrss-aspx-">最新评论 <a href="http://www.cnblogs.com/freeliver54/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/10/1621022.html#1728924" target="_blank">1. Re:[转]英语字根</a></li>
-<li>+　 plus　加号；正号 -　 minus　减号；负号 ±　plus or minus　正负号 ×　is multiplied by　乘号 ÷　is divided b...</li>
-<li>--freea</li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/15/1624696.html#1726601" target="_blank">2. Re:心居何处？</a></li>
-<li>与世界同在</li>
-<li>--freea</li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/15/1624998.html#1726597" target="_blank">3. Re:成家撑家 不要妄自菲薄</a></li>
-<li>躺在过去的经验和教训上迟早是会玩完的 明天的美好不仅在于明天是未知的更多的是因为明天是可以被按新的变化意愿创造的 拥抱明天的世界以未曾束缚的心机会 属于努力创造和利用</li>
-<li>--freea</li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/02/12/648209.html#1726562" target="_blank">4. Re:程序员的人生 该将如何规划?</a></li>
-<li>如果心不退那就意勇进热爱并享受自己的选择</li>
-<li>--freea</li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/10/20/1586889.html#1726260" target="_blank">5. Re:[转]js获取网站根路径(站点及虚拟目录)</a></li>
-<li>不错。谢谢。</li>
-<li>--零度的火</li>
-</ul>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/02/12/648209.html" target="_blank">1. 程序员的人生 该将如何规划?(23944)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/02/09/327853.html" target="_blank">2. VS2005中GridView簡單應用(23026)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/12/19/596603.html" target="_blank">3. SQL 2005 Express 的“企业管理器” 下载(14827)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/04/14/1152769.html" target="_blank">4. 遭遇“windows已经阻止此软件因为无法验证发行者”(11306)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/11/05/949935.html" target="_blank">5. 下载Eclipse的SWT插件(6901)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/11/27/573453.html" target="_blank">6. VS2005中ReportViewer 本地模式下报表呈现 入门示例(6829)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/02/09/645983.html" target="_blank">7. JS操作select相关方法：新增 修改 删除 选中 清空 判断存在 等(5887)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/10/15/1311371.html" target="_blank">8. [转]C/#中的IntPtr类型(5486)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/01/08/614626.html" target="_blank">9. [转]FreeTextBox使用详解(4571)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/01/17/622992.html" target="_blank">10. C/# 利用WinRAR (加密)压缩及解压缩 相关文件夹及文件(4461)</a></li>
-</ul>
-<h3 id="-">评论排行榜</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/02/12/648209.html" target="_blank">1. 程序员的人生 该将如何规划?(166)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/01/05/612393.html" target="_blank">2. VS2005 TreeView 的 CheckBox 被点击时的引发页面回发事件(29)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/02/09/327853.html" target="_blank">3. VS2005中GridView簡單應用(25)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/01/17/622992.html" target="_blank">4. C/# 利用WinRAR (加密)压缩及解压缩 相关文件夹及文件(23)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/12/29/607331.html" target="_blank">5. 分页及页码导航 用户控件(22)</a></li>
-</ul>
-<h3 id="60-">60天内阅读排行</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/11/16/1604192.html" target="_blank">1. [文摘20091116]一生必看的88本书(118)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/11/27/1611915.html" target="_blank">2. [转]SourceSafe中的权限管理(95)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/11/23/1608877.html" target="_blank">3. [转]Marquee 处理中 请等待 进度条(92)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/04/1616913.html" target="_blank">4. [文摘20091204]中国佛学66句禅语(88)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/09/1619883.html" target="_blank">5. windows 2003 组策略 设置开机登录时不需按CTRL+ALT+DEL 及关机时不需输关机原因(81)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/17/1626287.html" target="_blank">6. [English20091217]英语口语444句(60)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/04/1616901.html" target="_blank">7. [文字20091204]佛说--贪、嗔、痴、妒、慢、疑(55)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/10/1621022.html" target="_blank">8. [转]英语字根(52)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/11/26/1611244.html" target="_blank">9. [文摘20091126]不要让愤怒伤了自己(51)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/15/1624696.html" target="_blank">10. 心居何处？(50)</a></li>
-</ul>
-<p>*</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--MySQL命令行不同端口登录执行SQL文件创建用户赋予权限修改root密码/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--MySQL命令行不同端口登录执行SQL文件创建用户赋予权限修改root密码" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--MySQL命令行不同端口登录执行SQL文件创建用户赋予权限修改root密码-Love/">MySQL命令行 不同端口登录 执行SQL文件 创建用户 赋予权限 修改root密码 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--MySQL命令行不同端口登录执行SQL文件创建用户赋予权限修改root密码-Love/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="mysql-sql-root-love-in-coding___-">MySQL命令行 不同端口登录 执行SQL文件 创建用户 赋予权限 修改root密码 - Love in coding<em>_</em> - 博客园</h1>
-<p><a href="http://www.cnblogs.com/freeliver54/" target="_blank">Love in coding...</a></p>
-<p><strong>    Free and Susan</strong></p>
-<h2 id="-mysql-sql-root-http-www-cnblogs-com-freeliver54-archive-2009-07-25-1530970-html-"><a href="http://www.cnblogs.com/freeliver54/archive/2009/07/25/1530970.html" target="_blank">MySQL命令行 不同端口登录 执行SQL文件 创建用户 赋予权限 修改root密码</a></h2>
-<p>0.安装MySQL服务</p>
-<p>1.[不同端口登录]</p>
-<p>  通过开始菜单-&gt; 程序-&gt; MySQL-&gt; MySQL Command Line Client
-  通过输入密码Enter password:/<em>/</em>/<em>/</em>/<em>/</em>进行登录 该MySQL服务端口已定</p>
-<p>  或者</p>
-<p>  通过运行命令-&gt;C:\Program Files\MySQL\MySQL Server 5.2\bin&gt;
-  然后利用mysql进行登录
-  C:\Program Files\MySQL\MySQL Server 5.2\bin&gt;mysql -uroot -h127.0.0.1 -P3307 -p
-  Enter password:/<em>/</em>/<em>/</em>/<em>/</em>
-  亦可选择登录远程MySQL</p>
-<p>2.[执行SQL文件]</p>
-<p>  创建测试数据库及数据表
-  mysql&gt; source c:/test/test.sql;</p>
-<p>  test.sql文件内容：
-  create database IF NOT EXISTS testdb;</p>
-<p>  use testdb;</p>
-<p>  create table testtable
-         (testName varchar(10));</p>
-<p>3.[创建用户]</p>
-<p>  mysql&gt; create user testuser identified by &#39;testpass&#39;;</p>
-<p>4.[赋予权限]</p>
-<p>  mysql&gt; grant all privileges on testdb./* to &#39;testuser&#39;@&#39;%&#39; identified by &#39;testpass&#39;;</p>
-<p>5.<a href="转自网络">修改root密码</a></p>
-<p>  如果已登录
-  1)use mysql 
-  2)update user set password=password(&#39;你的密码&#39;) where user=&#39;root&#39;;
-  3)flush privileges;</p>
-<p>  如果没登录，你想进数据库而没有密码</p>
-<p>  先关掉服务
-  然后以safe模式进入
-  mysqld_safe --skip-grant-tables &amp;
-  这个窗口不要关，这样进数据库就不用密码，进去后 做 “如果已登录”的 步骤
-0</p>
-<p>0
-0</p>
-<p>(请您对文章做出评价)</p>
-<p><a href="http://www.cnblogs.com/freeliver54/archive/2009/07/24/1530146.html" target="_blank">«</a>上一篇：<a href="http://www.cnblogs.com/freeliver54/archive/2009/07/24/1530146.html" title="发布于2009-07-24 13:44" target="_blank">婚姻 一辈子的幸福厮守 请不要多拿彩礼和父母说事</a>
-<a href="http://www.cnblogs.com/freeliver54/archive/2009/08/05/1539449.html" target="_blank">»</a>下一篇：<a href="http://www.cnblogs.com/freeliver54/archive/2009/08/05/1539449.html" title="发布于2009-08-05 12:49" target="_blank">[书目20090805]钻石成功法则 - 陈安之</a></p>
-<p>posted on 2009-07-25 18:02 <a href="http://www.cnblogs.com/freeliver54/" target="_blank">freeliver54</a> 阅读(406) <a href="http://www.cnblogs.com/freeliver54/archive/2009/07/25/1530970.html#commentform" target="_blank">评论(0)</a>  <a href="http://www.cnblogs.com/freeliver54/admin/EditPosts.aspx?postid=1530970" target="_blank">编辑</a> <a href="http://www.cnblogs.com/freeliver54/AddToFavorite.aspx?id=1530970" target="_blank">收藏</a> <a href="http://www.cnblogs.com/freeliver54/archive/2009/07/25/1530970.html#" target="_blank">网摘</a> 所属分类: <a href="http://www.cnblogs.com/freeliver54/category/89971.html" target="_blank">Oracle/MySQL</a>
-<img src="" alt=""></p>
-<p>注册用户登录后才能发表评论，请<a href="http://passport.cnblogs.com/login.aspx?ReturnUrl=http%3a%2f%2fwww.cnblogs.com%2ffreeliver54%2farchive%2f2009%2f07%2f25%2f1530970.html%3flogin%3d1%23commentform" target="_blank">登录</a>或<a href="http://passport.cnblogs.com/register.aspx?ReturnUrl=http%3a%2f%2fwww.cnblogs.com%2ffreeliver54%2farchive%2f2009%2f07%2f25%2f1530970.html%23Bottom2" target="_blank">注册</a>。</p>
-<p>网站导航：
-<a href="http://www.cnblogs.com/" target="_blank">博客园首页</a>  <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://home.cnblogs.com/" target="_blank">个人主页</a>  <a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a>  <a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a>  <a href="http://space.cnblogs.com/" target="_blank">社区</a>  <a href="http://space.cnblogs.com/q/" target="_blank">博问</a>  <a href="http://wz.cnblogs.com/" target="_blank">网摘</a>
-IT新闻:
-· <a href="http://news.cnblogs.com/n/54542/" target="_blank">豆瓣网推出手机版 提供书影音资讯搜索服</a>
-· <a href="http://news.cnblogs.com/n/54541/" target="_blank">美国将推3D频道 6月直播世界杯</a>
-· <a href="http://news.cnblogs.com/n/54540/" target="_blank">用iPhone遥控无人直升机</a>
-· <a href="http://news.cnblogs.com/n/54539/" target="_blank">IT职业仍然是美国最好的工作之一</a>
-· <a href="http://news.cnblogs.com/n/54538/" target="_blank">马化腾：“全民公敌”偶像</a></p>
-<p><a href="http://www.china-pub.com/STATIC07/0912/zh_ndcx_091212.asp" target="_blank"><img src="" alt=""></a>
-<a href="http://www.china-pub.com/itbook/" target="_blank">China-pub 计算机图书网上专卖店！6.5万品种2-8折！</a>
-<a href="http://www.china-pub.com/static07/0901/zh_jueba_090121.asp" target="_blank">China-Pub 计算机绝版图书按需印刷服务</a>
-链接：<a href="http://www.cnblogs.com/freeliver54/archive/2009/07/25/1530970.html?switchskin=1#skinlist" target="_blank">切换模板</a></p>
-<p><strong>相关搜索:</strong>
-<a href="http://zzk.cnblogs.com/s?w=Oracle%2fMySQL" target="_blank">Oracle/MySQL</a>
-<strong>在知识库中查看：</strong>
-<a href="http://kb.cnblogs.com/a/1530970/" target="_blank">MySQL命令行 不同端口登录 执行SQL文件 创建用户 赋予权限 修改root密码</a></p>
-<p>Powered by:
-<a href="http://www.cnblogs.com/" target="_blank">博客园</a>
-Copyright © freeliver54</p>
-<h3 id="-">导航</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/" target="_blank">博客园</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/" target="_blank">首页</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a></li>
-<li><a href="http://space.cnblogs.com/msg/send/freeliver54" target="_blank">联系</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/rss" target="_blank">订阅</a><a href="http://www.cnblogs.com/freeliver54/rss" target="_blank"><img src="" alt="订阅"></a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/admin/EditPosts.aspx" target="_blank">管理</a></li>
-</ul>
-<h3 id="-">统计</h3>
-<ul>
-<li>随笔 - 714</li>
-<li>文章 - 0</li>
-<li>评论 - 1245</li>
-<li>引用 - 157</li>
-</ul>
-<h3 id="-">公告</h3>
-<p>每一天都有新的开始 每一天都是新的开始 愿我们 善始善终 持之以恒 不管前方 是希望还是迷茫 我们都只有一个信念 让我们的爱 伴我们终生</p>
-<p><a href="http://home.cnblogs.com/freeliver54/" target="_blank">我的主页</a>  <a href="http://home.cnblogs.com/freeliver54/detail/" target="_blank">个人资料</a>
-<a href="http://home.cnblogs.com/freeliver54/ing/" target="_blank">我的闪存</a>  <a href="http://space.cnblogs.com/msg/send/freeliver54" target="_blank">发短消息</a></p>
-<h3 id="-">搜索</h3>
-<h3 id="-">随笔分类</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/category/76308.html" target="_blank">Ajax.Net(12)</a> <a href="http://www.cnblogs.com/freeliver54/category/76308.html/rss" title="Subscribe to Ajax.Net(12)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/121615.html" target="_blank">C++(3)</a> <a href="http://www.cnblogs.com/freeliver54/category/121615.html/rss" title="Subscribe to C++(3)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/133235.html" target="_blank">CSS/网页相关(19)</a> <a href="http://www.cnblogs.com/freeliver54/category/133235.html/rss" title="Subscribe to CSS/网页相关(19)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/110145.html" target="_blank">English(9)</a> <a href="http://www.cnblogs.com/freeliver54/category/110145.html/rss" title="Subscribe to English(9)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/111073.html" target="_blank">Java(9)</a> <a href="http://www.cnblogs.com/freeliver54/category/111073.html/rss" title="Subscribe to Java(9)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/76352.html" target="_blank">JavaScript(67)</a> <a href="http://www.cnblogs.com/freeliver54/category/76352.html/rss" title="Subscribe to JavaScript(67)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/107484.html" target="_blank">Linux(2)</a> <a href="http://www.cnblogs.com/freeliver54/category/107484.html/rss" title="Subscribe to Linux(2)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/77443.html" target="_blank">MS SQL(57)</a> <a href="http://www.cnblogs.com/freeliver54/category/77443.html/rss" title="Subscribe to MS SQL(57)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/89971.html" target="_blank">Oracle/MySQL(23)</a> <a href="http://www.cnblogs.com/freeliver54/category/89971.html/rss" title="Subscribe to Oracle/MySQL(23)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/103597.html" target="_blank">PhotoShop&amp;Flash(13)</a> <a href="http://www.cnblogs.com/freeliver54/category/103597.html/rss" title="Subscribe to PhotoShop&amp;Flash(13)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/77424.html" target="_blank">Report(13)</a> <a href="http://www.cnblogs.com/freeliver54/category/77424.html/rss" title="Subscribe to Report(13)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/172773.html" target="_blank">RFID相关(1)</a> <a href="http://www.cnblogs.com/freeliver54/category/172773.html/rss" title="Subscribe to RFID相关(1)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/104390.html" target="_blank">Visual Basic/ASP(9)</a> <a href="http://www.cnblogs.com/freeliver54/category/104390.html/rss" title="Subscribe to Visual Basic/ASP(9)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/138020.html" target="_blank">VS2008(10)</a> <a href="http://www.cnblogs.com/freeliver54/category/138020.html/rss" title="Subscribe to VS2008(10)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/47995.html" target="_blank">VS技術實踐(347)</a> <a href="http://www.cnblogs.com/freeliver54/category/47995.html/rss" title="Subscribe to VS技術實踐(347)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/90122.html" target="_blank">Windows Server(24)</a> <a href="http://www.cnblogs.com/freeliver54/category/90122.html/rss" title="Subscribe to Windows Server(24)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/88169.html" target="_blank">WinForm 开发(68)</a> <a href="http://www.cnblogs.com/freeliver54/category/88169.html/rss" title="Subscribe to WinForm 开发(68)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/77442.html" target="_blank">XML/UML(9)</a> <a href="http://www.cnblogs.com/freeliver54/category/77442.html/rss" title="Subscribe to XML/UML(9)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/86175.html" target="_blank">安全与加密(15)</a> <a href="http://www.cnblogs.com/freeliver54/category/86175.html/rss" title="Subscribe to 安全与加密(15)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/85805.html" target="_blank">安装部署(36)</a> <a href="http://www.cnblogs.com/freeliver54/category/85805.html/rss" title="Subscribe to 安装部署(36)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/132722.html" target="_blank">励志创业(25)</a> <a href="http://www.cnblogs.com/freeliver54/category/132722.html/rss" title="Subscribe to 励志创业(25)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/86343.html" target="_blank">每日文摘(122)</a> <a href="http://www.cnblogs.com/freeliver54/category/86343.html/rss" title="Subscribe to 每日文摘(122)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/84533.html" target="_blank">其他(11)</a> <a href="http://www.cnblogs.com/freeliver54/category/84533.html/rss" title="Subscribe to 其他(11)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/121011.html" target="_blank">软考(2)</a> <a href="http://www.cnblogs.com/freeliver54/category/121011.html/rss" title="Subscribe to 软考(2)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/113983.html" target="_blank">图书目录(24)</a> <a href="http://www.cnblogs.com/freeliver54/category/113983.html/rss" title="Subscribe to 图书目录(24)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/89347.html" target="_blank">项目工程(25)</a> <a href="http://www.cnblogs.com/freeliver54/category/89347.html/rss" title="Subscribe to 项目工程(25)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/47972.html" target="_blank">心灵之旅(66)</a> <a href="http://www.cnblogs.com/freeliver54/category/47972.html/rss" title="Subscribe to 心灵之旅(66)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/99498.html" target="_blank">硬件网络(14)</a> <a href="http://www.cnblogs.com/freeliver54/category/99498.html/rss" title="Subscribe to 硬件网络(14)" target="_blank">(rss)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/category/83924.html" target="_blank">智能设备开发(12)</a> <a href="http://www.cnblogs.com/freeliver54/category/83924.html/rss" title="Subscribe to 智能设备开发(12)" target="_blank">(rss)</a></li>
-</ul>
-<h3 id="-">随笔档案</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2010/01.html" target="_blank">2010年1月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12.html" target="_blank">2009年12月 (10)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/11.html" target="_blank">2009年11月 (4)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/10.html" target="_blank">2009年10月 (8)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/09.html" target="_blank">2009年9月 (5)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/08.html" target="_blank">2009年8月 (9)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/07.html" target="_blank">2009年7月 (8)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/06.html" target="_blank">2009年6月 (4)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/05.html" target="_blank">2009年5月 (6)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/04.html" target="_blank">2009年4月 (4)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/03.html" target="_blank">2009年3月 (12)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/02.html" target="_blank">2009年2月 (24)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/01.html" target="_blank">2009年1月 (10)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/12.html" target="_blank">2008年12月 (14)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/11.html" target="_blank">2008年11月 (18)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/10.html" target="_blank">2008年10月 (23)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/09.html" target="_blank">2008年9月 (22)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/08.html" target="_blank">2008年8月 (9)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/07.html" target="_blank">2008年7月 (30)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/06.html" target="_blank">2008年6月 (17)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/05.html" target="_blank">2008年5月 (11)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/04.html" target="_blank">2008年4月 (45)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/03.html" target="_blank">2008年3月 (28)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/02.html" target="_blank">2008年2月 (11)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/01.html" target="_blank">2008年1月 (17)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/12.html" target="_blank">2007年12月 (15)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/11.html" target="_blank">2007年11月 (20)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/10.html" target="_blank">2007年10月 (22)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/09.html" target="_blank">2007年9月 (36)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/08.html" target="_blank">2007年8月 (23)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/07.html" target="_blank">2007年7月 (24)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/06.html" target="_blank">2007年6月 (6)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/05.html" target="_blank">2007年5月 (7)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/04.html" target="_blank">2007年4月 (32)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/03.html" target="_blank">2007年3月 (46)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/02.html" target="_blank">2007年2月 (22)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/01.html" target="_blank">2007年1月 (31)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/12.html" target="_blank">2006年12月 (45)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/11.html" target="_blank">2006年11月 (8)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/07.html" target="_blank">2006年7月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/06.html" target="_blank">2006年6月 (3)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/05.html" target="_blank">2006年5月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/04.html" target="_blank">2006年4月 (13)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/02.html" target="_blank">2006年2月 (8)</a></li>
-</ul>
-<h3 id="techlinks">techLINKS</h3>
-<ul>
-<li><a href="http://ajax.asp.net/" target="_blank">Ajax.net</a></li>
-<li><a href="http://www.asp.net/QuickStart/aspnet/" target="_blank">ASP.NET 快速入门教程</a></li>
-<li><a href="http://www.microsoft.com/china/msdn/library/default.aspx" target="_blank">MSDN</a></li>
-<li><a href="http://www.uml.org.cn/" target="_blank">UML</a></li>
-<li><a href="http://samples.gotdotnet.com/quickstart/winforms/" target="_blank">winforms</a></li>
-<li><a href="http://www.w3.org/TR/xslt" target="_blank">XSLT</a></li>
-<li><a href="http://chs.gotdotnet.com/quickstart/winforms/" target="_blank">窗体 快速入门教程</a></li>
-<li><a href="http://msdn.microsoft.com/windowsmobile/default.aspx" target="_blank">移动开发人员中心</a></li>
-</ul>
-<h3 id="-">友情链接</h3>
-<ul>
-<li><a href="http://www.cnweblog.com/homeus/" target="_blank">Sun&amp;Livia</a></li>
-<li><a href="http://www.xinhuanet.com/" target="_blank">新华网</a></li>
-<li><a href="http://blog.sina.com.cn/u/1280914171#aList_1" target="_blank">雪中路人</a></li>
-<li><a href="http://hi.baidu.com/freeliver54" target="_blank">有国才有家 爱我中华</a></li>
-<li><a href="http://www.cb.com.cn/" target="_blank">中国经营网</a></li>
-<li><a href="http://www.cgxdt.com/go.asp?user=freeliver54" target="_blank">自由 成功 富足 从容</a></li>
-</ul>
-<h3 id="-">积分与排名</h3>
-<ul>
-<li>积分 - 584146</li>
-<li>排名 - 57</li>
-</ul>
-<h3 id="-http-www-cnblogs-com-freeliver54-commentsrss-aspx-">最新评论 <a href="http://www.cnblogs.com/freeliver54/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/10/1621022.html#1728924" target="_blank">1. Re:[转]英语字根</a></li>
-<li>+　 plus　加号；正号 -　 minus　减号；负号 ±　plus or minus　正负号 ×　is multiplied by　乘号 ÷　is divided b...</li>
-<li>--freea</li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/15/1624696.html#1726601" target="_blank">2. Re:心居何处？</a></li>
-<li>与世界同在</li>
-<li>--freea</li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/15/1624998.html#1726597" target="_blank">3. Re:成家撑家 不要妄自菲薄</a></li>
-<li>躺在过去的经验和教训上迟早是会玩完的 明天的美好不仅在于明天是未知的更多的是因为明天是可以被按新的变化意愿创造的 拥抱明天的世界以未曾束缚的心机会 属于努力创造和利用</li>
-<li>--freea</li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/02/12/648209.html#1726562" target="_blank">4. Re:程序员的人生 该将如何规划?</a></li>
-<li>如果心不退那就意勇进热爱并享受自己的选择</li>
-<li>--freea</li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/10/20/1586889.html#1726260" target="_blank">5. Re:[转]js获取网站根路径(站点及虚拟目录)</a></li>
-<li>不错。谢谢。</li>
-<li>--零度的火</li>
-</ul>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/02/12/648209.html" target="_blank">1. 程序员的人生 该将如何规划?(23944)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/02/09/327853.html" target="_blank">2. VS2005中GridView簡單應用(23026)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/12/19/596603.html" target="_blank">3. SQL 2005 Express 的“企业管理器” 下载(14827)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/04/14/1152769.html" target="_blank">4. 遭遇“windows已经阻止此软件因为无法验证发行者”(11305)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/11/05/949935.html" target="_blank">5. 下载Eclipse的SWT插件(6901)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/11/27/573453.html" target="_blank">6. VS2005中ReportViewer 本地模式下报表呈现 入门示例(6829)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/02/09/645983.html" target="_blank">7. JS操作select相关方法：新增 修改 删除 选中 清空 判断存在 等(5887)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2008/10/15/1311371.html" target="_blank">8. [转]C/#中的IntPtr类型(5485)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/01/08/614626.html" target="_blank">9. [转]FreeTextBox使用详解(4571)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/01/17/622992.html" target="_blank">10. C/# 利用WinRAR (加密)压缩及解压缩 相关文件夹及文件(4461)</a></li>
-</ul>
-<h3 id="-">评论排行榜</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/02/12/648209.html" target="_blank">1. 程序员的人生 该将如何规划?(166)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/01/05/612393.html" target="_blank">2. VS2005 TreeView 的 CheckBox 被点击时的引发页面回发事件(29)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/02/09/327853.html" target="_blank">3. VS2005中GridView簡單應用(25)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2007/01/17/622992.html" target="_blank">4. C/# 利用WinRAR (加密)压缩及解压缩 相关文件夹及文件(23)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2006/12/29/607331.html" target="_blank">5. 分页及页码导航 用户控件(22)</a></li>
-</ul>
-<h3 id="60-">60天内阅读排行</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/11/16/1604192.html" target="_blank">1. [文摘20091116]一生必看的88本书(118)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/11/27/1611915.html" target="_blank">2. [转]SourceSafe中的权限管理(95)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/11/23/1608877.html" target="_blank">3. [转]Marquee 处理中 请等待 进度条(92)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/04/1616913.html" target="_blank">4. [文摘20091204]中国佛学66句禅语(88)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/09/1619883.html" target="_blank">5. windows 2003 组策略 设置开机登录时不需按CTRL+ALT+DEL 及关机时不需输关机原因(81)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/17/1626287.html" target="_blank">6. [English20091217]英语口语444句(60)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/04/1616901.html" target="_blank">7. [文字20091204]佛说--贪、嗔、痴、妒、慢、疑(55)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/10/1621022.html" target="_blank">8. [转]英语字根(52)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/11/26/1611244.html" target="_blank">9. [文摘20091126]不要让愤怒伤了自己(51)</a></li>
-<li><a href="http://www.cnblogs.com/freeliver54/archive/2009/12/15/1624696.html" target="_blank">10. 心居何处？(50)</a></li>
-</ul>
-<p>*</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--MySQL命令行不同端口登录执行SQL文件创建用户赋予权限修改root密码-Love/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--MySQL命令行不同端口登录执行SQL文件创建用户赋予权限修改root密码-Love" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mariadb--超越MySQL：三个流行MySQL分支的对比摘录-Speeddsy的专栏-博客频道-/">超越MySQL：三个流行MySQL分支的对比(摘录) </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mariadb--超越MySQL：三个流行MySQL分支的对比摘录-Speeddsy的专栏-博客频道-/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-mysql-mysql-speeddsy-csdn-net">超越MySQL：三个流行MySQL分支的对比(摘录) - Speeddsy的专栏 - 博客频道 - CSDN.NET</h1>
+        <h1 id="-mysql-insert-">如何优化MySQL insert性能</h1>
 <p>您还未登录！|<a href="https://passport.csdn.net/account/login" target="_blank">登录</a>|<a href="https://passport.csdn.net/account/register" target="_blank">注册</a>|<a href="https://passport.csdn.net/help/faq" target="_blank">帮助</a></p>
 <ul>
 <li><a href="http://www.csdn.net/" target="_blank">首页</a></li>
@@ -1118,122 +1101,188 @@ Copyright © freeliver54</p>
 <li><h2 id="-"><a href="">更多</a></h2>
 </li>
 </ul>
-<h1 id="-speeddsy-http-blog-csdn-net-speeddsy-"><a href="http://blog.csdn.net/Speeddsy" target="_blank">Speeddsy的专栏</a></h1>
-<h2 id="-">我的博客我说行！</h2>
+<h1 id="-tigernorth-http-blog-csdn-net-tigernorth-"><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth的专栏</a></h1>
+<h2 id="beginning-linux-programming-">Beginning Linux Programming 笔记</h2>
 <ul>
-<li><a href="http://blog.csdn.net/Speeddsy?viewmode=contents" target="_blank"><img src="" alt="">目录视图</a></li>
-<li><a href="http://blog.csdn.net/Speeddsy?viewmode=list" target="_blank"><img src="" alt="">摘要视图</a></li>
-<li><a href="http://blog.csdn.net/Speeddsy/rss/list" target="_blank"><img src="" alt="">订阅</a>
-<a href="http://surveies.csdn.net/survey/comein/532" target="_blank">博客专家信息更新登记表</a>        <a href="http://blog.csdn.net/blogdevteam/article/details/8572108" target="_blank">社区专家谈 12306</a>      <a href="http://bbs.csdn.net/topics/390373496" target="_blank">CSDN社区程序员回乡见闻活动火爆开始！</a>
-<a href="http://www.csdn.net/article/2013-02-26/2814263" target="_blank">专访周家安：我的十年编程自学之路</a>        <a href="http://blog.csdn.net/csdnstudent/article/details/8077932" target="_blank">2013年全国百所高校巡讲讲师招募</a></li>
+<li><a href="http://blog.csdn.net/tigernorth?viewmode=contents" target="_blank"><img src="" alt="">目录视图</a></li>
+<li><a href="http://blog.csdn.net/tigernorth?viewmode=list" target="_blank"><img src="" alt="">摘要视图</a></li>
+<li><a href="http://blog.csdn.net/tigernorth/rss/list" target="_blank"><img src="" alt="">订阅</a>
+<a href="https://code.csdn.net/blog/12" target="_blank">公告：博客新增直接引用代码功能</a>        <a href="http://www.csdn.net/article/2013-07-24/2816320" target="_blank">专访谭海燕：移动互联网开发的那些事</a>      <a href="http://blog.csdn.net/csdnproduct/article/details/9495139" target="_blank">CSDN博客频道自定义域名、标签搜索功能上线啦！</a>      <a href="http://blog.csdn.net/adali/article/details/9813651" target="_blank">独一无二的职位：开源社区经理</a></li>
 </ul>
-<h3 id="-mysql-mysql-"><a href="">超越MySQL：三个流行MySQL分支的对比(摘录)</a></h3>
-<p>分类： <a href="http://blog.csdn.net/Speeddsy/article/category/1166947" target="_blank">数据库</a>  2012-06-16 16:32 178人阅读 <a href="http://blog.csdn.net/speeddsy/article/details/7669150#comments" target="_blank">评论</a>(0) <a href="&quot;收藏&quot;">收藏</a> <a href="http://blog.csdn.net/speeddsy/article/details/7669150#report" title="举报" target="_blank">举报</a>
-<a href="http://blog.csdn.net/tag/details.html?tag=mysql" target="_blank">mysql</a><a href="http://blog.csdn.net/tag/details.html?tag=%e5%bc%95%e6%93%8e" target="_blank">引擎</a><a href="http://blog.csdn.net/tag/details.html?tag=%e4%ba%a7%e5%93%81" target="_blank">产品</a><a href="http://blog.csdn.net/tag/details.html?tag=server" target="_blank">server</a><a href="http://blog.csdn.net/tag/details.html?tag=%e5%ad%98%e5%82%a8" target="_blank">存储</a><a href="http://blog.csdn.net/tag/details.html?tag=%e6%89%a9%e5%b1%95" target="_blank">扩展</a></p>
-<p><strong>三个流行MySQL分支：Drizzle、MariaDB和Percona Server（包括XtraDB引擎）</strong></p>
-<p><strong>XtraDB</strong></p>
-<p>XtraDB是一款独立的产品，但它仍被认为是MySQL的一个分支。XtraDB实际上是基于MySQL的数据库的一个存储引擎。XtraDB被认为是已成为MySQL一部分的标准MyISAM和InnoDB的一个额外存储引擎。</p>
-<p>XtraDB分支有另一个目标，即成为InnoDB存储引擎的简单替代，这样用户就可以轻松地切换其存储引擎，无需更改任何现有的应用程序代码。XtraDB必须能够向后兼容InnoDB，以提供它们想要添加的所有新功能和改进。它们实现了此目标。</p>
-<p>XtraDB的速度有多快？我找到的一个性能测试表明：与内置的MySQL 5.1 InnoDB 引擎相比，它每分钟可处理2.7倍的事务。（请参见参考资料）。速度显然是一个不可以忽略的因素，在考虑替代产品时更是如此。</p>
-<p><strong>Percona</strong></p>
-<p>与内置的MySQL存储引擎相比，XtraDB提供了一些极大的改进，但它不是一款独立产品，也无法轻松放入现有MySQL安装。因此，如果您想使用这款新引擎，则必须使用提供它的产品。采用Percona Server的一个很好的理由是，利用XtraDB引擎来尽可能地减少代码更改。</p>
-<p>下面是Percona Server的声明，该声明来自它们自己的网站：</p>
-<ul>
-<li>可扩展性：处理更多事务；在强大的服务器上进行扩展</li>
-<li>性能：使用了XtraDB的Percona Server速度非常快</li>
-<li>可靠性：避免损坏，提供崩溃安全(crash-safe)复制</li>
-<li>管理：在线备份，在线表格导入/导出</li>
-<li>诊断：高级分析和检测</li>
-<li>灵活性：可变的页面大小，改进的缓冲池管理</li>
-</ul>
-<p>Percona Server的一个缺点是他们自己管理代码，不接受外部开发人员的贡献，以这种方式确保他们对产品中所包含功能的控制。</p>
-<p><strong>MariaDB</strong></p>
-<p>另一款提供了XtraDB存储引擎的产品是MariaDB产品。它与Percona产品非常类似，但是提供了更多底层代码更改，试图提供比标准MySQL更多的性能改进</p>
-<p>MariaDB提供了MySQL提供的标准存储引擎，即MyISAM和InnoDB。因此，实际上，可以将它视为MySQL的扩展集，它不仅提供MySQL提供的所有功能，还提供其他功能。MariaDB还声称自己是MySQL的替代，因此从MySQL切换到MariaDB时，无需更改任何基本代码即可安装它。</p>
-<p><strong>Drizzle</strong></p>
-<p>本文介绍的最后一款产品是Drizzle。与之前介绍的两款产品不同，Drizzle与MySQL有很大差别，甚至声称它们不是MySQL的替代产品。他们期望对MySQL进行一些重大更改，想要提供一种出色的解决方案来解决高可用性问题，即使这意味着要更改我们已经习惯了的MySQL的各个方面。</p>
-<p>是不是所有人都应该使用Drizzle呢？等等，正如Drizzle反复指出的那样，它与MySQL不兼容。因此，如果您现在使用的是MySQL平台，那么需要重写大量代码，才能使Drizzle在您的环境中正常工作</p>
-<p>尽管需要额外的工作才能让它运行，但它并不像Percona或MariaDB那样快速且易于使用。我之所以介绍Drizzle，是因为尽管目前它可能不是您的选择，但几年之后，它很可能会成为一些人的选择。因为本文的目标是提高您对未来使用的工具的认识，所以这是向您介绍此产品的好机会。许多领先的DB专家相信Drizzle将成为未来5年内高可用性数据库安装的选择。
-分享到： <a href="&quot;分享到新浪微博&quot;"></a><a href="&quot;分享到腾讯微博&quot;"></a></p>
-<ul>
-<li>上一篇：<a href="http://blog.csdn.net/speeddsy/article/details/7667621" target="_blank">Windows7下MySQL5.5.20免安装版的配置</a></li>
-<li><p>下一篇：<a href="http://blog.csdn.net/speeddsy/article/details/7669425" target="_blank">eclipse 配置知识</a>
-查看评论<a href=""></a></p>
-<p>暂无评论
-您还没有登录,请<a href="">[登录]</a>或<a href="http://passport.csdn.net/account/register?from=http%3A%2F%2Fblog.csdn.net%2Fspeeddsy%2Farticle%2Fdetails%2F7669150" target="_blank">[注册]</a></p>
+<h3 id="-mysql-insert-"><a href="">如何优化MySQL insert性能</a></h3>
+<p>分类： <a href="http://blog.csdn.net/tigernorth/article/category/1222822" target="_blank">MySQL</a>  2012-10-20 23:50 2602人阅读 <a href="">评论</a>(14) <a href="&quot;收藏&quot;">收藏</a> <a href="&quot;举报&quot;">举报</a>
+<a href="http://blog.csdn.net/tag/details.html?tag=insert" target="_blank">insert</a><a href="http://blog.csdn.net/tag/details.html?tag=mysql" target="_blank">mysql</a><a href="http://blog.csdn.net/tag/details.html?tag=%e4%bc%98%e5%8c%96" target="_blank">优化</a><a href="http://blog.csdn.net/tag/details.html?tag=sql" target="_blank">sql</a><a href="http://blog.csdn.net/tag/details.html?tag=%e6%b5%8b%e8%af%95" target="_blank">测试</a><a href="http://blog.csdn.net/tag/details.html?tag=table" target="_blank">table</a></p>
+<pre><code>对于一些数据量较大的系统，面临的问题除了是查询效率低下，还有一个很重要的问题就是插入时间长。我们就有一个业务系统，每天的数据导入需要4-5个钟。这种费时的操作其实是很有风险的，假设程序出了问题，想重跑操作那是一件痛苦的事情。因此，提高大数据量系统的MySQL insert效率是很有必要的。
+
+经过对MySQL的测试，发现一些可以提高insert效率的方法，供大家参考参考。
+</code></pre><p><strong>1. 一条SQL语句插入多条数据。</strong>
+常用的插入语句如：
+<strong>[sql]</strong> <a href="&quot;view plain&quot;">view plain</a><a href="&quot;copy&quot;">copy</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
+<ol>
+<li>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0);  </li>
+<li><p>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);<br>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0); INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);修改成：
+<strong>[sql]</strong> <a href="&quot;view plain&quot;">view plain</a><a href="&quot;copy&quot;">copy</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
 </li>
-</ul>
+<li><p>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0), (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);<br>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0), (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);</p>
+</li>
+</ol>
+<p>修改后的插入操作能够提高程序的插入效率。这里第二种SQL执行效率高的主要原因有两个，一是减少SQL语句解析的操作， 只需要解析一次就能进行数据的插入操作，二是SQL语句较短，可以减少网络传输的IO。</p>
+<p>这里提供一些测试对比数据，分别是进行单条数据的导入与转化成一条SQL语句进行导入，分别测试1百、1千、1万条数据记录。
+记录数 单条数据插入 多条数据插入 1百 0.149s 0.011s 1千 1.231s 0.047s 1万 11.678s 0.218s
+<strong>2. 在事务中进行插入处理。</strong>
+把插入修改成：
+<strong>[sql]</strong> <a href="&quot;view plain&quot;">view plain</a><a href="&quot;copy&quot;">copy</a><a href="&quot;print&quot;">print</a><a href="&quot;?&quot;">?</a></p>
+<ol>
+<li>START TRANSACTION;  </li>
+<li>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0);  </li>
+<li>INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);  </li>
+<li>...  </li>
+<li>COMMIT;<br>START TRANSACTION; INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0); INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1); ... COMMIT;</li>
+</ol>
+<p>使用事务可以提高数据的插入效率，这是因为进行一个INSERT操作时，MySQL内部会建立一个事务，在事务内进行真正插入处理。通过使用事务可以减少数据库执行插入语句时多次“创建事务，提交事务”的消耗，所有插入都在执行后才进行提交操作。</p>
+<p>这里也提供了测试对比，分别是不使用事务与使用事务在记录数为1百、1千、1万的情况。
+记录数 不使用事务 使用事务 1百 0.149s 0.033s 1千 1.231s 0.115s 1万 11.678s 1.050s
+<strong>性能测试：</strong>
+这里提供了同时使用上面两种方法进行INSERT效率优化的测试。即多条数据合并为同一个SQL，并且在事务中进行插入。
+记录数 单条数据插入 合并数据+事务插入 1万 0m15.977s 0m0.309s 10万 1m52.204s 0m2.271s 100万 18m31.317s 0m23.332s</p>
+<p>从测试结果可以看到，insert的效率大概有50倍的提高，这个一个很客观的数字。<em>**</em></p>
+<p><strong>注意事项：</strong></p>
+<ol>
+<li><p>SQL语句是有长度限制，在进行数据合并在同一SQL中务必不能超过SQL长度限制，通过max_allowed_packe配置可以修改，默认是1M。</p>
+</li>
+<li><p>事务需要控制大小，事务太大可能会影响执行的效率。MySQL有innodb_log_buffer_size配置项，超过这个值会日志会使用磁盘数据，这时，效率会有所下降。所以比较好的做法是，在事务大小达到配置项数据级前进行事务提交。</p>
+</li>
+</ol>
+<p>转载文章请注明来源： <a href="http://blog.csdn.net/tigernorth/article/details/8094277" target="_blank">http://blog.csdn.net/tigernorth/article/details/8094277</a>
+分享到： <a href="&quot;分享到新浪微博&quot;"></a><a href="&quot;分享到腾讯微博&quot;"></a></p>
+<ol>
+<li>上一篇：<a href="http://blog.csdn.net/tigernorth/article/details/7948539" target="_blank">MySQL锁的用法之行级锁</a></li>
+<li>下一篇：<a href="http://blog.csdn.net/tigernorth/article/details/8184924" target="_blank">MySQL 查询数据不一致</a>
+顶 7 踩 0
+查看评论<a href=""></a></li>
+</ol>
+<p>7楼 <a href="http://blog.csdn.net/kxxxxxxxb" target="_blank">kxxxxxxxb</a> 2013-05-21 15:19发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/kxxxxxxxb" target="_blank"><img src="" alt=""></a>楼主请教下，我一条sql语句一次性插入30000行数据出错，报的错误是mysql server has gone away ，插入25000行就可以，难道一行sql插入的大小是有限制的？（我已经调高了max_allowed_packet=16M）6楼 <a href="http://blog.csdn.net/huanggy001" target="_blank">huanggy001</a> 2012-11-28 10:03发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/huanggy001" target="_blank"><img src="" alt=""></a>多谢分享！5楼 <a href="http://blog.csdn.net/chunhaicao" target="_blank">chunhaicao</a> 2012-10-30 11:26发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/chunhaicao" target="_blank"><img src="" alt=""></a>方法很好啊
+只是我们大部分的备份数据都是“
+INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;0&#39;, &#39;userid_0&#39;, &#39;content_0&#39;, 0);
+INSERT INTO <code>insert_table</code> (<code>datetime</code>, <code>uid</code>, <code>content</code>, <code>type</code>) VALUES (&#39;1&#39;, &#39;userid_1&#39;, &#39;content_1&#39;, 1);”
+类的，这个有什么好的方法可以快速的转为一条Sql语句吗？Re: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-30 13:11发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复chunhaicao：使用mysqldump就能生成多行数据合并的sql的，用--extended-insert指定一个sql多条记录。4楼 <a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a> 2012-10-28 22:51发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dont27" target="_blank"><img src="" alt=""></a>最后一句：“转载文章请注明来源： <a href="http://blog.csdn.net/tigernorth/article/details/8094277”是你写的么？Re" target="_blank">http://blog.csdn.net/tigernorth/article/details/8094277”是你写的么？Re</a>: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-29 12:57发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复dont27：在百度搜博文标题，基本都只看到转载网站的搜索结果，CSND有事还看不到，很是郁闷。。Re: <a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a> 2012-10-29 23:26发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dont27" target="_blank"><img src="" alt=""></a>回复tigernorth：我勒个去，都是抓取的吧……话说那句话是你自己写的还是csdn自己加的？Re: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-29 23:43发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复dont27：自己写的。Re: <a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a> 2012-10-30 21:28发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dont27" target="_blank"><img src="" alt=""></a>回复tigernorth：之前百度一些技术的博客，貌似经常出现转载的情况，但都会留下最后“转载”的句子。我看那些抓取这文章的相当坑爹，都直接截取掉了……3楼 <a href="http://blog.csdn.net/dongfangling" target="_blank">dongfangling</a> 2012-10-23 22:45发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dongfangling" target="_blank"><img src="" alt=""></a>事物?还是事务?
+通过使用事物可以减少创建事物的消耗?Re: <a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a> 2012-10-24 12:55发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tigernorth" target="_blank"><img src="" alt=""></a>回复dongfangling：是“事务”，写错了，多谢提醒哈。
+是通过使用“事务”可以减少数据库插入数据时“创建事务，提交事务”的消耗，因为只需要开始创建一个事务，结束时提交即可。Re: <a href="http://blog.csdn.net/dongfangling" target="_blank">dongfangling</a> 2012-10-24 13:52发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/dongfangling" target="_blank"><img src="" alt=""></a>回复tigernorth：COOL2楼 <a href="http://blog.csdn.net/tewuxiaoqiang" target="_blank">特务苹果</a> 2012-10-23 20:47发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/tewuxiaoqiang" target="_blank"><img src="" alt=""></a>学习了。1楼 <a href="http://blog.csdn.net/limingchuan123456789" target="_blank">limingchuan123456789</a> 2012-10-22 11:07发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/limingchuan123456789" target="_blank"><img src="" alt=""></a>学习了。
+您还没有登录,请<a href="">[登录]</a>或<a href="http://passport.csdn.net/account/register?from=http%3A%2F%2Fblog.csdn.net%2Ftigernorth%2Farticle%2Fdetails%2F8094277" target="_blank">[注册]</a></p>
 <p>/* 以上用户言论只代表其个人观点，不代表CSDN网站的观点或立场<a href=""></a><a href=""></a>
-<a href="http://blog.csdn.net/speeddsy/article/details/7669150#" title="回到顶部" target="_blank"><img src="" alt="TOP"></a></p>
+<a href="&quot;回到顶部&quot;"><img src="" alt="TOP"></a></p>
 <p>个人资料</p>
-<p><a href="http://my.csdn.net/Speeddsy" target="_blank"><img src="&quot;访问我的空间&quot;" alt=""></a>
-<a href="http://my.csdn.net/Speeddsy" target="_blank">Speeddsy</a></p>
+<p><a href="http://my.csdn.net/tigernorth" target="_blank"><img src="&quot;访问我的空间&quot;" alt=""></a>
+<a href="http://my.csdn.net/tigernorth" target="_blank">tigernorth</a></p>
 <p><a href="&quot;[加关注]&quot;"></a> <a href="&quot;[发私信]&quot;"></a></p>
 <ul>
-<li>访问：2619次</li>
-<li>积分：58分</li>
+<li>访问：16316次</li>
+<li>积分：430分</li>
 <li><p>排名：千里之外</p>
 </li>
-<li><p>原创：1篇</p>
+<li><p>原创：21篇</p>
 </li>
-<li>转载：13篇</li>
+<li>转载：1篇</li>
 <li>译文：0篇</li>
-<li>评论：2条</li>
-</ul>
-<p>文章分类</p>
-<ul>
-<li><a href="http://blog.csdn.net/speeddsy/article/category/1277200" target="_blank">互联网</a>(0)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/category/1166947" target="_blank">数据库</a>(6)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/category/1167373" target="_blank">java</a>(5)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/category/1167164" target="_blank">c/c++</a>(3)</li>
-<li><p><a href="http://blog.csdn.net/speeddsy/article/category/1187660" target="_blank">其它</a>(1)
-文章存档</p>
-</li>
-<li><p><a href="http://blog.csdn.net/speeddsy/article/month/2012/11" target="_blank">2012年11月</a>(1)</p>
-</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/month/2012/07" target="_blank">2012年07月</a>(1)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/month/2012/06" target="_blank">2012年06月</a>(12)</li>
+<li>评论：24条</li>
 </ul>
 <p>文章搜索</p>
-<p><a href=""></a>
-阅读排行</p>
+<p><a href=""></a></p>
+<p>文章分类</p>
 <ul>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7751270" title="福昕pdf套件注册码激活" target="_blank">福昕pdf套件注册码激活</a>(640)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7661602" title="codeblocks 使用汇总" target="_blank">codeblocks 使用汇总</a>(418)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7667611" title="MySQL5.5 配置文件 my.ini" target="_blank">MySQL5.5 配置文件 my.ini</a>(327)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7677726" title="30 Best Eclipse Plugins" target="_blank">30 Best Eclipse Plugins</a>(248)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7662626" title="eclipse保存个人设置preference" target="_blank">eclipse保存个人设置preference</a>(200)</li>
-<li><a href="&quot;超越MySQL：三个流行MySQL分支的对比(摘录">超越MySQL：三个流行MySQL分支的对比(摘录)</a>&quot;)(177)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7667621" title="Windows7下MySQL5.5.20免安装版的配置" target="_blank">Windows7下MySQL5.5.20免安装版的配置</a>(110)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7660647" title="MySQL Workbench的使用教程" target="_blank">MySQL Workbench的使用教程</a>(105)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7694735" title="You can&#39;t specify target table &#39;sc1&#39; for update in FROM clause" target="_blank">You can&#39;t specify target table &#39;sc1&#39; for update in FROM clause</a>(93)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7669425" title="eclipse 配置知识" target="_blank">eclipse 配置知识</a>(79)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/806238" target="_blank">Beginning Linux Programming 笔记</a>(7)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/806236" target="_blank">TCP/IP相关工具命令</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/816887" target="_blank">Thinking in C++</a>(3)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/811054" target="_blank">微博开发平台</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/1073888" target="_blank">PHP</a>(2)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/1080760" target="_blank">linux</a>(2)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/1222822" target="_blank">MySQL</a>(5)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/category/1228827" target="_blank">锁机制</a>(1)</li>
+<li><p><a href="http://blog.csdn.net/tigernorth/article/category/1228828" target="_blank">MySQL锁</a>(2)
+文章存档</p>
+</li>
+<li><p><a href="http://blog.csdn.net/tigernorth/article/month/2012/11" target="_blank">2012年11月</a>(1)</p>
+</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/10" target="_blank">2012年10月</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/09" target="_blank">2012年09月</a>(2)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/08" target="_blank">2012年08月</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/06" target="_blank">2012年06月</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2012/02" target="_blank">2012年02月</a>(2)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2011/10" target="_blank">2011年10月</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2011/05" target="_blank">2011年05月</a>(3)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/month/2011/04" target="_blank">2011年04月</a>(10)</li>
 </ul>
-<p>评论排行</p>
+<p>展开</p>
+<p>阅读排行</p>
 <ul>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7660647" title="MySQL Workbench的使用教程" target="_blank">MySQL Workbench的使用教程</a>(1)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7662626" title="eclipse保存个人设置preference" target="_blank">eclipse保存个人设置preference</a>(1)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7751270" title="福昕pdf套件注册码激活" target="_blank">福昕pdf套件注册码激活</a>(0)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7694735" title="You can&#39;t specify target table &#39;sc1&#39; for update in FROM clause" target="_blank">You can&#39;t specify target table &#39;sc1&#39; for update in FROM clause</a>(0)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7677726" title="30 Best Eclipse Plugins" target="_blank">30 Best Eclipse Plugins</a>(0)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7677667" title="10款常用Java测试工具" target="_blank">10款常用Java测试工具</a>(0)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7669609" title="jdk与jre的区别" target="_blank">jdk与jre的区别</a>(0)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7669425" title="eclipse 配置知识" target="_blank">eclipse 配置知识</a>(0)</li>
-<li><a href="&quot;超越MySQL：三个流行MySQL分支的对比(摘录">超越MySQL：三个流行MySQL分支的对比(摘录)</a>&quot;)(0)</li>
-<li><a href="http://blog.csdn.net/speeddsy/article/details/7667621" title="Windows7下MySQL5.5.20免安装版的配置" target="_blank">Windows7下MySQL5.5.20免安装版的配置</a>(0)
-推荐文章</li>
+<li><a href="&quot;如何优化MySQL insert性能&quot;">如何优化MySQL insert性能</a>(2602)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/6331008" title="微博API：获取用户发布的微博" target="_blank">微博API：获取用户发布的微博</a>(2487)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7242146" title="如何使用CURL复用连接（PHP）" target="_blank">如何使用CURL复用连接（PHP）</a>(1094)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7272075" title="linux排重的方法" target="_blank">linux排重的方法</a>(832)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/6388604" title="C++循环变量定义生命周期" target="_blank">C++循环变量定义生命周期</a>(700)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7948539" title="MySQL锁的用法之行级锁" target="_blank">MySQL锁的用法之行级锁</a>(593)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7909951" title="PHP中MySQL连接管理" target="_blank">PHP中MySQL连接管理</a>(583)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/8184924" title="MySQL 查询数据不一致" target="_blank">MySQL 查询数据不一致</a>(576)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7670768" title="编写Linux定时处理程序" target="_blank">编写Linux定时处理程序</a>(515)</li>
+<li><p><a href="http://blog.csdn.net/tigernorth/article/details/7935766" title="MySQL锁的用法之表级锁" target="_blank">MySQL锁的用法之表级锁</a>(425)
+评论排行</p>
+</li>
+<li><p><a href="&quot;如何优化MySQL insert性能&quot;">如何优化MySQL insert性能</a>(14)</p>
+</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/6331008" title="微博API：获取用户发布的微博" target="_blank">微博API：获取用户发布的微博</a>(5)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7242146" title="如何使用CURL复用连接（PHP）" target="_blank">如何使用CURL复用连接（PHP）</a>(2)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/6388604" title="C++循环变量定义生命周期" target="_blank">C++循环变量定义生命周期</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/6844312" title="【转】如何才能做到网站高并发访问?" target="_blank">【转】如何才能做到网站高并发访问?</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7670768" title="编写Linux定时处理程序" target="_blank">编写Linux定时处理程序</a>(1)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7272075" title="linux排重的方法" target="_blank">linux排重的方法</a>(0)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7909951" title="PHP中MySQL连接管理" target="_blank">PHP中MySQL连接管理</a>(0)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7935766" title="MySQL锁的用法之表级锁" target="_blank">MySQL锁的用法之表级锁</a>(0)</li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7948539" title="MySQL锁的用法之行级锁" target="_blank">MySQL锁的用法之行级锁</a>(0)</li>
 </ul>
-<p>最新评论</p>
+<p>推荐文章
+最新评论</p>
 <ul>
-<li><a href="http://blog.csdn.net/Speeddsy/article/details/7660647#comments" target="_blank">MySQL Workbench的使用教程</a></li>
+<li><a href="">如何优化MySQL insert性能</a></li>
 </ul>
-<p><a href="http://blog.csdn.net/lnas01" target="_blank">随便啦</a>: 请问这篇文章怎么转载啊。。。</p>
+<p><a href="http://blog.csdn.net/kxxxxxxxb" target="_blank">kxxxxxxxb</a>: 楼主请教下，我一条sql语句一次性插入30000行数据出错，报的错误是mysql server ha...</p>
 <ul>
-<li><a href="http://blog.csdn.net/Speeddsy/article/details/7662626#comments" target="_blank">eclipse保存个人设置preference</a></li>
+<li><a href="http://blog.csdn.net/tigernorth/article/details/7670768#comments" target="_blank">编写Linux定时处理程序</a></li>
 </ul>
-<p><a href="http://blog.csdn.net/greateryang" target="_blank">greateryang</a>: 好用，此文章推荐寻找此方法的同志都看看</p>
-<p><a href="http://www.csdn.net/company/about.html" target="_blank">公司简介</a>|<a href="http://www.csdn.net/company/recruit.html" target="_blank">招贤纳士</a>|<a href="http://www.csdn.net/company/marketing.html" target="_blank">广告服务</a>|<a href="http://www.csdn.net/company/account.html" target="_blank">银行汇款帐号</a>|<a href="http://www.csdn.net/company/contact.html" target="_blank">联系方式</a>|<a href="http://www.csdn.net/company/statement.html" target="_blank">版权声明</a>|<a href="http://www.csdn.net/company/layer.html" target="_blank">法律顾问</a>|<a href="mailto:webmaster@csdn.net">问题报告</a>京 ICP 证 070598 号北京创新乐知信息技术有限公司 版权所有世纪乐知(北京)网络技术有限公司 提供技术支持江苏乐知网络技术有限公司 提供商务支持<img src="" alt=""> 联系邮箱：webmaster(at)csdn.netCopyright © 1999-2012, CSDN.NET, All Rights Reserved <a href="http://www.hd315.gov.cn/beian/view.asp?bianhao=010202001032100010" target="_blank"><img src="" alt="GongshangLogo"></a>
-<img src="" alt=""></p>
+<p><a href="http://blog.csdn.net/u010138411" target="_blank">u010138411</a>: good</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/huanggy001" target="_blank">huanggy001</a>: 多谢分享！</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a>: @tigernorth:之前百度一些技术的博客，貌似经常出现转载的情况，但都会留下最后“转载”的句子...</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a>: @chunhaicao:使用mysqldump就能生成多行数据合并的sql的，用--extended...</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/chunhaicao" target="_blank">chunhaicao</a>: 方法很好啊只是我们大部分的备份数据都是“INSERT INTO <code>insert_table</code> (`d...</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a>: @dont27:自己写的。</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a>: @tigernorth:我勒个去，都是抓取的吧……话说那句话是你自己写的还是csdn自己加的？</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/tigernorth" target="_blank">tigernorth</a>: @dont27:在百度搜博文标题，基本都只看到转载网站的搜索结果，CSND有事还看不到，很是郁闷。。</p>
+<ul>
+<li><a href="">如何优化MySQL insert性能</a></li>
+</ul>
+<p><a href="http://blog.csdn.net/dont27" target="_blank">Shellphon</a>: 最后一句：“转载文章请注明来源： <a href="http://blog.csdn.net/tigernorth/a" target="_blank">http://blog.csdn.net/tigernorth/a</a>...</p>
+<p><a href="http://www.csdn.net/company/about.html" target="_blank">公司简介</a>|<a href="http://www.csdn.net/company/recruit.html" target="_blank">招贤纳士</a>|<a href="http://www.csdn.net/company/marketing.html" target="_blank">广告服务</a>|<a href="http://www.csdn.net/company/account.html" target="_blank">银行汇款帐号</a>|<a href="http://www.csdn.net/company/contact.html" target="_blank">联系方式</a>|<a href="http://www.csdn.net/company/statement.html" target="_blank">版权声明</a>|<a href="http://www.csdn.net/company/layer.html" target="_blank">法律顾问</a>|<a href="mailto:webmaster@csdn.net">问题报告</a><a href="http://wpa.qq.com/msgrd?v=3&amp;uin=2355263776&amp;site=qq&amp;menu=yes" target="_blank">QQ客服</a> <a href="http://e.weibo.com/csdnsupport/profile" target="_blank">微博客服</a> <a href="http://bbs.csdn.net/forums/Service" target="_blank">论坛反馈</a> <a href="mailto:webmaster@csdn.net">联系邮箱：webmaster@csdn.net</a> 服务热线：400-600-2320京 ICP 证 070598 号北京创新乐知信息技术有限公司 版权所有世纪乐知(北京)网络技术有限公司 提供技术支持江苏乐知网络技术有限公司 提供商务支持Copyright © 1999-2012, CSDN.NET, All Rights Reserved <a href="http://www.hd315.gov.cn/beian/view.asp?bianhao=010202001032100010" target="_blank"><img src="" alt="GongshangLogo"></a>
+<img src="http://counter.csdn.net/pv.aspx?id=24" alt=""></p>
 
       
     </div>
@@ -1243,8 +1292,8 @@ Copyright © freeliver54</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mariadb/">mariadb</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mariadb/" class="label label-success">mariadb</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mariadb--超越MySQL：三个流行MySQL分支的对比摘录-Speeddsy的专栏-博客频道-/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mariadb--超越MySQL：三个流行MySQL分支的对比摘录-Speeddsy的专栏-博客频道-" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--如何优化MySQLinsert性能/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--如何优化MySQLinsert性能" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1257,7 +1306,7 @@ Copyright © freeliver54</p>
 
 
 <ul id="pagination" class="pagination pagination-lg">
-  <li><a class="extend prev" href="/page/131/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/129/">129</a></li><li><a class="page-number" href="/page/130/">130</a></li><li><a class="page-number" href="/page/131/">131</a></li><li class="active"><li><span class="page-number current">132</span></li><li><a class="page-number" href="/page/133/">133</a></li><li><a class="page-number" href="/page/134/">134</a></li><li><a class="page-number" href="/page/135/">135</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="page-number" href="/page/164/">164</a></li><li><a class="extend next" href="/page/133/">&raquo;</a></li>
+  <li><a class="extend prev" href="/page/131/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/129/">129</a></li><li><a class="page-number" href="/page/130/">130</a></li><li><a class="page-number" href="/page/131/">131</a></li><li class="active"><li><span class="page-number current">132</span></li><li><a class="page-number" href="/page/133/">133</a></li><li><a class="page-number" href="/page/134/">134</a></li><li><a class="page-number" href="/page/135/">135</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/162/">162</a></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="extend next" href="/page/133/">&raquo;</a></li>
   <div class="clearfix"></div>
 </ul></div><!--wapper-->
        </div><!-- ID main-col END -->
@@ -1324,7 +1373,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-29 22:06:56</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-30 14:30:16</em></span></div>
 </div>
 <div class="clearfix"></div>
 
