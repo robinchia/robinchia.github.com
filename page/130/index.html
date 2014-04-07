@@ -110,457 +110,1164 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-oracle--OracleB-tree、位图、全文索引三大索引性能比较及优缺点汇总/">Oracle B</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--求mysql中速度最快的分割字符串方法？？/">求 mysql中 速度最快的分割字符串方法？？</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:34.000Z"> <a href="/2014/02/02/2014-02-02-DB-oracle--OracleB-tree、位图、全文索引三大索引性能比较及优缺点汇总/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:34.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--求mysql中速度最快的分割字符串方法？？/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="oracle-b-tree-">Oracle B-tree、位图、全文索引三大索引性能比较及优缺点汇总</h1>
-<p>引言：大家都知道“效率”是数据库中非常重要的一个指标，如何提高效率大家可能都会想起索引，但索引又这么多种，什么场合应该使用什么索引呢？哪种索引可以提高我们的效率，哪种索引可以让我们的效率大大降低（有时还不如全表扫描性能好）下面要讲的“索引”如何成为我们的利器而不是灾难！多说一点，由于不同索引的存储结构不同，所以应用在不同组织结构的数据上，本篇文章重点就是：理解不同的技术都适合在什么地方应用！
-B-Tree索引
-场合：非常适合数据重复度低的字段 例如 身份证号码  手机号码  QQ号等字段，常用于主键 唯一约束，一般在在线交易的项目中用到的多些。
-原理：一个键值对应一行（rowid）  格式： 【索引头|键值|rowid】
-优点：当没有索引的时候，<a href="http://www.itpub.net/pubtree/?node=1" target="_blank">oracle</a>只能全表扫描where qq=40354446 这个条件那么这样是灰常灰常耗时的，当数据量很大的时候简直会让人崩溃，那么有个B-tree索引我们就像翻书目录一样，直接定位rowid立刻就找到了我们想要的数据，实质减少了I/O操作就提高速度，它有一个显著特点查询性能与表中数据量无关，例如 查2万行的数据用了3 consistent get,当查询1200万行的数据时才用了4 consistent gets。
-当我们的字段中使用了主键or唯一约束时，不用想直接可以用B-tree索引
-缺点：不适合键值重复率较高的字段上使用，例如 第一章 1-500page 第二章 501-1000page
-实验：
-alter system flush shared_pool;   清空共享池
-alter system flush buffer_cache;  清空数据库缓冲区，都是为了实验需要
-创建leo_t1  leo_t2 表
-leo_t1 表的object_id列的数据是没有重复值的，我们抽取了10行数据就可以看出来了。
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; create table leo_t1 as select object_id,object_name from dba_objects;
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select count(/*) from leo_t1;</p>
-<h2 id="-count-">  COUNT(/*)</h2>
-<pre><code>  9872
-</code></pre><p><a href="mailto:LS@LEO">LS@LEO</a>&gt;  select /* from leo_t1 where rownum &lt;= 10;
-OBJECT_ID OBJECT_NAME</p>
-<hr>
-<pre><code>    20 ICOL$
-    44 I_USER1
-    28 CON$
-    15 UNDO$
-    29 C_COBJ/#
-     3 I_OBJ/#
-    25 PROXY_ROLE_DATA$
-    39 I_IND1
-    51 I_CDEF2
-    26 I_PROXY_ROLE_DATA$_1
-</code></pre><p>leo_t2 表的object_id列我们是做了取余操作，值就只有0,1两种，因此重复率较高，如此设置为了说明重复率对B树索引的影响
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; create table leo_t2 as select mod(object_id,2) object_ID ,object_name from dba_objects;
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select count(/*) from leo_t2;</p>
-<h2 id="-count-">  COUNT(/*)</h2>
-<pre><code>  9873
-</code></pre><p><a href="mailto:LS@LEO">LS@LEO</a>&gt; select /* from leo_t2 where rownum &lt;= 10;
-OBJECT_ID OBJECT_NAME</p>
-<hr>
-<pre><code>     0 ICOL$
-     0 I_USER1
-     0 CON$
-     1 UNDO$
-     1 C_COBJ/#
-     1 I_OBJ/#
-     1 PROXY_ROLE_DATA$
-     1 I_IND1
-     1 I_CDEF2
-     0 I_PROXY_ROLE_DATA$_1
-</code></pre><p><a href="mailto:LS@LEO">LS@LEO</a>&gt; create index leo_t1_index on leo_t1(object_id);   创建B-tree索引，说明 默认创建的都是B-tree索引
-Index created.
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; create index leo_t2_index on leo_t2(object_ID);   创建B-tree索引
-Index created.
-让我们看一下leo_t1与leo_t2的重复情况
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select count(distinct(object_id)) from leo_t1;    让我们看一下leo_t1与leo_t2的重复情况，leo_t1没有重复值，leo_t2有很多</p>
-<h2 id="count-distinct-object_id-">COUNT(DISTINCT(OBJECT_ID))</h2>
-<pre><code>                  9872
-</code></pre><p><a href="mailto:LS@LEO">LS@LEO</a>&gt; select count(distinct(object_ID)) from leo_t2;</p>
-<h2 id="count-distinct-object_id-">COUNT(DISTINCT(OBJECT_ID))</h2>
-<pre><code>                     2
-</code></pre><p>收集2个表统计信息 
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; execute dbms_stats.gather_table_stats(ownname=&gt;&#39;LS&#39;,tabname=&gt;&#39;LEO_T1&#39;,method_opt=&gt;&#39;for all indexed columns size 2&#39;,cascade=&gt;TRUE);
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; execute dbms_stats.gather_table_stats(ownname=&gt;&#39;LS&#39;,tabname=&gt;&#39;LEO_T2&#39;,method_opt=&gt;&#39;for all indexed columns size 2&#39;,cascade=&gt;TRUE);
-参数详解：
-method_opt=&gt;&#39;for all indexed columns size 2&#39;  size_clause=integer 整型 ，范围 1~254 ，使用柱状图[ histogram analyze ]分析列数据的分布情况
-cascade=&gt;TRUE                          收集表的统计信息的同时收集B-tree索引的统计信息
-显示执行计划和统计信息+设置autotrace简介
-序号  命令                          解释
-1    SET AUTOTRACE OFF             此为默认值，即关闭Autotrace 
-2    SET AUTOTRACE ON EXPLAIN      只显示执行计划
-3    SET AUTOTRACE ON STATISTICS   只显示执行的统计信息
-4    SET AUTOTRACE ON              包含2,3两项内容
-5    SET AUTOTRACE TRACEONLY       与ON相似，但不显示语句的执行结果
-结果键值少的情况
-set autotrace trace exp stat;  （SET AUTOTRACE OFF 关闭执行计划和统计信息）
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select /* from leo_t1 where object_id=1;
-no rows selected</p>
-<h2 id="execution-plan-">Execution Plan 执行计划</h2>
-<h2 id="plan-hash-value-3712193284">Plan hash value: 3712193284</h2>
-<h2 id="-id-operation-name-rows-bytes-cost-cpu-time-">| Id  | Operation                   | Name         | Rows  | Bytes | Cost (%CPU)| Time     |</h2>
-<p>|   0 | SELECT STATEMENT            |              |     1 |    21 |     2   (0)| 00:00:01 |
-|   1 |  TABLE ACCESS BY INDEX ROWID| LEO_T1       |     1 |    21 |     2   (0)| 00:00:01 |</p>
-<h2 id="-2-index-range-scan-leo_t1_index-1-1-0-00-00-01-">|/*  2 |   INDEX RANGE SCAN索引扫描  | LEO_T1_INDEX |     1 |       |     1   (0)| 00:00:01 |</h2>
-<h2 id="predicate-information-identified-by-operation-id-">Predicate Information (identified by operation id):</h2>
-<p>   2 - access(&quot;OBJECT_ID&quot;=1)</p>
-<h2 id="statistics-">Statistics  统计信息</h2>
-<pre><code>      0  recursive calls
-      0  db block gets
-      2  consistent gets  我们知道leo_t1表的object_id没有重复值，因此使用B-tree索引扫描只有2次一致性读
-      0  physical reads
-      0  redo size
-    339  bytes sent via SQL/*Net to client
-    370  bytes received via SQL/*Net from client
-      1  SQL/*Net roundtrips to/from client
-      0  sorts (memory)
-      0  sorts (disk)
-      0  rows processed
-</code></pre><p>结果键值多的情况
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select /<em> from leo_t2 where object_ID=1; （select //</em>+full(leo_t2) /<em>/ /</em>  from leo_t2 where object_ID=1;hint方式强制全表扫描）
-4943 rows selected.    </p>
-<h2 id="execution-plan-">Execution Plan  执行计划</h2>
-<h2 id="plan-hash-value-3657048469">Plan hash value: 3657048469</h2>
-<h2 id="-id-operation-name-rows-bytes-cost-cpu-time-">| Id  | Operation         | Name   | Rows  | Bytes | Cost (%CPU)| Time     |</h2>
-<p>|   0 | SELECT STATEMENT  |        |  4943 | 98860 |    12   (0)| 00:00:01 |</p>
-<h2 id="-1-table-access-full-leo_t2-4943-98860-12-0-00-00-01-sql-4943row-4943row">|/*  1 |  TABLE ACCESS FULL| LEO_T2 |  4943 | 98860 |    12   (0)| 00:00:01 | sql结果是4943row，那么全表扫描也是4943row</h2>
-<h2 id="predicate-information-identified-by-operation-id-">Predicate Information (identified by operation id):</h2>
-<p>   1 - filter(&quot;OBJECT_ID&quot;=1) </p>
-<h2 id="statistics-">Statistics  统计信息</h2>
-<pre><code>      1  recursive calls
-      0  db block gets
-    366  consistent gets   导致有366次一致性读
-      0  physical reads
-      0  redo size
- 154465  bytes sent via SQL/*Net to client
-   4000  bytes received via SQL/*Net from client
-    331  SQL/*Net roundtrips to/from client
-      0  sorts (memory)
-      0  sorts (disk)
-   4943  rows processed
-</code></pre><p>大家肯定会疑惑，为什么要用全表扫描而不用B-tree索引呢，这是因为oracle基于成本优化器CBO认为使用全表扫描要比使用B-tree索引性能更好更快，由于我们结果重复率很高，导致有366次一致性读，从cup使用率12%上看也说明了B-tree索引不适合键值重复率较高的列
-我们在看一下强制使用B-tree索引时，效率是不是没有全表扫描高呢？
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select //<em>+index(leo_t2 leo_t2_index) /</em>/ /* from leo_t2 where object_ID=1; hint方式强制索引扫描
-4943 rows selected.</p>
-<h2 id="execution-plan-">Execution Plan  执行计划</h2>
-<h2 id="plan-hash-value-321706586">Plan hash value: 321706586</h2>
-<h2 id="-id-operation-name-rows-bytes-cost-cpu-time-">| Id  | Operation                   | Name         | Rows  | Bytes | Cost (%CPU)| Time     |</h2>
-<p>|   0 | SELECT STATEMENT            |              |  4943 | 98860 |    46   (0)| 00:00:01 |
-|   1 |  TABLE ACCESS BY INDEX ROWID| LEO_T2       |  4943 | 98860 |    46   (0)| 00:00:01 |</p>
-<h2 id="-2-index-range-scan-leo_t2_index-4943-10-0-00-00-01-">|/*  2 |   INDEX RANGE SCAN          | LEO_T2_INDEX |  4943 |       |    10   (0)| 00:00:01 |</h2>
-<h2 id="predicate-information-identified-by-operation-id-">Predicate Information (identified by operation id):</h2>
-<p>   2 - access(&quot;OBJECT_ID&quot;=1)</p>
-<h2 id="statistics-">Statistics  统计信息</h2>
-<pre><code>      1  recursive calls
-      0  db block gets
-    704  consistent gets  使用B-tree索引704次一致性读 &gt; 全表扫描366次一致性读，而且cpu使用率也非常高，显然效果没有全表扫描高
-      0  physical reads
-      0  redo size
- 171858  bytes sent via SQL/*Net to client
-   4000  bytes received via SQL/*Net from client
-    331  SQL/*Net roundtrips to/from client
-      0  sorts (memory)
-      0  sorts (disk)
-   4943  rows processed
-</code></pre><p>小结：从以上的测试我们可以了解到，B-tree索引在什么情况下使用跟键值重复率高低有很大关系的，之间没有一个明确的分水岭，只能多测试分析执行计划后来决定。
-位图索引   Bitmap index
-场合：列的基数很少，可枚举，重复值很多，数据不会被经常更新
-原理：一个键值对应很多行（rowid）， 格式：键值  start_rowid   end_rowid  位图
-优点：OLAP 例如报表类数据库 重复率高的数据 特定类型的查询例如count、or、and等逻辑操作因为只需要进行位运算即可得到我们需要的结果
-缺点：不适合重复率低的字段，还有经常DML操作（insert，update，delete），因为位图索引的锁代价极高，修改一个位图索引段影响整个位图段，例如修改
-一个键值，会影响同键值的多行，所以对于OLTP 系统位图索引基本上是不适用的
-实验：位图索引和B-tree索引的性能比较
-set pagesize 100;   设置页大小
-利用dba_objects数据字典创建一个15万行的表
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; create table leo_bm_t1 as select /<em> from dba_objects;
-Table created.
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; insert into leo_bm_t1 select /</em> from leo_bm_t1;  翻倍插入
-9876 rows created.
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; /
-19752 rows created.
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; /
-39504 rows created.
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; /
-79008 rows created.
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; /
-158016 rows created.
-因object_type字段重复值较高，顾在此字段上创建bitmap索引
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; create bitmap index leo_bm_t1_index on leo_bm_t1(object_type);
-Index created.
-创建一个和leo_bm_t1表结构一模一样的表leo_bm_t2，并在object_type列上创建一个B-tree索引（15万行记录）
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; create table leo_bm_t2 as select /* from leo_bm_t1;
-Table created.
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; create index leo_bm_t2_bt_index on leo_bm_t2(object_type);
-Index created.
-对比位图索引和B-tree索引所占空间大小,很明显位图要远远小于B-tree索引所占用的空间，节约空间特性也是我们选择位图的理由之一
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select segment_name,bytes from user_segments where segment_type=&#39;INDEX&#39;;
-SEGMENT_NAME                                                                           BYTES</p>
-<hr>
-<p>LEO_BM_T1_INDEX                                                                       327680(327K)
-LEO_BM_T2_BT_INDEX                                                                   7340032(7M)
-显示执行计划和统计信息
-set autotrace trace exp stat;
-在创建有位图索引的表上做count操作对比执行计划
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select count(/*) from leo_bm_t1 where object_type=&#39;TABLE&#39;;</p>
-<h2 id="execution-plan-">Execution Plan  执行计划</h2>
-<h2 id="plan-hash-value-3251686305">Plan hash value: 3251686305</h2>
-<h2 id="-id-operation-name-rows-bytes-cost-cpu-time-">| Id  | Operation                   | Name            | Rows  | Bytes | Cost (%CPU)| Time     |</h2>
-<p>|   0 | SELECT STATEMENT            |                 |     1 |    11 |     4   (0)| 00:00:01 |
-|   1 |  SORT AGGREGATE             |                 |     1 |    11 |            |          |
-|   2 |   BITMAP CONVERSION COUNT   |                 | 36315 |   390K|     4   (0)| 00:00:01 |</p>
-<h2 id="-3-bitmap-index-single-value-leo_bm_t1_index-">|/*  3 |    BITMAP INDEX SINGLE VALUE| LEO_BM_T1_INDEX |       |       |            |          |</h2>
-<p>位图索引上只扫描了一个值</p>
-<h2 id="predicate-information-identified-by-operation-id-">Predicate Information (identified by operation id):</h2>
-<p>   3 - access(&quot;OBJECT_TYPE&quot;=&#39;TABLE&#39;)</p>
-<h2 id="note">Note</h2>
+        <h1 id="-mysql-">求 mysql中 速度最快的分割字符串方法？？</h1>
+<p><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#" target="_blank"><img src="" alt=""></a></p>
 <ul>
-<li>dynamic sampling used for this statement 动态采样
-Statistics   统计信息</li>
+<li><a href="http://www.csdn.net/" target="_blank">首页</a>|</li>
+<li><a href="http://hi.csdn.net/" target="_blank">空间</a>|</li>
+<li><a href="http://news.csdn.net/" target="_blank">新闻</a>|</li>
+<li><a href="http://bbs.csdn.net/" target="_blank">论坛</a>|</li>
+<li><a href="http://blog.csdn.net/" target="_blank">博客</a>|</li>
+<li><a href="http://download.csdn.net/" target="_blank">下载</a>|</li>
+<li><a href="http://book.csdn.net/" target="_blank">读书</a>|</li>
+<li><a href="http://wz.csdn.net/" target="_blank">网摘</a>|</li>
+<li><a href="http://live.csdn.net/" target="_blank">视频</a>|</li>
+<li><a href="http://www.dearbook.com.cn/" target="_blank">书店</a>|</li>
+<li><a href="http://www.programmer.com.cn/" target="_blank">程序员</a>|</li>
+<li><a href="http://www.itliyu.com/" target="_blank">求职招聘</a>|</li>
+<li><a href="http://prj.csdn.net/" target="_blank">项目交易</a>|</li>
+<li><a href="http://training.csdn.net/" target="_blank">培训</a>|</li>
+<li><p><a href="http://daohang.csdn.net/" target="_blank">网址</a></p>
+</li>
+<li><p>欢迎您：<a href="http://hi.csdn.net/my.html" target="_blank">游客</a>|<a href="http://forum.csdn.net/User/LoginOut.aspx" target="_blank">退出</a>|<a href="http://passport.csdn.net/UserLogin.aspx" target="_blank">登录</a><a href="http://passport.csdn.net/CSDNUserRegister.aspx" target="_blank">注册</a>|<a href="http://community.csdn.net/Help/HelpCenter.htm" target="_blank">帮助</a>  <a href=""></a> <a href=""></a></p>
+</li>
 </ul>
-<hr>
-<pre><code>      9  recursive calls
-      0  db block gets
-     93  consistent gets  oracle选择使用位图索引访问数据，导致93次一致性读
-      7  physical reads
-      0  redo size
-    413  bytes sent via SQL/*Net to client
-    381  bytes received via SQL/*Net from client
-      2  SQL/*Net roundtrips to/from client
-      0  sorts (memory)
-      0  sorts (disk)
-      1  rows processed
-</code></pre><p>在创建有B-tree索引的表上做count操作对比执行计划
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select count(/*) from leo_bm_t2 where object_type=&#39;TABLE&#39;;</p>
-<h2 id="execution-plan-">Execution Plan   执行计划</h2>
-<h2 id="plan-hash-value-613433245">Plan hash value: 613433245</h2>
-<h2 id="-id-operation-name-rows-bytes-cost-cpu-time-">| Id  | Operation         | Name               | Rows  | Bytes | Cost (%CPU)| Time     |</h2>
-<p>|   0 | SELECT STATEMENT  |                    |     1 |    11 |    59   (0)| 00:00:01 |
-|   1 |  SORT AGGREGATE   |                    |     1 |    11 |            |          |</p>
-<h2 id="-2-index-range-scan-leo_bm_t2_bt_index-25040-268k-59-0-00-00-01-">|/*  2 |   INDEX RANGE SCAN| LEO_BM_T2_BT_INDEX | 25040 |   268K|    59   (0)| 00:00:01 |</h2>
-<p>B-tree索引上全部扫描，cpu使用率达到了59%，比位图索引cpu使用率4%高出许多</p>
-<h2 id="predicate-information-identified-by-operation-id-">Predicate Information (identified by operation id):</h2>
-<p>   2 - access(&quot;OBJECT_TYPE&quot;=&#39;TABLE&#39;)</p>
-<h2 id="note">Note</h2>
+<p><a href="http://www.csdn.net/" target="_blank">CSDN</a>-<a href="http://community.csdn.net/" target="_blank">CSDN社区</a>-<a href="http://forum.csdn.net/BList/OtherDatabase/" target="_blank">其他数据库开发</a>-<a href="http://forum.csdn.net/SList/MySQLPostgresql//" target="_blank">MySQL/Postgresql</a></p>
 <ul>
-<li>dynamic sampling used for this statement 动态采样
-Statistics   统计信息</li>
+<li><p><a href="">管理菜单</a></p>
+</li>
+<li><p><a href="http://forum.csdn.net/PointForum/BuildTopic.aspx?topicId=5d80ce75-305b-420c-95b4-ca1437c6a221&amp;postDate=2009-10-20+15%3a42%3a21&amp;return=" target="_blank">生成帖子</a></p>
+</li>
+<li><a href="">置顶</a></li>
+<li><a href="">推荐</a></li>
+<li><a href="">取消推荐</a></li>
+<li><a href="">锁定</a></li>
+<li><a href="">解锁</a></li>
+<li><a href="">移动</a></li>
+<li><a href="">编辑</a></li>
+<li><a href="">删除</a></li>
+<li><a href="">帖子加分</a></li>
+<li><a href="http://forum.csdn.net/PointForum/Manage/TopicManageView.aspx?forumID=ba09fe7e-2fb7-42d3-805e-578a4a8485e1&amp;topicID=5d80ce75-305b-420c-95b4-ca1437c6a221&amp;date=2009-10-20+15%3a42%3a21&amp;v=13" target="_blank">结  帖</a></li>
+<li><a href="http://forum.csdn.net/PointForum/Forum/PostTopic.aspx?forumID=ba09fe7e-2fb7-42d3-805e-578a4a8485e1" target="_blank">发  帖</a></li>
+<li><p><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#r_achor" target="_blank">回  复</a></p>
+</li>
+<li><p><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#" target="_blank">共2页</a></p>
+</li>
+<li><em><a href="http://topic.csdn.net/u/20091020/15/5d80ce75-305b-420c-95b4-ca1437c6a221.html" target="_blank">1</a></em></li>
+<li><em><a href="http://topic.csdn.net/u/20091020/15/5d80ce75-305b-420c-95b4-ca1437c6a221_2.html" target="_blank">2</a></em></li>
 </ul>
-<hr>
-<pre><code>     32  recursive calls
-      0  db block gets
-    161  consistent gets  B-tree索引表上发生了161次一致性读要远远高于位图索引表上93次一致性读，因此还是位图索引效率高
-     74  physical reads
-      0  redo size
-    413  bytes sent via SQL/*Net to client
-    381  bytes received via SQL/*Net from client
-      2  SQL/*Net roundtrips to/from client
-      0  sorts (memory)
-      0  sorts (disk)
-      1  rows processed
-</code></pre><p>我们再看看等值查找where object_type=&#39;TABLE&#39;情况下位图索引和B-tree索引的性能对比
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select /* from leo_bm_t1 where object_type=&#39;TABLE&#39; ;
-28512 rows selected.</p>
-<h2 id="execution-plan-">Execution Plan  执行计划</h2>
-<h2 id="plan-hash-value-4228542614">Plan hash value: 4228542614</h2>
-<h2 id="-id-operation-name-rows-bytes-cost-cpu-time-">| Id  | Operation                    | Name            | Rows  | Bytes | Cost (%CPU)| Time     |</h2>
-<p>|   0 | SELECT STATEMENT             |                 | 36315 |  6277K|   562   (0)| 00:00:07 |
-|   1 |  TABLE ACCESS BY INDEX ROWID | LEO_BM_T1       | 36315 |  6277K|   562   (0)| 00:00:07 |
-|   2 |   BITMAP CONVERSION TO ROWIDS| 位图映像-&gt;rowids |       |       |            |          |</p>
-<h2 id="-3-bitmap-index-single-value-leo_bm_t1_index-">|/*  3 |    BITMAP INDEX SINGLE VALUE | LEO_BM_T1_INDEX |       |       |            |          |</h2>
-<h2 id="predicate-information-identified-by-operation-id-">Predicate Information (identified by operation id):</h2>
-<p>   3 - access(&quot;OBJECT_TYPE&quot;=&#39;TABLE&#39;)</p>
-<h2 id="note">Note</h2>
+<h1 id="-mysql-20-"><a href="">收藏</a> 不显示删除回复显示所有回复显示星级回复显示得分回复 [推荐] <a href=""></a>求 mysql中 速度最快的分割字符串方法？？<em>[问题点数:20分]</em></h1>
 <ul>
-<li>dynamic sampling used for this statement动态采样
-Statistics   统计信息</li>
+<li><a href="http://hi.csdn.net/doney_dongxiang" target="_blank"><img src="" alt=""></a></li>
+<li><a href="http://hi.csdn.net/doney_dongxiang" target="_blank">doney_dongxiang</a></li>
+<li>(doney)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>结帖率：93.02%</li>
+<li><em>楼主</em>发表于：2009-10-20 15:42:21   今有 一万个手机号码已 &quot; ;&quot; 分割符连接的字符串，需要在存储过程中，需要将所有号码添加到另外一个表中，并且号码需要分开（既每个手机号码为一行）。有没有快捷的方法？
+下面是目前采用的方法：
+SQL codeset t_MCODE=ltrim(t_code); //<em> t_code 为号码字符串 /</em>/ set t_MCODE=rtrim(t_MCODE); set t_i=POSITION(&#39;;&#39; in t_MCODE); WHILE t_i &gt;=1 do set str=left(t_MCODE,t_i-1); set str=ltrim(str) ; set str=rtrim(str); insert test(names) values(str); set t_MCODE=substring(t_MCODE,t_i+1,length(t_MCODE)-t_i); set t_i=POSITION(&#39;;&#39; in t_MCODE); end WHILE ;//<em>把号码插入表/</em>/ insert test(names) values(t_MCODE); //<em>将最后剩余的号码放入临时表/</em>/</li>
 </ul>
-<hr>
-<pre><code>      7  recursive calls
-      0  db block gets
-   4407  consistent gets  使用位图索引发生了4407次一致性读
-      0  physical reads
-      0  redo size
-2776927  bytes sent via SQL/*Net to client
-  21281  bytes received via SQL/*Net from client
-   1902  SQL/*Net roundtrips to/from client
-      0  sorts (memory)
-      0  sorts (disk)
-  28512  rows processed
-</code></pre><p>leo_bm_t2表上使用B-tree索引得到执行计划
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select //<em>+index(leo_bm_t2 leo_bm_t2_bt_index) /</em>/ /* from leo_bm_t2 where object_type=&#39;TABLE&#39; ;
-28512 rows selected.  我们强制使用B-tree索引扫描等值条件</p>
-<h2 id="execution-plan-">Execution Plan  执行计划</h2>
-<h2 id="plan-hash-value-1334503202">Plan hash value: 1334503202</h2>
-<h2 id="-id-operation-name-rows-bytes-cost-cpu-time-">| Id  | Operation                   | Name               | Rows  | Bytes | Cost (%CPU)| Time     |</h2>
-<p>|   0 | SELECT STATEMENT            |                    | 25040 |  4328K|  2063   (1)| 00:00:25 |
-|   1 |  TABLE ACCESS BY INDEX ROWID| LEO_BM_T2          | 25040 |  4328K|  2063   (1)| 00:00:25 |</p>
-<h2 id="-2-index-range-scan-leo_bm_t2_bt_index-25040-59-0-00-00-01-">|/*  2 |   INDEX RANGE SCAN          | LEO_BM_T2_BT_INDEX | 25040 |       |    59   (0)| 00:00:01 |</h2>
-<p>B-tree索引上全部扫描，cpu使用率达到了2063%，比位图索引cpu使用率562%高出许多</p>
-<h2 id="predicate-information-identified-by-operation-id-">Predicate Information (identified by operation id):</h2>
-<p>   2 - access(&quot;OBJECT_TYPE&quot;=&#39;TABLE&#39;)</p>
-<h2 id="note">Note</h2>
+<p>一万条需要 20s 很慢，如果大量，用户并发操作就更加慢了 * <a href="">对我有用</a>[0]</p>
 <ul>
-<li>dynamic sampling used for this statement
-Statistics</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>
+回复次数：114  * <a href="http://hi.csdn.net/wwwwb" target="_blank"><img src="&quot;wwwwb用户自定义头像&quot;" alt="wwwwb用户头像"></a></li>
+<li><a href="http://hi.csdn.net/wwwwb" target="_blank">wwwwb</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>9</li>
 </ul>
-<hr>
-<pre><code>      7  recursive calls
-      0  db block gets
-   6621  consistent gets  
-      0  physical reads
-      0  redo size
-2776927  bytes sent via SQL/*Net to client
-  21281  bytes received via SQL/*Net from client
-   1902  SQL/*Net roundtrips to/from client
-      0  sorts (memory)
-      0  sorts (disk)
-  28512  rows processed
-</code></pre><p>小结：在等值查找中我们可以看出位图索引的效率依言高于B-tree索引
-全文索引 Text index
-定义：全文索引就是通过将文字按照某种语言进行词汇拆分，重新将数据组合存储，来达到快速检索的目的
-场合：当字段里存储的都是文本时适合用全文索引，常用于搜索文字
-优点：全文索引不是按照键值存储的，而是按照分词重组数据，常用于模糊查询Where name like &#39;%leonarding%&#39;效率比全表扫描高很多，适用OLAP系统，
-OLTP系统里面用到的并不多。
-缺点：全文索引会占用大量空间有时比原表本身占的空间还多，bug较多，维护困难。
-实验：全文索引性能优势
-创建一个表包含2个字段
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; create table leo_text_t1 (id int,name varchar(10));
-Table created.
-在name字段上创建B-tree索引，但检索的时候并没有用，还是全表扫描
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; create index leo_text_t1_bt_index on leo_text_t1(name);
-Index created.
-插入4条记录
-insert into leo_text_t1 values(1,&#39;Tom&#39;);
-insert into leo_text_t1 values(2,&#39;Tom Tom&#39;);
-insert into leo_text_t1 values(1,&#39;Tom&#39;);
-insert into leo_text_t1 values(2,&#39;Tom Tom&#39;);
-commit;
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select /* from leo_text_t1;
-        ID NAME</p>
-<hr>
-<pre><code>     1 Tom
-     2 Tom Tom
-     1 Tom
-     2 Tom Tom
-</code></pre><p>我们在创建一个表，并在name字段上创建全文索引
-create table leo_text_t2 as select /* from leo_text_t1;
-创建全文索引的前提
-ORACLE10g 创建全文索引过程：
-1,首先查看ORACLE是否已安装“全文检索工具”
-  通过查看是否存在 CTXSYS 用户，CTXAPP角色即可判断。
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select username from dba_users;</p>
-<h2 id="username">USERNAME</h2>
-<p>LS
-CTXSYS   默认是没有的，需要安装2个脚本catctx.sql，drdefus.sql
-2,如果ORACLE没有安装“全文检索工具”，则使用以下步骤手工安装。
-  a)进入ORACLE安装目录
-  cd $ORACLE_HOME
-  b)使用 DBA 角色登陆数据库
-  sqlplus sys/sys as sysdba
-  c)查看表空间文件存放路径
-  select name from v$datafile;
-  d)为 CTXSYS 用户创建表空间
-  CREATE TABLESPACE ctxsys
-  LOGGING
-  DATAFILE &#39;/u01/app/oracle/oradata/LEO/file1/ctxsys01.dbf&#39;
-  SIZE 32m
-  AUTOEXTEND ON
-  NEXT 32m MAXSIZE 2048m
-  EXTENT MANAGEMENT LOCAL ;
-  e)创建 CTXSYS 用户，创建 CTXAPP 角色
-  @?/ctx/admin/catctx.sql ctxsys ctxsys temp1 nolock
-  --(密码、表空间、临时表空间、用户状态)
-  --如果当前sql脚本无执行权限，请手工添加。
-  f)为 CTXSYS 执行初始化工作，如果没有此操作，后续操作会失败。
-  connect ctxsys/ctxsys;
-  @?/ctx/admin/defaults/drdefus.sql
-3,创建全文索引
-  a)创建词法分析器及相关表
-  --词法分析器
-execute ctx_ddl.create_preference(&#39;offerProdAddrLexer&#39;,&#39;CHINESE_LEXER&#39;);
-  --词法
-execute ctx_ddl.create_preference(&#39;offerProdAddrList&#39;, &#39;BASIC_WORDLIST&#39;);
-execute  ctx_ddl.set_attribute(&#39;offerProdAddrList&#39;,&#39;PREFIX_INDEX&#39;,&#39;TRUE&#39;);
-execute  ctx_ddl.set_attribute(&#39;offerProdAddrList&#39;,&#39;PREFIX_MIN_LENGTH&#39;,1);
-execute  ctx_ddl.set_attribute(&#39;offerProdAddrList&#39;,&#39;PREFIX_MAX_LENGTH&#39;, 5);
-execute  ctx_ddl.set_attribute(&#39;offerProdAddrList&#39;,&#39;SUBSTRING_INDEX&#39;, &#39;YES&#39;);
-b)创建全文索引
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; conn ctxsys/ctxsys
-Connected.
-<a href="mailto:CTXSYS@LEO">CTXSYS@LEO</a>&gt; create index ls.leo_text_t2_text_index on ls.leo_text_t2(name) indextype is ctxsys.context;
-<a href="mailto:CTXSYS@LEO">CTXSYS@LEO</a>&gt; conn ls/ls
-Connected.
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; set autotrace on;
-<a href="mailto:LS@LEO">LS@LEO</a>&gt; select /* from leo_text_t1 where name like &#39;%Tom%&#39;;
-        ID NAME</p>
-<hr>
-<pre><code>     1 Tom
-     2 Tom Tom
-     1 Tom
-     2 Tom Tom
-</code></pre><h2 id="execution-plan-">Execution Plan   执行计划</h2>
-<h2 id="plan-hash-value-3687902158">Plan hash value: 3687902158</h2>
-<h2 id="-id-operation-name-rows-bytes-cost-cpu-time-">| Id  | Operation         | Name        | Rows  | Bytes | Cost (%CPU)| Time     |</h2>
-<p>|   0 | SELECT STATEMENT  |             |     4 |    80 |     3   (0)| 00:00:01 |</p>
-<h2 id="-1-table-access-full-leo_text_t1-4-80-3-0-00-00-01-">|/*  1 |  TABLE ACCESS FULL| LEO_TEXT_T1 |     4 |    80 |     3   (0)| 00:00:01 |</h2>
-<p>全表扫描，cpu使用率3%</p>
-<h2 id="predicate-information-identified-by-operation-id-">Predicate Information (identified by operation id):</h2>
-<p>   1 - filter(&quot;NAME&quot; LIKE &#39;%Tom%&#39;)</p>
-<h2 id="note">Note</h2>
+<p>10
+16 /#1楼 得分：0回复于：2009-10-20 15:48:01<a href=""></a> 1、贴记录及要求结果出来看看；
+2、有SQL，对字符操作速度不会快；
+3、建议修改成列的形式
+号码1
+号码2
+...
+号码n * <a href="">对我有用</a>[0]</p>
 <ul>
-<li>dynamic sampling used for this statement动态采样
-Statistics   统计信息</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/vinsonshen" target="_blank"><img src="&quot;vinsonshen用户自定义头像&quot;" alt="vinsonshen用户头像"></a></li>
+<li><a href="http://hi.csdn.net/vinsonshen" target="_blank">vinsonshen</a></li>
+<li>(阿呢陀佛,一切皆空)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>2 /#2楼 得分：0回复于：2009-10-20 15:48:20<a href=""></a> 大致思路就像你这样来处理了。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/vinsonshen" target="_blank"><img src="&quot;vinsonshen用户自定义头像&quot;" alt="vinsonshen用户头像"></a></li>
+<li><a href="http://hi.csdn.net/vinsonshen" target="_blank">vinsonshen</a></li>
+<li>(阿呢陀佛,一切皆空)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>2 /#3楼 得分：0回复于：2009-10-20 15:54:18<a href=""></a> 这样的需求，直接用一句SQL是无法处理的，基本上像你那样写个存储过程来处理（也可以写程序用程序处理）。
+至于你说的“如果大量，用户并发操作就更加慢了 ”，那可以在存储过程里面的循环那部分用的是个临时表（有利于独立会话，减少竞争），然后循环处理完成后，在存储过程尾部一次性把临时表里面的所有记录插入到正式表中去（批量提交，会提高速度不少，同时减少并发竞争）。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ACMAIN_CHM" target="_blank"><img src="&quot;ACMAIN_CHM用户自定义头像&quot;" alt="ACMAIN_CHM用户头像"></a></li>
+<li><a href="http://hi.csdn.net/ACMAIN_CHM" target="_blank">ACMAIN_CHM</a></li>
+<li>(acmain)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>2</li>
 </ul>
-<hr>
-<pre><code>     56  recursive calls
-      0  db block gets
-     23  consistent gets  全表扫描没有使用B-tree索引，导致23次一致性读
-      0  physical reads
-      0  redo size
-    538  bytes sent via SQL/*Net to client
-    381  bytes received via SQL/*Net from client
-      2  SQL/*Net roundtrips to/from client
-      2  sorts (memory)
-      0  sorts (disk)
-      4  rows processed
-</code></pre><p><a href="mailto:LS@LEO">LS@LEO</a>&gt; select /* from leo_text_t2 where contains(name,&#39;Tom&#39;)&gt;0;
-        ID NAME</p>
-<hr>
-<pre><code>     1 Tom
-     2 Tom Tom
-     1 Tom
-     2 Tom Tom
-</code></pre><h2 id="execution-plan-">Execution Plan   执行计划</h2>
-<h2 id="plan-hash-value-2789465217">Plan hash value: 2789465217</h2>
-<h2 id="-id-operation-name-rows-bytes-cost-cpu-time-">| Id  | Operation                   | Name                   | Rows  | Bytes | Cost (%CPU)| Time     |</h2>
-<p>|   0 | SELECT STATEMENT            |                        |     1 |    32 |     4   (0)| 00:00:01 |
-|   1 |  TABLE ACCESS BY INDEX ROWID| LEO_TEXT_T2            |     1 |    32 |     4   (0)| 00:00:01 |</p>
-<h2 id="-2-domain-index-leo_text_t2_text_index-4-0-00-00-01-">|/*  2 |   DOMAIN INDEX              | LEO_TEXT_T2_TEXT_INDEX |       |       |     4   (0)| 00:00:01 |</h2>
-<h2 id="predicate-information-identified-by-operation-id-">Predicate Information (identified by operation id):</h2>
-<p>   2 - access(&quot;CTXSYS&quot;.&quot;CONTAINS&quot;(&quot;NAME&quot;,&#39;Tom&#39;)&gt;0)</p>
-<h2 id="note">Note</h2>
+<p>9 /#4楼 得分：0回复于：2009-10-20 16:02:48<a href=""></a> set t_MCODE=substring(t_MCODE,t_i+1,length(t_MCODE)-t_i);
+这个操作比较浪费时间。 不要复制这个文本串。换个思路。
+iPosCur, iPosNext 得到当前的 ; 位置iPosCur,，然后 找 iPosCur 后下一个; 的位置 iPosNext, 取 iPosCur, iPosNext  的字符串为号码，再 set iPosCur = iPosNext ; 再继续循环。
+10,000 个号码 /<em> 11 = 110,000 字节的字符串你的程序中复制了太多的次数！ </em> <a href="">对我有用</a>[0]</p>
 <ul>
-<li>dynamic sampling used for this statement动态采样
-Statistics   统计信息</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/foolbirdflyfirst" target="_blank"><img src="&quot;foolbirdflyfirst用户自定义头像&quot;" alt="foolbirdflyfirst用户头像"></a></li>
+<li><a href="http://hi.csdn.net/foolbirdflyfirst" target="_blank">foolbirdflyfirst</a></li>
+<li>(湖水清澈)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>3</li>
 </ul>
-<hr>
-<pre><code>     11  recursive calls
-      0  db block gets
-     19  consistent gets   
-      0  physical reads
-      0  redo size
-    545  bytes sent via SQL/*Net to client
-    381  bytes received via SQL/*Net from client
-      2  SQL/*Net roundtrips to/from client
-      0  sorts (memory)
-      0  sorts (disk)
-      4  rows processed
-</code></pre><p>小结：从如上实验来看，当我们检索大量文字的时候使用全文索引要比全表扫描快很多了，有弊就有利，由于全文索引会占用大量空间提前预估全文索引大小保留出足够的空间，context类型全文索引不是基于事务的，无法保证索引和数据实时同步，DML完成后，如果在全文索引中查不到键值时，可以通过手工or定时任务来刷新同步，而B-tree、位图都是实时的。
-总结：本次实验了B-tree  位图  全文三大索引的性能，同时比较了各自适合场合和用途，还总结了各自的优缺点，由于水平有限有不足之处还请大家指点。</p>
-<p>Leonarding</p>
-<p>2012.7.31</p>
-<p>天津&amp;summer</p>
-<p>分享<a href="http://f.dataguru.cn/.:;" target="_blank"><strong>技术</strong></a>~收获快乐</p>
-<p>Blog：<a href="http://space.itpub.net/26686207" target="_blank"><a href="http://space.itpub.net/26686207">http://space.itpub.net/26686207</a></a>
-来源： <a href="[http://www.itpub.net/thread-1700144-1-1.html](http://www.itpub.net/thread-1700144-1-1.html)">[http://www.itpub.net/thread-1700144-1-1.html](http://www.itpub.net/thread-1700144-1-1.html)</a> </p>
+<p>6</p>
+<h1 id="3-5-0-2009-10-20-17-27-18-">3 /#5楼 得分：0回复于：2009-10-20 17:27:18<a href=""></a> 这种思路会不会快一点。</h1>
+<p>SQL codemysql&gt; set @b = &#39;123;234;567;789&#39;; Query OK, 0 rows affected (0.00 sec) mysql&gt; set @a = concat(concat(&quot;insert into x values(&#39;&quot;,replace(@b,&#39;;&#39;,&quot;&#39;),(&#39;&quot;)),&quot; &#39;)&quot;); Query OK, 0 rows affected (0.00 sec) mysql&gt; select @a; +----------------------------------------------------+ | @a | +----------------------------------------------------+ | insert into x values(&#39;123&#39;),(&#39;234&#39;),(&#39;567&#39;),(&#39;789&#39;) | +----------------------------------------------------+ 1 row in set (0.00 sec)
+然后prepare,execute. * <a href="">对我有用</a>[0]</p>
+<ul>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/storyxsj" target="_blank"><img src="&quot;storyxsj用户自定义头像&quot;" alt="storyxsj用户头像"></a></li>
+<li><a href="http://hi.csdn.net/storyxsj" target="_blank">storyxsj</a></li>
+<li>(慢慢地说，但要迅速地想)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#6楼 得分：0回复于：2009-10-20 17:46:21<a href=""></a> 楼上的思路很新颖! * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ACMAIN_CHM" target="_blank"><img src="&quot;ACMAIN_CHM用户自定义头像&quot;" alt="ACMAIN_CHM用户头像"></a></li>
+<li><a href="http://hi.csdn.net/ACMAIN_CHM" target="_blank">ACMAIN_CHM</a></li>
+<li>(acmain)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>2</li>
+</ul>
+<p>9 /#7楼 得分：0回复于：2009-10-20 18:59:26<a href=""></a> /#5楼 快慢没试过，不过的确另人耳目一新。<img src="" alt=""> * <a href="">对我有用</a>[0]</p>
+<ul>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/xiaocongzhi" target="_blank"><img src="&quot;xiaocongzhi用户自定义头像&quot;" alt="xiaocongzhi用户头像"></a></li>
+<li><a href="http://hi.csdn.net/xiaocongzhi" target="_blank">xiaocongzhi</a></li>
+<li>(xiaocongzhi)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#8楼 得分：0回复于：2009-10-20 19:41:03<a href=""></a> 进来学习一下 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/robyjeffding" target="_blank"><img src="&quot;robyjeffding用户自定义头像&quot;" alt="robyjeffding用户头像"></a></li>
+<li><a href="http://hi.csdn.net/robyjeffding" target="_blank">robyjeffding</a></li>
+<li>(robyjeffding)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#9楼 得分：0回复于：2009-10-20 20:21:19<a href=""></a> 顶一下！ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/zswyhyfmz" target="_blank"><img src="&quot;zswyhyfmz用户自定义头像&quot;" alt="zswyhyfmz用户头像"></a></li>
+<li><a href="http://hi.csdn.net/zswyhyfmz" target="_blank">zswyhyfmz</a></li>
+<li>(zswyhyfmz)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#10楼 得分：0回复于：2009-10-20 20:33:54<a href=""></a> 学习了~~~~ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/zswyhyfmz" target="_blank"><img src="&quot;zswyhyfmz用户自定义头像&quot;" alt="zswyhyfmz用户头像"></a></li>
+<li><a href="http://hi.csdn.net/zswyhyfmz" target="_blank">zswyhyfmz</a></li>
+<li>(zswyhyfmz)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#11楼 得分：0回复于：2009-10-20 20:34:18<a href=""></a> 大家都是牛人啊~~~ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/zswyhyfmz" target="_blank"><img src="&quot;zswyhyfmz用户自定义头像&quot;" alt="zswyhyfmz用户头像"></a></li>
+<li><a href="http://hi.csdn.net/zswyhyfmz" target="_blank">zswyhyfmz</a></li>
+<li>(zswyhyfmz)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#12楼 得分：0回复于：2009-10-20 20:34:42<a href=""></a> 我学了好久现在都忘记光啦 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/vinsonshen" target="_blank"><img src="&quot;vinsonshen用户自定义头像&quot;" alt="vinsonshen用户头像"></a></li>
+<li><a href="http://hi.csdn.net/vinsonshen" target="_blank">vinsonshen</a></li>
+<li>(阿呢陀佛,一切皆空)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>2 /#13楼 得分：0回复于：2009-10-20 20:54:46<a href=""></a> 引用 5 楼 foolbirdflyfirst 的回复:<h1 id="-">这种思路会不会快一点。</h1>
+SQL codemysql&gt;set@b=&#39;123;234;567;789&#39;;
+Query OK,0 rows affected (0.00 sec)
+mysql&gt;set@a= concat(concat(&quot;insertinto xvalues(&#39;&quot;,replace(@b,&#39;;&#39;,&quot;&#39;),(&#39;&quot;)),&quot;&#39;)&quot;);
+Query OK,0 rows affected (0.00 sec)
+mysql&gt;select@a;+----------------------------------------------------+|@a|+----------------------------------------------------+|insertinto xvalues(&#39;123&#39;),(&#39;234&#39;),(&#39;567&#39;),(&#39;789&#39;)|+----------------------------------------------------+1 rowinset (0.00 sec)
+然后prepare,execute.
+这个要注意变量的值是否超出系统允许范围哦 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/vinsonshen" target="_blank"><img src="&quot;vinsonshen用户自定义头像&quot;" alt="vinsonshen用户头像"></a></li>
+<li><a href="http://hi.csdn.net/vinsonshen" target="_blank">vinsonshen</a></li>
+<li>(阿呢陀佛,一切皆空)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>2 /#14楼 得分：0回复于：2009-10-20 20:56:00<a href=""></a> 引用 7 楼 acmain_chm 的回复:
+/#5楼 快慢没试过，不过的确另人耳目一新。
+这个也是mysql独有的，因为其insert支持多值插入的写法，也就造就了写法“独特”。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/nianzhang747" target="_blank"><img src="&quot;nianzhang747用户自定义头像&quot;" alt="nianzhang747用户头像"></a></li>
+<li><a href="http://hi.csdn.net/nianzhang747" target="_blank">nianzhang747</a></li>
+<li>(飓风)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#15楼 得分：0回复于：2009-10-20 21:02:46<a href=""></a> 只能存储过程了 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/shlxbj" target="_blank"><img src="&quot;shlxbj用户自定义头像&quot;" alt="shlxbj用户头像"></a></li>
+<li><a href="http://hi.csdn.net/shlxbj" target="_blank">shlxbj</a></li>
+<li>(shlxbj)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#16楼 得分：0回复于：2009-10-20 21:02:52<a href=""></a> 该回复于2009-10-20 22:52:45被版主删除 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/china92" target="_blank"><img src="&quot;china92用户自定义头像&quot;" alt="china92用户头像"></a></li>
+<li><a href="http://hi.csdn.net/china92" target="_blank">china92</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#17楼 得分：0回复于：2009-10-20 21:32:47<a href=""></a> 观摩 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ibelive007" target="_blank"><img src="&quot;ibelive007用户自定义头像&quot;" alt="ibelive007用户头像"></a></li>
+<li><a href="http://hi.csdn.net/ibelive007" target="_blank">ibelive007</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#18楼 得分：0回复于：2009-10-20 21:32:59<a href=""></a> 今天涨了见识。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/yanronggui" target="_blank"><img src="&quot;yanronggui用户自定义头像&quot;" alt="yanronggui用户头像"></a></li>
+<li><a href="http://hi.csdn.net/yanronggui" target="_blank">yanronggui</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#19楼 得分：0回复于：2009-10-20 21:44:45<a href=""></a> o了 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/muqiaoqiao" target="_blank"><img src="&quot;muqiaoqiao用户自定义头像&quot;" alt="muqiaoqiao用户头像"></a></li>
+<li><a href="http://hi.csdn.net/muqiaoqiao" target="_blank">muqiaoqiao</a></li>
+<li>(muqiaoqiao)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#20楼 得分：0回复于：2009-10-20 21:48:52<a href=""></a> 我是来学习的~牛人啊 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ms45574511" target="_blank"><img src="&quot;ms45574511用户自定义头像&quot;" alt="ms45574511用户头像"></a></li>
+<li><a href="http://hi.csdn.net/ms45574511" target="_blank">ms45574511</a></li>
+<li>(ms45574511)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#21楼 得分：0回复于：2009-10-20 22:50:13<a href=""></a> sss * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ms45574511" target="_blank"><img src="&quot;ms45574511用户自定义头像&quot;" alt="ms45574511用户头像"></a></li>
+<li><a href="http://hi.csdn.net/ms45574511" target="_blank">ms45574511</a></li>
+<li>(ms45574511)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#22楼 得分：0回复于：2009-10-20 22:50:37<a href=""></a> 好 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ms45574511" target="_blank"><img src="&quot;ms45574511用户自定义头像&quot;" alt="ms45574511用户头像"></a></li>
+<li><a href="http://hi.csdn.net/ms45574511" target="_blank">ms45574511</a></li>
+<li>(ms45574511)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#23楼 得分：0回复于：2009-10-20 22:50:58<a href=""></a> 好好好 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/nettman" target="_blank"><img src="&quot;nettman用户自定义头像&quot;" alt="nettman用户头像"></a></li>
+<li><a href="http://hi.csdn.net/nettman" target="_blank">nettman</a></li>
+<li>(nm)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#24楼 得分：0回复于：2009-10-20 23:12:28<a href=""></a> Mark！ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/zhoudashu" target="_blank"><img src="&quot;zhoudashu用户自定义头像&quot;" alt="zhoudashu用户头像"></a></li>
+<li><a href="http://hi.csdn.net/zhoudashu" target="_blank">zhoudashu</a></li>
+<li>(zhoudashu)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#25楼 得分：0回复于：2009-10-20 23:48:19<a href=""></a> BUCUO ,XUEDAOLE * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/hiily" target="_blank"><img src="&quot;hiily用户自定义头像&quot;" alt="hiily用户头像"></a></li>
+<li><a href="http://hi.csdn.net/hiily" target="_blank">hiily</a></li>
+<li>(hiily)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#26楼 得分：0回复于：2009-10-21 00:19:55<a href=""></a> dddd<a href="http://ffff/" title="aaa">aaa</a> * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/fanxing168" target="_blank"><img src="&quot;fanxing168用户自定义头像&quot;" alt="fanxing168用户头像"></a></li>
+<li><a href="http://hi.csdn.net/fanxing168" target="_blank">fanxing168</a></li>
+<li>(我吃西红柿)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#27楼 得分：0回复于：2009-10-21 02:45:34<a href=""></a> xuexi * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/bgx51" target="_blank"><img src="&quot;bgx51用户自定义头像&quot;" alt="bgx51用户头像"></a></li>
+<li><a href="http://hi.csdn.net/bgx51" target="_blank">bgx51</a></li>
+<li>(bgx51)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#28楼 得分：0回复于：2009-10-21 04:30:58<a href=""></a> 我是新手来看看。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/anycall2004" target="_blank"><img src="&quot;anycall2004用户自定义头像&quot;" alt="anycall2004用户头像"></a></li>
+<li><a href="http://hi.csdn.net/anycall2004" target="_blank">anycall2004</a></li>
+<li>(没事，瞎转悠！)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#29楼 得分：0回复于：2009-10-21 07:04:46<a href=""></a> 学习了 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/yongy1978" target="_blank"><img src="&quot;yongy1978用户自定义头像&quot;" alt="yongy1978用户头像"></a></li>
+<li><a href="http://hi.csdn.net/yongy1978" target="_blank">yongy1978</a></li>
+<li>(yongy1978)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#30楼 得分：0回复于：2009-10-21 07:32:05<a href=""></a> 学习了，谢谢！ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/VCCxiaoting" target="_blank"><img src="&quot;VCCxiaoting用户自定义头像&quot;" alt="VCCxiaoting用户头像"></a></li>
+<li><a href="http://hi.csdn.net/VCCxiaoting" target="_blank">VCCxiaoting</a></li>
+<li>(VCCxiaoting)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#31楼 得分：0回复于：2009-10-21 07:54:15<a href=""></a> 学习了 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/yangyongbo123456" target="_blank"><img src="&quot;yangyongbo123456用户自定义头像&quot;" alt="yangyongbo123456用户头像"></a></li>
+<li><a href="http://hi.csdn.net/yangyongbo123456" target="_blank">yangyongbo123456</a></li>
+<li>(yangyongbo123456)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#32楼 得分：0回复于：2009-10-21 08:25:17<a href=""></a> 新手学黑客快速入门的好地方：
+  <a href="http://vip.hackbase.com" target="_blank">http://vip.hackbase.com</a> * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/SlaughtChen" target="_blank"><img src="&quot;SlaughtChen用户自定义头像&quot;" alt="SlaughtChen用户头像"></a></li>
+<li><a href="http://hi.csdn.net/SlaughtChen" target="_blank">SlaughtChen</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#33楼 得分：0回复于：2009-10-21 08:48:44<a href=""></a> 进来学习一下 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/macchen1224" target="_blank"><img src="&quot;macchen1224用户自定义头像&quot;" alt="macchen1224用户头像"></a></li>
+<li><a href="http://hi.csdn.net/macchen1224" target="_blank">macchen1224</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#34楼 得分：0回复于：2009-10-21 08:52:46<a href=""></a> up. * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/gefieder" target="_blank"><img src="&quot;gefieder用户自定义头像&quot;" alt="gefieder用户头像"></a></li>
+<li><a href="http://hi.csdn.net/gefieder" target="_blank">gefieder</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#35楼 得分：0回复于：2009-10-21 09:11:06<a href=""></a> 关注中...... * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/liudejie" target="_blank"><img src="&quot;liudejie用户自定义头像&quot;" alt="liudejie用户头像"></a></li>
+<li><a href="http://hi.csdn.net/liudejie" target="_blank">liudejie</a></li>
+<li>(java)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#36楼 得分：0回复于：2009-10-21 09:18:12<a href=""></a> xuexi le * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/coky2008" target="_blank"><img src="&quot;coky2008用户自定义头像&quot;" alt="coky2008用户头像"></a></li>
+<li><a href="http://hi.csdn.net/coky2008" target="_blank">coky2008</a></li>
+<li>(coky2008)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#37楼 得分：0回复于：2009-10-21 09:22:51<a href=""></a> 顶了。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/mykoma521" target="_blank"><img src="&quot;mykoma521用户自定义头像&quot;" alt="mykoma521用户头像"></a></li>
+<li><a href="http://hi.csdn.net/mykoma521" target="_blank">mykoma521</a></li>
+<li>(mykoma521)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#38楼 得分：0回复于：2009-10-21 09:28:21<a href=""></a> 顶~~ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/a043028448" target="_blank"><img src="&quot;a043028448用户自定义头像&quot;" alt="a043028448用户头像"></a></li>
+<li><a href="http://hi.csdn.net/a043028448" target="_blank">a043028448</a></li>
+<li>(a043028448)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#39楼 得分：0回复于：2009-10-21 09:37:07<a href=""></a> 观贴。。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/qiao246" target="_blank"><img src="&quot;qiao246用户自定义头像&quot;" alt="qiao246用户头像"></a></li>
+<li><a href="http://hi.csdn.net/qiao246" target="_blank">qiao246</a></li>
+<li>(qiao246)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#40楼 得分：0回复于：2009-10-21 09:57:05<a href=""></a> 士大夫似的发 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/amstar" target="_blank"><img src="&quot;amstar用户自定义头像&quot;" alt="amstar用户头像"></a></li>
+<li><a href="http://hi.csdn.net/amstar" target="_blank">amstar</a></li>
+<li>(阿门)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#41楼 得分：0回复于：2009-10-21 10:01:01<a href=""></a> 用数组和split * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/egyptcaesar" target="_blank"><img src="&quot;egyptcaesar用户自定义头像&quot;" alt="egyptcaesar用户头像"></a></li>
+<li><a href="http://hi.csdn.net/egyptcaesar" target="_blank">egyptcaesar</a></li>
+<li>(笨小孩)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#42楼 得分：0回复于：2009-10-21 10:14:51<a href=""></a> 进来长知识了。。5楼不错。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/benbenhai2008" target="_blank"><img src="&quot;benbenhai2008用户自定义头像&quot;" alt="benbenhai2008用户头像"></a></li>
+<li><a href="http://hi.csdn.net/benbenhai2008" target="_blank">benbenhai2008</a></li>
+<li>(benbenhai2008)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#43楼 得分：0回复于：2009-10-21 10:29:57<a href=""></a> up * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ZHULIULIU" target="_blank"><img src="&quot;ZHULIULIU用户自定义头像&quot;" alt="ZHULIULIU用户头像"></a></li>
+<li><a href="http://hi.csdn.net/ZHULIULIU" target="_blank">ZHULIULIU</a></li>
+<li>(ZHULIULIU)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#44楼 得分：0回复于：2009-10-21 10:44:13<a href=""></a> 记号学习 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/sugarnirvana" target="_blank"><img src="&quot;sugarnirvana用户自定义头像&quot;" alt="sugarnirvana用户头像"></a></li>
+<li><a href="http://hi.csdn.net/sugarnirvana" target="_blank">sugarnirvana</a></li>
+<li>(TINA)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#45楼 得分：0回复于：2009-10-21 10:51:29<a href=""></a> 学习 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/yjsgidt" target="_blank"><img src="&quot;yjsgidt用户自定义头像&quot;" alt="yjsgidt用户头像"></a></li>
+<li><a href="http://hi.csdn.net/yjsgidt" target="_blank">yjsgidt</a></li>
+<li>(yjsgidt)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#46楼 得分：0回复于：2009-10-21 10:54:20<a href=""></a> 顶~~~ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/wangtao198377" target="_blank"><img src="&quot;wangtao198377用户自定义头像&quot;" alt="wangtao198377用户头像"></a></li>
+<li><a href="http://hi.csdn.net/wangtao198377" target="_blank">wangtao198377</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#47楼 得分：0回复于：2009-10-21 10:56:34<a href=""></a> 学习 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/fcly1981826ly" target="_blank"><img src="&quot;fcly1981826ly用户自定义头像&quot;" alt="fcly1981826ly用户头像"></a></li>
+<li><a href="http://hi.csdn.net/fcly1981826ly" target="_blank">fcly1981826ly</a></li>
+<li>(fcly1981826ly)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#48楼 得分：0回复于：2009-10-21 10:57:40<a href=""></a> 学习了 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/sishenqiao" target="_blank"><img src="&quot;sishenqiao用户自定义头像&quot;" alt="sishenqiao用户头像"></a></li>
+<li><a href="http://hi.csdn.net/sishenqiao" target="_blank">sishenqiao</a></li>
+<li>(sishenqiao)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#49楼 得分：0回复于：2009-10-21 11:09:52<a href=""></a> 记号
+学习 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/sunnymnz" target="_blank"><img src="&quot;sunnymnz用户自定义头像&quot;" alt="sunnymnz用户头像"></a></li>
+<li><a href="http://hi.csdn.net/sunnymnz" target="_blank">sunnymnz</a></li>
+<li>(sunnymnz)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#50楼 得分：0回复于：2009-10-21 11:16:15<a href=""></a> 帮定议席 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/zhuoyue" target="_blank"><img src="&quot;zhuoyue用户自定义头像&quot;" alt="zhuoyue用户头像"></a></li>
+<li><a href="http://hi.csdn.net/zhuoyue" target="_blank">zhuoyue</a></li>
+<li>(海阔天空)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#51楼 得分：0回复于：2009-10-21 11:26:22<a href=""></a> set t_i=POSITION(&#39;;&#39; in t_MCODE);
+这个 POSITION() 是怎么个用法啊，怎么baidu不到啊 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/werwfh" target="_blank"><img src="&quot;werwfh用户自定义头像&quot;" alt="werwfh用户头像"></a></li>
+<li><a href="http://hi.csdn.net/werwfh" target="_blank">werwfh</a></li>
+<li>(werwfh)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#52楼 得分：0回复于：2009-10-21 11:32:14<a href=""></a> 看看学习中 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/qinqinxiatiao" target="_blank"><img src="&quot;qinqinxiatiao用户自定义头像&quot;" alt="qinqinxiatiao用户头像"></a></li>
+<li><a href="http://hi.csdn.net/qinqinxiatiao" target="_blank">qinqinxiatiao</a></li>
+<li>(亲亲虾条)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#53楼 得分：0回复于：2009-10-21 11:32:33<a href=""></a> mark!!!!! * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/amloy520" target="_blank"><img src="&quot;amloy520用户自定义头像&quot;" alt="amloy520用户头像"></a></li>
+<li><a href="http://hi.csdn.net/amloy520" target="_blank">amloy520</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#54楼 得分：0回复于：2009-10-21 12:19:53<a href=""></a> 顶!!!!!!!!!!! * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/Lithree1987" target="_blank"><img src="&quot;Lithree1987用户自定义头像&quot;" alt="Lithree1987用户头像"></a></li>
+<li><a href="http://hi.csdn.net/Lithree1987" target="_blank">Lithree1987</a></li>
+<li>(Lithree1987)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#55楼 得分：0回复于：2009-10-21 13:13:51<a href=""></a> 观摩学习中....... * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/china_west" target="_blank"><img src="&quot;china_west用户自定义头像&quot;" alt="china_west用户头像"></a></li>
+<li><a href="http://hi.csdn.net/china_west" target="_blank">china_west</a></li>
+<li>(china_west)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#56楼 得分：0回复于：2009-10-21 13:15:12<a href=""></a> ding * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/xsm545" target="_blank"><img src="&quot;xsm545用户自定义头像&quot;" alt="xsm545用户头像"></a></li>
+<li><a href="http://hi.csdn.net/xsm545" target="_blank">xsm545</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#57楼 得分：0回复于：2009-10-21 13:33:28<a href=""></a> 5楼方法很不错.学习个 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/haklk" target="_blank"><img src="&quot;haklk用户自定义头像&quot;" alt="haklk用户头像"></a></li>
+<li><a href="http://hi.csdn.net/haklk" target="_blank">haklk</a></li>
+<li>(haklk)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#58楼 得分：0回复于：2009-10-21 13:34:45<a href=""></a> 进来学习一下 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/yidichaxiang" target="_blank"><img src="&quot;yidichaxiang用户自定义头像&quot;" alt="yidichaxiang用户头像"></a></li>
+<li><a href="http://hi.csdn.net/yidichaxiang" target="_blank">yidichaxiang</a></li>
+<li>(幽灵·逐梦)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#59楼 得分：0回复于：2009-10-21 13:51:50<a href=""></a> mark * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/liangguanggui" target="_blank"><img src="&quot;liangguanggui用户自定义头像&quot;" alt="liangguanggui用户头像"></a></li>
+<li><a href="http://hi.csdn.net/liangguanggui" target="_blank">liangguanggui</a></li>
+<li>(liangguanggui)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#60楼 得分：0回复于：2009-10-21 14:15:55<a href=""></a> 顶顶顶顶顶顶顶顶顶 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/mlsml" target="_blank"><img src="&quot;mlsml用户自定义头像&quot;" alt="mlsml用户头像"></a></li>
+<li><a href="http://hi.csdn.net/mlsml" target="_blank">mlsml</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#61楼 得分：0回复于：2009-10-21 14:35:54<a href=""></a> set @a = concat(concat(&quot;insert into xvalues(&#39;&quot;,replace(@b,&#39;;&#39;,&quot;&#39;),(&#39;&quot;)),&quot;&#39;)&quot;);
+----------这都什么意思啊，格式方面都看不太懂。。。。。
+&quot;insert into xvalues(&#39;&quot;,replace(@b,&#39;;&#39;,&quot;&#39;),(&#39;&quot;)),&quot;&#39; * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/andelingzi" target="_blank"><img src="&quot;andelingzi用户自定义头像&quot;" alt="andelingzi用户头像"></a></li>
+<li><a href="http://hi.csdn.net/andelingzi" target="_blank">andelingzi</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#62楼 得分：0回复于：2009-10-21 14:40:13<a href=""></a> 长见识了 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/zhaoyanhua807102" target="_blank"><img src="&quot;zhaoyanhua807102用户自定义头像&quot;" alt="zhaoyanhua807102用户头像"></a></li>
+<li><a href="http://hi.csdn.net/zhaoyanhua807102" target="_blank">zhaoyanhua807102</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#63楼 得分：0回复于：2009-10-21 15:30:11<a href=""></a> 可以使用xml处理。
+microsoft sql server 中支持 xml很好。
+不知道mysql怎样。
+先处理成可执行的xml，然后一条语句就可以处理。
+说的不对的话，请大家见谅。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/liyongbin123" target="_blank"><img src="&quot;liyongbin123用户自定义头像&quot;" alt="liyongbin123用户头像"></a></li>
+<li><a href="http://hi.csdn.net/liyongbin123" target="_blank">liyongbin123</a></li>
+<li>(liyongbin123)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#64楼 得分：0回复于：2009-10-21 15:53:56<a href=""></a> 学学习习，支持 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/kanon_lgt" target="_blank"><img src="&quot;kanon_lgt用户自定义头像&quot;" alt="kanon_lgt用户头像"></a></li>
+<li><a href="http://hi.csdn.net/kanon_lgt" target="_blank">kanon_lgt</a></li>
+<li>(光导纤维)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#65楼 得分：0回复于：2009-10-21 16:35:20<a href=""></a> 请教下：一万个手机号码，组成的字符串长度是11万个字符。t_code您用了什么列类型呢？ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/crskyp" target="_blank"><img src="&quot;crskyp用户自定义头像&quot;" alt="crskyp用户头像"></a></li>
+<li><a href="http://hi.csdn.net/crskyp" target="_blank">crskyp</a></li>
+<li>(孤舟)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#66楼 得分：0回复于：2009-10-21 16:40:13<a href=""></a> mark * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/hbwz1985" target="_blank"><img src="&quot;hbwz1985用户自定义头像&quot;" alt="hbwz1985用户头像"></a></li>
+<li><a href="http://hi.csdn.net/hbwz1985" target="_blank">hbwz1985</a></li>
+<li>(C@nDour)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#67楼 得分：0回复于：2009-10-21 17:01:19<a href=""></a> 5楼：赏，欣赏，很欣赏！路过 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/hbwz1985" target="_blank"><img src="&quot;hbwz1985用户自定义头像&quot;" alt="hbwz1985用户头像"></a></li>
+<li><a href="http://hi.csdn.net/hbwz1985" target="_blank">hbwz1985</a></li>
+<li>(C@nDour)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#68楼 得分：0回复于：2009-10-21 17:01:56<a href=""></a> 测试下，哈哈！@ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ssDEais" target="_blank"><img src="&quot;ssDEais用户自定义头像&quot;" alt="ssDEais用户头像"></a></li>
+<li><a href="http://hi.csdn.net/ssDEais" target="_blank">ssDEais</a></li>
+<li>(ssDEais)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#69楼 得分：0回复于：2009-10-21 17:04:37<a href=""></a> ～ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/egceo" target="_blank"><img src="&quot;egceo用户自定义头像&quot;" alt="egceo用户头像"></a></li>
+<li><a href="http://hi.csdn.net/egceo" target="_blank">egceo</a></li>
+<li>(郑广智)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#70楼 得分：0回复于：2009-10-21 17:08:57<a href=""></a> mark * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/zhuzhupj" target="_blank"><img src="&quot;zhuzhupj用户自定义头像&quot;" alt="zhuzhupj用户头像"></a></li>
+<li><a href="http://hi.csdn.net/zhuzhupj" target="_blank">zhuzhupj</a></li>
+<li>(zhuzhupj)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#71楼 得分：0回复于：2009-10-21 17:09:50<a href=""></a> 学习下 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ckl881003" target="_blank"><img src="&quot;ckl881003用户自定义头像&quot;" alt="ckl881003用户头像"></a></li>
+<li><a href="http://hi.csdn.net/ckl881003" target="_blank">ckl881003</a></li>
+<li>(闪电)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#72楼 得分：0回复于：2009-10-21 17:10:41<a href=""></a> 引用 65 楼 kanon_lgt 的回复:
+请教下：一万个手机号码，组成的字符串长度是11万个字符。t_code您用了什么列类型呢？
+同问、、、 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/s_h1869" target="_blank"><img src="&quot;s_h1869用户自定义头像&quot;" alt="s_h1869用户头像"></a></li>
+<li><a href="http://hi.csdn.net/s_h1869" target="_blank">s_h1869</a></li>
+<li>(s_h1869)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#73楼 得分：0回复于：2009-10-21 17:24:11<a href=""></a> 太复杂，看不懂了 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/hankanling123" target="_blank"><img src="&quot;hankanling123用户自定义头像&quot;" alt="hankanling123用户头像"></a></li>
+<li><a href="http://hi.csdn.net/hankanling123" target="_blank">hankanling123</a></li>
+<li>(hankanling123)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#74楼 得分：0回复于：2009-10-21 17:27:07<a href=""></a> T-SQL语句是一样的。。。。。。。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/sxq51189540" target="_blank"><img src="&quot;sxq51189540用户自定义头像&quot;" alt="sxq51189540用户头像"></a></li>
+<li><a href="http://hi.csdn.net/sxq51189540" target="_blank">sxq51189540</a></li>
+<li>(zero)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#75楼 得分：0回复于：2009-10-21 17:30:07<a href=""></a> 学习 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/fxltsblsds" target="_blank"><img src="&quot;fxltsblsds用户自定义头像&quot;" alt="fxltsblsds用户头像"></a></li>
+<li><a href="http://hi.csdn.net/fxltsblsds" target="_blank">fxltsblsds</a></li>
+<li>(风雨彩虹)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#76楼 得分：0回复于：2009-10-21 18:19:40<a href=""></a> 好久没来了！！！ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/beimgly" target="_blank"><img src="&quot;beimgly用户自定义头像&quot;" alt="beimgly用户头像"></a></li>
+<li><a href="http://hi.csdn.net/beimgly" target="_blank">beimgly</a></li>
+<li>(beimgly)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#77楼 得分：0回复于：2009-10-21 20:03:39<a href=""></a> mysql&gt; set @b = &#39;123;234;567;789&#39;;
+Query OK, 0 rows affected (0.00 sec)
+mysql&gt; set @a = concat(concat(&quot;insert into x values(&#39;&quot;,replace(@b,&#39;;&#39;,&quot;&#39;),(&#39;&quot;)),&quot;
+&#39;)&quot;);
+Query OK, 0 rows affected (0.00 sec)
+mysql&gt; select @a;
++----------------------------------------------------+
+| @a                                                |
++----------------------------------------------------+
+| insert into x values(&#39;123&#39;),(&#39;234&#39;),(&#39;567&#39;),(&#39;789&#39;) |
++----------------------------------------------------+
+1 row in set (0.00 sec) * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/lixiankun001" target="_blank"><img src="&quot;lixiankun001用户自定义头像&quot;" alt="lixiankun001用户头像"></a></li>
+<li><a href="http://hi.csdn.net/lixiankun001" target="_blank">lixiankun001</a></li>
+<li>(lixiankun001)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#78楼 得分：0回复于：2009-10-21 20:16:49<a href=""></a> 学习学习了！~ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[1]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/fenyun5686" target="_blank"><img src="&quot;fenyun5686用户自定义头像&quot;" alt="fenyun5686用户头像"></a></li>
+<li><a href="http://hi.csdn.net/fenyun5686" target="_blank">fenyun5686</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#79楼 得分：0回复于：2009-10-21 20:50:00<a href=""></a> 学习了。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/vakano" target="_blank"><img src="&quot;vakano用户自定义头像&quot;" alt="vakano用户头像"></a></li>
+<li><a href="http://hi.csdn.net/vakano" target="_blank">vakano</a></li>
+<li>(vakano)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#80楼 得分：0回复于：2009-10-21 21:31:08<a href=""></a> 谢谢分享！ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/missbeast" target="_blank"><img src="&quot;missbeast用户自定义头像&quot;" alt="missbeast用户头像"></a></li>
+<li><a href="http://hi.csdn.net/missbeast" target="_blank">missbeast</a></li>
+<li>(missbeast)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#81楼 得分：0回复于：2009-10-21 21:39:57<a href=""></a> 每天回帖即可获得10分可用分！ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ths10086" target="_blank"><img src="&quot;ths10086用户自定义头像&quot;" alt="ths10086用户头像"></a></li>
+<li><a href="http://hi.csdn.net/ths10086" target="_blank">ths10086</a></li>
+<li>(ths10086)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#82楼 得分：0回复于：2009-10-21 21:43:55<a href=""></a> 刚开通...看些新面孔.. * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/Beloria" target="_blank"><img src="&quot;Beloria用户自定义头像&quot;" alt="Beloria用户头像"></a></li>
+<li><a href="http://hi.csdn.net/Beloria" target="_blank">Beloria</a></li>
+<li>(Beloria)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#83楼 得分：0回复于：2009-10-21 21:47:30<a href=""></a> 恁多牛人。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/learnonedelisonedel" target="_blank"><img src="&quot;learnonedelisonedel用户自定义头像&quot;" alt="learnonedelisonedel用户头像"></a></li>
+<li><a href="http://hi.csdn.net/learnonedelisonedel" target="_blank">learnonedelisonedel</a></li>
+<li>(learnonedelison)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#84楼 得分：0回复于：2009-10-21 21:50:41<a href=""></a> 5L独具匠心 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/hwhunter" target="_blank"><img src="&quot;hwhunter用户自定义头像&quot;" alt="hwhunter用户头像"></a></li>
+<li><a href="http://hi.csdn.net/hwhunter" target="_blank">hwhunter</a></li>
+<li>(Iverson)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#85楼 得分：0回复于：2009-10-21 21:59:45<a href=""></a> 这种思路会不会快一点。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/clplayboy1" target="_blank"><img src="&quot;clplayboy1用户自定义头像&quot;" alt="clplayboy1用户头像"></a></li>
+<li><a href="http://hi.csdn.net/clplayboy1" target="_blank">clplayboy1</a></li>
+<li>(clplayboy1)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#86楼 得分：0回复于：2009-10-21 22:12:38<a href=""></a> 呵呵 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/chaozai2688" target="_blank"><img src="&quot;chaozai2688用户自定义头像&quot;" alt="chaozai2688用户头像"></a></li>
+<li><a href="http://hi.csdn.net/chaozai2688" target="_blank">chaozai2688</a></li>
+<li>(chaozai2688)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#87楼 得分：0回复于：2009-10-21 22:28:30<a href=""></a> 学习中。。。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/guizhiqin" target="_blank"><img src="&quot;guizhiqin用户自定义头像&quot;" alt="guizhiqin用户头像"></a></li>
+<li><a href="http://hi.csdn.net/guizhiqin" target="_blank">guizhiqin</a></li>
+<li>(guizhiqin)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#88楼 得分：0回复于：2009-10-21 22:53:46<a href=""></a> 学习中 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/sdnjwang" target="_blank"><img src="&quot;sdnjwang用户自定义头像&quot;" alt="sdnjwang用户头像"></a></li>
+<li><a href="http://hi.csdn.net/sdnjwang" target="_blank">sdnjwang</a></li>
+<li>(sdnjwang)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#89楼 得分：0回复于：2009-10-21 23:39:58<a href=""></a> 学习 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/liyaqin88" target="_blank"><img src="&quot;liyaqin88用户自定义头像&quot;" alt="liyaqin88用户头像"></a></li>
+<li><a href="http://hi.csdn.net/liyaqin88" target="_blank">liyaqin88</a></li>
+<li>(liyaqin88)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#90楼 得分：0回复于：2009-10-22 01:27:10<a href=""></a> 以我觉得应该分类处理就会减小处理的数据冗余度！！ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/chen_767" target="_blank"><img src="&quot;chen_767用户自定义头像&quot;" alt="chen_767用户头像"></a></li>
+<li><a href="http://hi.csdn.net/chen_767" target="_blank">chen_767</a></li>
+<li>(chen_767)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#91楼 得分：0回复于：2009-10-22 07:58:24<a href=""></a> 学习了。 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/xiedi1209" target="_blank"><img src="&quot;xiedi1209用户自定义头像&quot;" alt="xiedi1209用户头像"></a></li>
+<li><a href="http://hi.csdn.net/xiedi1209" target="_blank">xiedi1209</a></li>
+<li>(谢頔)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#92楼 得分：0回复于：2009-10-22 08:26:45<a href=""></a> 纯sql写？ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/gahyyai" target="_blank"><img src="&quot;gahyyai用户自定义头像&quot;" alt="gahyyai用户头像"></a></li>
+<li><a href="http://hi.csdn.net/gahyyai" target="_blank">gahyyai</a></li>
+<li>(冰岛男孩)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#93楼 得分：0回复于：2009-10-22 08:35:28<a href=""></a> mark * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/YHL27" target="_blank"><img src="&quot;YHL27用户自定义头像&quot;" alt="YHL27用户头像"></a></li>
+<li><a href="http://hi.csdn.net/YHL27" target="_blank">YHL27</a></li>
+<li>(追梦)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#94楼 得分：0回复于：2009-10-22 08:45:24<a href=""></a> sf! * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/mlsml" target="_blank"><img src="&quot;mlsml用户自定义头像&quot;" alt="mlsml用户头像"></a></li>
+<li><a href="http://hi.csdn.net/mlsml" target="_blank">mlsml</a>
+<em>
+</em></li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#95楼 得分：0回复于：2009-10-22 08:57:38<a href=""></a> 谁能解答下这个
+set @a = concat(concat(&quot;insert into x values(&#39;&quot;,replace(@b,&#39;;&#39;,&quot;&#39;),(&#39;&quot;)),&quot;
+&#39;)&quot;);
+标点符号都不匹配却可以运行的问题~~~ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/aadss" target="_blank"><img src="&quot;aadss用户自定义头像&quot;" alt="aadss用户头像"></a></li>
+<li><a href="http://hi.csdn.net/aadss" target="_blank">aadss</a></li>
+<li>(悠闲)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#96楼 得分：0回复于：2009-10-22 09:51:58<a href=""></a> 热心帮顶 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/flybao51" target="_blank"><img src="&quot;flybao51用户自定义头像&quot;" alt="flybao51用户头像"></a></li>
+<li><a href="http://hi.csdn.net/flybao51" target="_blank">flybao51</a></li>
+<li>(flybao51)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#97楼 得分：0回复于：2009-10-22 09:58:32<a href=""></a> 学习一下 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/kirave" target="_blank"><img src="&quot;kirave用户自定义头像&quot;" alt="kirave用户头像"></a></li>
+<li><a href="http://hi.csdn.net/kirave" target="_blank">kirave</a></li>
+<li>(kirave)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#98楼 得分：0回复于：2009-10-22 09:59:09<a href=""></a> 好东东呀 * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/scutLiu" target="_blank"><img src="&quot;scutLiu用户自定义头像&quot;" alt="scutLiu用户头像"></a></li>
+<li><a href="http://hi.csdn.net/scutLiu" target="_blank">scutLiu</a></li>
+<li>(EndIf)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#99楼 得分：0回复于：2009-10-22 10:07:54<a href=""></a> mark * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/crb89643806" target="_blank"><img src="&quot;crb89643806用户自定义头像&quot;" alt="crb89643806用户头像"></a></li>
+<li><a href="http://hi.csdn.net/crb89643806" target="_blank">crb89643806</a></li>
+<li>(crb89643806)
+*</li>
+<li>等　级：<img src="" alt=""></li>
+<li>/#100楼 得分：0回复于：2009-10-22 10:57:42<a href=""></a> 来学习了，呵呵！！！ * <a href="">对我有用</a>[0]</li>
+<li><a href="">丢个板砖</a>[0]</li>
+<li><a href="">引用</a></li>
+<li><a href="">举报</a></li>
+<li><a href="">管理</a></li>
+<li><p><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#top" target="_blank">TOP</a></p>
+</li>
+<li><p><a href="">管理菜单</a></p>
+</li>
+<li><p><a href="http://forum.csdn.net/PointForum/BuildTopic.aspx?topicId=5d80ce75-305b-420c-95b4-ca1437c6a221&amp;postDate=2009-10-20+15%3a42%3a21&amp;return=" target="_blank">生成帖子</a></p>
+</li>
+<li><a href="">置顶</a></li>
+<li><a href="">推荐</a></li>
+<li><a href="">取消推荐</a></li>
+<li><a href="">锁定</a></li>
+<li><a href="">解锁</a></li>
+<li><a href="">移动</a></li>
+<li><a href="">编辑</a></li>
+<li><a href="">删除</a></li>
+<li><a href="">帖子加分</a></li>
+<li><a href="http://forum.csdn.net/PointForum/Manage/TopicManageView.aspx?forumID=ba09fe7e-2fb7-42d3-805e-578a4a8485e1&amp;topicID=5d80ce75-305b-420c-95b4-ca1437c6a221&amp;date=2009-10-20+15%3a42%3a21&amp;v=13" target="_blank">结  帖</a></li>
+<li><a href="http://forum.csdn.net/PointForum/Forum/PostTopic.aspx?forumID=ba09fe7e-2fb7-42d3-805e-578a4a8485e1" target="_blank">发  帖</a></li>
+<li><p><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#r_achor" target="_blank">回  复</a></p>
+</li>
+<li><p><a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#" target="_blank">共2页</a></p>
+</li>
+<li><em><a href="http://topic.csdn.net/u/20091020/15/5d80ce75-305b-420c-95b4-ca1437c6a221.html" target="_blank">1</a></em></li>
+<li><em><a href="http://topic.csdn.net/u/20091020/15/5d80ce75-305b-420c-95b4-ca1437c6a221_2.html" target="_blank">2</a></em>
+<a href="http://www.csdn.net/company/about.html" target="_blank">公司简介</a>| <a href="http://www.csdn.net/company/marketing.html" target="_blank">广告服务</a>| <a href="http://www.csdn.net/company/account.html" target="_blank">银行汇款帐号</a>| <a href="http://www.csdn.net/company/contact.html" target="_blank">联系方式</a>| <a href="http://www.csdn.net/company/statement.html" target="_blank">版权声明</a>| <a href="http://topic.csdn.net/u/20091020/15/5D80CE75-305B-420C-95B4-CA1437C6A221.html#" target="_blank">问题报告</a>北京创新乐知广告有限公司 版权所有, 京 ICP 证 070598 号世纪乐知(北京)网络技术有限公司 提供技术支持文明办网文明上网举报电话：13552009689 <img src="" alt="">Copyright © 1999-2009, CSDN.NET, All Rights Reserved<a href="http://www.hd315.gov.cn/beian/view.asp?bianhao=010202001032100010" target="_blank"><img src="" alt="GongshangLogo"></a><img src="" alt=""></li>
+</ul>
 
       
     </div>
@@ -570,8 +1277,8 @@ Statistics   统计信息</li>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/oracle/">oracle</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/oracle/" class="label label-success">oracle</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:35"datetime="2014-03-07 09:54:35"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-oracle--OracleB-tree、位图、全文索引三大索引性能比较及优缺点汇总/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-oracle--OracleB-tree、位图、全文索引三大索引性能比较及优缺点汇总" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:34"datetime="2014-03-07 09:54:34"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--求mysql中速度最快的分割字符串方法？？/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--求mysql中速度最快的分割字符串方法？？" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -586,104 +1293,311 @@ Statistics   统计信息</li>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--建立mysql可远程连接root权限用户-电脑知识网-电脑基础知识/">建立mysql可远程连接root权限用户</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-DB-mysql--MySQL报错：TheMySQLserverisrunningwiththe--ski/">MySQL报错：The MySQL server is running with the </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--建立mysql可远程连接root权限用户-电脑知识网-电脑基础知识/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:33.000Z"> <a href="/2014/02/02/2014-02-02-DB-mysql--MySQL报错：TheMySQLserverisrunningwiththe--ski/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-mysql-root-">建立mysql可远程连接root权限用户-电脑知识网-电脑基础知识</h1>
-<p><a href="http://www.diannaozs.com/bbx/" target="_blank">生活百宝箱</a> | <strong><a href="http://www.diannaozs.com/itshuyu/Index.html" target="_blank">IT术语解释</a></strong> | <a href="http://www.diannaozs.com/alexa/" title="alexa查询系统,alexa排名查询,alexa网站排名查询,全球alexa排名查询,alexa世界排名查询,alexa排名,alexa工具条" target="_blank">Alexa排名查询</a> | <a href="http://www.diannaozs.com/pr/" title="PR值查询" target="_blank">PR 值查询</a> | <a href="http://www.diannaozs.com/daili/" title="网页代理,在线网站代理,ip代理,IE代理,QQ代理" target="_blank">在线代理</a> | <a href="http://www.diannaozs.com/ip/" title="IP地址查询，IP查询所属地区查询" target="_blank">IP地址查询</a> | <a href="http://www.diannaozs.com/fanyi.htm" title="中英互译，在线翻译，翻译查询" target="_blank">在线翻译</a> | <a href="http://www.diannaozs.com/yz/" title="邮政编码查询，邮政地址查询，街道查询" target="_blank">邮政系统查询</a> | <a href="http://www.diannaozs.com/huoche/" title="全国火车票查询" target="_blank">火车票在线查询</a> | <a href="http://www.diannaozs.com/wl.asp" title="节日查询，万年历，日期查询，时间查询" target="_blank">万年历</a> | <a href="http://www.diannaozs.com/color/" title="网页颜色选择器，颜色选取工具，颜色查询工具" target="_blank">颜色选择器</a> | <a href="http://www.diannaozs.com/webico.html" target="_blank">常用网页小图标</a></p>
-<p><a href="http://www.diannaozs.com/" title="电脑知识网" target="_blank"><img src="" alt=""></a></p>
-<p><a href="http://www.diannaozs.com/zt/zb/Index.html" target="_blank">主板</a> | <a href="http://www.diannaozs.com/zt/CPU/Index.html" target="_blank">CPU</a> | <a href="http://www.diannaozs.com/zt/yp/Index.html" target="_blank">硬盘</a> | <a href="http://www.diannaozs.com/zt/nc/Index.html" target="_blank">内存</a> <a href="http://www.diannaozs.com/zt/xk/Index.html" target="_blank">显卡</a> | <a href="http://www.diannaozs.com/zt/sk/Index.html" target="_blank">声卡</a> | <a href="http://www.diannaozs.com/zt/wk/Index.html" target="_blank">网卡</a> | <a href="http://www.diannaozs.com/zt/xs/Index.html" target="_blank">显示器</a> | <a href="http://www.diannaozs.com/zt/jx/Index.html" target="_blank">机箱</a> | <a href="http://www.diannaozs.com/zt/yx/Index.html" target="_blank">音响</a> | <a href="http://www.diannaozs.com/zt/sx/Index.html" target="_blank">摄像头</a>
-<a href="http://www.diannaozs.com/zt/ly/Index.html" target="_blank">路由器</a> | <a href="http://www.diannaozs.com/zt/jh/Index.html" target="_blank">交换机</a> | <a href="http://www.diannaozs.com/zt/fw/Index.html" target="_blank">服务器</a> | <a href="http://www.diannaozs.com/zt/pt/Index.html" target="_blank">打印机</a> | <a href="http://www.diannaozs.com/zt/fy/Index.html" target="_blank">复印机</a> | <a href="http://www.diannaozs.com/zt/cz/Index.html" target="_blank">传真机</a> | <a href="http://www.diannaozs.com/zt/wx/Index.html" target="_blank">网线</a> | <a href="http://www.diannaozs.com/zt/sj/Index.html" target="_blank">水晶头</a> <a href="http://www.diannaozs.com/zt/" target="_blank">更多专题…</a>
-<a href="http://www.diannaozs.com/zt/sd/Index.html" target="_blank">杀毒</a> | <a href="http://www.diannaozs.com/zt/jc/Index.html" target="_blank">教程</a> | <a href="http://www.diannaozs.com/zt/zc/Index.html" target="_blank">注册表</a> | <a href="http://www.diannaozs.com/zt/zl/Index.html" target="_blank">组策略</a> | <a href="http://www.diannaozs.com/zt/DOS/Index.html" target="_blank">DOS</a> | <a href="http://www.diannaozs.com/zt/zj/Index.html" target="_blank">网络组建</a> | <a href="http://www.diannaozs.com/zt/zz/Index.html" target="_blank">电脑组装</a> | <a href="http://www.diannaozs.com/zt/Q/Index.html" target="_blank">QQ空间</a> | <a href="http://www.diannaozs.com/zt/chinaabc/Index.html" target="_blank">中国百科</a></p>
-<p>[<a href="">繁体版</a>]
-<a href="http://www.diannaozs.com/xml/Rss.xml" target="_blank">订阅<img src="" alt=""></a>
- | <a href="http://www.diannaozs.com/Index.html" target="_blank">网站首页</a> | <a href="http://www.diannaozs.com/Article/Index.html" target="_blank">新闻中心</a> | <a href="http://www.diannaozs.com/xitongzhishi/Index.html" target="_blank">系统知识</a> | <a href="http://www.diannaozs.com/wangluoanquan/Index.html" target="_blank">网络安全</a> | <a href="http://www.diannaozs.com/donghuasheji/Index.html" target="_blank">平面动画</a> | <a href="http://www.diannaozs.com/wangzhanchenxu/Index.html" target="_blank">网站程序</a> | <a href="http://www.diannaozs.com/shujukuzhishi/Index.html" target="_blank">数据库</a> | <a href="http://www.diannaozs.com/baocuochaxun/Index.html" target="_blank">报错查询</a> | <a href="http://www.diannaozs.com/key/Index.html" target="_blank">注册码</a> | <a href="http://www.diannaozs.com/mb/Index.html" target="_blank">网站模板</a> | <a href="http://www.diannaozs.com/SEO/Index.html" target="_blank">网站优化</a> | <a href="http://www.diannaozs.com/Photo/Index.html" target="_blank">图库</a> | <a href="http://www.diannaozs.com/Soft/Index.html" target="_blank">下载</a> | <strong><a href="http://www.diannaozs.com/bbs/" target="_blank">[电脑论坛]</a></strong></p>
-<p><strong>&gt;&gt;</strong> 您现在的位置： <a href="http://www.diannaozs.com/" target="_blank">电脑知识网</a> &gt;&gt; <a href="http://www.diannaozs.com/shujukuzhishi/Index.html" target="_blank">数据库</a> &gt;&gt; <a href="http://www.diannaozs.com/shujukuzhishi/m/Index.html" target="_blank">Mysql</a> &gt;&gt; 正文
-  <strong>建立mysql可远程连接root权限用户</strong> 双击自动滚屏  【字体：<a href="">小</a> <a href="">大</a>】 建立mysql可远程连接root权限用户  <a href="http://www.diannaozs.com/" target="_blank">电脑知识网</a>为您报时：今天是  </p>
-<pre><code> 以下语句具有和ROOT用户一样的权限。大家在拿站时应该碰到过。root用户的mysql，只可以本地连，对外拒绝连接。以下方法可以帮助你解决这个问题了，下面的语句功能是，建立一个用户为itpro 密码123 权限为和root一样。允许任意主机连接。这样你可以方便进行在本地远程操作数据库了。
-</code></pre><p>CREATE USER <a href="mailto:&#39;itpro&#39;@&#39;%&#39;">&#39;itpro&#39;@&#39;%&#39;</a> IDENTIFIED BY &#39;123&#39;;</p>
-<p>GRANT ALL PRIVILEGES ON /<em>./</em> TO <a href="mailto:&#39;itpro&#39;@&#39;%&#39;">&#39;itpro&#39;@&#39;%&#39;</a> IDENTIFIED BY &#39;123&#39;WITH GRANT OPTION</p>
-<p>MAX_QUERIES_PER_HOUR 0 MAX_CONNECTIONS_PER_HOUR 0</p>
-<p>MAX_UPDATES_PER_HOUR 0 MAX_USER_CONNECTIONS 0;</p>
-<p>搞完事记得删除脚印哟。</p>
-<p>DROP USER <a href="mailto:&#39;itpro&#39;@&#39;%&#39;">&#39;itpro&#39;@&#39;%&#39;</a>;</p>
-<p>DROP DATABASE IF EXISTS <code>itpro</code> ;
-<img src="" alt=""> <strong><a href="http://www.diannaozs.com/bbs/index.asp?boardid=3" title="欢迎您对电脑知识提问" target="_blank">我想对电脑方面的知识提问</a></strong> <img src="" alt=""> <strong><a href="http://www.diannaozs.com/bbs/index.asp?boardid=5" title="欢迎您撰写电脑文章" target="_blank">我想撰写关于电脑知识方面的文章</a></strong> <img src="" alt=""> <a href="http://www.diannaozs.com/bbs/index.asp?boardid=4" title="欢迎您提问" target="_blank">我想对生活方面的知识提问</a> <img src="" alt=""> <a href="http://www.diannaozs.com/bbs/index.asp?boardid=6" title="欢迎您撰写文章" target="_blank">我想撰写生活方面的文章</a>     <strong>推荐视频：</strong>
-<a href="http://www.diannaozs.com/2009sp_vista.html" target="_blank">Windows Vista安装</a>
-<a href="http://www.diannaozs.com/2009sp_xp.html" target="_blank">Windows XP安装</a>
-<a href="http://www.diannaozs.com/2009sp_bios.html" target="_blank">设置BIOS</a>
-<a href="http://www.diannaozs.com/2009sp_fq.html" target="_blank">硬盘分区</a>
-<a href="http://www.diannaozs.com/flash_20090906/1.html" target="_blank">经典FLASH动画视频教程</a>
-<a href="http://www.diannaozs.com/book/tucengshipin.html" target="_blank">Photoshop视频教程</a>
-<a href="http://www.diannaozs.com/book2/dream.html" target="_blank">Dreamweaver视频教程</a>
-<a href="http://www.diannaozs.com/book2/C/Index.html" target="_blank">C语言视频</a>
-<a href="http://www.diannaozs.com/book2/DOS.html" target="_blank">DOS 视频教程</a> (黑客入门) <strong>推荐工具：</strong>
-<a href="http://www.diannaozs.com/bbx/query/index.htm" target="_blank">手机号、身份证、区号查询</a>
-<a href="http://www.diannaozs.com/bbx/map/zl_ditu.htm" target="_blank">城市地图</a>
-<a href="http://www.diannaozs.com/bbx/computer/jsq_shuxue.htm" target="_blank">计算器</a>
-<a href="http://www.diannaozs.com/bbx/train/index.htm" target="_blank">火车查询</a>
-<a href="http://www.diannaozs.com/bbx/computer/jsq_jiankang.htm" target="_blank">健康指数查询</a>
-<a href="http://www.diannaozs.com/hopetree/" target="_blank">许愿树</a>
-<a href="http://www.diannaozs.com/love/" target="_blank">爱墙祝福</a>
-<a href="http://www.diannaozs.com/qqlove/default.asp" target="_blank">Q爱</a>
-<a href="http://www.diannaozs.com/youxi/" target="_blank">flash小游戏</a>
- <strong>站长工具：</strong>
-<a href="http://www.diannaozs.com/bbx/query/index.htm" target="_blank">IP查询</a>
-<a href="http://www.diannaozs.com/pr/" title="PR值查询" target="_blank">PR 值查询</a>
-<a href="http://www.diannaozs.com/alexa/" title="alexa查询系统,alexa排名查询,alexa网站排名查询,全球alexa排名查询,alexa世界排名查询,alexa排名,alexa工具条" target="_blank">Alexa排名查询</a>
-<a href="http://www.diannaozs.com/SEO/yy/Index.html" target="_blank">网站运营</a>
-<a href="http://www.diannaozs.com/SEO/baidu/Index.html" target="_blank">百度优化</a>
-<a href="http://www.diannaozs.com/SEO/google/Index.html" target="_blank">Google优化</a>
-<a href="http://www.diannaozs.com/SEO/Alexa/Index.html" target="_blank">Alexa排名</a>
-<a href="http://www.diannaozs.com/seo/" target="_blank">更多……</a> <strong>推荐网站：</strong>
-<a href="http://www.jkzhe.com/" target="_blank">健康者</a>（健康类型网站）
-<a href="http://www.pcwindows.net/" target="_blank">PCWindows</a>（系统学习）
-<a href="http://www.dh3.org/" target="_blank">第三导航</a>（协助上网）
-<a href="http://www.youxi28.com/" target="_blank">Flash小游戏</a>（小游戏）
-<a href="http://www.diannaozs.com/shujukuzhishi/m/200905/www.rrjk.com.cn" target="_blank">人人健康</a>(rrjk.com.cn)
-<a href="http://www.diannaozs.com/shujukuzhishi/m/200905/www.5apc.cn" target="_blank">我爱PC</a>(5apc.cn) * 上一篇数据库： <a href="http://www.diannaozs.com/shujukuzhishi/m/200904/20090407093714.html" title="文章标题：MySQL数据库函数详解(目录)
-作    者：佚名
-更新时间：2009-4-7 9:37:14">MySQL数据库函数详解(目录)</a></p>
+        <h1 id="mysql-the-mysql-server-is-running-with-the-skip-grant-tables-option-so-it-cannot-execute-this">MySQL报错：The MySQL server is running with the --skip-grant-tables option so it cannot execute this</h1>
+<p><a href=""></a></p>
+<h1 id="-_-http-www-cnblogs-com-xionghui-"><a href="http://www.cnblogs.com/xionghui/" target="_blank">_安静</a></h1>
+<h2 id="-mysql-the-mysql-server-is-running-with-the-skip-grant-tables-option-so-it-cannot-execute-this-statement-http-www-cnblogs-com-xionghui-archive-2013-03-01-2939342-html-"><a href="http://www.cnblogs.com/xionghui/archive/2013/03/01/2939342.html" target="_blank">MySQL报错：The MySQL server is running with the --skip-grant-tables option so it cannot execute this statement</a></h2>
+<p>The MySQL server is running with the --skip-grant-tables option so it cannot execute this statement</p>
+<p>解决办法：</p>
+<p>mysql&gt; set global read_only=0;
+（关掉新主库的只读属性）</p>
+<p> flush privileges;</p>
+<p>set global read_only=1;(读写属相)</p>
+<p> flush privileges;</p>
+<p>Cannot execute statement: impossible to write to binary log since BINLOG_FORMAT = STATEMENT and at least one table uses a storage engine limited to row-based logging. InnoDB is limited to row-logging when transaction isolation level is READ COMMITTED or READ UNCOMMITTED.</p>
+<p>  mysql&gt; SET SESSION binlog_format = &#39;ROW&#39;;
+   mysql&gt; SET GLOBAL binlog_format = &#39;ROW&#39;;</p>
+<h2 id="mysql5-1-binlogformat">MYSQL5.1复制参数binlogformat</h2>
+<p>MySQL 5.1 中，在复制方面的改进即便引进了新的复制技巧：基于行的复制。简言之，这种新技巧即便关怀表中发生改变的登记，而非过去的照抄 binlog 形式。从 MySQL 5.1.12 开始，能够用以下三种形式来告终：基于SQL语句的复制(statement-based replication, SBR)，基于行的复制(row-based replication, RBR)，混杂形式复制(mixed-based replication, MBR)。相应地，binlog的款式也有三种：STATEMENT，ROW，MIXED。MBR 形式中，SBR 形式是默认的。
+在运行时能够动态低改换binlog的款式，除非以下几种情形：</p>
+<ol>
+<li>存储过程可能引发器其中</li>
+<li>启用了NDB</li>
+<li>目前会话试用 RBR 形式，并且已敞开了临时表
+万一binlog批准了 MIXED 形式，那么在以下几种情形下会积极将binlog的形式由 SBR 形式改成 RBR 形式。</li>
+<li>当DML语句更新一个NDB表时</li>
+<li>当函数中包括 UUID() 时</li>
+<li>2个及以上包括 AUTO_INCREMENT 字段的表被更新时</li>
+<li>行任何 INSERT DELAYED 语句时</li>
+<li>用 UDF 时</li>
+<li>视图中定然要求利用 RBR 时，例如创立视图是利用了 UUID() 函数
+设定主从复制形式的措施极其容易，凡是在过去设定复制搭配的基础上，再加一个参数：
+binlog_format=&quot;STATEMENT&quot;
+/#binlog_format=&quot;ROW&quot;
+/#binlog_format=&quot;MIXED&quot;
+当然了，也能够在运行时动态修正binlog的款式。例如
+mysql&gt; SET SESSION binlog_format = &#39;STATEMENT&#39;;
+mysql&gt; SET SESSION binlog_format = &#39;ROW&#39;;
+mysql&gt; SET SESSION binlog_format = &#39;MIXED&#39;;
+mysql&gt; SET GLOBAL binlog_format = &#39;STATEMENT&#39;;
+mysql&gt; SET GLOBAL binlog_format = &#39;ROW&#39;;
+mysql&gt; SET GLOBAL binlog_format = &#39;MIXED&#39;;
+目前来比拟以下 SBR 和 RBR 2中形式各自的优缺点
+SBR 的优点：</li>
+<li>历史悠久，技巧成熟</li>
+<li>binlog文件较小</li>
+<li>binlog中包括了所有数据库改动消息，能够据此来核实数据库的平安等情形</li>
+<li>binlog能够用于实时的还原，而不但仅用于复制</li>
+<li>主从版本能够不一样，从服务器版本能够比主服务器版本高
+SBR 的缺点：</li>
+<li>不是所有的UPDATE语句都能被复制，尤其是包括不确定垄断的时候。</li>
+<li>调用具有不确定因素的 UDF 时复制也可能出问题</li>
+<li>利用以下函数的语句也无法被复制：
+/<em> LOAD_FILE()
+/</em> UUID()
+/<em> USER()
+/</em> FOUND_ROWS()
+/* SYSDATE() (除非启用时启用了 --sysdate-is-now 选项)</li>
+<li>INSERT ... SELECT 会发生比 RBR 更多的行级锁</li>
+<li>复制必需举行全表扫描(WHERE 语句中没利于用到索引)的 UPDATE 时，必需比 RBR 哀求更多的行级锁</li>
+<li>对于有 AUTO_INCREMENT 字段的 InnoDB表而言，INSERT 语句会阻塞其他 INSERT 语句</li>
+<li>对于一些混杂的语句，在从服务器上的耗资源情形会更严重，而 RBR 形式下，只会对那个发生改变的登记发生波及</li>
+<li>存储函数(不是存储过程)在被调用的同时也会厉行顺次 NOW() 函数，这个能够说是坏事也可能是好事</li>
+<li>确定了的 UDF 也必需在从服务器上厉行</li>
+<li>数据表定然几乎和主服务器坚持统一才行，否则可能会导致复制出错</li>
+<li>厉行混杂语句万一出错的话，会花费更多资源
+RBR 的优点：</li>
+<li>任何情形都能够被复制，这对复制来说是最平安可靠的</li>
+<li>和其他大多数数据库系统的复制技巧一样</li>
+<li>多数情形下，从服务器上的表万一有主键的话，复制就会快了许多</li>
+<li>复制以下几种语句时的行锁更少：
+/<em> INSERT ... SELECT
+/</em> 包括 AUTO_INCREMENT 字段的 INSERT
+/* 未曾附带条件可能并未曾修正许多登记的 UPDATE 或 DELETE 语句</li>
+<li>厉行 INSERT，UPDATE，DELETE 语句时锁更少</li>
+<li>从服务器上批准多线程来厉行复制成为可能
+RBR 的缺点：</li>
+<li>binlog 大了许多</li>
+<li>混杂的回滚时 binlog 中会包括许多的数据</li>
+<li>主服务器上厉行 UPDATE 语句时，所有发生改变的登记都会写到 binlog 中，而 SBR 只会写顺次，这会导致频繁发生
+binlog 的并发写问题</li>
+<li>UDF 发生的大 BLOB 值会导致复制变慢</li>
+<li>无法从 binlog 中看到都复制了写什么语句</li>
+<li>当在非事务表上厉行一段堆积的SQL语句时，良好批准 SBR 形式，否则很轻率导致主从服务器的数据不统一情形发生
+另外，针对系统库 mysql 里面的表发生改变时的处理法定如下：</li>
+<li>万一是批准 INSERT，UPDATE，DELETE 直接垄断表的情形，则日志款式依据 binlog_format 的设定而登记</li>
+<li>万一是批准 GRANT，REVOKE，SET PASSWORD 等管教语句来做的话，那么无论如何都批准 SBR 形式登记
+注：批准 RBR 形式后，能处理许多本来揭示的主键重复问题例如Pro Publica，SunlightFoundation和维基解密，开始添补鞭策媒体滑坡留下的空白。</li>
+</ol>
+<h2 id="mysql5-5mysql-5-5-binlog-3-mixed-statement-row-statement-">MYSQL5.5MySQL 5.5 中对于二进制日志 (binlog) 有 3 种不同的格式可选：Mixed,Statement,Row，默认格式是 Statement。总结一下这三种格式日志的优缺点。</h2>
+<p>MySQL Replication 复制可以是基于一条语句 (Statement Level) ，也可以是基于一条记录 (Row Level)，可以在 MySQL 的配置参数中设定这个复制级别，不同复制级别的设置会影响到 Master 端的 bin-log 日志格式。</p>
+<p><strong>1. Row</strong>
+日志中会记录成每一行数据被修改的形式，然后在 slave 端再对相同的数据进行修改。</p>
+<p><strong>优点</strong>： 在 row 模式下，bin-log 中可以不记录执行的 SQL 语句的上下文相关的信息，仅仅只需要记录那一条记录被修改了，修改成什么样了。所以 row 的日志内容会非常清楚的记录下每一行数据修改的细节，非常容易理解。而且不会出现某些特定情况下的存储过程或 function ，以及 trigger 的调用和触发无法被正确复制的问题。</p>
+<p><strong>缺点</strong>：在 row 模式下，所有的执行的语句当记录到日志中的时候，都将以每行记录的修改来记录，这样可能会产生大量的日志内容，比如有这样一条 update 语句：
+1 UPDATE product SET owner_member_id = &#39;b&#39; WHERE owner_member_id = &#39;a&#39;</p>
+<p>执 行之后，日志中记录的不是这条 update 语句所对应的事件 (MySQL 以事件的形式来记录 bin-log 日志) ，而是这条语句所更新的每一条记录的变化情况，这样就记录成很多条记录被更新的很多个事件。自然，bin-log 日志的量就会很大。尤其是当执行 alter table 之类的语句的时候，产生的日志量是惊人的。因为 MySQL 对于 alter table 之类的表结构变更语句的处理方式是整个表的每一条记录都需要变动，实际上就是重建了整个表。那么该表的每一条记录都会被记录到日志中。</p>
+<p><strong>2. Statement</strong>
+每一条会修改数据的 SQL 都会记录到 master 的 bin-log 中。slave 在复制的时候 SQL 进程会解析成和原来 master 端执行过的相同的 SQL 再次执行。</p>
+<p><strong>优点</strong>：在 statement 模式下，首先就是解决了 row 模式的缺点，不需要记录每一行数据的变化，减少了 bin-log 日志量，节省 I/O 以及存储资源，提高性能。因为他只需要记录在 master 上所执行的语句的细节，以及执行语句时候的上下文的信息。</p>
+<p><strong>缺点</strong>： 在 statement 模式下，由于他是记录的执行语句，所以，为了让这些语句在 slave 端也能正确执行，那么他还必须记录每条语句在执行的时候的一些相关信息，也就是上下文信息，以保证所有语句在 slave 端杯执行的时候能够得到和在 master 端执行时候相同的结果。另外就是，由于 MySQL 现在发展比较快，很多的新功能不断的加入，使 MySQL 的复制遇到了不小的挑战，自然复制的时候涉及到越复杂的内容，bug 也就越容易出现。在 statement 中，目前已经发现的就有不少情况会造成 MySQL 的复制出现问题，主要是修改数据的时候使用了某些特定的函数或者功能的时候会出现，比如：sleep() 函数在有些版本中就不能被正确复制，在存储过程中使用了 last_insert_id() 函数，可能会使 slave 和 master 上得到不一致的 id 等等。由于 row 是基于每一行来记录的变化，所以不会出现类似的问题。</p>
+<p><strong>3. Mixed</strong>
+从 官方文档中看到，之前的 MySQL 一直都只有基于 statement 的复制模式，直到 5.1.5 版本的 MySQL 才开始支持 row 复制。从 5.0 开始，MySQL 的复制已经解决了大量老版本中出现的无法正确复制的问题。但是由于存储过程的出现，给 MySQL Replication 又带来了更大的新挑战。另外，看到官方文档说，从 5.1.8 版本开始，MySQL 提供了除 Statement 和 Row 之外的第三种复制模式：Mixed，实际上就是前两种模式的结合。在 Mixed 模式下，MySQL 会根据执行的每一条具体的 SQL 语句来区分对待记录的日志形式，也就是在 statement 和 row 之间选择一种。新版本中的 statment 还是和以前一样，仅仅记录执行的语句。而新版本的 MySQL 中对 row 模式也被做了优化，并不是所有的修改都会以 row 模式来记录，比如遇到表结构变更的时候就会以 statement 模式来记录，如果 SQL 语句确实就是 update 或者 delete 等修改数据的语句，那么还是会记录所有行的变更。</p>
+<p><strong>其他参考信息</strong></p>
+<p><strong>除以下几种情况外，在运行时可以动态改变 binlog 的格式</strong>：
+. 存储流程或者触发器中间；
+. 启用了 NDB；
+. 当前会话使用 row 模式，并且已打开了临时表；</p>
+<p><strong>如果 binlog 采用了 Mixed 模式，那么在以下几种情况下会自动将 binlog 的模式由 statement 模式变为 row 模式</strong>：
+. 当 DML 语句更新一个 NDB 表时；
+. 当函数中包含 UUID() 时；
+. 2 个及以上包含 AUTO_INCREMENT 字段的表被更新时；
+. 执行 INSERT DELAYED 语句时；
+. 用 UDF 时；
+. 视图中必须要求运用 row 时，例如建立视图时使用了 UUID() 函数；</p>
+<p><strong>设定主从复制模式</strong>：
+1 2 3 4 log-bin=mysql-bin /#binlog_format=&quot;STATEMENT&quot; /#binlog_format=&quot;ROW&quot; binlog_format=&quot;MIXED&quot;</p>
+<p><strong>也可以在运行时动态修改 binlog 的格式。例如</strong>：</p>
+<p>1 2 3 4 5 6 mysql&gt; SET SESSION binlog_format = &#39;STATEMENT&#39;; mysql&gt; SET SESSION binlog_format = &#39;ROW&#39;; mysql&gt; SET SESSION binlog_format = &#39;MIXED&#39;; mysql&gt; SET GLOBAL binlog_format = &#39;STATEMENT&#39;; mysql&gt; SET GLOBAL binlog_format = &#39;ROW&#39;; mysql&gt; SET GLOBAL binlog_format = &#39;MIXED&#39;;</p>
+<p><strong>两种模式的对比</strong>：
+<strong>Statement 优点</strong>
+历史悠久，技术成熟；
+产生的 binlog 文件较小；
+binlog 中包含了所有数据库修改信息，可以据此来审核数据库的安全等情况；
+binlog 可以用于实时的还原，而不仅仅用于复制；
+主从版本可以不一样，从服务器版本可以比主服务器版本高；</p>
+<p><strong>Statement 缺点</strong>：
+不是所有的 UPDATE 语句都能被复制，尤其是包含不确定操作的时候；
+调用具有不确定因素的 UDF 时复制也可能出现问题；
+运用以下函数的语句也不能被复制：
+/<em> LOAD_FILE()
+/</em> UUID()
+/<em> USER()
+/</em> FOUND_ROWS()
+/* SYSDATE() (除非启动时启用了 –sysdate-is-now 选项)
+INSERT … SELECT 会产生比 RBR 更多的行级锁；
+复制须要执行全表扫描 (WHERE 语句中没有运用到索引) 的 UPDATE 时，须要比 row 请求更多的行级锁；
+对于有 AUTO_INCREMENT 字段的 InnoDB 表而言，INSERT 语句会阻塞其他 INSERT 语句；
+对于一些复杂的语句，在从服务器上的耗资源情况会更严重，而 row 模式下，只会对那个发生变化的记录产生影响；
+存储函数(不是存储流程 )在被调用的同时也会执行一次 NOW() 函数，这个可以说是坏事也可能是好事；
+确定了的 UDF 也须要在从服务器上执行；
+数据表必须几乎和主服务器保持一致才行，否则可能会导致复制出错；
+执行复杂语句如果出错的话，会消耗更多资源；</p>
+<p><strong>Row 优点</strong>
+任何情况都可以被复制，这对复制来说是最安全可靠的；
+和其他大多数数据库系统的复制技能一样；
+多数情况下，从服务器上的表如果有主键的话，复制就会快了很多；
+复制以下几种语句时的行锁更少：
+/<em> INSERT … SELECT
+/</em> 包含 AUTO_INCREMENT 字段的 INSERT
+/* 没有附带条件或者并没有修改很多记录的 UPDATE 或 DELETE 语句
+执行 INSERT，UPDATE，DELETE 语句时锁更少；
+从服务器上采用多线程来执行复制成为可能；</p>
+<p><strong>Row 缺点</strong>
+生成的 binlog 日志体积大了很多；
+复杂的回滚时 binlog 中会包含大量的数据；
+主服务器上执行 UPDATE 语句时，所有发生变化的记录都会写到 binlog 中，而 statement 只会写一次，这会导致频繁发生 binlog 的写并发请求；
+UDF 产生的大 BLOB 值会导致复制变慢；
+不能从 binlog 中看到都复制了写什么语句(加密过的)；
+当在非事务表上执行一段堆积的 SQL 语句时，最好采用 statement 模式，否则很容易导致主从服务器的数据不一致情况发生；
+另外，针对系统库 MySQL 里面的表发生变化时的处理准则如下：
+如果是采用 INSERT，UPDATE，DELETE 直接操作表的情况，则日志格式根据 binlog_format 的设定而记录；
+如果是采用 GRANT，REVOKE，SET PASSWORD 等管理语句来做的话，那么无论如何都要使用 statement 模式记录；
+使用 statement 模式后，能处理很多原先出现的主键重复问题；</p>
+<p>分类: <a href="http://www.cnblogs.com/xionghui/category/341683.html" target="_blank">mysql</a></p>
+<p>绿色通道： <a href="">好文要顶</a> <a href="">关注我</a> <a href="">收藏该文</a><a href="http://space.cnblogs.com/msg/send/_%e5%ae%89%e9%9d%99" target="_blank">与我联系</a> <a href="&quot;分享至新浪微博&quot;"><img src="" alt=""></a>
+<a href="http://home.cnblogs.com/u/xionghui/" target="_blank">_安静</a>
+<a href="http://home.cnblogs.com/u/xionghui/followees" target="_blank">关注 - 5</a>
+<a href="http://home.cnblogs.com/u/xionghui/followers" target="_blank">粉丝 - 8</a></p>
+<p><a href="">+加关注</a></p>
+<p>0</p>
+<p>0
+(请您对文章做出评价)</p>
+<p><a href="http://www.cnblogs.com/xionghui/archive/2012/07/15/2592876.html" target="_blank">«</a> 上一篇：<a href="http://www.cnblogs.com/xionghui/archive/2012/07/15/2592876.html" title="发布于2012-07-15 23:50" target="_blank">vs2005下配置OGRE</a>
+<a href="http://www.cnblogs.com/xionghui/archive/2013/03/07/2947384.html" target="_blank">»</a> 下一篇：<a href="http://www.cnblogs.com/xionghui/archive/2013/03/07/2947384.html" title="发布于2013-03-07 09:13" target="_blank">Cubic Spline三次样条曲线</a></p>
+<p>posted on 2013-03-01 19:37 <a href="http://www.cnblogs.com/xionghui/" target="_blank">_安静</a> 阅读(641) 评论(0) <a href="http://www.cnblogs.com/xionghui/admin/EditPosts.aspx?postid=2939342" target="_blank">编辑</a> <a href="">收藏</a></p>
+<p><a href="">刷新评论</a><a href="">刷新页面</a><a href="">返回顶部</a></p>
+<p>注册用户登录后才能发表评论，请 <a href="">登录</a> 或 <a href="">注册</a>，<a href="http://www.cnblogs.com/" target="_blank">访问</a>网站首页。
+<a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园首页</a><a href="http://q.cnblogs.com/" title="程序员问答社区" target="_blank">博问</a><a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">新闻</a><a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a><a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a><a href="http://kb.cnblogs.com/" target="_blank">知识库</a></p>
+<p><strong>最新IT新闻</strong>:
+· <a href="http://news.cnblogs.com/n/185243/" target="_blank">烧钱不断的Ubuntu——一个理想主义者的故事</a>
+· <a href="http://news.cnblogs.com/n/185242/" target="_blank">配4100万像素摄像头 Hyetis Crossbow智能手表</a>
+· <a href="http://news.cnblogs.com/n/185241/" target="_blank">金正恩都说好的朝鲜手机是国产山寨？</a>
+· <a href="http://news.cnblogs.com/n/185240/" target="_blank">3D视差效果：23张iOS 7壁纸免费下载</a>
+· <a href="http://news.cnblogs.com/n/185239/" target="_blank">免费！广告屏蔽插件Adblock正式发布IE版</a>
+» <a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">更多新闻...</a></p>
+<p><strong>最新知识库文章</strong>:
+· <a href="http://kb.cnblogs.com/page/180323/" target="_blank">我现在是这样编程的</a>
+· <a href="http://kb.cnblogs.com/page/178891/" target="_blank">如何做到 jQuery-free？</a>
+· <a href="http://kb.cnblogs.com/page/185000/" target="_blank">如何成为一位优秀的创业CEO</a>
+· <a href="http://kb.cnblogs.com/page/184977/" target="_blank">十年前的Java企业应用开发世界</a>
+· <a href="http://kb.cnblogs.com/page/184935/" target="_blank">专注做好一件事</a>
+» <a href="http://kb.cnblogs.com/" target="_blank">更多知识库文章...</a>
+<strong>历史上的今天:</strong>
+2012-03-01 <a href="http://www.cnblogs.com/xionghui/archive/2012/03/01/2375513.html" target="_blank">Eclipse中web-inf和meta-inf文件夹的信息</a>
+2012-03-01 <a href="http://www.cnblogs.com/xionghui/archive/2012/03/01/2375503.html" target="_blank">在Eclipse中创建WEB工程步骤</a></p>
+<h3 id="-">公告</h3>
+<p>昵称：<a href="http://home.cnblogs.com/u/xionghui/" target="_blank">_安静</a>
+园龄：<a href="http://home.cnblogs.com/u/xionghui/" title="入园时间：2011-12-07" target="_blank">1年8个月</a>
+粉丝：<a href="http://home.cnblogs.com/u/xionghui/followers/" target="_blank">8</a>
+关注：<a href="http://home.cnblogs.com/u/xionghui/followees/" target="_blank">5</a></p>
+<p><a href="">+加关注</a></p>
+<h3 id="-">导航</h3>
 <ul>
-<li>下一篇数据库： <a href="http://www.diannaozs.com/shujukuzhishi/m/200905/20090515150846.html" title="文章标题：基于MySQL数据库的UTF8中文网站全文检索的实现
-作    者：admin
-更新时间：2009-5-15 15:08:46">基于MySQL数据库的UTF8中文网站全文检索的实现</a> <img src="" alt=""> <strong>相关文章</strong> <a href="http://www.diannaozs.com/shujukuzhishi/m/200907/20090719210814.html" title="文章标题：MySQL数据库数据备份和恢复详解
-作    者：admin
-更新时间：2009-7-19 21:08:14">MySQL数据库数据备份和恢复详…</a>
-<a href="http://www.diannaozs.com/shujukuzhishi/m/200905/20090515150846.html" title="文章标题：基于MySQL数据库的UTF8中文网站全文检索的实现
-作    者：admin
-更新时间：2009-5-15 15:08:46">基于MySQL数据库的UTF8中文网…</a>
-<a href="http://www.diannaozs.com/shujukuzhishi/s/200904/20090427082753.html" title="文章标题：MYSQL出错代码列表
-作    者：佚名
-更新时间：2009-4-27 8:27:53">MYSQL出错代码列表</a>
-<a href="http://www.diannaozs.com/shujukuzhishi/s/200904/20090426181143.html" title="文章标题：MySQL数据库在指定位置增加字段
-作    者：佚名
-更新时间：2009-4-26 18:11:43">MySQL数据库在指定位置增加字…</a>
-<a href="http://www.diannaozs.com/shujukuzhishi/s/200904/20090426180556.html" title="文章标题：图形化MySQL工具:SQLyog MySQL GUI
-作    者：佚名
-更新时间：2009-4-26 18:05:56">图形化MySQL工具:SQLyog MyS…</a>
-<a href="http://www.diannaozs.com/shujukuzhishi/s/200904/20090426180154.html" title="文章标题：精简mysql中文乱码解决方法
-作    者：佚名
-更新时间：2009-4-26 18:01:54">精简mysql中文乱码解决方法</a>
-<a href="http://www.diannaozs.com/shujukuzhishi/m/200904/20090407093714.html" title="文章标题：MySQL数据库函数详解(目录)
-作    者：佚名
-更新时间：2009-4-7 9:37:14">MySQL数据库函数详解(目录)</a>
-<a href="http://www.diannaozs.com/shujukuzhishi/m/200904/20090407092220.html" title="文章标题：.Net中操作MySql数据库
-作    者：admin
-更新时间：2009-4-7 9:22:20">.Net中操作MySql数据库</a>
-<a href="http://www.diannaozs.com/shujukuzhishi/m/200903/20090326153808.html" title="文章标题：1.8.6.3. ENUM和SET约束
-作    者：佚名
-更新时间：2009-3-26 15:38:08">1.8.6.3. ENUM和SET约束…</a>
-<a href="http://www.diannaozs.com/shujukuzhishi/m/200903/20090326153548.html" title="文章标题：1.8.6.2. 对无效数据的约束
-作    者：佚名
-更新时间：2009-3-26 15:35:48">1.8.6.2. 对无效数据的约束…</a>  <a href="http://www.diannaozs.com/book/" target="_blank">电子书教程</a>   <a href="http://www.diannaozs.com/$" target="_blank">设为首页</a>   <a href="">加入收藏</a>   <a href="http://www.diannaozs.com/SiteMap/Article1.htm" target="_blank">网站地图</a>   <a href="http://www.diannaozs.com/SiteMap/Soft1.htm" target="_blank">软件下载地图</a>   <a href="http://www.diannaozs.com/FriendSite/" target="_blank">友情连接</a>   <a href="mailto:diannaozs@126.com%20&lt;diannaozs@126.com">联系站长</a>   <a href="http://www.diannaozs.com/bbs/index.asp?boardid=3" target="_blank">留言求助</a> Copyright 2007-2011 电脑知识网(<a href="http://www.diannaozs.com" target="_blank">http://www.diannaozs.com</a>) All rights reserved
-信息产业部备案：京ICP备08100023号</li>
+<li><a href="http://www.cnblogs.com/" target="_blank">博客园</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/" target="_blank">首页</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a></li>
+<li><a href="http://space.cnblogs.com/msg/send/_%e5%ae%89%e9%9d%99" target="_blank">联系</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/rss" target="_blank">订阅</a><a href="http://www.cnblogs.com/xionghui/rss" target="_blank"><img src="" alt="订阅"></a></li>
+<li><a href="http://www.cnblogs.com/xionghui/admin/EditPosts.aspx" target="_blank">管理</a>
+<a href="">&lt;</a>2013年3月<a href="">&gt;</a>日一二三四五六2425262728<a href="http://www.cnblogs.com/xionghui/archive/2013/03/01.html" target="_blank">1</a>23456<a href="http://www.cnblogs.com/xionghui/archive/2013/03/07.html" target="_blank">7</a>8910111213141516171819202122232425262728293031123456</li>
 </ul>
+<h3 id="-">统计</h3>
+<ul>
+<li>随笔 - 63</li>
+<li>文章 - 0</li>
+<li>评论 - 2</li>
+<li>引用 - 0<h3 id="-">搜索</h3>
+</li>
+</ul>
+<h3 id="-">常用链接</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/xionghui/MyPosts.html" target="_blank">我的随笔</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/MyComments.html" target="_blank">我的评论</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/OtherPosts.html" title="我发表过评论的随笔" target="_blank">我的参与</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/RecentComments.html" target="_blank">最新评论</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/tag/" target="_blank">我的标签</a></li>
+</ul>
+<h3 id="-">我的标签</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/xionghui/tag/redmine1.2.2%E5%AE%89%E8%A3%85    ruby1.8.7   rubygem1.6.2/" target="_blank">redmine1.2.2安装 ruby1.8.7 rubygem1.6.2</a>(5)</li>
+<li><a href="http://www.cnblogs.com/xionghui/tag/eclipse/" target="_blank">eclipse</a>(3)</li>
+<li><a href="http://www.cnblogs.com/xionghui/tag/html css javascript jquery easyui/" target="_blank">html css javascript jquery easyui</a>(3)</li>
+<li><a href="http://www.cnblogs.com/xionghui/tag/tomcat%E5%AE%89%E8%A3%85%E5%92%8C%E9%85%8D%E7%BD%AE/" target="_blank">tomcat安装和配置</a>(2)</li>
+<li><a href="http://www.cnblogs.com/xionghui/tag/xhEditor/" target="_blank">xhEditor</a>(1)</li>
+<li><a href="http://www.cnblogs.com/xionghui/tag/HTML5/" target="_blank">HTML5</a>(1)</li>
+<li><a href="http://www.cnblogs.com/xionghui/tag/jdk%E9%85%8D%E7%BD%AE/" target="_blank">jdk配置</a>(1)</li>
+<li><a href="http://www.cnblogs.com/xionghui/tag/ogre/" target="_blank">ogre</a>(1)</li>
+<li><a href="http://www.cnblogs.com/xionghui/tag/php%E5%AE%89%E8%A3%85%E5%92%8C%E9%85%8D%E7%BD%AE/" target="_blank">php安装和配置</a>(1)</li>
+<li><a href="http://www.cnblogs.com/xionghui/tag/serv-u%E5%AE%89%E8%A3%85%E9%85%8D%E7%BD%AE/" target="_blank">serv-u安装配置</a>(1)</li>
+<li><a href="http://www.cnblogs.com/xionghui/tag/" target="_blank">更多</a></li>
+</ul>
+<h3 id="-46-">随笔分类(46)</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/xionghui/category/362695.html" target="_blank">ant(1)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/362804.html" target="_blank">c c++</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/341738.html" target="_blank">Coldfusion(6)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/367982.html" target="_blank">discuz(3)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/361900.html" target="_blank">easyUI</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/361898.html" target="_blank">html(1)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/367981.html" target="_blank">inno setup(2)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/362803.html" target="_blank">java(2)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/361899.html" target="_blank">javascript(4)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/361897.html" target="_blank">jquery(2)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/341683.html" target="_blank">mysql(9)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/396246.html" target="_blank">Ogre(1)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/341014.html" target="_blank">ruby redmine(4)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/357315.html" target="_blank">struts2(3)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/366403.html" target="_blank">study(2)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/361984.html" target="_blank">tomcat(1)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/362028.html" target="_blank">web(4)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/category/457545.html" target="_blank">数值分析(1)</a></li>
+</ul>
+<h3 id="-63-">随笔档案(63)</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2013/03.html" target="_blank">2013年3月 (2)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/07.html" target="_blank">2012年7月 (2)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/05.html" target="_blank">2012年5月 (8)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/04.html" target="_blank">2012年4月 (5)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03.html" target="_blank">2012年3月 (28)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/02.html" target="_blank">2012年2月 (9)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12.html" target="_blank">2011年12月 (9)</a></li>
+</ul>
+<h3 id="mysql-">mysql下载</h3>
+<h3 id="-">最新评论</h3>
+<h3 id="-">阅读排行榜</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/01/2375503.html" target="_blank">1. 在Eclipse中创建WEB工程步骤(11416)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/09/2281827.html" target="_blank">2. redmine-1.2.2安装截图粘贴插件(7722)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/08/2281229.html" target="_blank">3. redmine-1.2.2安装代码评审插件(6289)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2390258.html" target="_blank">4. tomcat配置文件web.xml与server.xml解析--重要(6112)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/08/2280518.html" target="_blank">5. redmine-1.2.2安装服务（附图）(6089)</a></li>
+</ul>
+<h3 id="-">评论排行榜</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/10/2283229.html" target="_blank">1. Mysql安装配置(2)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/09/2281827.html" target="_blank">2. redmine-1.2.2安装截图粘贴插件(0)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2389927.html" target="_blank">3. jQuery 数据表： 将单个列导出到 Excel(0)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2389792.html" target="_blank">4. MYSQL启用日志，查看日志，利用mysqlbinlog工具恢复MySQL数据库(0)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2389790.html" target="_blank">5. mysql数据库my.ini配置文件中文详解(0)</a></li>
+</ul>
+<h3 id="-">推荐排行榜</h3>
+<ul>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2389791.html" target="_blank">1. mysqldump 常用备份选项,只备份数据或结构的方法(3)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/10/2283229.html" target="_blank">2. Mysql安装配置(2)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/12/2392555.html" target="_blank">3. web绿色环境搭建(2)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2012/03/11/2390258.html" target="_blank">4. tomcat配置文件web.xml与server.xml解析--重要(2)</a></li>
+<li><a href="http://www.cnblogs.com/xionghui/archive/2011/12/10/2283556.html" target="_blank">5. Coldfusion 7 生成验证码实例(CF验证码)(1)</a></li>
+</ul>
+<p>Powered by: <a href="http://www.cnblogs.com/" target="_blank">博客园</a> Copyright © _安静</p>
 
       
     </div>
@@ -694,7 +1608,7 @@ Statistics   统计信息</li>
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DB/">DB</a></li></span><span class="breadcrumb"><li><a href="/categories/DB/">DB</a></li><li><a href="/categories/DB/mysql/">mysql</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DB/" class="label label-primary">DB</a><a href="/tags/mysql/" class="label label-success">mysql</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:33"datetime="2014-03-07 09:54:33"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--建立mysql可远程连接root权限用户-电脑知识网-电脑基础知识/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--建立mysql可远程连接root权限用户-电脑知识网-电脑基础知识" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-DB-mysql--MySQL报错：TheMySQLserverisrunningwiththe--ski/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DB-mysql--MySQL报错：TheMySQLserverisrunningwiththe--ski" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1544,7 +2458,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 18:24:57</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:05:47</em></span></div>
 </div>
 <div class="clearfix"></div>
 

@@ -110,170 +110,236 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-Nginx--Nginx调优/">Nginx调优</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动 </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-服务器-Nginx--Nginx调优/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="nginx-">Nginx调优</h1>
-<p>这篇文章的目的是要谈谈我的 Nginx 调优经验，就不涉及数据库调优的内容了。</p>
-<h3 id="-">初始服务器设置</h3>
-<p>我的服务器运行在亚马逊 EC2 t1 micro 上，选择 Nginx + PHP5-fpm 作为后端，因为一些安全因素还打开了SSL。</p>
-<h3 id="-">性能测试</h3>
-<p>我使用了Blitz.io 来进行压力测试。下面是我使用的命令：
-1 -p</p>
-<p>1-250:60 <a href="https://mydomian.com" target="_blank">https://mydomian.com</a></p>
-<p>这是一个用户线性递增的测试，每个测试用户跑60秒。Blitz.io为每个请求每秒增加4个( = rise / run = 260 / 60)测试用户。</p>
-<h3 id="-">结论</h3>
-<p>我把结论提前写在这里，如果你不想读完整篇文章也没有问题。</p>
-<ol>
-<li>Nginx默认设置的DH算法（译注：Diffie-Hellman key exchange algorithm）是影响SSL性能的最大因素，因此采用如下设置能增加SSL性能：
-1</li>
-</ol>
-<p>2
-3</p>
-<p>4
-5 ssl_protocols TLSv1 TLSv1.1 TLSv1.2;</p>
-<p>ssl_ciphers ECDHE</p>
-<p>-RSA</p>
-<p>-AES256-SHA384:AES256-SHA256:RC4:HIGH:!MD5:!aNULL:!eNULL:!NULL:!DH:!EDH:!AESGCM;
-ssl_prefer_server_ciphers on;</p>
-<p>ssl_session_cache shared:SSL:10m;
-ssl_session_timeout 10m;</p>
-<ol>
-<li>升级硬件 Upgrade your EC2 from t1.micro to c1.medium</li>
-<li>正确配置 Nginx的worker进程数量 Set Nginx to have 2 worker processes as a c1.medium gives you 2 CPUs</li>
-</ol>
-<h3 id="-">细节解释</h3>
-<p>以下是我进行测试的详细过程。</p>
-<p><strong>尝试1：升级硬件</strong></p>
-<p>直觉告诉我，想解决性能问题的直接途径就是升级硬件，我把EC2实例从t1.micro升级到了为高流量而优化过的c1.medium</p>
-<p>升级后的测试结果：
-<img src="" alt=""></p>
-<p>巅峰时服务器的hits达到50/sec，压力增加时，time-out增加，hits减少。</p>
-<p><strong>尝试2：测试CPU性能</strong></p>
-<p>我打开top然后重启了测试，注意到2个CPU的使用率不到13%，内存使用了300Mb，很明显硬件没有充分利用。所以我更改了nginx的设置</p>
-<p>worker_processes 2;</p>
-<p><strong>尝试3，4，5：调整Nginx和PHP5-fpm</strong></p>
-<p>以下尝试得到的结果都和尝试1相同</p>
-<p>尝试3：</p>
-<p><strong>nginx.conf</strong>
-1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
- worker_processes 2;</p>
-<p>events {
-worker_connections 19000;</p>
-<p>multi_accept on;
-}</p>
-<p>...</p>
-<p>尝试4：</p>
-<p><strong>nginx.conf</strong>
-1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13</p>
-<p>14
-15 worker_processes 2;</p>
-<p>events {
-worker_connections 19000;</p>
-<p>multi_accept on;
-}</p>
-<p>http {
-gzip on;</p>
-<p>gzip_disable &quot;msie6&quot;;
-gzip_min_length 1000;</p>
-<p>gzip_proxied expired no-cache no-store private auth;
-gzip_types text/plain application/xml application/javascript text/css application/x-javascript;</p>
-<p>…
-}</p>
-<p>...</p>
-<p>尝试5：</p>
-<p>在尝试4未变的情况下我更改了php5-fpm的设置：
-1</p>
-<p>2
-3</p>
-<p>4
-5 pm.max_children = 160</p>
-<p>pm.start_servers = 24
-pm.min_spare_servers = 20</p>
-<p>pm.max_spare_servers = 35
-pm.max_requests = 1500</p>
-<h3 id="-6-"><strong>尝试6**</strong>：在另一个服务器部署**</h3>
-<p>我有一个1.5Gb RAM和8CPU的<a href="http://blog.jobbole.com/go/linode/" title="Linode" target="_blank">Linode</a>服务器，采用刚才的设置，这是我的测试结果：
-<img src="" alt=""></p>
-<p><a href="http://blog.jobbole.com/go/linode/" title="Linode" target="_blank">Linode</a>的服务器的结果棒极了！我的第一个直觉是难道Linode比EC2好吗。在我把我的服务迁移到Linode之前我想确保两者仅有的对性能有可能产生影响的不同被排除掉。</p>
-<p><strong>尝试7：大惊喜</strong></p>
-<p>我Google到Nginx在SSL上有些问题。Nginx默认使用DHE算法来产生密匙，改变这个设置应该能使它快一些。</p>
-<p>这里是我参考的一些文章：</p>
-<p><a href="http://matt.io/entry/ur" target="_blank">http://matt.io/entry/ur</a></p>
-<p><a href="http://auxbuss.com/blog/posts/2011_06_28_ssl_session_caching_on_nginx/" target="_blank">http://auxbuss.com/blog/posts/2011_06_28_ssl_session_caching_on_nginx/</a></p>
-<p>所以我更改了nginx.conf，删掉了kEDH算法
-1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13</p>
-<p>14
-15 worker_processes 2;</p>
-<p>events {
-worker_connections 1024;</p>
-<p>}
-http {</p>
-<p>gzip on;
-gzip_disable &quot;msie6&quot;;</p>
-<p>gzip_min_length 1000;
-gzip_proxied expired no-cache no-store private auth;</p>
-<p>gzip_types text/plain application/xml application/javascript text/css application/x-javascript;
-ssl_ciphers ALL:!kEDH!ADH:RC4+RSA:+HIGH:+EXP;</p>
-<p>…
-}</p>
-<p>...</p>
-<p>下图是测试结果：</p>
-<p><img src="" alt=""></p>
-<p>效果很显著！</p>
-<p><strong>尝试8： 硬件提升是必要的吗</strong></p>
-<p>现在我的EC2和Linode表现差不多了。但是我真的需要升级到c1.medium实例才能实现这个性能的提升吗？或许不是这样……所以我把我改回了t1.micro。因为t1.micro实例只有一个CPU，所以我把worder_processes设置改回1。下面是测试的结果：</p>
-<p><img src="" alt=""></p>
-<p>所以答案是肯定的，硬件上的提升是必要的。</p>
-<p><strong>尝试9：</strong></p>
-<p>有人在 Hacker News 上反馈说我的SSL密匙不能满足Perfect Forward Secrecy，我采用了他们的建议，对我的SSL设置做了如下更改：
-1</p>
-<p>2
-3</p>
-<p>4
-5 ssl_protocols TLSv1 TLSv1.1 TLSv1.2;</p>
-<p>ssl_ciphers ECDHE-RSA-AES256-SHA384:AES256-SHA256:RC4:HIGH:!MD5:!aNULL:!eNULL:!NULL:!DH:!EDH:!AESGCM;
-ssl_prefer_server_ciphers on;</p>
-<p>ssl_session_cache shared:SSL:10m;
-ssl_session_timeout 10m;</p>
-<p>现在这个设置应该满足Perfect Forward Secrecy协议了。我重新跑了测试：</p>
-<p><strong><a href="http://techsamurais.com/wp-content/uploads/2013/08/attempt10.png" title="Nginx SSL性能调优" target="_blank"><img src="" alt="attempt10"></a></strong></p>
-<p>太棒了，性能也没有下降。很棒的学习经验！</p>
-<p>来源： &lt;<a href="http://blog.jobbole.com/44844/" target="_blank">Nginx SSL性能调优 - 博客 - 伯乐在线</a>&gt; </p>
+        <h1 id="-java-service-wrapper-tomcat-linux-tomcat-java-iteye-">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动 - Tomcat - Java - ITeye论坛</h1>
+<p><a href="http://www.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.iteye.com/login" target="_blank">登录</a> <a href="http://www.iteye.com/signup" target="_blank">注册</a></p>
+<p><a href="http://www.iteye.com/" target="_blank"><img src="&quot;ITeye-最棒的软件开发交流社区&quot;" alt="ITeye-最棒的软件开发交流社区"></a></p>
+<p>-</p>
+<p><a href="http://www.iteye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.iteye.com/forums/board/Java" target="_blank">Java企业应用论坛</a> →</p>
+<h1 id="-java-service-wrapper-tomcat-linux-">使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动</h1>
+<p><a href="http://www.iteye.com/forums/board/Java" target="_blank">全部</a> <a href="http://www.iteye.com/forums/tag/Hibernate" target="_blank">Hibernate</a> <a href="http://www.iteye.com/forums/tag/Spring" target="_blank">Spring</a> <a href="http://www.iteye.com/forums/tag/Struts" target="_blank">Struts</a> <a href="http://www.iteye.com/forums/tag/iBATIS" target="_blank">iBATIS</a> <a href="http://www.iteye.com/forums/tag/%E4%BC%81%E4%B8%9A%E5%BA%94%E7%94%A8" target="_blank">企业应用</a> <a href="http://www.iteye.com/forums/tag/Lucene" target="_blank">Lucene</a> <a href="http://www.iteye.com/forums/tag/SOA" target="_blank">SOA</a> <a href="http://www.iteye.com/forums/tag/Java%E7%BB%BC%E5%90%88" target="_blank">Java综合</a> <a href="http://www.iteye.com/forums/tag/%E8%AE%BE%E8%AE%A1%E6%A8%A1%E5%BC%8F" target="_blank">设计模式</a> <a href="http://www.iteye.com/forums/tag/Tomcat" target="_blank">Tomcat</a> <a href="http://www.iteye.com/forums/tag/OO" target="_blank">OO</a> <a href="http://www.iteye.com/forums/tag/JBoss" target="_blank">JBoss</a>
+<a href="http://www.iteye.com/clicks/593" target="_blank">最成熟稳定甘特图控件,支持Java和.Net</a></p>
+<p>浏览 5354 次 锁定老帖子 <a href="">主题：使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动</a></p>
+<p>精华帖 (0) :: 良好帖 (0) :: 新手帖 (0) :: 隐藏帖 (0) 作者 正文 * wenson</p>
+<ul>
+<li>等级: 初级会员</li>
+<li><a href="http://wenson.iteye.com/" target="_blank"><img src="&quot;wenson的博客: 山下的人&quot;" alt="wenson的博客"></a></li>
+<li>性别: <img src="&quot;男&quot;" alt=""></li>
+<li>文章: 111</li>
+<li>积分: 80</li>
+<li>来自: 广州</li>
+<li><img src="" alt="">
+  发表时间：2008-01-11   最后修改：2009-02-02</li>
+</ul>
+<p><a href="http://www.iteye.com/topic/155159#" target="_blank">&lt;</a> <a href="http://www.iteye.com/topic/155159#" target="_blank">&gt;</a>  猎头职位: <a href="http://www.iteye.com/jobs/1847" target="_blank">北京:  ITeye网站诚聘产品交互设计</a></p>
+<p>相关文章: <a href="http://www.iteye.com/topic/155159#" title="关闭" target="_blank"> </a></p>
+<ul>
+<li><a href="http://www.iteye.com/topic/36657" title="把java程序做成windows服务（转）" target="_blank">把java程序做成windows服务（转）</a></li>
+<li><a href="http://www.iteye.com/topic/557980" title="tomcat源码—redirect和forward的实现" target="_blank">tomcat源码—redirect和forward的实现</a></li>
+<li><a href="http://www.iteye.com/topic/614683" title="tomcat集群时统计session与在线人数" target="_blank">tomcat集群时统计session与在线人数</a>
+推荐群组: <a href="http://ubuntu.group.iteye.com/" target="_blank">Ubuntu For Fun</a>
+<a href="http://www.iteye.com/wiki/topic/155159" target="_blank">更多相关推荐</a>
+<a href="http://www.iteye.com/forums/tag/Tomcat" target="_blank">Tomcat</a></li>
+</ul>
+<p>前几天总结了使用JSVC来设置tomcat作为linux服务并且开机自动启动，但是如果要更专业一点来控制tomcat的启动，使用Java Service Wrapper应该不失为一个好的选择，下面来总结一下Java Service Wrapper在Linux中对于tomcat启动的设置：
+<strong>1、</strong> 安装JDK、Tomcat,此处略过。比如tomcat安装在/opt/tomcat目录中。
+<strong>2</strong> 、使用命令wget 下载Java Service Wrapper(目前版本wrapper-linux-x86-32-3.2.3，官网：<a href="http://wrapper.tanukisoftware.org" target="_blank">http://wrapper.tanukisoftware.org</a>), 用命令tar -zxvf wrapper-linux-x86-32-3.2.3.tar.gz 解压，得到目录wrapper-linux-x86-32-3.2.3，使用ln -s wrapper-linux-x86-32-3.2.3 wrapper 给目录wrapper-linux-x86-32-3.2.3 建一个名称为wrapper的快捷方式。
+<strong>3</strong> 、复制wrapper\src\bin\sh.script.in到/opt/tomcat/bin目录，重命名为tomcat
+复制wrapper\src\conf\wrapper.conf.in到/opt/tomcat/conf目录，重命名为wrapper.conf
+复制wrapper\lib目录下的所有3个文件到/opt/tomcat/lib目录
+复制wrapper\bin目录下的wrapper文件到/opt/tomcat/bin目录
+<strong>4</strong> 、修改/opt/testapp/bin/tomcat文件
+APP_NAME=&quot;tomcat&quot;
+APP_LONG_NAME=&quot;Tomcat Application Server&quot;
+WRAPPER_CMD=&quot;./wrapper&quot;
+WRAPPER_CONF=&quot;../conf/wrapper.conf&quot;
+赋予执行权限
+chmod 775 /opt/tomcat/bin/tomcat
+chmod 775 /opt/tomcat/bin/tomcat
+<strong>5</strong> 、修改/opt/tomcat/conf/wrapper.conf文件，如：
+/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
+/# Wrapper Properties
+/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
+/# Java Application
+/# 设置环境变量
+set.JAVA_HOME=/usr/java/jdk1.6.0_01
+set.CATALINA_HOME=/opt/tomcat
+set.CATALINA_BASE=/opt/tomcat
+wrapper.java.command=/usr/java/jdk1.6.0_01/bin/java
+/# Java Main class. This class must implement the WrapperListener interface
+/# or guarantee that the WrapperManager class is initialized. Helper
+/# classes are provided to do this for you. See the Integration section
+/# of the documentation for details.
+/# 使用WrapperStartStopApp，这样可以通过命令带start/stop来启动/停止程序。
+wrapper.java.mainclass=org.tanukisoftware.wrapper.WrapperStartStopApp
+/# Java Classpath (include wrapper.jar) Add class path elements as
+/# needed starting from 1
+/# 设置执行tomcat的classpath文件
+wrapper.java.classpath.1=%CATALINA_HOME%/lib/wrapper.jar
+wrapper.java.classpath.2=%CATALINA_BASE%/bin/bootstrap.jar
+/# Java Library Path (location of Wrapper.DLL or libwrapper.so)
+/# 设置tomcat的lib路径
+wrapper.java.library.path.1=%CATALINA_HOME%/lib/
+/# Java Additional Parameters
+/# 设置额外参数
+wrapper.java.additional.1=-Djava.endorsed.dirs=%CATALINA_HOME%/common/endorsed
+wrapper.java.additional.2=-Dcatalina.base=%CATALINA_BASE%
+wrapper.java.additional.3=-Dcatalina.home=%CATALINA_HOME%
+wrapper.java.additional.4=-Djava.io.tmpdir=%CATALINA_BASE%/temp
+/# Initial Java Heap Size (in MB)
+/# 设置tomcat的JVM初始化堆的大小
+wrapper.java.initmemory=128
+/# Maximum Java Heap Size (in MB)
+/# 设置tomcat的JVM堆的最大值
+wrapper.java.maxmemory=512
+/# Application parameters. Add parameters as needed starting from 1
+/# 设置启动、停止和重启参数
+wrapper.app.parameter.1=org.apache.catalina.startup.Bootstrap
+wrapper.app.parameter.2=1
+wrapper.app.parameter.3=start
+wrapper.app.parameter.4=org.apache.catalina.startup.Bootstrap
+wrapper.app.parameter.5=true
+wrapper.app.parameter.6=1
+wrapper.app.parameter.7=stop
+wrapper.filter.trigger.1=java.lang.OutOfMemoryError
+wrapper.filter.action.1=RESTART
+/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
+/# Wrapper Logging Properties
+/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
+/# Format of output for the console. (See docs for formats)
+wrapper.console.format=PM
+/# Log Level for console output. (See docs for log levels)
+wrapper.console.loglevel=INFO
+/# Log file to use for wrapper output logging.
+/# 设置log文件路径
+wrapper.logfile=%CATALINA_BASE%/logs/wrapper.log
+/# Format of output for the log file. (See docs for formats)
+wrapper.logfile.format=LPTM
+/# Log Level for log file output. (See docs for log levels)
+wrapper.logfile.loglevel=INFO
+/# Maximum size that the log file will be allowed to grow to before
+/# the log is rolled. Size is specified in bytes. The default value
+/# of 0, disables log rolling. May abbreviate with the &#39;k&#39; (kb) or
+/# &#39;m&#39; (mb) suffix. For example: 10m = 10 megabytes.
+/# 设置log文件最大值
+wrapper.logfile.maxsize=5
+/# Maximum number of rolled log files which will be allowed before old
+/# files are deleted. The default value of 0 implies no limit.
+/#设置log文件最多个数
+wrapper.logfile.maxfiles=10
+/# Log Level for sys/event log output. (See docs for log levels)
+wrapper.syslog.loglevel=NONE
+/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
+/# Wrapper Windows Properties
+/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
+/# Title to use when running as a console
+/# windows下tomcat控制台名称
+wrapper.console.title=Tomcat6 Application Server
+/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
+/# Wrapper Windows NT/2000/XP Service Properties
+/#/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
+/# WARNING - Do not modify any of these properties when an application
+/# using this configuration file has been installed as a service.
+/# Please uninstall the service before modifying this section. The
+/# service can then be reinstalled.
+/# Name of the service
+/# 设置服务名称
+wrapper.ntservice.name=tomcat6
+/# Display name of the service
+wrapper.ntservice.displayname=@app.long.name@
+/# Description of the service
+wrapper.ntservice.description=@app.description@
+/# Service dependencies. Add dependencies as needed starting from 1
+wrapper.ntservice.dependency.1=
+/# Mode in which the service is installed. AUTO_START or DEMAND_START
+/# 设置允许Tomcat服务自动启动
+wrapper.ntservice.starttype=AUTO_START
+/# Allow the service to interact with the desktop.
+wrapper.ntservice.interactive=false
+<strong>6</strong> 、设置tomcat开机自动运行：
+ln -s /opt/tomcat/bin/tomcat /etc/init.d/tomcat
+<strong>7</strong> 、测试,执行命令：service tomcat start|stop|restart|status
+至此，使用Java Service Wrapper来设置Tomcat作为Linux的服务完成，从此过程看来，Java Service Wrapper对tomcat的控制程度比tomcat自带的JSVC深入多了。
+目录结构：
+/opt/tomcat/bin
+                 | tomcat
+                 | wrapper
+/opt/tomcat/logs
+                 | wrapper.log（程序运行时自动产生）
+/opt/tomcat/conf
+                 | wrapper.conf
+/opt/tomcat/lib
+                 | libwrapper.so
+                 | wrapper.jar
+                 | test.jar</p>
+<p>声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。</p>
+<p>推荐链接</p>
+<ul>
+<li><a href="http://www.iteye.com/clicks/508" target="_blank">.Net程序员不用羡慕Android程序员，微软移动战役打响</a></li>
+<li><a href="http://www.iteye.com/clicks/716" target="_blank">想进外企，出国，跳槽，找工作？英语不好,快来充电吧</a></li>
+<li><a href="http://www.iteye.com/clicks/527" target="_blank">100万现金奖培训出来的程序员</a></li>
+<li><a href="http://www.iteye.com/clicks/609" target="_blank">-</a> <a href="http://www.iteye.com/topic/155159#" target="_blank">返回顶楼</a> <a href="http://wenson.iteye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://wenson.iteye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://my.iteye.com/messages/new?message%5Breceiver_name%5D=wenson" title="发送站内短信" target="_blank"> </a> <a href="http://wenson.iteye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://my.iteye.com/feed?subscription%5Bsubscribed_user_name%5D=wenson" title="关注作者" target="_blank"> </a>  * nwangwei</li>
+<li>等级: <img src="&quot;一星会员&quot;" alt="一星会员"></li>
+<li><a href="http://nwangwei.iteye.com/" target="_blank"><img src="&quot;nwangwei的博客: nwangwei&quot;" alt="nwangwei的博客"></a></li>
+<li>性别: <img src="&quot;男&quot;" alt=""></li>
+<li>文章: 41</li>
+<li>积分: 130</li>
+<li><img src="" alt="">
+  发表时间：2008-03-13  </li>
+</ul>
+<p>棒！
+tomcat的shutdown命令老是关不掉全部的java进程 <a href="http://www.iteye.com/topic/155159#" target="_blank">返回顶楼</a> <a href="http://nwangwei.iteye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://nwangwei.iteye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://my.iteye.com/messages/new?message%5Breceiver_name%5D=nwangwei" title="发送站内短信" target="_blank"> </a> <a href="http://nwangwei.iteye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://my.iteye.com/feed?subscription%5Bsubscribed_user_name%5D=nwangwei" title="关注作者" target="_blank"> </a> <a href="http://www.iteye.com/topic/155159#485194" title="nwangwei回帖:使用Java Service Wrapper设置tomcat作为linux服务并且开机自动启动" target="_blank">回帖地址</a></p>
+<p><a href="http://www.iteye.com/topic/155159#" title="好" target="_blank">0</a> <a href="http://www.iteye.com/topic/155159#" title="差" target="_blank">0</a> 请登录后投票</p>
+<p><a href="http://www.iteye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.iteye.com/forums/board/Java" target="_blank">Java企业应用版</a>
+跳转论坛:移动开发技术 Web前端技术 Java企业应用 编程语言技术 综合技术 入门技术 招聘求职 海阔天空</p>
+<ul>
+<li><a href="http://www.iteye.com/jobs/1555" title="北京:美团诚聘资深研发工程师（Java）" target="_blank">北京: 美团诚聘资深研发工程师（Java）</a></li>
+<li><a href="http://www.iteye.com/jobs/1554" title="北京:美团诚聘研发工程师（Java）" target="_blank">北京: 美团诚聘研发工程师（Java）</a></li>
+<li><a href="http://www.iteye.com/jobs/712" title="北京:ITeye官方招聘和猎头诚聘ITeye网站诚聘Java高级搜索工程师" target="_blank">北京: ITeye官方招聘和猎头诚聘ITeye网站诚聘Java</a></li>
+<li><a href="http://www.iteye.com/jobs/2068" title="吉林:用友汽车软件诚聘Java程序员" target="_blank">吉林: 用友汽车软件诚聘Java程序员</a></li>
+<li><a href="http://www.iteye.com/jobs/1628" title="浙江:阿里巴巴诚聘高级Java工程师" target="_blank">浙江: 阿里巴巴诚聘高级Java工程师</a></li>
+<li><a href="http://www.iteye.com/jobs/2078" title="上海:用友汽车软件诚聘项目经理" target="_blank">上海: 用友汽车软件诚聘项目经理</a></li>
+<li><a href="http://www.iteye.com/jobs/1144" title="陕西:ThoughtWorks诚聘西安Senior Java Application Developer" target="_blank">陕西: ThoughtWorks诚聘西安Senior Java Applicatio</a></li>
+<li><a href="http://www.iteye.com/jobs/2067" title="重庆:用友汽车软件诚聘Java程序员" target="_blank">重庆: 用友汽车软件诚聘Java程序员</a></li>
+<li><a href="http://www.iteye.com/jobs/750" title="北京:杰嘉迪诚聘高级Java程序员" target="_blank">北京: 杰嘉迪诚聘高级Java程序员</a></li>
+<li><a href="http://www.iteye.com/jobs/2111" title="北京:中油瑞飞/richfit诚聘JAVA开发工程师" target="_blank">北京: 中油瑞飞/richfit诚聘JAVA开发工程师</a></li>
+<li><a href="http://www.iteye.com/jobs/1891" title="北京:北大软件诚聘Java软件开发工程师（技术研发部110809）" target="_blank">北京: 北大软件诚聘Java软件开发工程师（技术研发部</a></li>
+<li><a href="http://www.iteye.com/jobs/755" title="北京:杰嘉迪诚聘Java程序员" target="_blank">北京: 杰嘉迪诚聘Java程序员</a></li>
+<li><a href="http://www.iteye.com/jobs/1231" title="北京:胡莱游戏诚聘年薪8-16万高级Java程序员" target="_blank">北京: 胡莱游戏诚聘年薪8-16万高级Java程序员</a></li>
+<li><a href="http://www.iteye.com/jobs/1541" title="上海:大众点评诚聘Java高级开发工程师（上海）" target="_blank">上海: 大众点评诚聘Java高级开发工程师（上海）</a></li>
+<li><a href="http://www.iteye.com/jobs/2066" title="湖北:用友汽车软件诚聘Java程序员" target="_blank">湖北: 用友汽车软件诚聘Java程序员</a></li>
+<li><a href="http://www.iteye.com/jobs/1849" title="浙江:阿里巴巴诚聘C++开发工程师(搜索引擎和广告引擎方向，偏底层)" target="_blank">浙江: 阿里巴巴诚聘C++开发工程师(搜索引擎和广告</a></li>
+<li><a href="http://www.iteye.com/jobs/2065" title="安徽:用友汽车软件诚聘Java程序员" target="_blank">安徽: 用友汽车软件诚聘Java程序员</a></li>
+<li><a href="http://www.iteye.com/jobs/2080" title="上海:用友汽车软件诚聘软件研发工程师（实习岗位）" target="_blank">上海: 用友汽车软件诚聘软件研发工程师（实习岗位）</a></li>
+<li><p><a href="http://www.iteye.com/jobs/2064" title="上海:用友汽车软件诚聘高级Java程序员" target="_blank">上海: 用友汽车软件诚聘高级Java程序员</a></p>
+</li>
+<li><p><a href="http://www.iteye.com/" target="_blank">首页</a></p>
+</li>
+<li><a href="http://www.iteye.com/news" target="_blank">资讯</a></li>
+<li><a href="http://www.iteye.com/magazines" target="_blank">精华</a></li>
+<li><a href="http://www.iteye.com/forums" target="_blank">论坛</a></li>
+<li><a href="http://www.iteye.com/ask" target="_blank">问答</a></li>
+<li><a href="http://www.iteye.com/blogs" target="_blank">博客</a></li>
+<li><a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a></li>
+<li><a href="http://www.iteye.com/groups" target="_blank">群组</a></li>
+<li><a href="http://www.iteye.com/job" target="_blank">招聘</a></li>
+<li><a href="http://www.iteye.com/search" target="_blank">搜索</a></li>
+<li><a href="http://www.ciecloud.org/2012/index.html" target="_blank">云计算大会</a></li>
+<li><a href="http://www.iteye.com/index/service" target="_blank">广告服务</a></li>
+<li><a href="http://webmaster.iteye.com/" target="_blank">ITeye黑板报</a></li>
+<li><a href="http://www.iteye.com/index/contactus" target="_blank">联系我们</a></li>
+<li><a href="http://www.iteye.com/index/friend_links" target="_blank">友情链接</a></li>
+</ul>
+<p>© 2003-2011 ITeye.com. [ <a href="http://www.miibeian.gov.cn/" target="_blank">京ICP证110151号</a> 京公网安备110105010620 ]
+百联优力(北京)投资有限公司 版权所有
+上海炯耐计算机软件有限公司 提供商务支持 <img src="" alt=""></p>
 
       
     </div>
@@ -283,8 +349,476 @@ ssl_session_timeout 10m;</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/Nginx/">Nginx</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Nginx/" class="label label-primary">Nginx</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-Nginx--Nginx调优/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-Nginx--Nginx调优" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wrapper/">wrapper</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wrapper/" class="label label-primary">wrapper</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wrapper--使用JavaServiceWrapper设置tomcat作为linux服务并且开机自动启动-" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper把Java程序作为Windows系统服务--IT/">使用Java Service Wrapper 把Java程序作为Windows系统服务 </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper把Java程序作为Windows系统服务--IT/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-java-service-wrapper-java-windows-iteye-">使用Java Service Wrapper 把Java程序作为Windows系统服务 - - ITeye技术网站</h1>
+<p><a href="http://www.iteye.com/" target="_blank">首页</a> <a href="http://www.iteye.com/news" target="_blank">资讯</a> <a href="http://www.iteye.com/magazines" target="_blank">精华</a> <a href="http://www.iteye.com/forums" target="_blank">论坛</a> <a href="http://www.iteye.com/ask" target="_blank">问答</a> <a href="http://www.iteye.com/blogs" target="_blank">博客</a> <a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a> <a href="http://www.iteye.com/groups" target="_blank">群组</a> <a href="http://lbyzx123.iteye.com/blog/248210#" target="_blank">更多 ▼</a></p>
+<p><a href="http://www.iteye.com/job" target="_blank">招聘</a> <a href="http://www.iteye.com/search" target="_blank">搜索</a></p>
+<p><a href="http://lbyzx123.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://lbyzx123.iteye.com/login" target="_blank">登录</a> <a href="http://lbyzx123.iteye.com/signup" target="_blank">注册</a></p>
+<h1 id="-lbyzx123-http-lbyzx123-iteye-com-"><a href="http://lbyzx123.iteye.com/" target="_blank">lbyzx123</a></h1>
+<ul>
+<li><a href="http://lbyzx123.iteye.com/" target="_blank"><strong>博客</strong></a></li>
+<li><a href="http://lbyzx123.iteye.com/weibo" target="_blank">微博</a></li>
+<li><a href="http://lbyzx123.iteye.com/album" target="_blank">相册</a></li>
+<li><a href="http://lbyzx123.iteye.com/link" target="_blank">收藏</a></li>
+<li><a href="http://lbyzx123.iteye.com/blog/guest_book" target="_blank">留言</a></li>
+<li><a href="http://lbyzx123.iteye.com/blog/profile" target="_blank">关于我</a></li>
+</ul>
+<h3 id="-java-service-wrapper-java-windows-"><a href="">使用Java Service Wrapper 把Java程序作为Windows系统服务</a> **</h3>
+<p><a href="http://www.iteye.com/blogs/tag/Java" target="_blank">Java</a><a href="http://www.iteye.com/blogs/tag/Windows" target="_blank">Windows</a><a href="http://www.iteye.com/blogs/tag/Tomcat" target="_blank">Tomcat</a><a href="http://www.iteye.com/blogs/tag/%E9%85%8D%E7%BD%AE%E7%AE%A1%E7%90%86" target="_blank">配置管理</a><a href="http://www.iteye.com/blogs/tag/C%23" target="_blank">C/#</a></p>
+<p>Java程序很多情况下是作为服务程序运行的，在Un/<em>x平台下可以利用在命令后加“&amp;”把程序作为后台服务运行，但在Windows下看作那个Console窗口在桌面上，你是否一直担心别的同时把你的Console窗口关闭？是否怀念用VC写的Win32服务程序？
+翻开JBOSS、Tomcat的发布包，发现他们都使用了一个Open source——Java Service Wrapper。用Java Service Wrapper可以轻松解决我们的需求，让我们的服务程序成为 Win32系统服务。
+当然，在Un/</em>x下也可以使用Java Service Wrapper，可以避免加“&amp;”的粗暴方式，导致每天收到一堆mail，通过Java Service Wrapper提供的日志方式查看运行信息。
+Java Service Wrapper功能很强大，同时支持Windows及Un/*x平台，提供三种方式把你的Java程序包装成系统服务，这里只介绍最简单的一种方式，因这种方式无需对已有的服务程序作任何改变，仅仅增加几个script、配置文件就可以把你的Java服务程序改造成系统服务程序了。
+当然在使用之前需要到<a href="http://sourceforge.net/project/showfiles.php?group_id=39428下载Java" target="_blank">http://sourceforge.net/project/showfiles.php?group_id=39428下载Java</a> Service Wrapper的发布包。
+下面简单介绍一下具体的使用步骤：</p>
+<ol>
+<li>将下载的Java Service Wrapper包解压到本地，目录为{WRAPPER_HOME}；</li>
+<li>服务应用程序名为MyServApp，在目录d:\MyServApp下建立bin、conf、logs、lib目录；并把你的已有应用程序如NioBlockingServer.class拷贝到该目录下；</li>
+<li>将{WRAPPER_HOME}\src\bin\下的遗以下文件拷贝到MyServApp目录下，并重命名。
+{WRAPPER_HOME}\bin\Wrapper.exe  C:\ MyServApp \bin\Wrapper.exe
+{WRAPPER_HOME}\src\bin\App.bat.in  C:\ MyServApp\bin\MyApp.bat
+{WRAPPER_HOME}\src\bin\InstallApp-NT.bat.in  C:\ MyServApp\bin\InstallMyApp-NT.bat
+{WRAPPER_HOME}\src\bin\UninstallApp-NT.bat.in  C:\ MyServApp\bin\UninstallMyApp-NT.bat</li>
+<li>将{WRAPPER_HOME}\lib下的以下文件拷贝到C:\ MyServApp \lib目录下
+{WRAPPER_HOME}\lib\Wrapper.DLL
+{WRAPPER_HOME}\lib\wrapper.jar</li>
+<li>将{WRAPPER_HOME}\src\conf\wrapper.conf.in拷贝到C:\ MyServApp \conf目录下并命名为wrapper.conf；并修改wrapper.conf文件，在其中配置您的应用服务。
+主要修改以下几项即可：
+/#你的JVM位置：
+wrapper.java.command=D:\Sun\j2sdk1.4.0_03\bin\java
+/#运行参数：如：
+wrapper.java.additional.1=-Dprogram.name=run.bat
+/#classpath：
+wrapper.java.classpath.1=../lib/wrapper.jar
+wrapper.java.classpath.2=../bin/.
+/# Java Library Path (location of Wrapper.DLL or libwrapper.so)
+wrapper.java.library.path.1=../lib
+/#MAIN CLASS 此处决定了使用Java Service Wrapper的方式
+wrapper.java.mainclass=org.tanukisoftware.wrapper.WrapperSimpleApp
+/#你的Java应用类
+wrapper.app.parameter.1= NonBlockingServer
+/# 服务名
+wrapper.ntservice.name=NB
+/# Display name of the service
+wrapper.ntservice.displayname=Nio Nonblocking Server
+/# 服务描述
+wrapper.ntservice.description=Nio Nonblocking Server
+其他的配置根据你的需要改变即可</li>
+<li>对以上配置的MyApp.bat进行测试，运行MyApp.bat，就像在Console窗口下运行Tomcat一样；</li>
+<li>对以上配置的服务进行测试，运行C:\ MyServApp\bin\InstallMyApp-NT.bat将把你的应用（此处为NioBlockingServer）安装到Win32系统服务中了。</li>
+<li>打开控制面板－管理程序－服务，看到Nio Nonblocking Server已经在系统服务中了，其他用法就与我们熟悉的Windows服务一样了。
+Tomcat使用的是Java Service Wrapper模式二，这种方式需要对已有的程序进行小的改动，但可以通过Socket端口的方式控制服务程序核心的启动，更加灵活。Java Service Wrapper提供的模式三比较复杂，需要作出更多的编码，我没有研究。
+采用模式一，即可简单有效的把我们的服务程序包装成为系统服务程序，并增强了日志功能，我们可以把MyServApp的几个文件做成模板，每次修改文件名，配置文件就可以了，有精力的朋友更可以做成Eclipse的plugin，鼠标点点就把应用配成服务了。
+附件是一个模板，可以直接修改文件名和配置文件就可以把服务改造了。
+希望本文能对大家有所帮助，当然也申请加分了，我的2分实在不够混的了。 <h1 id="-files-cai9911-ntservicewrappertemplate-rar-http-files-cnblogs-com-cai9911-ntservicewrappertemplate-rar-"><a href="http://files.cnblogs.com/cai9911/NTServiceWrapperTemplate.rar" target="_blank">/Files/cai9911/NTServiceWrapperTemplate.rar</a></h1>
+自己做的一个例子,可以直接拿来修改:
+(写下来备忘)
+主要修改config/wrapper.conf 一个地方:
+wrapper.app.parameter.1= HelloWorld  &lt;要启动的类&gt;
+其他的可以修改应用程序的服务名称等.
+<a href="http://files.cnblogs.com/cai9911/JavaService.rar" target="_blank">/Files/cai9911/JavaService.rar</a>
+分享到： <a href="&quot;分享到新浪微博&quot;"><img src="" alt=""></a> <a href="&quot;分享到腾讯微博&quot;"><img src="" alt=""></a></li>
+</ol>
+<p><a href="http://lbyzx123.iteye.com/blog/258505" title="javascript中如何给二维数组赋值？" target="_blank">javascript中如何给二维数组赋值？</a> | <a href="http://lbyzx123.iteye.com/blog/248209" title="an error has occurred.See error log for more deta." target="_blank">an error has occurred.See error log for ...</a></p>
+<ul>
+<li>2008-09-30 13:40:07</li>
+<li>浏览 4068</li>
+<li><a href="http://lbyzx123.iteye.com/blog/248210#comments" target="_blank">评论(0)</a></li>
+<li><a href="http://www.iteye.com/wiki/blog/248210" target="_blank">相关推荐</a></li>
+</ul>
+<h3 id="-">评论</h3>
+<p><a href=""></a></p>
+<h3 id="-">发表评论</h3>
+<p><a href="http://lbyzx123.iteye.com/login" target="_blank"><img src="" alt=""></a><a href="http://lbyzx123.iteye.com/login" target="_blank">您还没有登录,请您登录后再发表评论</a></p>
+<p><a href="http://lbyzx123.iteye.com/" target="_blank"><img src="&quot;lbyzx123的博客: &quot;" alt="lbyzx123的博客"></a></p>
+<p>lbyzx123</p>
+<ul>
+<li>浏览: 51258 次</li>
+<li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
+<li>来自: 杭州</li>
+<li><img src="" alt=""><h3 id="-http-lbyzx123-iteye-com-blog-user_visits-">最近访客 <a href="http://lbyzx123.iteye.com/blog/user_visits" target="_blank">更多访客&gt;&gt;</a></h3>
+</li>
+</ul>
+<p><a href="http://zhaoyijun.iteye.com/" target="_blank"><img src="&quot;zhaoyijun的博客: &quot;" alt="zhaoyijun的博客"></a></p>
+<p><a href="http://zhaoyijun.iteye.com/" target="_blank">zhaoyijun</a></p>
+<p><a href="http://yang8580330.iteye.com/" target="_blank"><img src="&quot;yang8580330的博客: &quot;" alt="yang8580330的博客"></a></p>
+<p><a href="http://yang8580330.iteye.com/" target="_blank">yang8580330</a>
+<a href="http://bgvhuy38.iteye.com/" target="_blank"><img src="&quot;bgvhuy38的博客: &quot;" alt="bgvhuy38的博客"></a></p>
+<p><a href="http://bgvhuy38.iteye.com/" target="_blank">bgvhuy38</a></p>
+<p><a href="http://taibin.iteye.com/" target="_blank"><img src="&quot;taibin的博客: &quot;" alt="taibin的博客"></a></p>
+<p><a href="http://taibin.iteye.com/" target="_blank">taibin</a></p>
+<h3 id="-">文章分类</h3>
+<ul>
+<li><a href="http://lbyzx123.iteye.com/" target="_blank">全部博客 (93)</a></li>
+<li><a href="http://lbyzx123.iteye.com/category/42284" target="_blank">AJAX (0)</a></li>
+<li><a href="http://lbyzx123.iteye.com/category/42285" target="_blank">J2EE (11)</a></li>
+<li><a href="http://lbyzx123.iteye.com/category/42283" target="_blank">数据库 (14)</a></li>
+<li><a href="http://lbyzx123.iteye.com/category/42286" target="_blank">JAVASCRIPT (16)</a></li>
+<li><a href="http://lbyzx123.iteye.com/category/42287" target="_blank">哲理 (6)</a></li>
+<li><a href="http://lbyzx123.iteye.com/category/42315" target="_blank">开发工具问题 (12)</a></li>
+<li><a href="http://lbyzx123.iteye.com/category/42316" target="_blank">设计模式 (0)</a></li>
+<li><a href="http://lbyzx123.iteye.com/category/44335" target="_blank">ExtJS (10)</a></li>
+<li><a href="http://lbyzx123.iteye.com/category/122708" target="_blank">java (9)</a></li>
+<li><a href="http://lbyzx123.iteye.com/category/137565" target="_blank">测试 (2)</a></li>
+<li><p><a href="http://lbyzx123.iteye.com/category/191171" target="_blank">c++ (1)</a></p>
+<h3 id="-">社区版块</h3>
+</li>
+<li><p><a href="http://lbyzx123.iteye.com/blog/news" target="_blank">我的资讯</a> (0)</p>
+</li>
+<li><a href="http://lbyzx123.iteye.com/blog/post" target="_blank">我的论坛</a> (1)</li>
+<li><a href="http://lbyzx123.iteye.com/blog/solution" target="_blank">我解决的问题</a> (0)</li>
+</ul>
+<h3 id="-">存档分类</h3>
+<ul>
+<li><a href="http://lbyzx123.iteye.com/blog/monthblog/2012-01" target="_blank">2012-01</a> (1)</li>
+<li><a href="http://lbyzx123.iteye.com/blog/monthblog/2011-12" target="_blank">2011-12</a> (4)</li>
+<li><a href="http://lbyzx123.iteye.com/blog/monthblog/2011-11" target="_blank">2011-11</a> (3)</li>
+<li><p><a href="http://lbyzx123.iteye.com/blog/monthblog_more" target="_blank">更多存档...</a></p>
+<h3 id="-">评论排行榜</h3>
+</li>
+<li><p><a href="http://lbyzx123.iteye.com/blog/1139428" title="extjs4 异步树的写法" target="_blank">extjs4 异步树的写法</a></p>
+</li>
+<li><a href="http://lbyzx123.iteye.com/blog/1073789" title="请问一下mysql是不是限制了单个表的容量，能改吗" target="_blank">请问一下mysql是不是限制了单个表的容量， ...</a></li>
+<li><a href="http://lbyzx123.iteye.com/blog/1172418" title="三个故事说穿许多人" target="_blank">三个故事说穿许多人</a></li>
+</ul>
+<h3 id="-">最新评论</h3>
+<ul>
+<li><a href="http://paradigm.iteye.com/" target="_blank">paradigm</a>： 谢谢
+<a href="http://lbyzx123.iteye.com/blog/764985#bc2227490" target="_blank">WebSphere7.0数据源配置与应用程序发布之创建数据源</a></li>
+<li><a href="http://gooderlee.iteye.com/" target="_blank">maozilee</a>： windows下面就用NTFS，没事儿！
+<a href="http://lbyzx123.iteye.com/blog/1073789#bc2218928" target="_blank">请问一下mysql是不是限制了单个表的容量，能改吗</a></li>
+<li><a href="http://lljjssljseye.iteye.com/" target="_blank">lljjssljseye</a>： ...
+<a href="http://lbyzx123.iteye.com/blog/1172418#bc2216979" target="_blank">三个故事说穿许多人</a></li>
+<li><a href="http://lbyzx123.iteye.com/" target="_blank">lbyzx123</a>： hable 写道看不明白啊,能不能加点注释 很简单呀，既然是异 ...
+<a href="http://lbyzx123.iteye.com/blog/1139428#bc2213672" target="_blank">extjs4 异步树的写法</a></li>
+<li><a href="http://hable.iteye.com/" target="_blank">hable</a>： 看不明白啊,能不能加点注释
+<a href="http://lbyzx123.iteye.com/blog/1139428#bc2213623" target="_blank">extjs4 异步树的写法</a>
+声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
+© 2003-2011 ITeye.com. All rights reserved. [ 京ICP证110151号 京公网安备110105010620 ]
+<img src="" alt=""></li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wrapper/">wrapper</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wrapper/" class="label label-primary">wrapper</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-wrapper--使用JavaServiceWrapper把Java程序作为Windows系统服务--IT/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wrapper--使用JavaServiceWrapper把Java程序作为Windows系统服务--IT" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope/">Java Service Wrapper </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-service-wrapper-logging-configuration-properties">Java Service Wrapper - Logging Configuration Properties</h1>
+<p><img src="" alt="World Map">EnglishJapanese (Nihongo)German (Deutsch)</p>
+<p><strong>Please  or</strong></p>
+<ul>
+<li><a href="http://wrapper.tanukisoftware.com/" target="_blank"><img src="" alt="Java Service Wrapper Logo"></a></li>
+<li><a href="http://www.tanukisoftware.com/" target="_blank"><img src="" alt="Tanuki Software Ltd Logo"></a></li>
+</ul>
+<p>Java Service Wrapper is the easiest way to make your product more reliable.</p>
+<ul>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/requestTrial.jsp" target="_blank"><img src="" alt="Free Trial"></a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp" target="_blank"><img src="" alt="Buy Now"></a></li>
+<li><a href="http://www.tanukisoftware.com/" target="_blank">Tanuki Software</a></li>
+<li><p><a href="http://wrapper.tanukisoftware.com/" target="_blank">Java Service Wrapper</a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp" target="_blank">Home</a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Product</a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Overview</a></p>
+</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/product-features.html" target="_blank">Features</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/licenseOverview.html" target="_blank">License</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/faq.html" target="_blank">FAQ</a></li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp" target="_blank">Download</a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp#stable" target="_blank">Stable Release</a></p>
+</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/release-notes.html" target="_blank">Release Notes</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/versions.jsp" target="_blank">Past Releases</a></li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp#purchase" target="_blank">Order</a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp#purchase" target="_blank">Buy now</a></p>
+</li>
+<li><a href="http://www.tanukisoftware.com/en/distributors.php" target="_blank">Distributors</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/licenseOverview.html" target="_blank">License Overview</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/licenseOverview.html#examples" target="_blank">License FAQ</a></li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Documentation</a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Introduction</a></p>
+</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/integrate.html" target="_blank">Integration Methods</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/launch.html" target="_blank">Launching your Application</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html" target="_blank">Configuration Properties</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/javadocs.html" target="_blank">Java API</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/i18n.html" target="_blank">Localization / i18n</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/security-model.html" target="_blank">Security Model</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/jmx.html" target="_blank">JMX Control</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/example.html" target="_blank">TestWrapper Application</a></li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Support</a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/debugging.html" target="_blank">Debugging</a></p>
+</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/troubleshooting.html" target="_blank">Troubleshooting</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/howto.html" target="_blank">HOWTO</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/qna.html" target="_blank">Questions &amp; Answers</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/faq.html" target="_blank">FAQ</a></li>
+<li><a href="http://sourceforge.net/tracker/?group_id=39428" target="_blank">Issue Tracking</a></li>
+<li><a href="http://sourceforge.net/mail/?group_id=39428" target="_blank">Maling List</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Get Support</a></li>
+<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank">Community</a></p>
+</li>
+<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank">SourceForge Project</a></p>
+</li>
+<li><a href="http://sourceforge.net/svn/?group_id=39428" target="_blank">Source Repository</a></li>
+<li><p><a href="http://www.tanukisoftware.com/en/" target="_blank">About us</a></p>
+</li>
+<li><p><a href="http://www.tanukisoftware.com/en/company.php" target="_blank">Company Profile</a></p>
+</li>
+<li><a href="http://www.tanukisoftware.com/en/distributors.php" target="_blank">Distributors</a></li>
+<li><a href="http://www.tanukisoftware.com/en/customers.php" target="_blank">Customers</a></li>
+<li><a href="http://www.tanukisoftware.com/en/contact.php" target="_blank">Contact us</a></li>
+<li><h2 id="properties">Properties</h2>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html" target="_blank">Configuration Overview</a></p>
+</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html#category" target="_blank">List by Category</a></li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html#name" target="_blank">List by Name</a></p>
+</li>
+<li><h2 id="currently-logged-on-">Currently logged on:</h2>
+</li>
+<li><p>1 users, 100 guests</p>
+</li>
+<li><h2 id="customers">Customers</h2>
+</li>
+</ul>
+<p>Logging Configuration Properties <a href=""></a> # Logging Configuration Properties Logging properties are used to configure how where the Java Service Wrapper logs internal output as well as JVM output which would normally show up in the console used to launch a Java application. Wrapper Logging properties do not in any way control nor replace Logging tools within the Java application.</p>
+<p>[General/Common]</p>
+<ul>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-adviser.html" target="_blank">wrapper.adviser</a> (3.1.0)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-debug.html" target="_blank">wrapper.debug</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#action" target="_blank">wrapper.filter.action.<n></a> (3.0.0)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#allow-wildcards" target="_blank">wrapper.filter.allow_wildcards.<n></a> (3.5.5)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#message" target="_blank">wrapper.filter.message.<n></a> (3.5.0)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-filter-x-n.html#trigger" target="_blank">wrapper.filter.trigger.<n></a> (3.0.0)</li>
+</ul>
+<p>[Console]</p>
+<ul>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-flush.html" target="_blank">wrapper.console.flush</a> (3.2.0)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-format.html" target="_blank">wrapper.console.format</a></li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-loglevel.html" target="_blank">wrapper.console.loglevel</a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-x-to-stderr.html" target="_blank">wrapper.console.error_to_stderr</a> (3.5.3)</p>
+</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-x-to-stderr.html" target="_blank">wrapper.console.fatal_to_stderr</a> (3.5.3)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-console-x-to-stderr.html" target="_blank">wrapper.console.warn_to_stderr</a> (3.5.3)</li>
+</ul>
+<p>[Command]</p>
+<ul>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-java-command-loglevel.html" target="_blank">wrapper.java.command.loglevel</a> (3.1.2)</li>
+</ul>
+<p>[Log File]</p>
+<ul>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile.html" target="_blank">wrapper.logfile</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-format.html" target="_blank">wrapper.logfile.format</a> (2.2.5)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-inactivity-timeout.html" target="_blank">wrapper.logfile.inactivity.timeout</a> (3.2.0)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-loglevel.html" target="_blank">wrapper.logfile.loglevel</a> (2.2.5)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-maxfiles.html" target="_blank">wrapper.logfile.maxfiles</a> (2.2.5)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-maxsize.html" target="_blank">wrapper.logfile.maxsize</a> (2.2.5)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-purge-pattern.html" target="_blank">wrapper.logfile.purge.pattern</a> (3.3.8)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-purge-sort.html" target="_blank">wrapper.logfile.purge.sort</a> (3.3.8)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logfile-rollmode.html" target="_blank">wrapper.logfile.rollmode</a> (3.2.0)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-umask.html#x-umask" target="_blank">wrapper.logfile.umask</a> (3.2.0)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-log-lf-delay-threshold.html" target="_blank">wrapper.log.lf_delay.threshold</a> (3.5.10)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-log-warning-threshold.html" target="_blank">wrapper.log.warning.threshold</a> (3.5.8)</li>
+</ul>
+<p>[Log-Dialog]</p>
+<ul>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-enable.html" target="_blank">wrapper.logdialog.enable</a> (3.3.1)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-format.html" target="_blank">wrapper.logdialog.format</a> (3.3.1)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-lines.html" target="_blank">wrapper.logdialog.lines</a> (3.3.1)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-logdialog-loglevel.html" target="_blank">wrapper.logdialog.loglevel</a> (3.3.1)</li>
+</ul>
+<p>[Syslog]</p>
+<ul>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-facility.html" target="_blank">wrapper.syslog.facility</a> (3.2.1)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-ident.html" target="_blank">wrapper.syslog.ident</a> (3.2.0)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-local-host.html" target="_blank">wrapper.syslog.local.host</a> (3.5.0)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-loglevel.html" target="_blank">wrapper.syslog.loglevel</a> (2.2.5)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-remote-host.html" target="_blank">wrapper.syslog.remote.host</a> (3.5.0)</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/prop-syslog-remote-port.html" target="_blank">wrapper.syslog.remote.port</a> (3.5.0)</li>
+<li><a href="http://wrapper.tanukisoftware.com/" target="_blank"><img src="" alt=""></a></li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Product</a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/product-overview.html" target="_blank">Overview</a></p>
+</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/product-features.html" target="_blank">Features</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/download.jsp#stable" target="_blank">Download</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/accountLicenses.jsp#purchase" target="_blank">Buy Now</a></li>
+<li><a href="http://www.tanukisoftware.com/en/distributors.php" target="_blank">Distribuitors</a></li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Documentation</a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/introduction.html" target="_blank">Introduction</a></p>
+</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/integrate.html" target="_blank">Integration Methods</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/properties.html" target="_blank">Configuration Properties</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/javadocs.html" target="_blank">Java API</a></li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Support</a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/debugging.html" target="_blank">Debugging</a></p>
+</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/troubleshooting.html" target="_blank">Troubleshooting</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/qna.html" target="_blank">Questions &amp; Answers</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/faq.html" target="_blank">FAQ</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/english/support.jsp" target="_blank">Get Support</a></li>
+<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank">Community</a></p>
+</li>
+<li><p><a href="http://sourceforge.net/projects/wrapper/" target="_blank"><img src="" alt="SourceForge Project"></a></p>
+</li>
+<li><p><a href="http://wrapper.tanukisoftware.com/doc/english/" target="_blank">English</a></p>
+</li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/japanese/" target="_blank">日本語</a></li>
+<li><a href="http://wrapper.tanukisoftware.com/doc/german/" target="_blank">Deutsch</a>
+Copyright (c) 2004-2011, Tanuki Software, Ltd. All Rights Reserved.</li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/wrapper/">wrapper</a></li></span></span> | <span class="tags">Tagged <a href="/tags/wrapper/" class="label label-primary">wrapper</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-wrapper--JavaServiceWrapper-LoggingConfigurationPrope" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--FTP的主动模式/">FTP的主动模式</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--FTP的主动模式/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="ftp-">FTP的主动模式</h1>
+<p>FTP的主动模式(active mode)和被动模式(passive mode)：(转)</p>
+<p>FTP的主动模式(active mode)和被动模式(passive mode)：(转)</p>
+<p>2010-03-01 23:57
+大多数的TCP服务是使用单个的连接，一般是客户向服务器的一个周知端口发起连接，然后使用这个连接进行通讯。但是，FTP协议却有所不同，它使用双向的多个连接 ，而且使用的端口很难预计。一般，FTP连接包括：
+一个控制连接 (control connection)
+这个连接用于传递客户端的命令和服务器端对命令的响应。它使用服务器的21端口，生存期是整个FTP会话时间。
+几个数据连接 (data connection)
+这些连接用于传输文件和其它数据，例如：目录列表等。这种连接在需要数据传输时建立，而一旦数据传输完毕就关闭，每次使用的端口也不一定相同。而且，数据 连接既可能是客户端发起的，也可能是服务器端发起的。
+在FTP协议中，控制连接使用周知端口21 ，因此使用ISA的IP PACKET FILTER就可以这种连接进行很好的安全保护。相反，数据传输连接的目的端口通常实现无法知道，因此处理这样的端口转发非常困难。F</p>
+<p>TP协议使用一个标准的端口21作为ftp-data端口，但是这个端口只用于连接的源地址是服务器端的情况，在这个端口上根本就没有监听进程。</p>
+<p>FTP的数据连接和控制连接的方向一般是相反的，也就是说，是服务器向客户端发起一个用于数据传输的连接。连接的端口是由服务器端和客户端协商确定的。FTP协议 的这个特征对ISA 转发以及防火墙和NAT的配置增加了很多困难。
+除此之外，还有另外一种FTP模式，叫做被动模式 (passive mod)。在这种模式下，数据连接是由客户程序发起的，和刚才讨论过的模式(我们可以叫做主动模式 )相反。</p>
+<p>是否采取被动模式取决于客户程序，在ftp命令行中使用passive命令就可以关闭/打开被动模式。</p>
+<p><strong>iptables**</strong>中配置vsftp**</p>
+<p>问题：配置iptables后， vsftpd不能用。常见现象是能够登录到服务器，LIST列目录失败(超时)。</p>
+<p>分析：</p>
+<p>主动模式 下，客户连接 TCP/21，服务器通过 TCP/20 连接客户的随机端口 </p>
+<p>————这种情况下，通过状态防火墙可以解决 iptables -A INPUT -m state --state NEW,RELATED,ESTABLISHED -j ACCEPT
+被动模式 下，客户连接 TCP/21，客户再通过其他端口连接服务器的随机端口</p>
+<p>卡住的原因，是因为服务器在被动模式下没有打开临时端口让 client 连过来，因此需要几个条件</p>
+<p>1、client 没有防火墙时，用主动模式连接即可
+2、server 没有防火墙时，用被动模式即可
+3、双方都有防火墙时，vsftpd 设置被动模式高端口范围，server 打开那段范围，client 用被动模式连接即可
+4、加载 ip_conntrack_ftp 模块，使 server 支持 connection tracking，支持临时打洞，client 用被动模式即可
+5、server 使用 ip_conntrack_ftp、client 使用 ip_conntrack_ftp 和 ip_nat_ftp，支持临时打洞和临时 NAT 穿越打洞，双方使用主动或被动模式均可</p>
+<ul>
+<li>“打洞”的配置说明：</li>
+<li>优点：不影响ftp配置；缺点： 客户会感觉到连接有些延迟。原因参见ip_conntract的实现原理</li>
+</ul>
+<p>在/etc/modprobe.conf中添加
+alias ip_conntrack ip_conntract_ftp ip_nat_ftp</p>
+<p>在/etc/rc.local中添加</p>
+<p>/sbin/modprobe ip_conntract
+/sbin/modprobe  ip_conntrack_ftp
+/sbin/modprobe  ip_nat_ftp</p>
+<p>这个作用就是完成上面所说的“临时打洞”的方法。</p>
+<ul>
+<li>限制被动模式连接端口的配置说明</li>
+<li>优点：对连接速度没有影响。缺点： 限制了被动模式下，客户端并发连接的数量。</li>
+</ul>
+<p>在/etc/vsftpd/vsftpd.conf中添加
+pasv_min_port=2222
+pasv_max_port=2225</p>
+<p>iptables中开放这段端口</p>
+<p>-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 21 -j ACCEPT
+-A INPUT -p tcp --dport 2222:2225 -j ACCEPT</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ftp/">ftp</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ftp/" class="label label-primary">ftp</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-ftp--FTP的主动模式/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ftp--FTP的主动模式" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1247,196 +1781,6 @@ public class HelloWorld {
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-webservice-CXF--CXF获取客户端IP解决WebServiceContext为null问题/">CXF获取客户端IP(解决WebServiceContext为null问题)</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-webservice-CXF--CXF获取客户端IP解决WebServiceContext为null问题/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="cxf-ip-webservicecontext-null-">CXF获取客户端IP(解决WebServiceContext为null问题)</h1>
-<p>网络上很多文章都是这样配的：
-1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
- @Resource</p>
-<p>private</p>
-<p>WebServiceContext wscontext;</p>
-<p>public</p>
-<p>String getIP(){</p>
-<p>MessageContext ctx = wscontext.getMessageContext();</p>
-<p>HttpServletRequest request = (HttpServletRequest)ctx.ge(AbstractHTTPDestination.HTTP_REQUEST);</p>
-<p>return</p>
-<p>request.getRemoteAddr();</p>
-<p>}</p>
-<p>但是在我测试的过程中，发现如果把这段代码写在aop切点中，wscontext就是null，如果写在普通的实现类，就可以正常获取。其实很多帖子也说到null的问题，但最后都没解决。</p>
-<p>现在在<a href="http://www.javatips.net/blog/2012/03/getting-ip-address-using-cxf" target="_blank">这里</a>发现另一种方法，经测试完全有效:
-1</p>
-<p>2
-3 Message message = PhaseInterceptorChain.getCurrentMessage();</p>
-<p>HttpServletRequest httprequest = (HttpServletRequest)message.get(AbstractHTTPDestination.HTTP_REQUEST);
-return</p>
-<p>httprequest.getRemoteAddr();
-来源： <a href="[https://linchunyu.info/81/cxf_fetch_request_ip.html](https://linchunyu.info/81/cxf_fetch_request_ip.html)">[https://linchunyu.info/81/cxf_fetch_request_ip.html](https://linchunyu.info/81/cxf_fetch_request_ip.html)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/webservice/">webservice</a></li></span><span class="breadcrumb"><li><a href="/categories/webservice/">webservice</a></li><li><a href="/categories/webservice/CXF/">CXF</a></li></span></span> | <span class="tags">Tagged <a href="/tags/CXF/" class="label label-primary">CXF</a><a href="/tags/webservice/" class="label label-success">webservice</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-webservice-CXF--CXF获取客户端IP解决WebServiceContext为null问题/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-webservice-CXF--CXF获取客户端IP解决WebServiceContext为null问题" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--FTP的主动模式/">FTP的主动模式</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--FTP的主动模式/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="ftp-">FTP的主动模式</h1>
-<p>FTP的主动模式(active mode)和被动模式(passive mode)：(转)</p>
-<p>FTP的主动模式(active mode)和被动模式(passive mode)：(转)</p>
-<p>2010-03-01 23:57
-大多数的TCP服务是使用单个的连接，一般是客户向服务器的一个周知端口发起连接，然后使用这个连接进行通讯。但是，FTP协议却有所不同，它使用双向的多个连接 ，而且使用的端口很难预计。一般，FTP连接包括：
-一个控制连接 (control connection)
-这个连接用于传递客户端的命令和服务器端对命令的响应。它使用服务器的21端口，生存期是整个FTP会话时间。
-几个数据连接 (data connection)
-这些连接用于传输文件和其它数据，例如：目录列表等。这种连接在需要数据传输时建立，而一旦数据传输完毕就关闭，每次使用的端口也不一定相同。而且，数据 连接既可能是客户端发起的，也可能是服务器端发起的。
-在FTP协议中，控制连接使用周知端口21 ，因此使用ISA的IP PACKET FILTER就可以这种连接进行很好的安全保护。相反，数据传输连接的目的端口通常实现无法知道，因此处理这样的端口转发非常困难。F</p>
-<p>TP协议使用一个标准的端口21作为ftp-data端口，但是这个端口只用于连接的源地址是服务器端的情况，在这个端口上根本就没有监听进程。</p>
-<p>FTP的数据连接和控制连接的方向一般是相反的，也就是说，是服务器向客户端发起一个用于数据传输的连接。连接的端口是由服务器端和客户端协商确定的。FTP协议 的这个特征对ISA 转发以及防火墙和NAT的配置增加了很多困难。
-除此之外，还有另外一种FTP模式，叫做被动模式 (passive mod)。在这种模式下，数据连接是由客户程序发起的，和刚才讨论过的模式(我们可以叫做主动模式 )相反。</p>
-<p>是否采取被动模式取决于客户程序，在ftp命令行中使用passive命令就可以关闭/打开被动模式。</p>
-<p><strong>iptables**</strong>中配置vsftp**</p>
-<p>问题：配置iptables后， vsftpd不能用。常见现象是能够登录到服务器，LIST列目录失败(超时)。</p>
-<p>分析：</p>
-<p>主动模式 下，客户连接 TCP/21，服务器通过 TCP/20 连接客户的随机端口 </p>
-<p>————这种情况下，通过状态防火墙可以解决 iptables -A INPUT -m state --state NEW,RELATED,ESTABLISHED -j ACCEPT
-被动模式 下，客户连接 TCP/21，客户再通过其他端口连接服务器的随机端口</p>
-<p>卡住的原因，是因为服务器在被动模式下没有打开临时端口让 client 连过来，因此需要几个条件</p>
-<p>1、client 没有防火墙时，用主动模式连接即可
-2、server 没有防火墙时，用被动模式即可
-3、双方都有防火墙时，vsftpd 设置被动模式高端口范围，server 打开那段范围，client 用被动模式连接即可
-4、加载 ip_conntrack_ftp 模块，使 server 支持 connection tracking，支持临时打洞，client 用被动模式即可
-5、server 使用 ip_conntrack_ftp、client 使用 ip_conntrack_ftp 和 ip_nat_ftp，支持临时打洞和临时 NAT 穿越打洞，双方使用主动或被动模式均可</p>
-<ul>
-<li>“打洞”的配置说明：</li>
-<li>优点：不影响ftp配置；缺点： 客户会感觉到连接有些延迟。原因参见ip_conntract的实现原理</li>
-</ul>
-<p>在/etc/modprobe.conf中添加
-alias ip_conntrack ip_conntract_ftp ip_nat_ftp</p>
-<p>在/etc/rc.local中添加</p>
-<p>/sbin/modprobe ip_conntract
-/sbin/modprobe  ip_conntrack_ftp
-/sbin/modprobe  ip_nat_ftp</p>
-<p>这个作用就是完成上面所说的“临时打洞”的方法。</p>
-<ul>
-<li>限制被动模式连接端口的配置说明</li>
-<li>优点：对连接速度没有影响。缺点： 限制了被动模式下，客户端并发连接的数量。</li>
-</ul>
-<p>在/etc/vsftpd/vsftpd.conf中添加
-pasv_min_port=2222
-pasv_max_port=2225</p>
-<p>iptables中开放这段端口</p>
-<p>-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
--A INPUT -p tcp -m state --state NEW -m tcp --dport 21 -j ACCEPT
--A INPUT -p tcp --dport 2222:2225 -j ACCEPT</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ftp/">ftp</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ftp/" class="label label-primary">ftp</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-ftp--FTP的主动模式/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ftp--FTP的主动模式" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-webservice--Webservicesoapwsdl区别之个人见解/">Webservice soap wsdl区别之个人见解</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-webservice--Webservicesoapwsdl区别之个人见解/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="webservice-soap-wsdl-">Webservice soap wsdl区别之个人见解</h1>
-<p><img src="" alt=""><img src="" alt=""> <img src="" alt=""> <a href="http://www.wudongqi.com/blogedit.asp?id=652" title="编辑该日志" target="_blank"><img src="" alt=""></a> <a href="http://www.wudongqi.com/blogedit.asp?action=del&amp;id=652" target="_blank"><img src="" alt=""></a>
-    ● Web Service实现业务诉求：Web Service是真正“办事”的那个，提供一种办事接口的统称。
-    ● WSDL提供“能办的事的文档说明”：对要提供的服务的一种描述格式。我想帮你的忙，但是我要告诉你我都能干什么，以及干这些事情需要的参数类型。
-    ● SOAP提供“请求”的规范：向服务接口传递请求的格式，包括方法和参数等。你想让人家办事，总得告诉人家你想干什么吧，SOAP就是定义这个“请求”的格式的，按照SOAP定义的“请求”格式“书写”请求就可以保证Web Service能够正确的解读你想让它干什么以及你为它提供了什么参数。在这个请求中，你需要描述的主要问题有：向哪个Web Service发送请求，请求的参数类型、参数值、返回值类型。这些都“填写”完毕，也就完成了符合SOAP规范的SOAP消息。
-    wsdl和soap虽然是web service的两大标准，但是两者并没有必然的联系，都可以独立使用。
-    wsdl提供了一个统一的接口，目前已经成为一个国际上公认的标准，通过wsdl提供的接口可以访问不同类型的资源（如java、c/#、C、C、C++等），因为wsdl是基于xml，与语言平台无关的。另外wsdl提供了binding和service元素，用以绑定接口到具体的服务，实现了接口与实现的分离。
-    soap（简单对象访问协议）是一种基于http的传输协议，用来访问远程服务
-    wsdl与soap的关系在于：wsdl绑定服务的时候可以设定使用的协议，协议可以是soap、http、smtp、ftp等任何一种传输协议，除此以外wsdl还可以绑定jms、ejb及local java等等，不过都是需要对binding和service元素做扩展的，而且需要扩展服务器的功能以支持这种扩展
-    soap协议是一种请求和应答协议规范，而http是web传输协议，soap的传输是可以基于http的，但也可以基于其他的传输协议，如ftp、smtp等。
-    简单对象访问协议（SOAP）是W3C组织的一个Note, 它描述了一种在分散的或分布式的环境中如何交换信息的轻量级协议。SOAP是一个基于XML的协议，它包括三个部分：SOAP封装(Envelop)，封装定义了一个描述消息中的内容是什么，是谁发送的，谁应当接受并处理它以及如何处理它们的框架；SOAP编码规则（Encoding Rules），用于表示应用程序需要使用的数据类型的实例；SOAP RPC表示(RPC Representation)，表示远程过程调用和应答的协定；SOAP可以和多种传输协议绑定（Binding），使用底层协议交换信息。在这个文档中，目前只定义了SOAP如何和HTTP以及HTTP扩展进行绑定的框架。
-    SOAP是个通信协议， SOAP在HTTP协议的基础上，把编写成XML的REQUEST参数, 放在HTTP BODY上提交个WEB SERVICE服务器(SERVLET，ASP什么的) 处理完成后，结果也写成XML作为RESPONSE送回用户端， 为了使用户端和WEB SERVICE可以相互对应，可以使用WSDL作为这种通信方式的描述文件，利用WSDL工具可以自动生成WS和用户端的框架文件，SOAP具备把复杂对象序列化捆绑到XML里去的能力。
-    SOAP的前身是RPC, 就是远程呼叫处理的协议，这个协议安全性不是很好，多数防火墙都会阻挡RPC的通信包，而SOAP则使用HTTP协议作为基本的协议，使用端口80使得SOAP可以透过防火墙，完成RPC的功能。
-    SOAP协议和HTTP协议一样，都是底层的通信协议，只是请求包的格式不同而已，SOAP包是XML格式的，现在我们编写WEB SERVICE不需要深入理解SOAP也没关系。如果SERVICE和CLIENT在同样的环境下使用SOAP，由于一般情况下都有自动生成SOAP程序框架的工具，因此不知道细节也没关系. 可是, 如果CLIENT和SERVICE的环境不同，比如说JAVA的Client和.NET的SERVICE进行通信，或者是VB CLIENT和TOMCAT下的JAVA SERVICE通信，还是要知道一点细节为好. 特别是, WSDL或者UDDI都不是标准，如果不让用就只好手工配制SOAP MESSAGE啦。</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/webservice/">webservice</a></li></span></span> | <span class="tags">Tagged <a href="/tags/webservice/" class="label label-primary">webservice</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:27:47"datetime="2014-03-07 10:27:47"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-webservice--Webservicesoapwsdl区别之个人见解/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-webservice--Webservicesoapwsdl区别之个人见解" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -1507,7 +1851,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 18:24:57</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:05:46</em></span></div>
 </div>
 <div class="clearfix"></div>
 
