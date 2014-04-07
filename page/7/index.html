@@ -299,6 +299,959 @@ ssl_session_timeout 10m;</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--ApacheFTP实用代码/">Apache FTP 实用代码</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--ApacheFTP实用代码/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="apache-ftp-">Apache FTP 实用代码</h1>
+<h2 id="-apache-commons-net-ftputil-">结合网上两个使用apache commons-net包的两个优秀的代码，结合实际，写出了如下的FtpUtil，供参考！</h2>
+<p>参考网址：<a href="http://www.iteye.com/topic/173786" target="_blank"><a href="http://www.iteye.com/topic/173786">http://www.iteye.com/topic/173786</a></a>，<a href="http://hi.baidu.com/victorlin23/blog/item/edc62a35dbae8a1a91ef3947.html" target="_blank"><a href="http://hi.baidu.com/victorlin23/blog/item/edc62a35dbae8a1a91ef3947.html">http://hi.baidu.com/victorlin23/blog/item/edc62a35dbae8a1a91ef3947.html</a></a></p>
+<h2 id="-"> </h2>
+<p>package com.pccw.portlet.publictools;</p>
+<p>import java.io.File;</p>
+<p>import java.io.FileOutputStream;</p>
+<p>import java.io.IOException;</p>
+<p>import java.io.InputStream;</p>
+<p>import java.io.OutputStream;</p>
+<p>import java.io.RandomAccessFile;</p>
+<p>import java.net.SocketException;</p>
+<p>import java.util.ArrayList;</p>
+<p>import java.util.List;</p>
+<p>import org.apache.commons.logging.Log;</p>
+<p>import org.apache.commons.logging.LogFactory;</p>
+<p>import org.apache.commons.net.ftp.FTP;</p>
+<p>import org.apache.commons.net.ftp.FTPClient;</p>
+<p>import org.apache.commons.net.ftp.FTPFile;</p>
+<p>import org.apache.commons.net.ftp.FTPReply;</p>
+<p>//<em>/</em></p>
+<p> /* FTP工具类</p>
+<p> /*</p>
+<p> /* @author WangXianfeng 1:16:50 PM Jul 16, 2011</p>
+<p> /*/</p>
+<p>public class FtpUtil {</p>
+<pre><code>   private FTPClient ftpClient;
+
+   private static Log log = LogFactory.getLog(FtpUtil.class);
+
+
+
+   //*/*
+
+    /* 根路径为&quot;/&quot;,如果需要链接服务器之后跳转到路径，则在path中定义
+
+    /* @param ftpConfig
+
+    /* @throws SocketException
+
+    /* @throws IOException
+
+    /*/
+
+   public boolean connectServer(FtpConfig ftpConfig) throws SocketException,
+
+                 IOException {
+
+          String server = ftpConfig.getServer();
+
+          int port = ftpConfig.getPort();
+
+          String user = ftpConfig.getUsername();
+
+          String password = ftpConfig.getPassword();
+
+          String path = ftpConfig.getPath();
+
+          return connectServer(server, port, user, password, path);
+
+   }
+
+   //*/*
+
+    /* 连接ftp服务器
+
+    /* @param server 服务器ip
+
+    /* @param port 端口，通常为21
+
+    /* @param user 用户名
+
+    /* @param password 密码
+
+    /* @param path 进入服务器之后的默认路径
+
+    /* @return 连接成功返回true，否则返回false
+
+    /* @throws SocketException
+
+    /* @throws IOException
+
+    /*/
+
+   public boolean connectServer(String server, int port, String user,
+
+                 String password, String path) throws SocketException, IOException {
+
+          ftpClient = new FTPClient();
+
+          ftpClient.connect(server, port);
+
+          ftpClient.setControlEncoding(&quot;GBK&quot;);
+
+          log.info(&quot;Connected to &quot; + server + &quot;.&quot;);
+
+          log.info(&quot;FTP server reply code:&quot; + ftpClient.getReplyCode());
+
+          if (FTPReply.isPositiveCompletion(ftpClient.getReplyCode())) {
+
+                 if (ftpClient.login(user, password)) {
+
+                        // Path is the sub-path of the FTP path
+
+                        if (path.length() != 0) {
+
+                               ftpClient.changeWorkingDirectory(path);
+
+                        }
+
+                        return true;
+
+                 }
+
+          }
+
+          disconnect();
+
+          return false;
+
+   }
+
+   //*/*
+
+    /* 断开与远程服务器的连接
+
+    /* @throws IOException
+
+    /*/
+
+   public void disconnect() throws IOException {
+
+          if (ftpClient.isConnected()) {
+
+                 ftpClient.disconnect();
+
+          }
+
+   }
+
+
+
+   //*/*
+
+    /* 从FTP服务器上下载文件,支持断点续传，下载百分比汇报
+
+    /* @param remote 远程文件路径及名称
+
+    /* @param local 本地文件完整绝对路径
+
+    /* @return 下载的状态
+
+    /* @throws IOException
+
+    /*/
+
+   public DownloadStatus download(String remote, String local)
+
+                 throws IOException {
+
+          // 设置被动模式
+
+          ftpClient.enterLocalPassiveMode();
+
+          // 设置以二进制方式传输
+
+          ftpClient.setFileType(FTP.BINARY_FILE_TYPE);
+
+          DownloadStatus result;
+
+
+
+          // 检查远程文件是否存在
+
+          FTPFile[] files = ftpClient.listFiles(new String(
+
+                        remote.getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+          if (files.length != 1) {
+
+                 log.info(&quot;远程文件不存在&quot;);
+
+                 return DownloadStatus.RemoteFileNotExist;
+
+          }
+
+
+
+          long lRemoteSize = files[0].getSize();
+
+          File f = new File(local);
+
+          // 本地存在文件，进行断点下载
+
+          if (f.exists()) {
+
+                 long localSize = f.length();
+
+                 // 判断本地文件大小是否大于远程文件大小
+
+                 if (localSize &gt;= lRemoteSize) {
+
+                        log.info(&quot;本地文件大于远程文件，下载中止&quot;);
+
+                        return DownloadStatus.LocalFileBiggerThanRemoteFile;
+
+                 }
+
+
+
+                 // 进行断点续传，并记录状态
+
+                 FileOutputStream out = new FileOutputStream(f, true);
+
+                 ftpClient.setRestartOffset(localSize);
+
+                 InputStream in = ftpClient.retrieveFileStream(new String(remote
+
+                               .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+                 byte[] bytes = new byte[1024];
+
+                 long step = lRemoteSize / 100;
+
+                 step = step==0?1:step;//文件过小，step可能为0
+
+                 long process = localSize / step;
+
+                 int c;
+
+                 while ((c = in.read(bytes)) != -1) {
+
+                        out.write(bytes, 0, c);
+
+                        localSize += c;
+
+                        long nowProcess = localSize / step;
+
+                        if (nowProcess &gt; process) {
+
+                               process = nowProcess;
+
+                               if (process % 10 == 0){
+
+                                      log.info(&quot;下载进度：&quot; + process);
+
+                               }
+
+                        }
+
+                 }
+
+                 in.close();
+
+                 out.close();
+
+                 boolean isDo = ftpClient.completePendingCommand();
+
+                 if (isDo) {
+
+                        result = DownloadStatus.DownloadFromBreakSuccess;
+
+                 } else {
+
+                        result = DownloadStatus.DownloadFromBreakFailed;
+
+                 }
+
+          } else {
+
+                 OutputStream out = new FileOutputStream(f);
+
+                 InputStream in = ftpClient.retrieveFileStream(new String(remote
+
+                               .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+                 byte[] bytes = new byte[1024];
+
+                 long step = lRemoteSize / 100;
+
+                 step = step==0?1:step;//文件过小，step可能为0
+
+                 long process = 0;
+
+                 long localSize = 0L;
+
+                 int c;
+
+                 while ((c = in.read(bytes)) != -1) {
+
+                        out.write(bytes, 0, c);
+
+                        localSize += c;
+
+                        long nowProcess = localSize / step;
+
+                        if (nowProcess &gt; process) {
+
+                               process = nowProcess;
+
+                               if (process % 10 == 0){
+
+                                      log.info(&quot;下载进度：&quot; + process);
+
+                               }
+
+                        }
+
+                 }
+
+                 in.close();
+
+                 out.close();
+
+                 boolean upNewStatus = ftpClient.completePendingCommand();
+
+                 if (upNewStatus) {
+
+                        result = DownloadStatus.DownloadNewSuccess;
+
+                 } else {
+
+                        result = DownloadStatus.DownloadNewFailed;
+
+                 }
+
+          }
+
+          return result;
+
+   }
+
+
+
+   public boolean changeDirectory(String path) throws IOException {
+
+          return ftpClient.changeWorkingDirectory(path);
+
+   }
+
+
+
+   public boolean createDirectory(String pathName) throws IOException {
+
+          return ftpClient.makeDirectory(pathName);
+
+   }
+
+
+
+   public boolean removeDirectory(String path) throws IOException {
+
+          return ftpClient.removeDirectory(path);
+
+   }
+
+
+
+   public boolean removeDirectory(String path, boolean isAll)
+
+                 throws IOException {
+
+
+
+          if (!isAll) {
+
+                 return removeDirectory(path);
+
+          }
+
+
+
+          FTPFile[] ftpFileArr = ftpClient.listFiles(path);
+
+          if (ftpFileArr == null || ftpFileArr.length == 0) {
+
+                 return removeDirectory(path);
+
+          }
+
+          //  
+
+          for (FTPFile ftpFile : ftpFileArr) {
+
+                 String name = ftpFile.getName();
+
+                 if (ftpFile.isDirectory()) {
+
+                        log.info(&quot;/* [sD]Delete subPath [&quot; + path + &quot;/&quot; + name + &quot;]&quot;);
+
+                        if (!ftpFile.getName().equals(&quot;.&quot;)
+
+                                      &amp;&amp; (!ftpFile.getName().equals(&quot;..&quot;))) {
+
+                               removeDirectory(path + &quot;/&quot; + name, true);
+
+                        }
+
+                 } else if (ftpFile.isFile()) {
+
+                        log.info(&quot;/* [sF]Delete file [&quot; + path + &quot;/&quot; + name + &quot;]&quot;);
+
+                        deleteFile(path + &quot;/&quot; + name);
+
+                 } else if (ftpFile.isSymbolicLink()) {
+
+
+
+                 } else if (ftpFile.isUnknown()) {
+
+
+
+                 }
+
+          }
+
+          return ftpClient.removeDirectory(path);
+
+   }
+
+
+
+   //*/*
+
+    /* 查看目录是否存在
+
+    /* @param path
+
+    /* @return
+
+    /* @throws IOException
+
+    /*/
+
+   public boolean isDirectoryExists(String path) throws IOException {
+
+          boolean flag = false;
+
+          FTPFile[] ftpFileArr = ftpClient.listFiles(path);
+
+          for (FTPFile ftpFile : ftpFileArr) {
+
+                 if (ftpFile.isDirectory()
+
+                               &amp;&amp; ftpFile.getName().equalsIgnoreCase(path)) {
+
+                        flag = true;
+
+                        break;
+
+                 }
+
+          }
+
+          return flag;
+
+   }
+
+
+
+   //*/*
+
+    /* 得到某个目录下的文件名列表
+
+    /* @param path
+
+    /* @return
+
+    /* @throws IOException
+
+    /*/
+
+   public List&lt;String&gt; getFileList(String path) throws IOException {
+
+          // listFiles return contains directory and file, it&#39;s FTPFile instance
+
+          // listNames() contains directory, so using following to filer
+
+          // directory.
+
+          // String[] fileNameArr = ftpClient.listNames(path);
+
+          FTPFile[] ftpFiles = ftpClient.listFiles(path);
+
+
+
+          List&lt;String&gt; retList = new ArrayList&lt;String&gt;();
+
+          if (ftpFiles == null || ftpFiles.length == 0) {
+
+                 return retList;
+
+          }
+
+          for (FTPFile ftpFile : ftpFiles) {
+
+                 if (ftpFile.isFile()) {
+
+                        retList.add(ftpFile.getName());
+
+                 }
+
+          }
+
+          return retList;
+
+   }
+
+
+
+   public boolean deleteFile(String pathName) throws IOException {
+
+          return ftpClient.deleteFile(pathName);
+
+   }
+
+
+
+   //*/*
+
+    /* 上传文件到FTP服务器，支持断点续传
+
+    /* @param local 本地文件名称，绝对路径
+
+    /* @param remote 远程文件路径，按照Linux上的路径指定方式，支持多级目录嵌套，支持递归创建不存在的目录结构
+
+    /* @return 上传结果
+
+    /* @throws IOException
+
+    /*/
+
+   public UploadStatus upload(String local, String remote) throws IOException {
+
+          // 设置PassiveMode传输
+
+          ftpClient.enterLocalPassiveMode();
+
+          // 设置以二进制流的方式传输
+
+          ftpClient.setFileType(FTP.BINARY_FILE_TYPE);
+
+          ftpClient.setControlEncoding(&quot;GBK&quot;);
+
+          UploadStatus result;
+
+          // 对远程目录的处理
+
+          String remoteFileName = remote;
+
+          if (remote.contains(&quot;/&quot;)) {
+
+                 remoteFileName = remote.substring(remote.lastIndexOf(&quot;/&quot;) + 1);
+
+                 // 创建服务器远程目录结构，创建失败直接返回
+
+                 if (createDirecroty(remote, ftpClient) == UploadStatus.CreateDirectoryFail) {
+
+                        return UploadStatus.CreateDirectoryFail;
+
+                 }
+
+          }
+
+
+
+          // 检查远程是否存在文件
+
+          FTPFile[] files = ftpClient.listFiles(new String(remoteFileName
+
+                        .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+          if (files.length == 1) {
+
+                 long remoteSize = files[0].getSize();
+
+                 File f = new File(local);
+
+                 long localSize = f.length();
+
+                 if (remoteSize == localSize) { // 文件存在
+
+                        return UploadStatus.FileExits;
+
+                 } else if (remoteSize &gt; localSize) {
+
+                        return UploadStatus.RemoteFileBiggerThanLocalFile;
+
+                 }
+
+
+
+                 // 尝试移动文件内读取指针,实现断点续传
+
+                 result = uploadFile(remoteFileName, f, ftpClient, remoteSize);
+
+
+
+                 // 如果断点续传没有成功，则删除服务器上文件，重新上传
+
+                 if (result == UploadStatus.UploadFromBreakFailed) {
+
+                        if (!ftpClient.deleteFile(remoteFileName)) {
+
+                               return UploadStatus.DeleteRemoteFaild;
+
+                        }
+
+                        result = uploadFile(remoteFileName, f, ftpClient, 0);
+
+                 }
+
+          } else {
+
+                 result = uploadFile(remoteFileName, new File(local), ftpClient, 0);
+
+          }
+
+          return result;
+
+   }
+
+
+
+   //*/*
+
+    /* 递归创建远程服务器目录
+
+    /* @param remote 远程服务器文件绝对路径
+
+    /* @param ftpClient FTPClient对象
+
+    /* @return 目录创建是否成功
+
+    /* @throws IOException
+
+    /*/
+
+   public UploadStatus createDirecroty(String remote, FTPClient ftpClient)
+
+                 throws IOException {
+
+          UploadStatus status = UploadStatus.CreateDirectorySuccess;
+
+          String directory = remote.substring(0, remote.lastIndexOf(&quot;/&quot;) + 1);
+
+          if (!directory.equalsIgnoreCase(&quot;/&quot;)
+
+                        &amp;&amp; !ftpClient.changeWorkingDirectory(new String(directory
+
+                                      .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;))) {
+
+                 // 如果远程目录不存在，则递归创建远程服务器目录
+
+                 int start = 0;
+
+                 int end = 0;
+
+                 if (directory.startsWith(&quot;/&quot;)) {
+
+                        start = 1;
+
+                 } else {
+
+                        start = 0;
+
+                 }
+
+                 end = directory.indexOf(&quot;/&quot;, start);
+
+                 while (true) {
+
+                        String subDirectory = new String(remote.substring(start, end)
+
+                                      .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;);
+
+                        if (!ftpClient.changeWorkingDirectory(subDirectory)) {
+
+                               if (ftpClient.makeDirectory(subDirectory)) {
+
+                                      ftpClient.changeWorkingDirectory(subDirectory);
+
+                               } else {
+
+                                      log.info(&quot;创建目录失败&quot;);
+
+                                      return UploadStatus.CreateDirectoryFail;
+
+                               }
+
+                        }
+
+                        start = end + 1;
+
+                        end = directory.indexOf(&quot;/&quot;, start);
+
+                        // 检查所有目录是否创建完毕
+
+                        if (end &lt;= start) {
+
+                               break;
+
+                        }
+
+                 }
+
+          }
+
+          return status;
+
+   }
+
+
+
+   //*/*
+
+    /* 上传文件到服务器,新上传和断点续传
+
+    /* @param remoteFile 远程文件名，在上传之前已经将服务器工作目录做了改变
+
+    /* @param localFile 本地文件File句柄，绝对路径
+
+    /* @param processStep 需要显示的处理进度步进值
+
+    /* @param ftpClient FTPClient引用
+
+    /* @return
+
+    /* @throws IOException
+
+    /*/
+
+   public UploadStatus uploadFile(String remoteFile, File localFile,
+
+                 FTPClient ftpClient, long remoteSize) throws IOException {
+
+          UploadStatus status;
+
+          // 显示进度的上传
+
+          System.out.println(&quot;localFile.length():&quot;+localFile.length());
+
+          long step = localFile.length() / 100;
+
+          step = step==0?1:step;//文件过小，step可能为0
+
+          long process = 0;
+
+          long localreadbytes = 0L;
+
+          RandomAccessFile raf = new RandomAccessFile(localFile, &quot;r&quot;);
+
+          OutputStream out = ftpClient.appendFileStream(new String(remoteFile
+
+                        .getBytes(&quot;GBK&quot;), &quot;iso-8859-1&quot;));
+
+          // 断点续传
+
+          if (remoteSize &gt; 0) {
+
+                 ftpClient.setRestartOffset(remoteSize);
+
+                 process = remoteSize / step;
+
+                 raf.seek(remoteSize);
+
+                 localreadbytes = remoteSize;
+
+          }
+
+          byte[] bytes = new byte[1024];
+
+          int c;
+
+          while ((c = raf.read(bytes)) != -1) {
+
+                 out.write(bytes, 0, c);
+
+                 localreadbytes += c;
+
+                 if (localreadbytes / step != process) {
+
+                        process = localreadbytes / step;
+
+                        if (process % 10 == 0){
+
+                               log.info(&quot;上传进度：&quot; + process);
+
+                        }
+
+                 }
+
+          }
+
+          out.flush();
+
+          raf.close();
+
+          out.close();
+
+          boolean result = ftpClient.completePendingCommand();
+
+          if (remoteSize &gt; 0) {
+
+                 status = result ? UploadStatus.UploadFromBreakSuccess
+
+                               : UploadStatus.UploadFromBreakFailed;
+
+          } else {
+
+                 status = result ? UploadStatus.UploadNewFileSuccess
+
+                               : UploadStatus.UploadNewFileFailed;
+
+          }
+
+          return status;
+
+   }
+
+
+
+   public InputStream downFile(String sourceFileName) throws IOException {
+
+          return ftpClient.retrieveFileStream(sourceFileName);
+
+   }
+
+
+
+   public enum UploadStatus {
+
+          CreateDirectoryFail, // 远程服务器相应目录创建失败
+
+          CreateDirectorySuccess, // 远程服务器闯将目录成功
+
+          UploadNewFileSuccess, // 上传新文件成功
+
+          UploadNewFileFailed, // 上传新文件失败
+
+          FileExits, // 文件已经存在
+
+          RemoteFileBiggerThanLocalFile, // 远程文件大于本地文件
+
+          UploadFromBreakSuccess, // 断点续传成功
+
+          UploadFromBreakFailed, // 断点续传失败
+
+          DeleteRemoteFaild; // 删除远程文件失败
+
+   }
+
+
+
+   public enum DownloadStatus {
+
+          RemoteFileNotExist, // 远程文件不存在
+
+          DownloadNewSuccess, // 下载文件成功
+
+          DownloadNewFailed, // 下载文件失败
+
+          LocalFileBiggerThanRemoteFile, // 本地文件大于远程文件
+
+          DownloadFromBreakSuccess, // 断点续传成功
+
+          DownloadFromBreakFailed; // 断点续传失败
+
+   }
+</code></pre><p>}
+FtpConfig类：
+//<em>/</em>
+ /<em> 
+ /</em>/
+package com.pccw.portlet.publictools;
+//<em>/</em>
+ /<em> FTP配置类
+ /</em> @author WangXianfeng 1:18:45 PM Jul 16, 2011
+ /<em>/
+public class FtpConfig {
+    private String server;
+    private int port;
+    private String username;
+    private String password;
+    private String path;
+    gets  。。sets。。
+}
+测试类：
+import java.util.List;
+import com.pccw.portlet.publictools.FtpConfig;
+import com.pccw.portlet.publictools.FtpUtil;
+//</em>/<em>
+ /</em> 
+ /<em> @author WangXianfeng 1:20:45 PM Jul 16, 2011
+ /</em>/
+public class HelloWorld {
+    //<em>/</em>
+     /<em> @param args
+     /</em>/
+    public static void main(String[] args) throws Exception {
+        FtpConfig config = new FtpConfig();
+        config.setServer(&quot;192.168.0.199&quot;);
+        config.setPort(21);
+        config.setUsername(&quot;wxf&quot;);
+        config.setPassword(&quot;wxf&quot;);
+        config.setPath(&quot;bankafile&quot;);
+        FtpUtil ftp = new FtpUtil();
+        ftp.connectServer(config);
+        String localFile = &quot;c:\Seagull.rar&quot;;
+        ftp.upload(localFile, &quot;sea.rar&quot;);
+        List<String> files = ftp.getFileList(&quot;&quot;);
+        //ftp.changeDirectory(&quot;bankafile&quot;);</p>
+<pre><code>    for(String file:files){
+        System.out.println(file);
+        String local = &quot;D:\\ct\\199\\temp\\&quot; + file;
+        ftp.download(file, local);
+    }
+}
+</code></pre><p>}</p>
+<p>来源： <a href="[http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/](http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/)">[http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/](http://xianfengmc.blog.163.com/blog/static/82690025201161731615607/)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ftp/">ftp</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ftp/" class="label label-primary">ftp</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-ftp--ApacheFTP实用代码/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ftp--ApacheFTP实用代码" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-webservice-CXF--CXF获取客户端IP解决WebServiceContext为null问题/">CXF获取客户端IP(解决WebServiceContext为null问题)</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-webservice-CXF--CXF获取客户端IP解决WebServiceContext为null问题/">feb. 2 2014</a></time></span>      
@@ -361,226 +1314,62 @@ return</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-webservice-CXF--CXF发布Webservice服务，出现异常/">CXF发布Webservice服务，出现异常，请帮忙分析一下 </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-ftp--FTP的主动模式/">FTP的主动模式</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-webservice-CXF--CXF发布Webservice服务，出现异常/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-ftp--FTP的主动模式/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="cxf-webservice-java-java-ee">CXF发布Webservice服务，出现异常，请帮忙分析一下 - Java - Java EE</h1>
-<p><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#" target="_blank"><img src="" alt=""></a></p>
+        <h1 id="ftp-">FTP的主动模式</h1>
+<p>FTP的主动模式(active mode)和被动模式(passive mode)：(转)</p>
+<p>FTP的主动模式(active mode)和被动模式(passive mode)：(转)</p>
+<p>2010-03-01 23:57
+大多数的TCP服务是使用单个的连接，一般是客户向服务器的一个周知端口发起连接，然后使用这个连接进行通讯。但是，FTP协议却有所不同，它使用双向的多个连接 ，而且使用的端口很难预计。一般，FTP连接包括：
+一个控制连接 (control connection)
+这个连接用于传递客户端的命令和服务器端对命令的响应。它使用服务器的21端口，生存期是整个FTP会话时间。
+几个数据连接 (data connection)
+这些连接用于传输文件和其它数据，例如：目录列表等。这种连接在需要数据传输时建立，而一旦数据传输完毕就关闭，每次使用的端口也不一定相同。而且，数据 连接既可能是客户端发起的，也可能是服务器端发起的。
+在FTP协议中，控制连接使用周知端口21 ，因此使用ISA的IP PACKET FILTER就可以这种连接进行很好的安全保护。相反，数据传输连接的目的端口通常实现无法知道，因此处理这样的端口转发非常困难。F</p>
+<p>TP协议使用一个标准的端口21作为ftp-data端口，但是这个端口只用于连接的源地址是服务器端的情况，在这个端口上根本就没有监听进程。</p>
+<p>FTP的数据连接和控制连接的方向一般是相反的，也就是说，是服务器向客户端发起一个用于数据传输的连接。连接的端口是由服务器端和客户端协商确定的。FTP协议 的这个特征对ISA 转发以及防火墙和NAT的配置增加了很多困难。
+除此之外，还有另外一种FTP模式，叫做被动模式 (passive mod)。在这种模式下，数据连接是由客户程序发起的，和刚才讨论过的模式(我们可以叫做主动模式 )相反。</p>
+<p>是否采取被动模式取决于客户程序，在ftp命令行中使用passive命令就可以关闭/打开被动模式。</p>
+<p><strong>iptables**</strong>中配置vsftp**</p>
+<p>问题：配置iptables后， vsftpd不能用。常见现象是能够登录到服务器，LIST列目录失败(超时)。</p>
+<p>分析：</p>
+<p>主动模式 下，客户连接 TCP/21，服务器通过 TCP/20 连接客户的随机端口 </p>
+<p>————这种情况下，通过状态防火墙可以解决 iptables -A INPUT -m state --state NEW,RELATED,ESTABLISHED -j ACCEPT
+被动模式 下，客户连接 TCP/21，客户再通过其他端口连接服务器的随机端口</p>
+<p>卡住的原因，是因为服务器在被动模式下没有打开临时端口让 client 连过来，因此需要几个条件</p>
+<p>1、client 没有防火墙时，用主动模式连接即可
+2、server 没有防火墙时，用被动模式即可
+3、双方都有防火墙时，vsftpd 设置被动模式高端口范围，server 打开那段范围，client 用被动模式连接即可
+4、加载 ip_conntrack_ftp 模块，使 server 支持 connection tracking，支持临时打洞，client 用被动模式即可
+5、server 使用 ip_conntrack_ftp、client 使用 ip_conntrack_ftp 和 ip_nat_ftp，支持临时打洞和临时 NAT 穿越打洞，双方使用主动或被动模式均可</p>
 <ul>
-<li><a href=""></a></li>
+<li>“打洞”的配置说明：</li>
+<li>优点：不影响ftp配置；缺点： 客户会感觉到连接有些延迟。原因参见ip_conntract的实现原理</li>
 </ul>
-<h2 id="-">#</h2>
-<h2 id="-">#</h2>
-<p>&lt;&lt;&gt;&gt;
-<a href="http://www.csdn.net/" target="_blank">CSDN</a>-<a href="http://community.csdn.net/" target="_blank">CSDN社区</a>-<a href="http://forum.csdn.net/BList/Java/" target="_blank">Java</a>-<a href="http://forum.csdn.net/SList/J2EE//" target="_blank">Java EE</a></p>
+<p>在/etc/modprobe.conf中添加
+alias ip_conntrack ip_conntract_ftp ip_nat_ftp</p>
+<p>在/etc/rc.local中添加</p>
+<p>/sbin/modprobe ip_conntract
+/sbin/modprobe  ip_conntrack_ftp
+/sbin/modprobe  ip_nat_ftp</p>
+<p>这个作用就是完成上面所说的“临时打洞”的方法。</p>
 <ul>
-<li><p><a href="">管理菜单</a></p>
-</li>
-<li><p><a href="http://forum.csdn.net/PointForum/BuildTopic.aspx?topicId=68615908-0c81-480b-8ec2-36c88ed83271&amp;postDate=2008-10-12+16%3a13%3a23&amp;return=" target="_blank">生成帖子</a></p>
-</li>
-<li><a href="">置顶</a></li>
-<li><a href="">推荐</a></li>
-<li><a href="">取消推荐</a></li>
-<li><a href="">锁定</a></li>
-<li><a href="">解锁</a></li>
-<li><a href="">移动</a></li>
-<li><a href="">编辑</a></li>
-<li><a href="">删除</a></li>
-<li><a href="">帖子加分</a></li>
-<li><a href="">帖子高亮</a></li>
-<li><a href="">取消高亮</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Manage/TopicManageView.aspx?forumID=2efca177-6b51-42d9-a509-0216fbca231e&amp;topicID=68615908-0c81-480b-8ec2-36c88ed83271&amp;date=2008-10-12+16%3a13%3a23&amp;v=13" target="_blank">结  帖</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Forum/PostTopic.aspx?forumID=2efca177-6b51-42d9-a509-0216fbca231e" target="_blank">发  帖</a></li>
-<li><p><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#r_achor" target="_blank">回  复</a></p>
-<h1 id="-cxf-webservice-50-ma_liang-"><a href="">收藏</a> 不显示删除回复显示所有回复显示星级回复显示得分回复 <a href=""></a>CXF发布Webservice服务，出现异常，请帮忙分析一下<em>[问题点数:50分，结帖人:ma_liang]</em></h1>
-<ul>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank"><img src="" alt=""></a></li>
+<li>限制被动模式连接端口的配置说明</li>
+<li>优点：对连接速度没有影响。缺点： 限制了被动模式下，客户端并发连接的数量。</li>
 </ul>
-</li>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank">ma_liang</a></li>
-<li>(黑马)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>结帖率：93.33%</li>
-<li><em>楼主</em>发表于：2008-10-12 16:13:23 使用Cxf发布WebServic出现如下异常，请帮忙分析一下
-信息: Creating Service {<a href="http://service.webservice.client.api.workflow.cvicse.com/}WsClient" target="_blank">http://service.webservice.client.api.workflow.cvicse.com/}WsClient</a> from class com.cvicse.workflow.api.client.webservice.service.WsClient
-Exception in thread &quot;main&quot; java.lang.AbstractMethodError: org.apache.xerces.dom.DocumentImpl.getInputEncoding()Ljava/lang/String;
-at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
-at sun.reflect.NativeMethodAccessorImpl.invoke(Unknown Source)
-at sun.reflect.DelegatingMethodAccessorImpl.invoke(Unknown Source)
-at java.lang.reflect.Method.invoke(Unknown Source)
-at org.apache.ws.commons.schema.utils.DOMUtil.getInputEncoding(DOMUtil.java:602)
-at org.apache.ws.commons.schema.SchemaBuilder.build(SchemaBuilder.java:84)
-at org.apache.ws.commons.schema.XmlSchemaCollection.read(XmlSchemaCollection.java:424)
-at org.apache.ws.commons.schema.XmlSchemaCollection.read(XmlSchemaCollection.java:418)
-at org.apache.cxf.common.xmlschema.SchemaCollection.read(SchemaCollection.java:142)
-at org.apache.cxf.databinding.AbstractDataBinding.addSchemaDocument(AbstractDataBinding.java:93)
-at org.apache.cxf.jaxb.JAXBDataBinding.initialize(JAXBDataBinding.java:336)
-at org.apache.cxf.service.factory.ReflectionServiceFactoryBean.buildServiceFromClass(ReflectionServiceFactoryBean.java:354)
-at org.apache.cxf.jaxws.support.JaxWsServiceFactoryBean.buildServiceFromClass(JaxWsServiceFactoryBean.java:514)
-at org.apache.cxf.service.factory.ReflectionServiceFactoryBean.initializeServiceModel(ReflectionServiceFactoryBean.java:405)
-at org.apache.cxf.service.factory.ReflectionServiceFactoryBean.create(ReflectionServiceFactoryBean.java:188)
-at org.apache.cxf.jaxws.support.JaxWsServiceFactoryBean.create(JaxWsServiceFactoryBean.java:164)
-at org.apache.cxf.frontend.AbstractWSDLBasedEndpointFactory.createEndpoint(AbstractWSDLBasedEndpointFactory.java:100)
-at org.apache.cxf.frontend.ServerFactoryBean.create(ServerFactoryBean.java:116)
-at org.apache.cxf.jaxws.JaxWsServerFactoryBean.create(JaxWsServerFactoryBean.java:168)
-at org.apache.cxf.jaxws.EndpointImpl.getServer(EndpointImpl.java:336)
-at org.apache.cxf.jaxws.EndpointImpl.doPublish(EndpointImpl.java:251)
-at org.apache.cxf.jaxws.EndpointImpl.publish(EndpointImpl.java:201)
-at org.apache.cxf.jaxws.spi.ProviderImpl.createAndPublishEndpoint(ProviderImpl.java:84)
-at javax.xml.ws.Endpoint.publish(Endpoint.java:47)
-at com.cvicse.workflow.WorkflowWebService.<init>(WorkflowWebService.java:13)
-at com.cvicse.workflow.WorkflowWebService.main(WorkflowWebService.java:18) * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>
-回复次数：9  * <a href="http://hi.csdn.net/accp206" target="_blank"><img src="&quot;accp206用户自定义头像&quot;" alt="accp206用户头像"></a></li>
-<li><a href="http://hi.csdn.net/accp206" target="_blank">accp206</a></li>
-<li>(与勋章仅一步之遥，遗憾……没太)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#1楼 得分：10回复于：2008-10-12 18:45:58<a href=""></a> 你接口中的某些方法，其参数或返回值类型是否有String数组的？
-如果有的话，消除这些类型的参数，用别的方式代替。比如String数组，可换成一个用“,”号分隔的字符串传递。
-在开发WebService程序时，尽量不要使用复杂数据类型。 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ma_liang" target="_blank"><img src="&quot;ma_liang用户自定义头像&quot;" alt="ma_liang用户头像"></a></li>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank">ma_liang</a></li>
-<li>(黑马)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#2楼 得分：0回复于：2008-10-12 21:17:36<a href=""></a> 接口中的方法里没有数组类型，不过返回值和参数里有接口类型的，我已经将它增加了适配器，如果不用适配器的话发布服务的时候会报JAXB绑定的错误，但是适配了所有后发布服务，报上面的错误，让人不解 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/teamlet" target="_blank"><img src="&quot;teamlet用户自定义头像&quot;" alt="teamlet用户头像"></a></li>
-<li><a href="http://hi.csdn.net/teamlet" target="_blank">teamlet</a></li>
-<li>(teamlet)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#3楼 得分：10回复于：2008-10-13 11:23:08<a href=""></a> 看看classpath路径下有没有 xercesImpl-2.8.1.jar ，如果没有加上试试。
-这是由于获取字符集的时候，你所使用的 jar 包中的org.apache.xerces.dom.DocumentImpl没有实现getInputEncoding()这个方法。 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/teamlet" target="_blank"><img src="&quot;teamlet用户自定义头像&quot;" alt="teamlet用户头像"></a></li>
-<li><a href="http://hi.csdn.net/teamlet" target="_blank">teamlet</a></li>
-<li>(teamlet)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#4楼 得分：10回复于：2008-10-13 12:55:22<a href=""></a> 报错后，字符集被设置为 UTF-8 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ma_liang" target="_blank"><img src="&quot;ma_liang用户自定义头像&quot;" alt="ma_liang用户头像"></a></li>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank">ma_liang</a></li>
-<li>(黑马)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#5楼 得分：0回复于：2008-10-14 08:38:30<a href=""></a> 我把项目构件路径中的 xercesImpl-2.8.1.jar 去掉了，反而发布成功了，为什么？ * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/teamlet" target="_blank"><img src="&quot;teamlet用户自定义头像&quot;" alt="teamlet用户头像"></a></li>
-<li><a href="http://hi.csdn.net/teamlet" target="_blank">teamlet</a></li>
-<li>(teamlet)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#6楼 得分：10回复于：2008-10-14 10:56:15<a href=""></a> <strong>更正一下</strong>
-org.apache.xerces.dom.DocumentImpl.getInputEncoding()在其父类CoreDocumentImpl中实现了。
-在DOMUtil.java中，通过如下语句调用 getInputEncoding 方法：
-Method m = Document.class.getMethod(&quot;getInputEncoding&quot;, new Class[]{});
-Document是一个接口，声明了 getInputEncoding 方法。
-DocumentImpl继承了CoreDocumentImpl，CoreDocumentImpl实现了Document接口。
-在通过Document接口调用DocumentImpl的时候，没有找到getInputEncoding 方法，
-因此提示java.lang.AbstractMethodError
-你的cxf是哪个版本的？在你的环境下使用的是哪个版本的 xercesImpl？是否存在多个不同的xercesImpl？ * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ma_liang" target="_blank"><img src="&quot;ma_liang用户自定义头像&quot;" alt="ma_liang用户头像"></a></li>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank">ma_liang</a></li>
-<li>(黑马)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#7楼 得分：0回复于：2008-10-15 08:32:12<a href=""></a> 我的Cxf是用的2.1.2版本，xercesImpl.jar只有一个，在构建路径里去掉就可以正常发布服务，实际上它在原来的项目里伴有重要的角色，去掉之后是可以发布服务了，但是以前的功能有些就不支持了 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ma_liang" target="_blank"><img src="&quot;ma_liang用户自定义头像&quot;" alt="ma_liang用户头像"></a></li>
-<li><a href="http://hi.csdn.net/ma_liang" target="_blank">ma_liang</a></li>
-<li>(黑马)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#8楼 得分：0回复于：2008-10-15 09:02:58<a href=""></a> 我还有一个疑问是在用Cxf发布服务时，怎么会调用这个类的方法，为什么去掉之后就不去找这个方法了？ * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/teamlet" target="_blank"><img src="&quot;teamlet用户自定义头像&quot;" alt="teamlet用户头像"></a></li>
-<li><a href="http://hi.csdn.net/teamlet" target="_blank">teamlet</a></li>
-<li>(teamlet)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>/#9楼 得分：10回复于：2008-10-15 10:57:07<a href=""></a> 1、在根据Class生成XMLSchema的时候，当涉及到如下的namespace就会调用这个方法：
-<a href="http://www.w3.org/2005/02/addressing/wsdl" target="_blank">http://www.w3.org/2005/02/addressing/wsdl</a>
-<a href="http://www.w3.org/2005/08/addressing" target="_blank">http://www.w3.org/2005/08/addressing</a>
-<a href="http://schemas.xmlsoap.org/ws/2005/02/rm" target="_blank">http://schemas.xmlsoap.org/ws/2005/02/rm</a>
-<a href="http://www.w3.org/2005/05/xmlmime" target="_blank">http://www.w3.org/2005/05/xmlmime</a>
-每个namespache对应的xsd在classpath中：
-&quot;<a href="http://www.w3.org/2005/02/addressing/wsdl&quot;,&quot;classpath:/schemas/wsdl/ws-addr-wsdl.xsd" target="_blank">http://www.w3.org/2005/02/addressing/wsdl&quot;,&quot;classpath:/schemas/wsdl/ws-addr-wsdl.xsd</a>&quot;);
-&quot;<a href="http://www.w3.org/2005/08/addressing" target="_blank">http://www.w3.org/2005/08/addressing</a>&quot;, &quot;classpath:/schemas/wsdl/ws-addr.xsd&quot;);
-&quot;<a href="http://schemas.xmlsoap.org/ws/2005/02/rm" target="_blank">http://schemas.xmlsoap.org/ws/2005/02/rm</a>&quot;, &quot;classpath:/schemas/wsdl/wsrm.xsd&quot;);
-&quot;<a href="http://www.w3.org/2005/05/xmlmime" target="_blank">http://www.w3.org/2005/05/xmlmime</a>&quot;, &quot;classpath:/schemas/wsdl/ws-addr.xsd&quot;);
-2、javax.xml.validation.SchemaFactory 是sun提供的一个抽象类，声明了一些抽象的方法；
-通过在classpath中查找同名的配置文件可以获得具体的实现。
-在xercesImpl.jar中有一个配置文件javax.xml.validation.SchemaFactory，声明使用xercesImpl中的类。
-当你去除这个jar的时候，这个配置无法读取，就不去找这个方法了！
-但是你的环境中还可以找到其他的 javax.xml.validation.SchemaFactory 文件，绑定的是其他的实现。
-如果这些实现只能解析特定的schema ，那么它不能解析的schema声明的功能就无法使用了。 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><p><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#top" target="_blank">TOP</a></p>
-</li>
-<li><p><a href="">管理菜单</a></p>
-</li>
-<li><p><a href="http://forum.csdn.net/PointForum/BuildTopic.aspx?topicId=68615908-0c81-480b-8ec2-36c88ed83271&amp;postDate=2008-10-12+16%3a13%3a23&amp;return=" target="_blank">生成帖子</a></p>
-</li>
-<li><a href="">置顶</a></li>
-<li><a href="">推荐</a></li>
-<li><a href="">取消推荐</a></li>
-<li><a href="">锁定</a></li>
-<li><a href="">解锁</a></li>
-<li><a href="">移动</a></li>
-<li><a href="">编辑</a></li>
-<li><a href="">删除</a></li>
-<li><a href="">帖子加分</a></li>
-<li><a href="">帖子高亮</a></li>
-<li><a href="">取消高亮</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Manage/TopicManageView.aspx?forumID=2efca177-6b51-42d9-a509-0216fbca231e&amp;topicID=68615908-0c81-480b-8ec2-36c88ed83271&amp;date=2008-10-12+16%3a13%3a23&amp;v=13" target="_blank">结  帖</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Forum/PostTopic.aspx?forumID=2efca177-6b51-42d9-a509-0216fbca231e" target="_blank">发  帖</a></li>
-<li><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#r_achor" target="_blank">回  复</a>
-相关问题 <a href="http://topic.csdn.net/u/20090513/09/5a3a5401-e059-4963-9147-136b65bce728.html" target="_blank">[求助大家]关于Web Service调用时出现&quot;no jbi part element&quot;的问题</a>    <img src="" alt=""></li>
-</ul>
-<p><a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#" target="_blank">[关闭]</a>
-<a href="http://topic.csdn.net/u/20081012/16/68615908-0c81-480b-8ec2-36c88ed83271.html#" target="_blank">[关闭]</a></p>
+<p>在/etc/vsftpd/vsftpd.conf中添加
+pasv_min_port=2222
+pasv_max_port=2225</p>
+<p>iptables中开放这段端口</p>
+<p>-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 21 -j ACCEPT
+-A INPUT -p tcp --dport 2222:2225 -j ACCEPT</p>
 
       
     </div>
@@ -590,8 +1379,8 @@ DocumentImpl继承了CoreDocumentImpl，CoreDocumentImpl实现了Document接口�
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/webservice/">webservice</a></li></span><span class="breadcrumb"><li><a href="/categories/webservice/">webservice</a></li><li><a href="/categories/webservice/CXF/">CXF</a></li></span></span> | <span class="tags">Tagged <a href="/tags/CXF/" class="label label-primary">CXF</a><a href="/tags/webservice/" class="label label-success">webservice</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-webservice-CXF--CXF发布Webservice服务，出现异常/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-webservice-CXF--CXF发布Webservice服务，出现异常" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ftp/">ftp</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ftp/" class="label label-primary">ftp</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-ftp--FTP的主动模式/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ftp--FTP的主动模式" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -606,263 +1395,28 @@ DocumentImpl继承了CoreDocumentImpl，CoreDocumentImpl实现了Document接口�
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-tomcat--Servlet工作原理/">Servlet工作原理</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-webservice--Webservicesoapwsdl区别之个人见解/">Webservice soap wsdl区别之个人见解</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-服务器-tomcat--Servlet工作原理/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-webservice--Webservicesoapwsdl区别之个人见解/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="servlet-">Servlet工作原理</h1>
-<p><a href="http://blog.csdn.net/haojun186/article/details/7467100" target="_blank">Servlet工作原理</a></p>
-<p><a href="">从 Servlet 容器说起</a></p>
-<p>要介绍 Servlet 必须要先把 Servlet 容器说清楚，Servlet 与 Servlet 容器的关系有点像枪和子弹的关系，枪是为子弹而生，而子弹又让枪有了杀伤力。虽然它们是彼此依存的，但是又相互独立发展，这一切都是为了适应工业化生产的结果。从技术角度来说是为了解耦，通过标准化接口来相互协作。既然接口是连接 Servlet 与 Servlet 容器的关键，那我们就从它们的接口说起。</p>
-<p>前面说了 Servlet 容器作为一个独立发展的标准化产品，目前它的种类很多，但是它们都有自己的市场定位，很难说谁优谁劣，各有特点。例如现在比较流行的 Jetty，在定制化和移动领域有不错的发展，我们这里还是以大家最为熟悉 Tomcat 为例来介绍 Servlet 容器如何管理 Servlet。Tomcat 本身也很复杂，我们只从 Servlet 与 Servlet 容器的接口部分开始介绍，关于 Tomcat 的详细介绍可以参考我的另外一篇文章《 Tomcat 系统架构与模式设计分析》。</p>
-<p>Tomcat 的容器等级中，Context 容器是直接管理 Servlet 在容器中的包装类 Wrapper，所以 Context 容器如何运行将直接影响 Servlet 的工作方式。
-<a href=""><strong>图 1 . Tomcat 容器模型</strong></a>
-<img src="" alt="图 1 . Tomcat 容器模型"></p>
-<p>从上图可以看出 Tomcat 的容器分为四个等级，真正管理 Servlet 的容器是 Context 容器，一个 Context 对应一个 Web 工程，在 Tomcat 的配置文件中可以很容易发现这一点，如下：
-<a href=""><strong>清单 1 Context 配置参数</strong></a></p>
-<Context path="/projectOne " docBase="D:\projects\projectOne"
-reloadable="true" />
-
-<p>下面详细介绍一下 Tomcat 解析 Context 容器的过程，包括如何构建 Servlet 的过程。</p>
-<p><a href="">Servlet 容器的启动过程</a></p>
-<p>Tomcat7 也开始支持嵌入式功能，增加了一个启动类 org.apache.catalina.startup.Tomcat。创建一个实例对象并调用 start 方法就可以很容易启动 Tomcat，我们还可以通过这个对象来增加和修改 Tomcat 的配置参数，如可以动态增加 Context、Servlet 等。下面我们就利用这个 Tomcat 类来管理新增的一个 Context 容器，我们就选择 Tomcat7 自带的 examples Web 工程，并看看它是如何加到这个 Context 容器中的。
-<a href=""><strong>清单 2 . 给 Tomcat 增加一个 Web 工程</strong></a></p>
-<p>Tomcat tomcat = getTomcatInstance();
-File appDir = new File(getBuildDirectory(), &quot;webapps/examples&quot;);</p>
-<p>tomcat.addWebapp(null, &quot;/examples&quot;, appDir.getAbsolutePath());
-tomcat.start();</p>
-<p>ByteChunk res = getUrl(&quot;<a href="http://localhost" target="_blank">http://localhost</a>:&quot; + getPort() +
-               &quot;/examples/servlets/servlet/HelloWorldExample&quot;);</p>
-<p>assertTrue(res.toString().indexOf(&quot;<h1>Hello World!</h1>&quot;) &gt; 0);</p>
-<p>清单 1 的代码是创建一个 Tomcat 实例并新增一个 Web 应用，然后启动 Tomcat 并调用其中的一个 HelloWorldExample Servlet，看有没有正确返回预期的数据。</p>
-<p>Tomcat 的 addWebapp 方法的代码如下：
-<a href=""><strong>清单 3 .Tomcat.addWebapp</strong></a></p>
-<p>public Context addWebapp(Host host, String url, String path) {
-        silence(url);</p>
-<pre><code>    Context ctx = new StandardContext();
-    ctx.setPath( url );
-
-    ctx.setDocBase(path);
-    if (defaultRealm == null) {
-
-        initSimpleAuth();
-    }
-
-    ctx.setRealm(defaultRealm);
-    ctx.addLifecycleListener(new DefaultWebXmlListener());
-
-    ContextConfig ctxCfg = new ContextConfig();
-    ctx.addLifecycleListener(ctxCfg);
-
-    ctxCfg.setDefaultWebXml(&quot;org/apache/catalin/startup/NO_DEFAULT_XML&quot;);
-    if (host == null) {
-
-        getHost().addChild(ctx);
-    } else {
-
-        host.addChild(ctx);
-    }
-
-    return ctx;
-</code></pre><p>}</p>
-<p>前面已经介绍了一个 Web 应用对应一个 Context 容器，也就是 Servlet 运行时的 Servlet 容器，添加一个 Web 应用时将会创建一个 StandardContext 容器，并且给这个 Context 容器设置必要的参数，url 和 path 分别代表这个应用在 Tomcat 中的访问路径和这个应用实际的物理路径，这个两个参数与清单 1 中的两个参数是一致的。其中最重要的一个配置是 ContextConfig，这个类将会负责整个 Web 应用配置的解析工作，后面将会详细介绍。最后将这个 Context 容器加到父容器 Host 中。</p>
-<p>接下去将会调用 Tomcat 的 start 方法启动 Tomcat，如果你清楚 Tomcat 的系统架构，你会容易理解 Tomcat 的启动逻辑，Tomcat 的启动逻辑是基于观察者模式设计的，所有的容器都会继承 Lifecycle 接口，它管理者容器的整个生命周期，所有容器的的修改和状态的改变都会由它去通知已经注册的观察者（Listener），关于这个设计模式可以参考《 Tomcat 的系统架构与设计模式，第二部分：设计模式》。Tomcat 启动的时序图可以用图 2 表示。
-<a href=""><strong>图 2. Tomcat 主要类的启动时序图（</strong></a><strong><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/image003.jpg" target="_blank">查看大图</a>）</strong>
-<img src="" alt="图 2. Tomcat 主要类的启动时序图"></p>
-<p>上图描述了 Tomcat 启动过程中，主要类之间的时序关系，下面我们将会重点关注添加 examples 应用所对应的 StandardContext 容器的启动过程。</p>
-<p>当 Context 容器初始化状态设为 init 时，添加在 Contex 容器的 Listener 将会被调用。ContextConfig 继承了 LifecycleListener 接口，它是在调用清单 3 时被加入到 StandardContext 容器中。ContextConfig 类会负责整个 Web 应用的配置文件的解析工作。</p>
-<p>ContextConfig 的 init 方法将会主要完成以下工作：</p>
-<ol>
-<li>创建用于解析 xml 配置文件的 contextDigester 对象</li>
-<li>读取默认 context.xml 配置文件，如果存在解析它</li>
-<li>读取默认 Host 配置文件，如果存在解析它</li>
-<li>读取默认 Context 自身的配置文件，如果存在解析它</li>
-<li>设置 Context 的 DocBase</li>
-</ol>
-<p>ContextConfig 的 init 方法完成后，Context 容器的会执行 startInternal 方法，这个方法启动逻辑比较复杂，主要包括如下几个部分：</p>
-<ol>
-<li>创建读取资源文件的对象</li>
-<li>创建 ClassLoader 对象</li>
-<li>设置应用的工作目录</li>
-<li>启动相关的辅助类如：logger、realm、resources 等</li>
-<li>修改启动状态，通知感兴趣的观察者（Web 应用的配置）</li>
-<li>子容器的初始化</li>
-<li>获取 ServletContext 并设置必要的参数</li>
-<li>初始化“load on startup”的 Servlet</li>
-</ol>
-<p><a href="">Web 应用的初始化工作</a></p>
-<p>Web 应用的初始化工作是在 ContextConfig 的 configureStart 方法中实现的，应用的初始化主要是要解析 web.xml 文件，这个文件描述了一个 Web 应用的关键信息，也是一个 Web 应用的入口。</p>
-<p>Tomcat 首先会找 globalWebXml 这个文件的搜索路径是在 engine 的工作目录下寻找以下两个文件中的任一个 org/apache/catalin/startup/NO_DEFAULT_XML 或 conf/web.xml。接着会找 hostWebXml 这个文件可能会在 System.getProperty(&quot;catalina.base&quot;)/conf/${EngineName}/${HostName}/web.xml.default，接着寻找应用的配置文件 examples/WEB-INF/web.xml。web.xml 文件中的各个配置项将会被解析成相应的属性保存在 WebXml 对象中。如果当前应用支持 Servlet3.0，解析还将完成额外 9 项工作，这个额外的 9 项工作主要是为 Servlet3.0 新增的特性，包括 jar 包中的 META-INF/web-fragment.xml 的解析以及对 annotations 的支持。</p>
-<p>接下去将会将 WebXml 对象中的属性设置到 Context 容器中，这里包括创建 Servlet 对象、filter、listener 等等。这段代码在 WebXml 的 configureContext 方法中。下面是解析 Servlet 的代码片段：
-<a href=""><strong>清单 4. 创建 Wrapper 实例</strong></a></p>
-<p>for (ServletDef servlet : servlets.values()) {
-            Wrapper wrapper = context.createWrapper();</p>
-<pre><code>        String jspFile = servlet.getJspFile();
-        if (jspFile != null) {
-
-            wrapper.setJspFile(jspFile);
-        }
-
-        if (servlet.getLoadOnStartup() != null) {
-            wrapper.setLoadOnStartup(servlet.getLoadOnStartup().intValue());
-
-        }
-        if (servlet.getEnabled() != null) {
-
-            wrapper.setEnabled(servlet.getEnabled().booleanValue());
-        }
-
-        wrapper.setName(servlet.getServletName());
-        Map&lt;String,String&gt; params = servlet.getParameterMap();
-
-        for (Entry&lt;String, String&gt; entry : params.entrySet()) {
-            wrapper.addInitParameter(entry.getKey(), entry.getValue());
-
-        }
-        wrapper.setRunAs(servlet.getRunAs());
-
-        Set&lt;SecurityRoleRef&gt; roleRefs = servlet.getSecurityRoleRefs();
-        for (SecurityRoleRef roleRef : roleRefs) {
-
-            wrapper.addSecurityReference(
-                    roleRef.getName(), roleRef.getLink());
-
-        }
-        wrapper.setServletClass(servlet.getServletClass());
-
-        MultipartDef multipartdef = servlet.getMultipartDef();
-        if (multipartdef != null) {
-
-            if (multipartdef.getMaxFileSize() != null &amp;&amp;
-                    multipartdef.getMaxRequestSize()!= null &amp;&amp;
-
-                    multipartdef.getFileSizeThreshold() != null) {
-                wrapper.setMultipartConfigElement(new
-</code></pre><p>MultipartConfigElement(
-                            multipartdef.getLocation(),</p>
-<pre><code>                        Long.parseLong(multipartdef.getMaxFileSize()),
-                        Long.parseLong(multipartdef.getMaxRequestSize()),
-
-                        Integer.parseInt(
-                                multipartdef.getFileSizeThreshold())));
-
-            } else {
-                wrapper.setMultipartConfigElement(new
-</code></pre><p>MultipartConfigElement(
-                            multipartdef.getLocation()));</p>
-<pre><code>            }
-        }
-
-        if (servlet.getAsyncSupported() != null) {
-            wrapper.setAsyncSupported(
-
-                    servlet.getAsyncSupported().booleanValue());
-        }
-
-        context.addChild(wrapper);
-</code></pre><p>}</p>
-<p>这段代码清楚的描述了如何将 Servlet 包装成 Context 容器中的 StandardWrapper，这里有个疑问，为什么要将 Servlet 包装成 StandardWrapper 而不直接是 Servlet 对象。这里 StandardWrapper 是 Tomcat 容器中的一部分，它具有容器的特征，而 Servlet 为了一个独立的 web 开发标准，不应该强耦合在 Tomcat 中。</p>
-<p>除了将 Servlet 包装成 StandardWrapper 并作为子容器添加到 Context 中，其它的所有 web.xml 属性都被解析到 Context 中，所以说 Context 容器才是真正运行 Servlet 的 Servlet 容器。一个 Web 应用对应一个 Context 容器，容器的配置属性由应用的 web.xml 指定，这样我们就能理解 web.xml 到底起到什么作用了。</p>
-<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/#ibm-pcon" target="_blank">回页首</a></p>
-<p><a href="">创建 Servlet 实例</a></p>
-<p>前面已经完成了 Servlet 的解析工作，并且被包装成 StandardWrapper 添加在 Context 容器中，但是它仍然不能为我们工作，它还没有被实例化。下面我们将介绍 Servlet 对象是如何创建的，以及如何被初始化的。</p>
-<p><a href="">创建 Servlet 对象</a></p>
-<p>如果 Servlet 的 load-on-startup 配置项大于 0，那么在 Context 容器启动的时候就会被实例化，前面提到在解析配置文件时会读取默认的 globalWebXml，在 conf 下的 web.xml 文件中定义了一些默认的配置项，其定义了两个 Servlet，分别是：org.apache.catalina.servlets.DefaultServlet 和 org.apache.jasper.servlet.JspServlet 它们的 load-on-startup 分别是 1 和 3，也就是当 Tomcat 启动时这两个 Servlet 就会被启动。</p>
-<p>创建 Servlet 实例的方法是从 Wrapper. loadServlet 开始的。loadServlet 方法要完成的就是获取 servletClass 然后把它交给 InstanceManager 去创建一个基于 servletClass.class 的对象。如果这个 Servlet 配置了 jsp-file，那么这个 servletClass 就是 conf/web.xml 中定义的 org.apache.jasper.servlet.JspServlet 了。</p>
-<p>创建 Servlet 对象的相关类结构图如下：
-<a href=""><strong>图 3. 创建 Servlet 对象的相关类结构</strong></a>
-<img src="" alt="图 3. 创建 Servlet 对象的相关类结构"></p>
-<p><a href="">初始化 Servlet</a></p>
-<p>初始化 Servlet 在 StandardWrapper 的 initServlet 方法中，这个方法很简单就是调用 Servlet 的 init 的方法，同时把包装了 StandardWrapper 对象的 StandardWrapperFacade 作为 ServletConfig 传给 Servlet。Tomcat 容器为何要传 StandardWrapperFacade 给 Servlet 对象将在后面做详细解析。</p>
-<p>如果该 Servlet 关联的是一个 jsp 文件，那么前面初始化的就是 JspServlet，接下去会模拟一次简单请求，请求调用这个 jsp 文件，以便编译这个 jsp 文件为 class，并初始化这个 class。</p>
-<p>这样 Servlet 对象就初始化完成了，事实上 Servlet 从被 web.xml 中解析到完成初始化，这个过程非常复杂，中间有很多过程，包括各种容器状态的转化引起的监听事件的触发、各种访问权限的控制和一些不可预料的错误发生的判断行为等等。我们这里只抓了一些关键环节进行阐述，试图让大家有个总体脉络。</p>
-<p>下面是这个过程的一个完整的时序图，其中也省略了一些细节。
-<a href=""><strong>图 4. 初始化 Servlet 的时序图（</strong></a><strong><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/image007.jpg" target="_blank">查看大图</a>）</strong>
-<img src="" alt="图 4. 初始化 Servlet 的时序图"></p>
-<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/#ibm-pcon" target="_blank">回页首</a></p>
-<p><a href="">Servlet 体系结构</a></p>
-<p>我们知道 Java Web 应用是基于 Servlet 规范运转的，那么 Servlet 本身又是如何运转的呢？为何要设计这样的体系结构。
-<a href=""><strong>图 5.Servlet 顶层类关联图</strong></a>
-<img src="" alt="图 5.Servlet 顶层类关联图"></p>
-<p>从上图可以看出 Servlet 规范就是基于这几个类运转的，与 Servlet 主动关联的是三个类，分别是 ServletConfig、ServletRequest 和 ServletResponse。这三个类都是通过容器传递给 Servlet 的，其中 ServletConfig 是在 Servlet 初始化时就传给 Servlet 了，而后两个是在请求达到时调用 Servlet 时传递过来的。我们很清楚 ServletRequest 和 ServletResponse 在 Servlet 运行的意义，但是 ServletConfig 和 ServletContext 对 Servlet 有何价值？仔细查看 ServletConfig 接口中声明的方法发现，这些方法都是为了获取这个 Servlet 的一些配置属性，而这些配置属性可能在 Servlet 运行时被用到。而 ServletContext 又是干什么的呢？ Servlet 的运行模式是一个典型的“握手型的交互式”运行模式。所谓“握手型的交互式”就是两个模块为了交换数据通常都会准备一个交易场景，这个场景一直跟随个这个交易过程直到这个交易完成为止。这个交易场景的初始化是根据这次交易对象指定的参数来定制的，这些指定参数通常就会是一个配置类。所以对号入座，交易场景就由 ServletContext 来描述，而定制的参数集合就由 ServletConfig 来描述。而 ServletRequest 和 ServletResponse 就是要交互的具体对象了，它们通常都是作为运输工具来传递交互结果。</p>
-<p>ServletConfig 是在 Servlet init 时由容器传过来的，那么 ServletConfig 到底是个什么对象呢？</p>
-<p>下图是 ServletConfig 和 ServletContext 在 Tomcat 容器中的类关系图。
-<a href=""><strong>图 6. ServletConfig 在容器中的类关联图</strong></a>
-<img src="" alt="图 6. ServletConfig 在容器中的类关联图"></p>
-<p>上图可以看出 StandardWrapper 和 StandardWrapperFacade 都实现了 ServletConfig 接口，而 StandardWrapperFacade 是 StandardWrapper 门面类。所以传给 Servlet 的是 StandardWrapperFacade 对象，这个类能够保证从 StandardWrapper 中拿到 ServletConfig 所规定的数据，而又不把 ServletConfig 不关心的数据暴露给 Servlet。</p>
-<p>同样 ServletContext 也与 ServletConfig 有类似的结构，Servlet 中能拿到的 ServletContext 的实际对象也是 ApplicationContextFacade 对象。ApplicationContextFacade 同样保证 ServletContex 只能从容器中拿到它该拿的数据，它们都起到对数据的封装作用，它们使用的都是门面设计模式。</p>
-<p>通过 ServletContext 可以拿到 Context 容器中一些必要信息，比如应用的工作路径，容器支持的 Servlet 最小版本等。</p>
-<p>Servlet 中定义的两个 ServletRequest 和 ServletResponse 它们实际的对象又是什么呢？，我们在创建自己的 Servlet 类时通常使用的都是 HttpServletRequest 和 HttpServletResponse，它们继承了 ServletRequest 和 ServletResponse。为何 Context 容器传过来的 ServletRequest、ServletResponse 可以被转化为 HttpServletRequest 和 HttpServletResponse 呢？
-<a href=""><strong>图 7.Request 相关类结构图</strong></a>
-<img src="" alt="图 7.Request 相关类结构图"></p>
-<p>上图是 Tomcat 创建的 Request 和 Response 的类结构图。Tomcat 一接受到请求首先将会创建 org.apache.coyote.Request 和 org.apache.coyote.Response，这两个类是 Tomcat 内部使用的描述一次请求和相应的信息类它们是一个轻量级的类，它们作用就是在服务器接收到请求后，经过简单解析将这个请求快速的分配给后续线程去处理，所以它们的对象很小，很容易被 JVM 回收。接下去当交给一个用户线程去处理这个请求时又创建 org.apache.catalina.connector. Request 和 org.apache.catalina.connector. Response 对象。这两个对象一直穿越整个 Servlet 容器直到要传给 Servlet，传给 Servlet 的是 Request 和 Response 的门面类 RequestFacade 和 RequestFacade，这里使用门面模式与前面一样都是基于同样的目的——封装容器中的数据。一次请求对应的 Request 和 Response 的类转化如下图所示：
-<a href=""><strong>图 8.Request 和 Response 的转变过程</strong></a>
-<img src="" alt="图 8.Request 和 Response 的转变过程"></p>
-<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/#ibm-pcon" target="_blank">回页首</a></p>
-<p><a href="">Servlet 如何工作</a></p>
-<p>我们已经清楚了 Servlet 是如何被加载的、Servlet 是如何被初始化的，以及 Servlet 的体系结构，现在的问题就是它是如何被调用的。</p>
-<p>当用户从浏览器向服务器发起一个请求，通常会包含如下信息：<a href="http://hostname" target="_blank">http://hostname</a>: port /contextpath/servletpath，hostname 和 port 是用来与服务器建立 TCP 连接，而后面的 URL 才是用来选择服务器中那个子容器服务用户的请求。那服务器是如何根据这个 URL 来达到正确的 Servlet 容器中的呢？</p>
-<p>Tomcat7.0 中这件事很容易解决，因为这种映射工作有专门一个类来完成的，这个就是 org.apache.tomcat.util.http.mapper，这个类保存了 Tomcat 的 Container 容器中的所有子容器的信息，当 org.apache.catalina.connector. Request 类在进入 Container 容器之前，mapper 将会根据这次请求的 hostnane 和 contextpath 将 host 和 context 容器设置到 Request 的 mappingData 属性中。所以当 Request 进入 Container 容器之前，它要访问那个子容器这时就已经确定了。
-<a href=""><strong>图 9.Request 的 Mapper 类关系图</strong></a>
-<img src="" alt="图 9.Request 的 Mapper 类关系图"></p>
-<p>可能你有疑问，mapper 中怎么会有容器的完整关系，这要回到图 2 中 19 步 MapperListener 类的初始化过程，下面是 MapperListener 的 init 方法代码 :
-<a href=""><strong>清单 5. MapperListener.init</strong></a></p>
-<p>public void init() {
-        findDefaultHost();</p>
-<pre><code>    Engine engine = (Engine) connector.getService().getContainer();
-    engine.addContainerListener(this);
-
-    Container[] conHosts = engine.findChildren();
-    for (Container conHost : conHosts) {
-
-        Host host = (Host) conHost;
-        if (!LifecycleState.NEW.equals(host.getState())) {
-
-            host.addLifecycleListener(this);
-            registerHost(host);
-
-        }
-    }
-</code></pre><p>}</p>
-<p>这段代码的作用就是将 MapperListener 类作为一个监听者加到整个 Container 容器中的每个子容器中，这样只要任何一个容器发生变化，MapperListener 都将会被通知，相应的保存容器关系的 MapperListener 的 mapper 属性也会修改。for 循环中就是将 host 及下面的子容器注册到 mapper 中。
-<a href=""><strong>图 10.Request 在容器中的路由图</strong></a>
-<img src="" alt="图 10.Request 在容器中的路由图"></p>
-<p>上图描述了一次 Request 请求是如何达到最终的 Wrapper 容器的，我们现正知道了请求是如何达到正确的 Wrapper 容器，但是请求到达最终的 Servlet 还要完成一些步骤，必须要执行 Filter 链，以及要通知你在 web.xml 中定义的 listener。</p>
-<p>接下去就要执行 Servlet 的 service 方法了，通常情况下，我们自己定义的 servlet 并不是直接去实现 javax.servlet.servlet 接口，而是去继承更简单的 HttpServlet 类或者 GenericServlet 类，我们可以有选择的覆盖相应方法去实现我们要完成的工作。</p>
-<p>Servlet 的确已经能够帮我们完成所有的工作了，但是现在的 web 应用很少有直接将交互全部页面都用 servlet 来实现，而是采用更加高效的 MVC 框架来实现。这些 MVC 框架基本的原理都是将所有的请求都映射到一个 Servlet，然后去实现 service 方法，这个方法也就是 MVC 框架的入口。</p>
-<p>当 Servlet 从 Servlet 容器中移除时，也就表明该 Servlet 的生命周期结束了，这时 Servlet 的 destroy 方法将被调用，做一些扫尾工作。</p>
-<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/#ibm-pcon" target="_blank">回页首</a></p>
-<p><a href="">Session 与 Cookie</a></p>
-<p>前面我们已经说明了 Servlet 如何被调用，我们基于 Servlet 来构建应用程序，那么我们能从 Servlet 获得哪些数据信息呢？</p>
-<p>Servlet 能够给我们提供两部分数据，一个是在 Servlet 初始化时调用 init 方法时设置的 ServletConfig，这个类基本上含有了 Servlet 本身和 Servlet 所运行的 Servlet 容器中的基本信息。根据前面的介绍 ServletConfig 的实际对象是 StandardWrapperFacade，到底能获得哪些容器信息可以看看这类提供了哪些接口。还有一部分数据是由 ServletRequest 类提供，它的实际对象是 RequestFacade，从提供的方法中发现主要是描述这次请求的 HTTP 协议的信息。所以要掌握 Servlet 的工作方式必须要很清楚 HTTP 协议，如果你还不清楚赶紧去找一些参考资料。关于这一块还有一个让很多人迷惑的 Session 与 Cookie。</p>
-<p>Session 与 Cookie 不管是对 Java Web 的熟练使用者还是初学者来说都是一个令人头疼的东西。Session 与 Cookie 的作用都是为了保持访问用户与后端服务器的交互状态。它们有各自的优点也有各自的缺陷。然而具有讽刺意味的是它们优点和它们的使用场景又是矛盾的，例如使用 Cookie 来传递信息时，随着 Cookie 个数的增多和访问量的增加，它占用的网络带宽也很大，试想假如 Cookie 占用 200 个字节，如果一天的 PV 有几亿的时候，它要占用多少带宽。所以大访问量的时候希望用 Session，但是 Session 的致命弱点是不容易在多台服务器之间共享，所以这也限制了 Session 的使用。</p>
-<p>不管 Session 和 Cookie 有什么不足，我们还是要用它们。下面详细讲一下，Session 如何基于 Cookie 来工作。实际上有三种方式能可以让 Session 正常工作：</p>
-<ol>
-<li>基于 URL Path Parameter，默认就支持</li>
-<li>基于 Cookie，如果你没有修改 Context 容器个 cookies 标识的话，默认也是支持的</li>
-<li>基于 SSL，默认不支持，只有 connector.getAttribute(&quot;SSLEnabled&quot;) 为 TRUE 时才支持</li>
-</ol>
-<p>第一种情况下，当浏览器不支持 Cookie 功能时，浏览器会将用户的 SessionCookieName 重写到用户请求的 URL 参数中，它的传递格式如 /path/Servlet;name=value;name2=value2? Name3=value3，其中“Servlet；”后面的 K-V 对就是要传递的 Path Parameters，服务器会从这个 Path Parameters 中拿到用户配置的 SessionCookieName。关于这个 SessionCookieName，如果你在 web.xml 中配置 session-config 配置项的话，其 cookie-config 下的 name 属性就是这个 SessionCookieName 值，如果你没有配置 session-config 配置项，默认的 SessionCookieName 就是大家熟悉的“JSESSIONID”。接着 Request 根据这个 SessionCookieName 到 Parameters 拿到 Session ID 并设置到 request.setRequestedSessionId 中。</p>
-<p>请注意如果客户端也支持 Cookie 的话，Tomcat 仍然会解析 Cookie 中的 Session ID，并会覆盖 URL 中的 Session ID。</p>
-<p>如果是第三种情况的话将会根据 javax.servlet.request.ssl_session 属性值设置 Session ID。</p>
-<p>有了 Session ID 服务器端就可以创建 HttpSession 对象了，第一次触发是通过 request. getSession() 方法，如果当前的 Session ID 还没有对应的 HttpSession 对象那么就创建一个新的，并将这个对象加到 org.apache.catalina. Manager 的 sessions 容器中保存，Manager 类将管理所有 Session 的生命周期，Session 过期将被回收，服务器关闭，Session 将被序列化到磁盘等。只要这个 HttpSession 对象存在，用户就可以根据 Session ID 来获取到这个对象，也就达到了状态的保持。
-<a href=""><strong>图 11.Session 相关类图</strong></a>
-<img src="" alt="图 11.Session 相关类图"></p>
-<p>上从图中可以看出从 request.getSession 中获取的 HttpSession 对象实际上是 StandardSession 对象的门面对象，这与前面的 Request 和 Servlet 是一样的原理。下图是 Session 工作的时序图：
-<a href=""><strong>图 12.Session 工作的时序图（</strong></a><strong><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/image023.jpg" target="_blank">查看大图</a>）</strong>
-<img src="" alt="图 12.Session 工作的时序图"></p>
-<p>还有一点与 Session 关联的 Cookie 与其它 Cookie 没有什么不同，这个配置的配置可以通过 web.xml 中的 session-config 配置项来指定。</p>
-<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/#ibm-pcon" target="_blank">回页首</a></p>
-<p><a href="">Servlet 中的 Listener</a></p>
-<p>整个 Tomcat 服务器中 Listener 使用的非常广泛，它是基于观察者模式设计的，Listener 的设计对开发 Servlet 应用程序提供了一种快捷的手段，能够方便的从另一个纵向维度控制程序和数据。目前 Servlet 中提供了 5 种两类事件的观察者接口，它们分别是：4 个 EventListeners 类型的，ServletContextAttributeListener、ServletRequestAttributeListener、ServletRequestListener、HttpSessionAttributeListener 和 2 个 LifecycleListeners 类型的，ServletContextListener、HttpSessionListener。如下图所示：
-<a href=""><strong>图 13.Servlet 中的 Listener（</strong></a><strong><a href="http://www.ibm.com/developerworks/cn/java/j-lo-servlet/image025.png" target="_blank">查看大图</a>）</strong>
-<img src="" alt="图 13.Servlet 中的 Listener"></p>
-<p>它们基本上涵盖了整个 Servlet 生命周期中，你感兴趣的每种事件。这些 Listener 的实现类可以配置在 web.xml 中的 <listener> 标签中。当然也可以在应用程序中动态添加 Listener，需要注意的是 ServletContextListener 在容器启动之后就不能再添加新的，因为它所监听的事件已经不会再出现。掌握这些 Listener 的使用，能够让我们的程序设计的更加灵活。
-来源： <a href="[http://blog.csdn.net/haojun186/article/details/7467100](http://blog.csdn.net/haojun186/article/details/7467100)">[http://blog.csdn.net/haojun186/article/details/7467100](http://blog.csdn.net/haojun186/article/details/7467100)</a> </p>
+        <h1 id="webservice-soap-wsdl-">Webservice soap wsdl区别之个人见解</h1>
+<p><img src="" alt=""><img src="" alt=""> <img src="" alt=""> <a href="http://www.wudongqi.com/blogedit.asp?id=652" title="编辑该日志" target="_blank"><img src="" alt=""></a> <a href="http://www.wudongqi.com/blogedit.asp?action=del&amp;id=652" target="_blank"><img src="" alt=""></a>
+    ● Web Service实现业务诉求：Web Service是真正“办事”的那个，提供一种办事接口的统称。
+    ● WSDL提供“能办的事的文档说明”：对要提供的服务的一种描述格式。我想帮你的忙，但是我要告诉你我都能干什么，以及干这些事情需要的参数类型。
+    ● SOAP提供“请求”的规范：向服务接口传递请求的格式，包括方法和参数等。你想让人家办事，总得告诉人家你想干什么吧，SOAP就是定义这个“请求”的格式的，按照SOAP定义的“请求”格式“书写”请求就可以保证Web Service能够正确的解读你想让它干什么以及你为它提供了什么参数。在这个请求中，你需要描述的主要问题有：向哪个Web Service发送请求，请求的参数类型、参数值、返回值类型。这些都“填写”完毕，也就完成了符合SOAP规范的SOAP消息。
+    wsdl和soap虽然是web service的两大标准，但是两者并没有必然的联系，都可以独立使用。
+    wsdl提供了一个统一的接口，目前已经成为一个国际上公认的标准，通过wsdl提供的接口可以访问不同类型的资源（如java、c/#、C、C、C++等），因为wsdl是基于xml，与语言平台无关的。另外wsdl提供了binding和service元素，用以绑定接口到具体的服务，实现了接口与实现的分离。
+    soap（简单对象访问协议）是一种基于http的传输协议，用来访问远程服务
+    wsdl与soap的关系在于：wsdl绑定服务的时候可以设定使用的协议，协议可以是soap、http、smtp、ftp等任何一种传输协议，除此以外wsdl还可以绑定jms、ejb及local java等等，不过都是需要对binding和service元素做扩展的，而且需要扩展服务器的功能以支持这种扩展
+    soap协议是一种请求和应答协议规范，而http是web传输协议，soap的传输是可以基于http的，但也可以基于其他的传输协议，如ftp、smtp等。
+    简单对象访问协议（SOAP）是W3C组织的一个Note, 它描述了一种在分散的或分布式的环境中如何交换信息的轻量级协议。SOAP是一个基于XML的协议，它包括三个部分：SOAP封装(Envelop)，封装定义了一个描述消息中的内容是什么，是谁发送的，谁应当接受并处理它以及如何处理它们的框架；SOAP编码规则（Encoding Rules），用于表示应用程序需要使用的数据类型的实例；SOAP RPC表示(RPC Representation)，表示远程过程调用和应答的协定；SOAP可以和多种传输协议绑定（Binding），使用底层协议交换信息。在这个文档中，目前只定义了SOAP如何和HTTP以及HTTP扩展进行绑定的框架。
+    SOAP是个通信协议， SOAP在HTTP协议的基础上，把编写成XML的REQUEST参数, 放在HTTP BODY上提交个WEB SERVICE服务器(SERVLET，ASP什么的) 处理完成后，结果也写成XML作为RESPONSE送回用户端， 为了使用户端和WEB SERVICE可以相互对应，可以使用WSDL作为这种通信方式的描述文件，利用WSDL工具可以自动生成WS和用户端的框架文件，SOAP具备把复杂对象序列化捆绑到XML里去的能力。
+    SOAP的前身是RPC, 就是远程呼叫处理的协议，这个协议安全性不是很好，多数防火墙都会阻挡RPC的通信包，而SOAP则使用HTTP协议作为基本的协议，使用端口80使得SOAP可以透过防火墙，完成RPC的功能。
+    SOAP协议和HTTP协议一样，都是底层的通信协议，只是请求包的格式不同而已，SOAP包是XML格式的，现在我们编写WEB SERVICE不需要深入理解SOAP也没关系。如果SERVICE和CLIENT在同样的环境下使用SOAP，由于一般情况下都有自动生成SOAP程序框架的工具，因此不知道细节也没关系. 可是, 如果CLIENT和SERVICE的环境不同，比如说JAVA的Client和.NET的SERVICE进行通信，或者是VB CLIENT和TOMCAT下的JAVA SERVICE通信，还是要知道一点细节为好. 特别是, WSDL或者UDDI都不是标准，如果不让用就只好手工配制SOAP MESSAGE啦。</p>
 
       
     </div>
@@ -872,95 +1426,8 @@ tomcat.start();</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/tomcat/">tomcat</a></li></span></span> | <span class="tags">Tagged <a href="/tags/tomcat/" class="label label-primary">tomcat</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-tomcat--Servlet工作原理/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-tomcat--Servlet工作原理" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-webservice--Java开发的WebService获取客户端IP地址/">Java开发的WebService获取客户端IP地址_数据库 开发_比特网</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:45.000Z"> <a href="/2014/02/02/2014-02-02-webservice--Java开发的WebService获取客户端IP地址/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-webservice-ip-">Java开发WebService获取客户端IP地址</h1>
-<p>1.基于jax-ws开发的webservice获取客户端ip的方法【在代理类XXXDelegate添加如下代码】：</p>
-<p>import javax.annotation.Resource;</p>
-<p>import javax.servlet.http.HttpServletRequest;</p>
-<p>import javax.xml.ws.WebServiceContext;</p>
-<p>import javax.xml.ws.handler.MessageContext;</p>
-<p>@Resource</p>
-<p>private WebServiceContext wsContext;</p>
-<p>private String getClientInfo(){</p>
-<p>MessageContext mc = wsContext.getMessageContext();</p>
-<p>HttpServletRequest request = (HttpServletRequest)(mc.get(MessageContext.SERVLET_REQUEST));</p>
-<p>String remortAddress = request.getRemoteAddr();</p>
-<p>return (remortAddress);</p>
-<p>}</p>
-<p>2.基于axis发布的webservice获取客户端ip的方法</p>
-<p>//<em>/</em></p>
-<p>/* 获取客户端IP地址，如调用方的IP，以便检查权限。</p>
-<p>/* 适用于axis发布的webservice</p>
-<p>/* @return</p>
-<p>/*/</p>
-<p>public String getClientIpAxis() {</p>
-<p>MessageContext mc = null;</p>
-<p>HttpServletRequest request = null;</p>
-<p>try {</p>
-<p>mc = MessageContext.getCurrentMessageContext();</p>
-<p>if (mc == null)</p>
-<p>throw new Exception(“无法获取到MessageContext”);</p>
-<p>request = (HttpServletRequest) mc</p>
-<p>.getProperty(HTTPConstants.MC_HTTP_SERVLETREQUEST);</p>
-<p>System.out.println(“remote ip: ” + request.getRemoteAddr());</p>
-<p>} catch (Exception e) {</p>
-<p>System.out.println(e.getMessage());</p>
-<p>e.printStackTrace();</p>
-<p>}</p>
-<p>return request.getRemoteAddr();</p>
-<p>}</p>
-<p>3.基于xfire发布的webservice获取客户端ip的方法</p>
-<p>//<em>/</em></p>
-<p>/* 获取客户端IP地址</p>
-<p>/* 适用于xfire发布的webservice</p>
-<p>/* @return</p>
-<p>/*/</p>
-<p>public String getClientIpXfire() {</p>
-<p>String ip = “”;</p>
-<p>try {</p>
-<p>HttpServletRequest request = XFireServletController.getRequest();</p>
-<p>ip = request.getRemoteAddr();</p>
-<p>} catch (Exception e) {</p>
-<p>System.out.println(“无法获取HttpServletRequest.”);</p>
-<p>e.printStackTrace();</p>
-<p>}</p>
-<p>return ip;</p>
-<p>}
-关键字：Java</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/webservice/">webservice</a></li></span></span> | <span class="tags">Tagged <a href="/tags/webservice/" class="label label-primary">webservice</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:39:04"datetime="2014-03-07 10:39:04"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-webservice--Java开发的WebService获取客户端IP地址/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-webservice--Java开发的WebService获取客户端IP地址" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/webservice/">webservice</a></li></span></span> | <span class="tags">Tagged <a href="/tags/webservice/" class="label label-primary">webservice</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:27:47"datetime="2014-03-07 10:27:47"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-webservice--Webservicesoapwsdl区别之个人见解/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-webservice--Webservicesoapwsdl区别之个人见解" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1040,7 +1507,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 17:30:36</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 18:24:57</em></span></div>
 </div>
 <div class="clearfix"></div>
 
