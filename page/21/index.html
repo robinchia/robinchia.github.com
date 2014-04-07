@@ -110,811 +110,249 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy几个重要的结构体/">HAProxy几个重要的结构体</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-TCPIP--TCPIP网络层谜云--ITeye技术网站/">TCP IP网络层谜云 </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy几个重要的结构体/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-TCPIP--TCPIP网络层谜云--ITeye技术网站/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="haproxy-">HAProxy几个重要的结构体</h1>
-<h1 id="-haproxy-http-tech-uc-cn-p-1738-"><a href="http://tech.uc.cn/?p=1738" target="_blank">HAProxy几个重要的结构体</a></h1>
-<p>上一篇文章《<a href="http://tech.uc.cn/?p=1523" target="_blank">HAProxy的event_accept函数源码分析</a>》（以下简称上文）理顺了HAProxy接收客户端连接的主要流程，遗留下相关的基础设施和数据结构没有深入分析，这一篇先介绍几个重要的结构体。</p>
-<p>另外要说明的是，本系列文章对HAProxy的分析都基于目前的稳定版本HAProxy 1.4，而目前的开发版本HAProxy 1.5和1.4相比，重构力度比较大，不少函数名称和结构体都发生变化，但是关键流程还是基本一致的，请各位读者留意。</p>
-<h1 id="1-session">1. session</h1>
-<p>上文讲的其实就是HAProxy怎样在客户端和服务端之间建立一个完整的链路，相关信息都保存到一个session结构体中。原本的session结构体有80行，可以说非常冗长。和上文思路一样，本着不追求旁枝末节，以较小的代价描述HAProxy原理的原则，我把它进行简化，去掉了HTTP处理相关的成员和一些实现额外功能的成员，只把必不可少的成员列出来：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13 struct session {</p>
-<pre><code>struct list list;         //* position in global sessions list /*/
-struct task /*task;        //* the task associated with this session /*/
-
-int conn_retries;         //* number of connect retries left /*/
-int flags;                //* some flags describing the session /*/
-
-struct buffer /*req;       //* request buffer /*/
-struct buffer /*rep;       //* response buffer /*/
-
-struct stream_interface si[2];     //* client and server stream interfaces /*/
-struct sockaddr_storage cli_addr;  //* the client address /*/
-
-struct sockaddr_in srv_addr;       //* the address to connect to /*/
-struct server /*srv;       //* the server the session will be running or has been running on /*/
-
-struct server /*prev_srv;  //* the server the was running on, after a redispatch, otherwise NULL /*/
-</code></pre><p>};</p>
-<p>其中，task、req、rep和si在上文已经有所提及，下面也会有进一步解释；conn_retries、flags、cli_addr和srv_addr甚至不用看注释就明白其意义；srv和prev_srv也很明显，一个指向将要执行或正在执行的后端服务器结构体，一个指向上一次曾经执行的后端服务器结构体。</p>
-<p>list也是一个结构体，包含n和p两个指向struct list类型的指针，详见mini-clist.h。它在这里的作用是把各个session结构体串起来，形成 一个双向链表，如下图所示。这是包括HAProxy和Linux内核广泛使用的一种数据结构。我认为用在这里倒不是很必要，不过仍然是一种值得学习的技巧。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/07/haproxy_sessions.png" target="_blank"><img src="" alt="haproxy_sessions"></a></p>
-<p>值得注意的是，这种链表是嵌入到各个结构体中使用，p和n两个指针成员各自指向前、后节点节点的list成员，而非前、后节点本身。</p>
-<h1 id="2-task">2. task</h1>
-<p>task结构体的主要成员如下：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8 struct task {</p>
-<pre><code>struct eb32_node wq;  //* ebtree node used to hold the task in the wait queue /*/
-struct eb32_node rq;  //* ebtree node used to hold the task in the run queue /*/
-
-int state;            //* task state : bit field of TASK_/* /*/
-int expire;           //* next expiration date for this task, in ticks /*/
-
-struct task /* (/*process)(struct task /*t);  //* the function which processes the task /*/
-void /*context;        //* the task&#39;s context /*/
-</code></pre><p>};</p>
-<p>其中，state和expire都是顾名思义；process是函数指针，根据task的类型会执行不同的处理函数，以后的文章再叙述；context指向与task关联的结构体，在event_accept函数中，context指向的就是session。</p>
-<p>重点讲一下wq和rq，它们是两个使用32位键的ebtree节点（以下简称ebnode），分别代表该task与等待队列和运行队列的关系。在第一篇文章《<a href="http://tech.uc.cn/?p=1031" target="_blank">HAProxy的独门武器：ebtree</a>》中，因为没有具体例子印证，有一个关于ebnode的特点没有交代：一个ebnode在ebtree中，当且仅当该ebnode的leaf_p不为空。这一点可以从ebnode的插入、删除操作中推导得出。</p>
-<p>因此，判断一个task是否在运行队列中就是：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4 static inline int task_in_rq(struct task /*t)</p>
-<p>{
-    return t-&gt;rq.node.leaf_p != NULL;</p>
-<p>}</p>
-<p>同样，判断一个task是否在等待队列中就是：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4 static inline int task_in_wq(struct task /*t)</p>
-<p>{
-    return t-&gt;wq.node.leaf_p != NULL;</p>
-<p>}</p>
-<p>从运行队列中删除一个task：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5 static inline struct task /<em>__task_unlink_rq(struct task /</em>t)</p>
-<p>{
-    eb32_delete(&amp;t-&gt;rq);</p>
-<pre><code>return t;
-</code></pre><p>}</p>
-<p>从等待队列中删除一个task，这里有个优化，last_timer指向最后一个入队列的task（稍后再介绍）：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7 static inline struct task /<em>__task_unlink_wq(struct task /</em>t)</p>
-<p>{
-    eb32_delete(&amp;t-&gt;wq);</p>
-<pre><code>if (last_timer == &amp;t-&gt;wq)
-    last_timer = NULL;
-
-return t;
-</code></pre><p>}</p>
-<p>添加task到运行队列，也就是唤醒该task，上文的event_accept函数，最终也是会执行到这里：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8 extern struct task /<em>__task_wakeup(struct task /</em>t)</p>
-<p>{
-    t-&gt;rq.key = ++rqueue_ticks;</p>
-<pre><code>// clear state flags at the same time
-t-&gt;state &amp;= ~TASK_WOKEN_ANY;
-
-eb32_insert(&amp;rqueue, &amp;t-&gt;rq);
-return t;
-</code></pre><p>}</p>
-<p>添加task到等待队列，也就是让该task排队，乍看上去有点复杂，其实核心部分就只有两三句，关于last_timer的都是一些优化工作，使得HAProxy更快地找到插入的地方：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13</p>
-<p>14
-15</p>
-<p>16
-17</p>
-<p>18
-19</p>
-<p>20
-21</p>
-<p>22
-23</p>
-<p>24 extern void __task_queue(struct task /*task)</p>
-<p>{
-    if (likely(task_in_wq(task)))</p>
-<pre><code>    __task_unlink_wq(task);
-
-
-//* the task is not in the queue now /*/
-task-&gt;wq.key = task-&gt;expire;
-
-
-if (likely(last_timer &amp;&amp;
-
-       last_timer-&gt;node.bit &lt; 0 &amp;&amp;
-       last_timer-&gt;key == task-&gt;wq.key &amp;&amp;
-
-       last_timer-&gt;node.node_p)) {
-    eb_insert_dup(&amp;last_timer-&gt;node, &amp;task-&gt;wq.node);
-
-    if (task-&gt;wq.node.bit &lt; last_timer-&gt;node.bit)
-        last_timer = &amp;task-&gt;wq;
-
-    return;
-}
-
-eb32_insert(&amp;timers, &amp;task-&gt;wq);
-
-
-//* Make sure we don&#39;t assign the last_timer to a node-less entry /*/
-if (task-&gt;wq.node.node_p &amp;&amp; (!last_timer || (task-&gt;wq.node.bit &lt; last_timer-&gt;node.bit)))
-
-    last_timer = &amp;task-&gt;wq;
-return;
-</code></pre><p>}</p>
-<p>由此可以看出，ebtree函数库在使用上，只负责ebnode的组织，并不负责对ebnode的分配和释放，否则wq和rq就是两个ebnode类型的指针，而不是两个ebnode。这样做是有道理的，利用以上ebnode的特点，一个task可以先后多次挂载到相应的以ebtree为具体设施的队列中，减少了内存分配和释放次数。</p>
-<h1 id="3-stream-interface">3. stream interface</h1>
-<p>stream interface结构体的主要成员如下：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13</p>
-<p>14
-15</p>
-<p>16
-17</p>
-<p>18
-19</p>
-<p>20
-21 struct stream_interface {</p>
-<pre><code>unsigned int state;       //* SI_ST/* /*/
-unsigned int prev_state;  //* SI_ST/*, copy of previous state /*/
-
-void /*owner;              //* generally a (struct task/*) /*/
-int fd;                   //* file descriptor for a stream driver when known /*/
-
-unsigned int flags;
-unsigned int exp;         //* wake up time for connect, queue, turn-around, ... /*/
-
-void (/*update)(struct stream_interface /*);     //* I/O update function /*/
-void (/*shutr)(struct stream_interface /*);      //* shutr function /*/
-
-void (/*shutw)(struct stream_interface /*);      //* shutw function /*/
-void (/*chk_rcv)(struct stream_interface /*);    //* chk_rcv function /*/
-
-void (/*chk_snd)(struct stream_interface /*);    //* chk_snd function /*/
-int (/*connect)(struct stream_interface /*, struct proxy /*, struct server /*,
-
-   struct sockaddr /*, struct sockaddr /*);      //* connect function if any /*/
-void (/*iohandler)(struct stream_interface /*);  //* internal I/O handler when embedded /*/
-
-struct buffer /*ib, /*ob;   //* input and output buffers /*/
-unsigned int err_type;    //* first error detected, one of SI_ET_/* /*/
-
-void /*err_loc;            //* commonly the server, NULL when SI_ET_NONE /*/
-void /*private;            //* may be used by any function above /*/
-
-unsigned int st0, st1;    //* may be used by any function above /*/
-</code></pre><p>};</p>
-<p>大部分成员可以从注释中了解其用途，值得注意的是几个函数指针。大致上，它们可以指向两组函数：默认一组是以stream<em>sock</em>开头，用于在socket与缓冲区之间传输数据，转发处理业务流；另一组是以stream<em>int</em>开头，负责拦截、统计和响应客户端的监控请求，因为HAProxy的业务请求与监控请求是发送到同一个端口，通过URI来区分的，而监控请求显然是不能转发到后端服务器的，所以必须在获得各计数器数据后返回客户端。</p>
-<p>以下简述一下stream<em>sock</em>开头的那一组函数的作用。这一组函数在上文的event_accept函数中初始化。
-update指向的函数（stream_sock_data_finish）用于更新stream interface的fd的读写状态和相关标志位。
-shutr和shutw指向的函数（stream_sock_shutr和stream_sock_shutw）分别用于关闭stream interface上的读和写。
-chk_rcv指向的函数（stream_sock_chk_rcv）由消费者调用，用于通知生产者：缓冲区可能有空间了。
-chk_snd指向的函数（stream_sock_chk_snd）由生产者调用，用于通知消费者：缓冲区可能有数据了。
-当si是客户端stream interface时，connect为空，因为客户端连接显然已经建立。
-当si是服务端stream interface时，connect指向HAProxy与服务端建立连接的那个函数（tcpv4_connect_server），而它会在backend.c的connect_server执行时被调用。
-iohandler总是为空。</p>
-<p>stream<em>int</em>开头的那一组函数在stream_interface.c的stream_int_register_handler函数中初始化，而该函数只有在监控分支才会执行。最明显区别是这一组会设置iohandler，而且调用时会重新唤醒所属的task，调用后马上返回，不再向下处理，如下所示：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13</p>
-<p>14
-15</p>
-<p>16
-17</p>
-<p>18
-19 struct task /<em>process_session(struct task /</em>t)</p>
-<p>{
-    ...</p>
-<pre><code>//* Call the second stream interface&#39;s I/O handler if it&#39;s embedded.
- /* Note that this one may wake the task up again.
-
- /*/
-if (s-&gt;req-&gt;cons-&gt;iohandler) {
-
-    s-&gt;req-&gt;cons-&gt;iohandler(s-&gt;req-&gt;cons);
-    if (task_in_rq(t)) {
-
-        //* If we woke up, we don&#39;t want to requeue the
-         /* task to the wait queue, but rather requeue
-
-         /* it into the runqueue ASAP.
-         /*/
-
-        t-&gt;expire = TICK_ETERNITY;
-        return t;
-
-    }
-}
-
-...
-</code></pre><p>}</p>
-<h1 id="4-buffer">4. buffer</h1>
-<p>完整的buffer结构体如下：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13</p>
-<p>14
-15</p>
-<p>16
-17</p>
-<p>18
-19</p>
-<p>20
-21</p>
-<p>22
-23 struct buffer {</p>
-<pre><code>unsigned int flags;             //* BF_/* /*/
-int rex;                        //* expiration date for a read, in ticks /*/
-
-int wex;                        //* expiration date for a write or connect, in ticks /*/
-int rto;                        //* read timeout, in ticks /*/
-
-int wto;                        //* write timeout, in ticks /*/
-int cto;                        //* connect timeout, in ticks /*/
-
-unsigned int l;                 //* data length /*/
-char /*r, /*w, /*lr;               //* read ptr, write ptr, last read /*/
-
-unsigned int size;              //* buffer size in bytes /*/
-unsigned int send_max;          //* number of bytes the sender can consume om this buffer, &lt;= l /*/
-
-unsigned int to_forward;        //* number of bytes to forward after send_max without a wake-up /*/
-unsigned int analysers;         //* bit field indicating what to do on the buffer /*/
-
-int analyse_exp;                //* expiration date for current analysers (if set) /*/
-void (/*hijacker)(struct session /*, struct buffer /*); //* alternative content producer /*/
-
-unsigned char xfer_large;       //* number of consecutive large xfers /*/
-unsigned char xfer_small;       //* number of consecutive small xfers /*/
-
-unsigned long long total;       //* total data read /*/
-struct stream_interface /*prod;  //* producer attached to this buffer /*/
-
-struct stream_interface /*cons;  //* consumer attached to this buffer /*/
-struct pipe /*pipe;              //* non-NULL only when data present /*/
-
-char data[0];                   //* &lt;size&gt; bytes /*/
-</code></pre><p>};</p>
-<p>可以看到，HAProxy的buffer结构体也由许多成员组成，常规buffer该有的一个都不少，例如size、data、l、r、w、lr等等，除此之外，还有具有HAProxy特有的生产者、消费者stream interface指针（prod和cons），还有众多表示读写过期时间、超时时间的成员，还有指示具体请求响应解析过程的标志位（analysers），还有回调函数hijacker（不过看起来没有使用），还有表示该buffer最多能向其消费者发送多少字节的send_max，还有在HTTP chunked格式转发时才有意义的to_forward，还有连续满负荷传输数据和连续低负荷传输数据的计数器（xfer_large和xfer_small），以触发判断是否使用splice系统调用。面对把这么多功能揽于一身的buffer，看你晕不晕！</p>
-<p>下面只挑一些具有通用借鉴意义的成员提及一下。</p>
-<p>最后的那个成员data[0]是一个“零长度数组”，不懂的google一下就知道了，很简单，不多说。</p>
-<h1 id="5-pipe">5. pipe</h1>
-<p>buffer的倒数第二个成员pipe指针，指向的是这么一个链表结构：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6 struct pipe {</p>
-<pre><code>int data;   //* number of bytes present in the pipe  /*/
-int prod;   //* FD the producer must write to ; -1 if none /*/
-
-int cons;   //* FD the consumer must read from ; -1 if none /*/
-struct pipe /*next;
-</code></pre><p>};</p>
-<p>因为splice系统调用要求输入和输出至少必须有一个描述符是管道符，所以，HAProxy准备了一对管道符（prod和cons）。当使用splice读数据时，HAProxy从源socket描述符（对于请求，就是连接客户端与HAProxy的socket描述符，对于响应，则是连接服务端与HAProxy的socket 描述符；下面的目的socket描述符刚好相反）splice到管道符prod；当使用splice写数据时，HAProxy从管道符cons splice到目的socket描述符。详见stream_socket.c的stream_sock_splice_in函数和stream_sock_write_loop函数：</p>
-<p>1</p>
-<p>2
-3</p>
-<p>4
-5</p>
-<p>6
-7</p>
-<p>8
-9</p>
-<p>10
-11</p>
-<p>12
-13</p>
-<p>14
-15 static int stream_sock_splice_in(struct buffer /<em>b, struct stream_interface /</em>si)</p>
-<p>{
-    ...</p>
-<pre><code>ret = splice(fd, NULL, b-&gt;pipe-&gt;prod, NULL, max,
-        SPLICE_F_MOVE|SPLICE_F_NONBLOCK);
-
-...
-</code></pre><p>}</p>
-<p>static int stream_sock_write_loop(struct stream_interface /<em>si, struct buffer /</em>b)</p>
-<p>{
-    ...</p>
-<pre><code>ret = splice(b-&gt;pipe-&gt;cons, NULL, si-&gt;fd, NULL, b-&gt;pipe-&gt;data,
-        SPLICE_F_MOVE|SPLICE_F_NONBLOCK);
-
-...
-</code></pre><p>}</p>
-<p>这样一来，每个buffer就要创建一对管道符，从上文和上面的分析可知，每个session就有两个buffer，而每个session的生命周期是从客户端连接建立到客户端连接释放（这里之前没有提到，以后可能会讲一下），所以，如果并发量很大，这是一个巨大的消耗。为此，HAProxy用管道池来解决这一问题，就像内存池的使用那样，需要有一个next指针把pipe结构体串起来。具体流程是，读取数据之前，调用get_pipe函数获取一对管道符，全部数据写完之后（由data指示数据是否写完），调用put_pipe函数进行释放，这样管道只会在异步等待写的时候被占用，大大减少使用量，从而减少系统开销。详见上面两个函数的代码。</p>
-<h1 id="6-">6. 小结</h1>
-<p>五个我认为比较重要的结构体就介绍到这里。当然，HAProxy还有许多结构体，例如proxy、server、listener等等，不过，这些结构体，要么比较容易看懂，要么网上已经有比较齐全的资料，要么可以陆续在后面的文章中单独说明。而session、task、stream interface、buffer和pipe这五个结构体，连同第一篇介绍的ebtree，向我们展现了HAProxy作为一个高性能代理服务器的底层数据组织和一些重要的处理细节。</p>
-<h3 id="-">您可能感兴趣的文章</h3>
-<ul>
-<li><a href="http://tech.uc.cn/?p=1523" target="_blank">HAProxy的event_accept函数源码分析</a></li>
-<li><a href="http://tech.uc.cn/?p=1031" target="_blank">HAProxy的独门武器：ebtree</a></li>
-<li><a href="http://tech.uc.cn/?p=965" target="_blank">Nginx使用ETag功能的分析</a></li>
-</ul>
-<p>来源： <a href="[http://tech.uc.cn/?p=1738](http://tech.uc.cn/?p=1738)">[http://tech.uc.cn/?p=1738](http://tech.uc.cn/?p=1738)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:45"datetime="2014-03-07 09:54:45"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--HAProxy几个重要的结构体/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--HAProxy几个重要的结构体" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/">HAProxy的独门武器：ebtree</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="haproxy-ebtree">HAProxy的独门武器：ebtree</h1>
-<h1 id="1-haproxy-ebtree-">1. HAProxy和ebtree简介</h1>
-<p>HAProxy是法国人Willy Tarreau个人开发的一个开源软件，目标是应对客户端10000以上的同时连接，为后端应用服务器、数据库服务器提供高性能的负载均衡服务。
-在底层数据结构方面，旧版本HAProxy曾经使用过红黑树，用于任务调度、负载均衡等方面。但是Willy Tarreau认为，在事件响应非常频繁的情况下，任务插入、删除的频率非常高，这时候使用红黑树存在性能瓶颈，尤其不能接受红黑树删除节点的时间复杂度为O(log n)。因此，他发明了一种新的数据结构，叫做<strong>弹性二叉树（elastic binary tree）</strong>，简称ebtree。
-目前新版本的HAProxy（本文编写时最新版本为1.4.23）已使用ebtree，而除了HAProxy之外，还没有其它著名的开源软件使用ebtree。可以这么说，HAProxy最有特色的地方就是ebtree，ebtree名符其实是HAProxy的独门武器。
-ebtree是不平衡的二叉搜索树（BST），而红黑树、AVL树等都是平衡的BST。传统的BST最怕的就是退化成线性搜索，因此，红黑树等BST插入、删除时都需要对树进行平衡化，而平衡化是一个从叶子节点开始，向根节点方向递归向上的过程，时间复杂度是O(log n)。
-有鉴于此，ebtree为了实现删除节点时O(1)的时间复杂度，必然放弃保持树的平衡，为了拒绝由此而来的副作用——退化成线性搜索（或者更准确地说，退化成不受限制的线性搜索），不可避免地引入了一些新的成员和新的思路，且待我慢慢道来。</p>
-<h1 id="2-ebtree-">2. ebtree节点的组成</h1>
-<p>一个ebtree的节点（以下简称ebnode）分为node部分和leaf部分（Willy Tarreau是这样描述的，但我觉得称为树干部分和叶子部分更合适一些，以下就按我的理解来叙述）。<strong>树干</strong>负责关联其它ebnode，由父指针（node_p）和分支（Willy Tarreau称之为root，包括左分支L和右分支R），以及一个控制树的高度的特殊成员（bit）组成，<strong>叶子</strong>负责携带数据（data，一般是数据的键值，所以下文都称为key），另外包含一个指向上层的指针（leaf_p）。
-一棵ebtree只有一个根节点（root），包含两个左右分支的指针（L、R）。所有的ebnode总是挂在根节点的左分支下面，根节点的右分支总是为空。在ebtree的遍历过程中，判断当前节点是否根节点就是判断其右指针是否为空。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/Ebnode.png" target="_blank"><img src="" alt="Ebnode"></a></p>
-<p>-</p>
-<h1 id="3-">3. 各个指针的附加属性</h1>
-<p>在32位平台中，一个指针占用4个字节，例如，地址值0xaabbcc00的下一个地址值是0xaabbcc04，再下一个是0xaabbcc08，也就是说，指针的值的最后两个比特不能表示一个合法地址。因此，Willy Tarreau充分利用这一点，来保存上述几个指针的特殊属性。这是一个很重要的优化，每个ebnode可以节省几个成员，整个ebtree就节省大量存储空间。
-1）L和R既可以指向其它ebnode的树干，也可以指向其它ebnode的叶子，还可以指向自己的叶子。在ebtree的遍历过程中，对树干和叶子有不同的处理逻辑，L和R有必要知道自己所指向的是树干还是叶子。
-2）可以知道node_p和leaf_p究竟挂在其它ebnode的左分支下面，还是挂在其右分支下面。
-3）根节点右分支不挂任何树干和叶子，可以把它也利用上，指示该ebtree是否允许重复键值。
-熟悉红黑树的读者都知道，红黑树也有同样的优化方法，表示红黑树节点颜色的属性并不占用内存空间。</p>
-<h1 id="4-bit-">4. bit的定义</h1>
-<p>引入bit就是为了<strong>限制树的高度</strong>，避免极端不平衡。在一棵不允许重复键值的ebtree中，key是32位的情况下，bit的取值范围是从0到31，此时，它的定义是：<strong>子树所有的键中，第一个不同的二进制位的位置</strong>。允许重复键值的ebtree稍后再详细介绍。
-例如，下图的右下角子树中只有两个键，左边叶子节点的键值为300，右边叶子节点的键值为400，300的二进制是100101100，400的二进制是110010000，从右边数起第7位起（注意，程序员都是从0开始数数的），300和400左边的位都相同，所以，bit等于7。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/bit.png" target="_blank"><img src="" alt="bit"></a></p>
-<p>这时候，读者可能会问，这样定义bit为什么能够限制树的高度呢？不用着急，马上隆重介绍bit的两个重要意义！</p>
-<h1 id="5-bit-">5. bit的第一个重要意义</h1>
-<p>这里只讨论键值大于等于零的情况，事实上，ebtree可以支持键值为负数，不过，我还没有仔细研究过这种情况，应该是对符号位进行某些转换处理。
-bit的第一个重要意义：<strong>同一个ebnode中的bit和key，联合决定该ebnode属下的子树内，所有key的取值范围</strong>。
-先看下图挂在根节点下面，key = 300的那个ebnode，bit = 8，300的二进制为100101100，从右边数起第8位是最高位那个1，参考bit的定义，也就是说，该子树所有的键，第8位左边都是0，所以，它们的取值范围是从0到511（二进制111111111）。
-再看最下面那个ebnode，bit = 5，250的二进制为11111010，从右边数起第5位是第三个1，再对照bit的定义，该子树的键，第5位左边都是11，所以，它们的取值范围是从192（二进制11000000）到255（二进制11111111）。
-同理，最右边那个ebnode，bit = 7，key = 400，取值范围是256-511。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/bit1.png" target="_blank"><img src="" alt="bit1"></a></p>
-<h1 id="6-bit-">6. bit的第二个重要意义和查找过程</h1>
-<p>bit的第二个重要意义：<strong>如果要查找的数据x在该子树的取值范围内，bit可以指示其可能会在左分支下面还是右分支下面</strong>。
-ebtree的具体查找过程是，遍历到某个ebnode时，如果key = x，返回查找结果；如果x已经超出bit规定的取值范围，返回查找失败；否则，取x的第bit位，如果bit = 0，那么从该ebnode的左分支查找，反之，从右分支查找；如果已到达叶子还是没有匹配，返回查找失败。
-还是上一节那个图，假如要找的键x = 249，二进制为11111001，从根节点左分支开始查找，bit = 8，右边数起第8位为0，于是从它的左分支继续查找，bit = 5，249右边数起第5位为1，于是从它的右分支继续查找，此时已到达叶子，且250 != 249，本次查找失败。
-假如要找的键x = 300，因为就在查找路径的节点上，直接返回结果。
-假如要找的键x = 600，已经超出该子树中bit规定的取值范围，返回查找失败。</p>
-<h1 id="7-">7. 插入不可重复的键值</h1>
-<p>首先，要介绍的是空树的情况。由前面的叙述可以得知，一棵ebtree为空树当且仅当它的根节点的左分支为空。所以，此时插入的ebnode就直接挂在根节点的左分支下面，由于新插入的ebnode不存在左右分支，也没有父节点（上层ebnode），显然也不需要bit来控制树的高度，因此，该ebnode的树干都没有使用。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert0.png" target="_blank"><img src="" alt="insert0"></a></p>
-<p>其次，介绍ebtree只有一个ebnode时，再插入一个ebnode的情况。此时，新的ebnode必定插入在根节点与旧的ebnode之间，如果新的键值大于原来的键值，旧的ebnode挂在新的ebnode的左分支下面，新的ebnode的叶子挂在自己的右分支下面，再计算bit；反之，则左右相反，再计算bit。
-下图的例子，是已有key = 200，再插入key = 300的情形。读者可以根据上面的描述画出已有key = 200，再插入key = 100的情形。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert1.png" target="_blank"><img src="" alt="insert1"></a></p>
-<p>然后，就可以介绍在ebtree中插入新的ebnode的<strong>五种基本情形</strong>。在这里，都以上图为初始状态。任何具有更多ebnode的情形，都可以通过对ebtree的遍历，递推到其中一种情形。</p>
-<p>1) <strong>新的键值可以插入子树中，而且小于子树中的最小键值。</strong></p>
-<p>假如新插入ebnode的key为100，根据bit的第二个重要意义，100应该在该子树的左分支下面，而且，100小于200，于是，该ebnode插入在原图的左分支上，自己的左分支指向自己的叶子，自己的右分支指向原来子树的左分支。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_1.png" target="_blank"><img src="" alt="insert2_1"></a></p>
-<p>键值范围[0, 200)都属于这种情形。</p>
-<p>2) <strong>新的键值可以插入子树中，该键值在确定要插入的两个ebnode的键值之间，且应该在该子树的左分支下面。</strong></p>
-<p>假如新插入ebnode的key为225，根据bit的第二个重要意义，225应该在该子树的左分支下面，而且，225大于200，于是，该ebnode插入在原图的左分支上，自己的左分支指向原来子树的左分支，自己的右分支指向自己的叶子。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_2.png" target="_blank"><img src="" alt="insert2_2"></a></p>
-<p>键值范围(200, 255]都属于这种情形。</p>
-<p>3) <strong>新的键值可以插入子树中，该键值在确定要插入的两个ebnode的键值之间，且应该在该子树的右分支下面。</strong></p>
-<p>假如新插入ebnode的key为275，根据bit的第二个重要意义，275应该在该子树的右分支下面，而且，275小于300，于是，该ebnode插入在原图的右分支上，自己的左分支指向自己的叶子，自己的右分支指向原来子树的右分支。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_3.png" target="_blank"><img src="" alt="insert2_3"></a></p>
-<p>键值范围(255, 300)都属于这种情形。</p>
-<p>4) <strong>新的键值可以插入子树中，而且大于子树中的最大键值。</strong></p>
-<p>假如新插入ebnode的key为400，根据bit的第二个重要意义，400应该在该子树的右分支下面，而且，400大于300，于是，该ebnode插入在原图的右分支上，自己的左分支指向原来子树的右分支，自己的右分支指向自己的叶子。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_4.png" target="_blank"><img src="" alt="insert2_4"></a></p>
-<p>键值范围(300, 511]都属于这种情形。</p>
-<p>5) <strong>新的键值不可以插入子树中。</strong></p>
-<p>假如新插入ebnode的key为600，根据bit的第一个重要意义，600不可插入到子树中，于是，该ebnode插入在原图的子树之上，自己的左分支指向原来的子树，自己的右分支指向自己的叶子。如下图所示。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert2_5.png" target="_blank"><img src="" alt="insert2_5"></a></p>
-<p>键值范围(511, +∞)都属于这种情形。</p>
-<h1 id="8-bit-">8. bit的第三个重要意义和插入重复的键值</h1>
-<p>ebtree是专门为任务调度而生的，同样的优先级，必须保证能够按照任务触发的次序来进行访问。所以，ebtree支持存储重复的键值，这一点并不是所有的BST都支持，可以说是ebtree的优点。而且，解决键值冲突不会退化成链表。
-bit的第三个重要意义：<strong>bit为负值表示该子树下所有的键都是重复的，而且，该值表示重复子树的层次</strong>。当然，必须要在根节点右指针允许的情况下。
-插入第一个重复键值，例如300（ebnode底纹为点点），可以参考上一节的第二种和第四种基本情形，不同的是，bit为-1。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup1.png" target="_blank"><img src="" alt="insert_dup1"></a></p>
-<p>如果再插入一个重复键值300（ebnode底纹为方格），应该在重复键值子树上插入，而且是向上生长。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup2.png" target="_blank"><img src="" alt="insert_dup2"></a></p>
-<p>上图已经有四个ebnode，信息量较大，为了后续叙述方便，把它简化，去掉几个指针域，保留bit和key，得到下图。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup2s.png" target="_blank"><img src="" alt="insert_dup2s"></a></p>
-<p>再插入一个300（ebnode底纹为斜方格），得到下面的ebtree。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup3s.png" target="_blank"><img src="" alt="insert_dup3s"></a></p>
-<p>再插入两个300（ebnode底纹分别为左斜线和右斜线），得到下面的ebtree。</p>
-<p><a href="http://tech.uc.cn/wp-content/uploads/2013/05/insert_dup5s.png" target="_blank"><img src="" alt="insert_dup5s"></a></p>
-<p>读者可以思考一下，如果再来一个、两个、三个300，应该在哪里插入？如果插入不同于300的其它键值，应该在哪里插入？
-从上面几张图，大家可以看到，一个ebnode的树干和叶子会随着树的增长而拉长到不同的层次上，好像很有弹性的样子，这就是弹性二叉树名字的由来。</p>
-<h1 id="9-">9. 删除节点</h1>
-<p>删除一个ebnode，概括起来比较简单，就是把要删除的叶子和该叶子的父亲（树干部分）删除，然后把兄弟挂到祖父下面。因为不需要对树进行平衡化，不需要访问其它ebnode，效率很高。
-具体操作，分为两种情况：
-1）被删除的叶子直连自己的树干，可直接删除该ebnode，然后对它的兄弟重新指派原来的祖父为父亲。
-2）被删除的叶子不是直连自己的树干，以该叶子的父亲（其它ebnode的树干）替换该ebnode的树干，然后删除该ebnode，再把它的兄弟重新指派原来的祖父为父亲。</p>
-<h1 id="10-">10. 总结</h1>
-<p>没有最好的数据结构，只有最合适的数据结构。ebtree有它的优点：
-1）支持存储重复的键值，而且，在此情况下，也不会退化成线性操作。
-2）删除节点时，不需要对树进行平衡化。
-3）插入键值时，很可能不需要深入到树的叶子，当然，很多BST都这样。
-4）查询键值时，可以预知子树的取值范围，从而可以选择访问还是不访问该子树。
-缺点也很明显：
-1）逻辑比较复杂，熟悉的人不多（希望读者看完本文之后都有茅塞顿开的感觉）。
-2）ebnode占用空间比较多，如果把bit也算一个指针，相当于花了5个指针才携带1个数据。
-3）键值严重依赖于可以进行位运算的数据类型。
-总而言之，ebtree适合有高频率插入、删除操作（例如50万次/秒）的使用场合，不适合查询较多、插入、删除较少的场合，非常不适合用于缓存。</p>
-<h1 id="11-">11. 参考资料</h1>
-<ul>
-<li><a href="http://1wt.eu/articles/ebtree/" target="_blank"><a href="http://1wt.eu/articles/ebtree/">http://1wt.eu/articles/ebtree/</a></a></li>
-<li>Willy Tarreau个人网站对ebtree的介绍，不过存在不少误导的地方</li>
-<li><a href="http://blog.nklike.com/%E5%BC%80%E6%BA%90%E8%BD%AF%E4%BB%B6/ebtree%E4%BB%8B%E7%BB%8D/" target="_blank"><a href="http://blog.nklike.com/开源软件/ebtree介绍/">http://blog.nklike.com/开源软件/ebtree介绍/</a></a></li>
-<li>淘宝空见对上文的翻译，也有不够准确的地方</li>
-<li><a href="http://wenku.it168.com/d_000555847.shtml" target="_blank"><a href="http://wenku.it168.com/d_000555847.shtml">http://wenku.it168.com/d_000555847.shtml</a></a></li>
-<li><p>对ebtree的描述错误比较多</p>
-<h3 id="-">您可能感兴趣的文章</h3>
-</li>
-<li><p><a href="http://tech.uc.cn/?p=696" target="_blank">使用搜索技术实现URL智能匹配</a></p>
-</li>
-<li><a href="http://tech.uc.cn/?p=1738" target="_blank">HAProxy几个重要的结构体</a></li>
-<li><a href="http://tech.uc.cn/?p=300" target="_blank">Nginx的http配置结构体的组织结构</a></li>
-</ul>
-<p>来源： <a href="[http://tech.uc.cn/?p=1031](http://tech.uc.cn/?p=1031)">[http://tech.uc.cn/?p=1031](http://tech.uc.cn/?p=1031)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--HAProxy的独门武器：ebtree" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ArmstrongNumber/">ArmstrongNumber</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ArmstrongNumber/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="armstrongnumber">ArmstrongNumber</h1>
-<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 阿姆斯壮数</a></h1>
-<h2 id="-">说明</h2>
-<p>在三位的整数中，例如153可以满足13 + 53 + 33 = 153，这样的数称之为Armstrong数，试写出一程式找出所有的三位数Armstrong数。</p>
-<h2 id="-">解法</h2>
-<p>Armstrong数的寻找，其实就是在问如何将一个数字分解为个位数、十位数、百位数......，这只要使用除法与余数运算就可以了，例如输入 input为abc，则：
-a = input / 100
-b = (input%100) / 10
-c = input % 10</p>
-<h2 id="-">实作</h2>
-<ul>
-<li><p>C
-/#include <stdio.h>
-/#include <time.h>
-/#include <math.h>
-int main(void) {
-int a, b, c;
-int input;
-printf(&quot;寻找Armstrong数：\n&quot;);
-for(input = 100; input &lt;= 999; input++) {
-a = input / 100;
-b = (input % 100) / 10;
-c = input % 10;
-if(a/<em>a/</em>a + b/<em>b/</em>b + c/<em>c/</em>c == input)
-printf(&quot;%d &quot;, input);
-}
-printf(&quot;\n&quot;);
-return 0;
-}</p>
-</li>
-<li><p>Java
-public class Armstrong {
-public static void main(String[] args) {
-System.out.println(&quot;寻找Armstrong数：&quot;);
-for(int i = 100; i &lt;= 999; i++) {
-int a = i / 100;
-int b = (i % 100) / 10;
-int c = i % 10;
-if(a/<em>a/</em>a + b/<em>b/</em>b + c/<em>c/</em>c == i)
-System.out.print(i + &quot; &quot;);
-}
-System.out.println();
-}
-}</p>
-</li>
-</ul>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:35:39"datetime="2014-03-07 10:35:39"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ArmstrongNumber/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--ArmstrongNumber" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/">haproxy 解决 多主机session共享问题 的三种方法</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="haproxy-session-">haproxy 解决 多主机session共享问题 的三种方法</h1>
-<p>haproxy 解决 多主机session共享问题 的三种方法</p>
-<p>1 session知识储备
-2 haproxy三种方法保持客户端session一致
-3 实验环境及结构
-4 安装配置及管理
-5 本实验中使用到相同的index.php代码
-6 联系方法及扩展阅读
-感谢 不就是要我命 QQ 47034839 提供测试主机 
-1 session知识储备
-Session是由应用服务器维持的一个服务器端的存储空间，用户在连接服务器时，会由服务器生成一个唯一的SessionID,用该SessionID 为标识符来存取服务器端的Session存储空间。
-而SessionID这一数据则是保存到客户端，用Cookie保存的，用户提交页面时，会将这一 SessionID提交到服务器端，来存取Session数据。
-服务器也通过URL重写的方式来传递SessionID的值，因此不是完全依赖Cookie。如果客户端Cookie禁用，则服务器可以自动通过重写URL的方式来保存Session的值，并且这个过程对程序员透明。
-php.ini 里几个session相关值的 其它的值请参考《PHP与Mysql5程序设计》
-session.use_cookies = 1  /#表示 服务端和客户端交互session是通过cookie的方式 默认值
-session.name = 9ai9     /#默认值是PHPSESSID 我这里改成9ai9是为了和默认值区别
-session.cache_limiter = nocache /#此设置确保对每个请求，在可能提供缓存的版本前，先请求发送到最初的服务器。这个值联系到下文中 cookie识别中的相关参数
-2 haproxy三种方法保持客户端session一致
-  2.1 用户IP 识别 </p>
-<p>haroxy 将用户IP经过hash计算后 指定到固定的真实服务器上（类似于nginx 的IP hash 指令）
-配置指令        balance source
-实例访问<a href="http://sourceip.9ai9.net:8080/" target="_blank"><a href="http://sourceip.9ai9.net:8080">http://sourceip.9ai9.net:8080</a></a>
-  2.2 cookie 识别<br>haproxy 将WEB服务端发送给客户端的cookie中插入(或添加加前缀)haproxy定义的后端的服务器COOKIE ID。
-配置指令例举  cookie  SESSION_COOKIE  insert indirect nocache
-<a href="http://cookie.9ai9.net:8080/" target="_blank"><a href="http://cookie.9ai9.net:8080">http://cookie.9ai9.net:8080</a></a>
-用firebug可以观察到用户的请求头的cookie里 有类似&quot; Cookie 9ai9=0bc588656ca05ecf7588c65f9be214f5; SESSION_COOKIE=12&quot; SESSION_COOKIE=12就是haproxy添加的内容
-  2.3 session 识别<br>haproxy 将后端服务器产生的session和后端服务器标识存在haproxy中的一张表里。客户端请求时先查询这张表。
-配置指令例举 appsession 9ai9 len 64 timeout 5h request-learn 
-注意 9ai9 这个值替换成 你的php.ini 里session.name的值。
-实例访问 <a href="http://appsession.9ai9.net:8080/" target="_blank"><a href="http://appsession.9ai9.net:8080">http://appsession.9ai9.net:8080</a></a>
-  2.4 只做简单轮询对比 
-实例访问 <a href="http://nosession.9ai9.net:8080/" target="_blank"><a href="http://nosession.9ai9.net:8080">http://nosession.9ai9.net:8080</a></a>
-3 实验环境及结构
-CentOS 5.3 64
-haproxy  113.106.185.245
-WEB1 REALsrv_70  184.82.239.70
-WEB2  REALsrv_120 220.162.237.120<br>4 安装配置及管理
-useradd -M -s /sbin/nologin haproxy
-wget <a href="http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz" target="_blank"><a href="http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz">http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz</a></a>
-tar zxvf haproxy-1.4.13.tar.gz 
-cd haproxy-1.4.13
-make TARGET=linux26 PREFIX=/usr/local/haproxy install
-mkdir /usr/local/haproxy/conf
-vim /usr/local/haproxy/conf/haproxy.cfg</p>
+        <h1 id="tcp-ip-iteye-">TCP IP网络层谜云 - - ITeye技术网站</h1>
+<p><a href="http://www.iteye.com/" target="_blank">首页</a> <a href="http://www.iteye.com/news" target="_blank">新闻</a> <a href="http://www.iteye.com/forums" target="_blank">论坛</a> <a href="http://www.iteye.com/ask" target="_blank">问答</a> <a href="http://www.iteye.com/blogs" target="_blank">博客</a> <a href="http://www.iteye.com/job" target="_blank">招聘</a> <a href="http://java-mzd.iteye.com/blog/1019088#" target="_blank">更多 ▼</a></p>
+<p><a href="http://www.iteye.com/wiki" target="_blank">专栏</a>  <a href="http://www.iteye.com/groups" target="_blank">群组</a> <a href="http://www.iteye.com/search" target="_blank">搜索</a></p>
+<p><a href="http://java-mzd.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.iteye.com/all" target="_blank">我的应用</a> <a href="http://java-mzd.iteye.com/login" target="_blank">登录</a> <a href="http://java-mzd.iteye.com/signup" target="_blank">注册</a></p>
+<h1 id="-java-mzd-http-java-mzd-iteye-com-"><a href="http://java-mzd.iteye.com/" target="_blank">java-mzd</a></h1>
+<p>永久域名 <a href="http://java-mzd.iteye.com/" target="_blank"><a href="http://java-mzd.iteye.com">http://java-mzd.iteye.com</a></a></p>
+<p><a href="http://java-mzd.iteye.com/blog/1019088#" target="_blank">4顶</a>
+<a href="http://java-mzd.iteye.com/blog/1019088#" target="_blank">3踩</a></p>
+<p><a href="http://java-mzd.iteye.com/blog/1019089" title="TCP/IP网络层谜云之ICMP" target="_blank">TCP/IP网络层谜云之ICMP</a> | <a href="http://java-mzd.iteye.com/blog/1007577" title="TCP/IP传输层，你懂多少？" target="_blank">TCP/IP传输层，你懂多少？</a></p>
+<p>2011-04-27</p>
+<h3 id="-tcp-ip-"><a href="">TCP/IP网络层谜云</a></h3>
+<p><strong>文章分类:<a href="http://www.iteye.com/blogs/category/java" target="_blank">Java编程</a></strong></p>
+<p>PS.又调了好几遍，还是无法将整篇文章作为一个博客发表。所以，还是将文件分成两部分吧。</p>
+<p>第一部分主要介绍网络层的基本知识</p>
+<p>第二部分介绍ICMP有关知识。
+<strong>你所不知道的网络层</strong></p>
+<hr>
+<p>**上文《TCP/IP传输层，你懂多少》 <a href="http://java-mzd.iteye.com/blog/1007577中，我们介绍了“传输层是如何为数据提供端对端的服务的”" target="_blank">http://java-mzd.iteye.com/blog/1007577中，我们介绍了“传输层是如何为数据提供端对端的服务的”</a>.</p>
+<p>可是，数据包又是怎样从你的电脑出发，历经网络世界的艰辛，到达对方电脑的呢？在网络的世界当中，你的数据包又会遇到些什么问题？它们又是怎么解决的你？要回答这个问题，我们就必须研究TCP/IP协议栈中的Internet层（和数据链路层了）。**</p>
+<p><strong>同以往一样，给出我自己认为会遇到的15个问题，并且列出来，如果大家能熟练的回答，请您绕道。</strong></p>
 <ol>
-<li>global</li>
-<li>log     127.0.0.1 local0 info </li>
-<li>maxconn 4096</li>
-<li>user    haproxy</li>
-<li>group   haproxy</li>
-<li>daemon</li>
-<li>nbproc  1</li>
-<li>pidfile /var/run/haproxy.pid</li>
-<li>defaults</li>
-<li>mode    http</li>
-<li>maxconn         2000</li>
-<li>contimeout      5000</li>
-<li>clitimeout      30000</li>
-<li>srvtimeout      30000</li>
-<li>option          httplog</li>
-<li>option          redispatch</li>
-<li>option          abortonclose</li>
-<li>retries         3</li>
-<li>listen admin_stats</li>
-<li>bind 113.106.185.245:443</li>
-<li>mode http</li>
-<li>log 127.0.0.1 local0 err</li>
-<li>stats   uri     /qhappy_stats</li>
-<li>stats   realm   9ai9.net\ Qhappy</li>
-<li>stats   auth    qhappy:qhappy</li>
-<li>stats   refresh   5s </li>
-<li>listen site_status</li>
-<li>bind 113.106.185.245:445</li>
-<li>mode http</li>
-<li>log  127.0.0.1 local0 err</li>
-<li>monitor-uri     /site_status</li>
-<li>frontend  WEB_SITE</li>
-<li>bind    0.0.0.0:8080</li>
-<li>mode    http</li>
-<li>log     global</li>
-<li>option  httplog</li>
-<li>option  httpclose</li>
-<li>option  forwardfor</li>
-<li>acl     COOKIE          hdr_reg(host)   -i ^(cookie.9ai9.net)</li>
-<li>acl     SOURCE          hdr_reg(host)   -i ^(sourceip.9ai9.net)</li>
-<li>acl     APPSESSION      hdr_reg(host)   -i ^(appsession.9ai9.net)</li>
-<li>acl     NOSESSION       hdr_reg(host)   -i ^(nosession.9ai9.net)</li>
-<li>use_backend COOKIE_srv          if COOKIE</li>
-<li>use_backend SOURCE_srv          if SOURCE</li>
-<li>use_backend APPSESSION_srv      if APPSESSION</li>
-<li>use_backend NOSESSION_srv       if NOSESSION</li>
-<li>/#        default_backend ai_server</li>
-<li>backend COOKIE_srv</li>
-<li>mode    http</li>
-<li>cookie  SESSION_COOKIE  insert indirect nocache</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend SOURCE_srv</li>
-<li>mode    http</li>
-<li>balance source</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend APPSESSION_srv</li>
-<li>mode    http</li>
-<li>appsession 9ai9 len 64 timeout 5h request-learn</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1
-1.</li>
-<li>backend NOSESSION_srv</li>
-<li>mode    http</li>
-<li>balance roundrobin</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend ai_server</li>
-<li>mode    http</li>
-<li>balance roundrobin</li>
-<li>cookie  SERVERID</li>
-<li>server REALsrv_70 184.82.239.70:80 cookie 2 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120 220.162.237.120:80 cookie 1 check inter 1500 rise 3 fall 3 weight 1
-<em>复制代码</em>
-haproxy 启动重启等管理脚本
-cd /etc/init.d/
-wget <a href="http://www.9ai9.net/download/shell/haproxy" target="_blank"><a href="http://www.9ai9.net/download/shell/haproxy">http://www.9ai9.net/download/shell/haproxy</a></a>
-chmod 755 haproxy
-chkconfig --add haproxy
-使用方法 你懂的
-/etc/init.d/haproxy {start|stop|status|checkconfig|restart|try-restart|reload|force-reload}
-5 本实验中使用到相同的index.php代码 如下</li>
-<li>&lt;?php</li>
-<li>session_start();</li>
-<li>$_SESSION[&#39;time&#39;] =date(&quot;Y:m:d:H:s&quot;,time());</li>
-<li>echo &quot;本次访问时间&quot;.&quot;<font color=red>&quot;.$_SESSION[&#39;time&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;访问的服务器地址是&quot;.&quot;<font color=red>&quot;.$_SERVER[&#39;SERVER_ADDR&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;访问的服务器域名是&quot;.&quot;<font color=red>&quot;.$_SERVER[&#39;SERVER_NAME&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;SESSIONNAME是&quot;.&quot;<font color=red>&quot;.session_name().&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;SESSIONID是&quot;.&quot;<font color=red>&quot;.session_id().&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>?&gt;
-<em>复制代码</em>6 联系方法及扩展阅读
-笔者 水煮鱼@溢  微博 <a href="http://t.qq.com/cllxy1234" target="_blank"><a href="http://t.qq.com/cllxy1234">http://t.qq.com/cllxy1234</a></a> 欢迎收听
-haproxy 官网 <a href="http://haproxy.1wt.eu/download/1.4/doc/configuration.txt" target="_blank"><a href="http://haproxy.1wt.eu/download/1.4/doc/configuration.txt">http://haproxy.1wt.eu/download/1.4/doc/configuration.txt</a></a>
-董旗宇  <a href="http://www.9ai9.net/download/art/HAProxy" target="_blank"><a href="http://www.9ai9.net/download/art/HAProxy">http://www.9ai9.net/download/art/HAProxy</a></a>配置使用说明.pdf<br>刘天斯  <a href="http://blog.liuts.com/post/223/" target="_blank"><a href="http://blog.liuts.com/post/223/">http://blog.liuts.com/post/223/</a></a>
-linuxtone <a href="http://bbs.linuxtone.org/thread-73-1-1.html" target="_blank"><a href="http://bbs.linuxtone.org/thread-73-1-1.html">http://bbs.linuxtone.org/thread-73-1-1.html</a></a></li>
+<li>网络层的作用？</li>
+<li>网络层有哪些协议？</li>
+<li>IP数据包的格式？</li>
+<li>IP数据包传输的过程？</li>
+<li>为什么需要ARP协议？</li>
+<li>ARP协议通信过程是怎么样的？（ARP协议如何控制网络？）</li>
+<li>数据包的最大值？（分片的地方？分片重组的地方？分片的原则？）</li>
+<li>数据包在局域网内怎么从一台主机传送到另外一台主机？</li>
+<li>数据怎么实现跨网段传输？（路由如何实现跨网段传输？）</li>
+<li>什么是默认网关？</li>
+<li>代理ARP的作用？</li>
+<li>数据跨网段传输时在路由器中的具体情形？（所谓的穿过路由是指什么？）</li>
+<li>数据包路由的过程？</li>
+<li>为什么需要ICMP协议？（ICMP协议差错控制与TCP差错控制对比）</li>
+<li>什么是ICMP协议？</li>
+<li>ICMP协议有哪些数据包？（Ping程序的实现？trancerouter程序的实现？） </li>
 </ol>
-<p>来源： <a href="[http://bbs.linuxtone.org/thread-9526-1-1.html](http://bbs.linuxtone.org/thread-9526-1-1.html)">[http://bbs.linuxtone.org/thread-9526-1-1.html](http://bbs.linuxtone.org/thread-9526-1-1.html)</a></p>
+<p><strong>一。网络层的作用：</strong> </p>
+<p>TCP/IP协议栈的<strong>Internet层主要负责处理主机到主机的通信**</strong>，决定数据包如何交付**：是交给网关(路由器)还是交给本地端口。</p>
+<p><strong>二。网络层的协议及作用：</strong></p>
+<p>网际协议IP：用来路由</p>
+<p>网际控制报文协议 ICMP：给IP层提供一定的可靠性</p>
+<p>地址解析协议ARP：</p>
+<p>反向地址解析协议RARP</p>
+<p><strong>三。IP数据包格式：</strong> </p>
+<p>版本（4）</p>
+<p>头长度（4）</p>
+<p>服务类型（8）</p>
+<p>总长度（16） 标识（16）</p>
+<p>标志（3）</p>
+<p>段位移（13） 生存期（8）</p>
+<p>协议（8）</p>
+<p>头校验和（16） 源IP地址（32） 目的IP地址（32） IP选项（0或者32） 数据</p>
+<p><strong>四。数据包传输的过程</strong></p>
+<p>首先，传输层将封装好的数据交给Internet层，Internet层收到数据后，<strong>将数据封装成一个**</strong>IP<strong>**数据包。</strong></p>
+<p><strong>注意协议之间的底层无关性：</strong>Internet层封装上层数据包时，不关心不管上层传给他的是UDP数据包还是TCP数据包，都将上层传来的数据封装为IP数据包。同样，传输层在封装用户信息流时也是同样的不关心上层数据的内容。</p>
+<hr>
+<p><strong>五。为什么需要ARP协议？</strong></p>
+<p><strong>IP数据包要想继续向下发送，就必须转化为在物理设备上传输的数据帧。</strong> </p>
+<p>在物理设备上传输数据时，数据包首先是被网卡接收，如果网卡接收到的数据包的硬件地址与本机不符，则直接丢弃，如果相符，再交由上层协议处理的。而在我们的网络通信中，源主机的应用程序知道目的程序的IP地址和端口号，却不知道目的主机的硬件地址，<strong>因此在通讯前必须获得目的主机的硬件地址。ARP**</strong>协议就起到这个作用。**</p>
+<hr>
+<p><strong>六。ARP**</strong>协议通信过程？**</p>
+<p><strong>每台机器上都维护着一个ARP缓存表，保存着IP地址到MAC**</strong>地址的映射**</p>
+<p>注意：缓存表中的记录有过期时间T，如果T时间内没有再次使用某条记录，则该记录失效，下次使用时，还要再次发ARP请求来获得目的主机的硬件地址。</p>
+<p>作用：因为我们的机器需要和大量机器通信，如果没有过期机制的话，显然将会产生巨大的记录量，降低效率。</p>
+<p>主机A要和主机B（192.168.0.1）通信，则先查询主机A中的ARP缓存表，看是否有该记录，如果有，则取出对应MAC地址。</p>
+<p>如果缓存中没有该记录，主机A发出ARP请求，询问“IP地址是192.168.0.1的主机的硬件地址是多少”，并将这个ARP请求<strong>广播</strong>到本地网段（本地网段的任何一个主机都可能是接受者，所以用广播, 广播的目的MAC地址为:FF:FF:FF:FF:FF:FF）主机B收到广播的ARP请求，发现其中的IP地址（192.168.0.1）与本机相符，发送一个ARP应答数据包给源主机，将自己的硬件地址填写在应答包中,主机A接收ARP应答，提取MAC地址，并且将IP和MAC映射存入ARP缓存。</p>
+<p>对于其他主机，虽然这个ARP请求可能与它无关，但ARP协议软件也会把其中的源MAC地址与源IP地址的映射记录下来，这样做能够有效的减少ARP请求在局域网的发送次数。 </p>
+<p><strong>ARP欺骗的原理：</strong> </p>
+<p>通过以上的知识，我们可以知道，主机A要和主机B通信，必须请求得到主机B的MAC地址，而MAC地址，又是通过ARP请求来得到的。又，根据ARP请求的广播机制，与非接收主机也会讲收到的ARP请求存入自己的ARP缓存。那么，我们可以自己发送一个ARP请求，将默认网关的IP作为发送IP，自己的MAC地址作为发送的MAC地址，随便请求一个IP地址的MAC地址。这样，网络中的所有计算机都会更新到默认网关的ARP缓存，而将默认网关IP对于的MAC地址改为我们网卡的MAC地址。从而，发送给默认网关的IP数据帧都会发送给我们自己的主机，我们监视完IP数据包后，再将IP数据包转发出去，即可通过ARP欺骗来完成对网络的监控。同样。当我们只进行ARP欺骗，而不进行转发的时候，则整个网络(内网)都将瘫痪。</p>
+<p>当然，这些都只是雕虫小计，装了ARP防火墙的机器，你就不能监控了，要实现监控，最好的方式，还是把你的机器，作为内网的默认网关，所有通往外网的机器都通过你的主机。这样比较合适。</p>
+<p><strong>七。数据包的最大值：</strong></p>
+<p>就像前面我们说的，IP数据包要想继续向下发送，就必须转化为在物理设备上传输的数据帧。<strong>对于网络硬件来说，能传输的物理帧的大小是有物理上限的</strong>。这个上限值就是最大传输单元MTU。{令牌环网4500字节，以太网1500字节}。当数据包的比MTU大的时候，数据包是无法封装成帧在网络上传输的，当数据包比MTU小的时候，显然又会浪费网络带宽。</p>
+<p>因此，<strong>IP数据包最理想的大小应该是相连网络的MTU相符。</strong>又因为 ，<strong>不同的网络MTU可能不同，当数据包需要经过较小MTU的网络时，我们需要将大数据包划分成更小的数据包（分片），以确保他们能通过无力处理大IP数据包的网络。</strong></p>
+<p>分片发生的位置：相连MTU网络间的路由</p>
+<p>分片重组的位置：目标主机</p>
+<p>分片发生在IP层，通过IP数据报报头中的“标志”和“段位移”来标识</p>
+<p>(标识由)</p>
+<p>分片后，<strong>形成的还是IP数据包</strong>，在路由中的处理方式与其他IP数据包一样</p>
+<p> 分片示意图：</p>
+<pre><code>    原始数据包：
+</code></pre><p>IP报头</p>
+<p>数据1480字节</p>
+<p> 分片以后数据包</p>
+<p>IP报头</p>
+<p>数据600字节</p>
+<p>段位移0</p>
+<p>IP报头</p>
+<p>数据600字节</p>
+<p>段位移600</p>
+<p>IP报头</p>
+<p>数据280字节  段位移1200</p>
+<p><strong>分片的优点</strong>：可以让数据包穿过MTU多变的网络。</p>
+<p><strong>缺点</strong>：分片后形成的多个IP数据包，每个都单独路由，又因为重组发送在目标主机，且又一个分片丢失，则整个原始IP数据包丢失，增大丢包风险。</p>
+<p>说了这么多，我们还是只是不知道，<strong>数据怎么从一台主机到另外一台主机</strong>，接下来，我们一一分解，先从局域网开始。</p>
+<p><strong>八。数据在局域网中是如何传播的？</strong></p>
+<p>我们知道，在局域网中，无论是按何种拓扑结构组网，还是按何种方式来处理介质访问权限，任何<strong>两个节点之间都存在实际的线路链接</strong>。</p>
+<p>因此，我们通过ARP协议，得到目标主机的MAC地址后，在数据链路层将IP数据包封装为数据帧，将数据帧发送到本地网段上，即可将数据帧成功的交给目标主机（目标主机网卡收到数据帧后，判断MAC地址是否为本网卡MAC地址）。
+当你要和很多很多主机通信时，你不可能保证他们都和你在同一网段内</p>
+<p>那么不在一个局域网的数据之间，又是如何通信的呢？</p>
+<p><strong>九。数据是怎么样实现跨网段传输的？</strong></p>
+<p>这就需要路由器通过IP协议来完成此工作了。</p>
+<p>下面我们通过一个实际的例子来看：主机A：192.168.1.1 需要和主机B:172.16.1.1通信。</p>
+<pre><code>      ![]()
+</code></pre><p>两个主机并不在同一个局域网，并没有实际的物理线路将他们链接起来。</p>
+<p>这个时候，<strong>我们在两个网段之间增加一个中转点（路由器），</strong>路由器上<strong>插有多个网卡</strong>,可以同时通过网卡E0接入局域网1 （192.168.1.0/24），同时通过网卡E2接入局域网2（172.168.1.0/24）。这样，局域网1中的机器A（192.168.1.1）要和局域网2中的机器B（172.16.1.1）通信。<strong>A将数据将数据包发送到本网段，路由器的E1口接收数据包，再将其通过E2口发送到网段B，主机B即可成功接收来自主机A的信息了。即可实现数据的跨网段传输。</strong></p>
+<p><strong>大家发现问题了嘛？</strong></p>
+<p>没错，我们前面说了“网卡接收数据包后，首先判断MAC地址是不是本机地址，如果不是，则丢弃。”</p>
+<p>而且我们说了“ARP请求是发送广播”，而大家都知道，为了防止广播风暴，路由器是不转发广播的。</p>
+<p>那么，这个时候，即使A能有办法获得B的MAC地址，路由器的E1口上的网卡，MAC地址也不是B的MAC地址，这个时候，我们该怎么办呢？</p>
+<p><strong>十。什么是默认网关？</strong></p>
+<p><strong>默认网关是TCP/IP中的一个配置参数，它是处于本地网络上的某个路由器的接口的IP地址。</strong></p>
+<p>在有默认网关的情况下，目的地为非本网段的数据包，源主机都发送给默认网关，由默认网关将数据包正确的发送给目标主机。</p>
+<p>在上图中，网络192.168.1.0/24的默认网关为192.168.1.254，目的地为非本地网段的数据包，都发送给这个IP对应的Router，再由该Router转发给目的主机。</p>
+<p><strong>十一：什么是代理ARP?</strong></p>
+<p>在没有默认网关的情况下，我们也可以使用代理ARP技术来实现让路由器完成数据的跨网段传输功能。</p>
+<p>如果我们<strong>将网络中所有主机的目的地都设为本地网络</strong>，那么当有要发送给外网IP的数据包时，源主机依然会认为目的地为本网段，而使用目的IP发出ARP请求。这个时候，对于目的IP不是本网段的ARP请求，连接在本网段的路由器使用自己的MAC地址回复这个ARP请求。于是主机A将数据发到本地网段，连在本地网络的路由器接收数据，路由器再将数据转发到正确的目的地。（<strong>其实运行代理ARP的路由器就相当于默认网关</strong>）</p>
+<p> <strong>代理ARP的优点</strong>：简化了主机的管理（不用再每个主机都单独配置默认网关了）</p>
+<p>  <strong>缺点</strong>：因为针对每个局域网，外网IP都是很多的，所以：</p>
+<pre><code> 1.在路由器上需要保存一个很大的ARP缓存。
+
+     2.每个外网IP都需要发送ARP请求，增大了内网的通信。
+</code></pre><p>在上图中，当没有设置默认网关的时候，主机A发送给主机B的数据包，主机A发送ARP请求后，由连接E1口的Router 用自己E1口的MAC地址回复该ARP请求 。</p>
+<p><strong>路由器在E1口接到数据包后，怎么样通过E2口发到主机B所在的网段上去？</strong></p>
+<p><strong>十二.路由器中数据跨网段传输的具体情形？</strong></p>
+<p><strong>每个路由器中都存有一张路由表，记录着目标网段和对应的网卡出口的映射。</strong></p>
+<p>在上面的例子中，路由器的E1口收到数据包，根据数据包取出对应的目的网段的地址172.16.1.1，然后路由器查找路由表，根据IP地址，找到通过E2口可以达到目标网络。于是，路由将数据包从E1口读入，穿过路由器，从E2口写出。</p>
+<p><strong>所谓的穿过路由器</strong>，应该是指：两个网卡上都分别运行着TCP/IP协议，穿过路由，即从路由的内存中，将数据从网卡1的IP程序拷贝到网卡2的IP程序。</p>
+<p>至此，关于路由中的部分，我们就几乎讲完了，我们再来总结下：</p>
+<p><strong>【路由器都有哪些功能？】</strong></p>
+<p>   1.<strong>交换和转发功能：将数据从路由器的进入接口，穿过路由器，送到输出接口。</strong></p>
+<p>  （将一个数据包从一个网段，发送到另外一个网段。）</p>
+<p>   2.<strong>路由功能：即寻址</strong>，通过IP数据包决定正确的下一跳路径</p>
+<p> （通过哪个网卡写出。）</p>
+<p><strong>【路由器实现跨网段传输的基础？】</strong></p>
+<p>1.<strong>硬件基础</strong>：有多个网卡，同时在多个网段上，同时属于多个局域网。</p>
+<p>2.<strong>软件基础：</strong>代理ARP（主机将目的地址都配置为本网段，路由器代理回应ARP请求）</p>
+<p>在实际中的很多情况下，两个局域网之间可能不仅仅隔了一个网段，同理，我们可以在多个网段之间，通过多个路由器而使彼此连接起来。<strong>其实路由器就是将世界各地的各个局域网都连接起来，得到了我们现在的互联网。</strong></p>
+<p><strong>十三：路由过程：</strong></p>
+<p>1.主机A的传输层将数据交给网络层，网络层加上双方IP地址，TTL等IP报头信息，成为IP数据包，网络层将IP数据报交给数据链路层。</p>
+<p>2.数据链路层根据IP地址，通过ARP得到MAC，封装为物理帧，通过网卡发出。</p>
+<p>3.主机B接收物理帧，根据MAC地址判断：如果目的MAC地址不是本网卡MAC地址，则丢弃；如果是发给自己的，则交给网络层处理。</p>
+<p>4.网络层通过IP地址判断：如果是发给自己的，则交给上层协议处理；如果不是发给自己的，则在路由表中查找此IP合理的下一跳地址（即通过哪个网卡发送到下一个网段），并将数据通过内存，从接收数据网卡的IP程序拷贝到需要发送数据网卡的IP程序。在发送网卡中，IP程序将数据包交给链路层，链路层发送ARP请求，得到下一跳的目的MAC地址，封装为帧，发送。</p>
+<p><strong>如此反复，直到IP数据包到达最终正确的接收主机。</strong></p>
+<p><strong>好了，关于ARP和IP都讲了挺多了，可是，为什么有ICMP协议呢？这个协议是干嘛的呢？
+</strong></p>
+<p>预知详情，请看下篇《TCP/IP网络层谜云之ICMP》 <a href="http://java-mzd.iteye.com/blog/1019089" target="_blank"><a href="http://java-mzd.iteye.com/blog/1019089">http://java-mzd.iteye.com/blog/1019089</a></a></p>
+<p><a href="http://java-mzd.iteye.com/blog/1019088#"><strong>4</strong>
+顶</a><a href="http://java-mzd.iteye.com/blog/1019088#"><strong>3</strong>
+踩</a>
+<a href="http://java-mzd.iteye.com/blog/1019089" title="TCP/IP网络层谜云之ICMP" target="_blank">TCP/IP网络层谜云之ICMP</a> | <a href="http://java-mzd.iteye.com/blog/1007577" title="TCP/IP传输层，你懂多少？" target="_blank">TCP/IP传输层，你懂多少？</a></p>
+<ul>
+<li>00:37</li>
+<li>浏览 (311)</li>
+<li><a href="http://java-mzd.iteye.com/blog/1019088#comments" target="_blank">评论</a> (0)</li>
+<li>分类: <a href="http://java-mzd.iteye.com/category/153171" target="_blank">TCP/IP</a></li>
+<li><a href="http://www.iteye.com/wiki/topic/1019088" target="_blank">相关推荐</a><h3 id="-">评论</h3>
+</li>
+</ul>
+<p><a href=""></a></p>
+<h3 id="-">发表评论</h3>
+<h3 id="-">表情图标</h3>
+<p><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""></p>
+<p>字体颜色: 标准深红红色橙色棕色黄色绿色橄榄青色蓝色深蓝靛蓝紫色灰色白色黑色 字体大小: 标准1 (xx-small)2 (x-small)3 (small)4 (medium)5 (large)6 (x-large)7 (xx-large) 对齐: 标准居左居中居右</p>
+<p>提示：选择您需要装饰的文字, 按上列按钮即可添加上相应的标签</p>
+<p>您还没有登录，请<a href="http://java-mzd.iteye.com/login" target="_blank">登录</a>后发表评论(快捷键 Alt+S / Ctrl+Enter)</p>
+<p><a href="http://java-mzd.iteye.com/" target="_blank"><img src="&quot;java_mzd的博客: &quot;" alt="java_mzd的博客"></a></p>
+<p>java_mzd</p>
+<ul>
+<li>浏览: 70754 次</li>
+<li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
+<li>来自: 长沙</li>
+<li><img src="" alt=""></li>
+<li><a href="http://java-mzd.iteye.com/blog/profile" target="_blank">详细资料</a> <a href="http://java-mzd.iteye.com/blog/guest_book" target="_blank">留言簿</a></li>
+</ul>
+<h3 id="-">搜索本博客</h3>
+<h3 id="-http-java-mzd-iteye-com-blog-user_visits-">最近访客 <a href="http://java-mzd.iteye.com/blog/user_visits" target="_blank">&gt;&gt;更多访客</a></h3>
+<p><a href="http://aria.iteye.com/" target="_blank"><img src="&quot;aria的博客: &quot;" alt="aria的博客"></a></p>
+<p><a href="http://aria.iteye.com/" target="_blank">aria</a></p>
+<p><a href="http://zhxing.iteye.com/" target="_blank"><img src="&quot;zhxing的博客: ヾ孤星随缘ツ  http://t.sina.com.cn/samzhxing&quot;" alt="zhxing的博客"></a></p>
+<p><a href="http://zhxing.iteye.com/" target="_blank">zhxing</a>
+<a href="http://java-suddy.iteye.com/" target="_blank"><img src="&quot;java_suddy的博客: “平凡”的思想&quot;" alt="java_suddy的博客"></a></p>
+<p><a href="http://java-suddy.iteye.com/" target="_blank">java_suddy</a></p>
+<p><a href="http://liuxinglanyue.iteye.com/" target="_blank"><img src="&quot;liuxinglanyue的博客: liuxinglanyue&quot;" alt="liuxinglanyue的博客"></a></p>
+<p><a href="http://liuxinglanyue.iteye.com/" target="_blank">liuxinglanyue</a></p>
+<h3 id="-">博客分类</h3>
+<ul>
+<li><a href="http://java-mzd.iteye.com/" target="_blank">全部博客 (43)</a></li>
+<li><a href="http://java-mzd.iteye.com/category/133623" target="_blank">数据结构----------JAVA类集 (5)</a></li>
+<li><p><a href="http://java-mzd.iteye.com/category/153171" target="_blank">TCP/IP (7)</a></p>
+<h3 id="-http-java-mzd-iteye-com-blog-guest_book-">我的留言簿 <a href="http://java-mzd.iteye.com/blog/guest_book" target="_blank">&gt;&gt;更多留言</a></h3>
+</li>
+<li><p>楼主 你工作多久了。。。。
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39913" target="_blank">fanmingxing</a></p>
+</li>
+<li>写的不错，学习，谢谢！
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39693" target="_blank">chenge2k</a></li>
+<li>看了LZ的文章，发现工作快两年的我，就像是一块浮起来的木头，真的很惭愧！也不怪我拿 ...
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39618" target="_blank">GoTiger</a></li>
+</ul>
+<h3 id="-">其他分类</h3>
+<ul>
+<li><a href="http://java-mzd.iteye.com/blog/favorite" target="_blank">我的收藏</a> (23)</li>
+<li><a href="http://java-mzd.iteye.com/blog/code_favorite" target="_blank">我的代码</a> (0)</li>
+<li><a href="http://java-mzd.iteye.com/blog/topic" target="_blank">我的论坛主题帖</a> (3)</li>
+<li><a href="http://java-mzd.iteye.com/blog/post" target="_blank">我的所有论坛帖</a> (37)</li>
+<li><p><a href="http://java-mzd.iteye.com/blog/article" target="_blank">我的精华良好帖</a> (0)</p>
+<h3 id="-">最近加入群组</h3>
+</li>
+<li><p><a href="http://android.group.iteye.com/" target="_blank">Android</a></p>
+</li>
+</ul>
+<h3 id="-">存档</h3>
+<ul>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-05" target="_blank">2011-05</a> (2)</li>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-04" target="_blank">2011-04</a> (7)</li>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-03" target="_blank">2011-03</a> (2)</li>
+<li><p><a href="http://java-mzd.iteye.com/blog/monthblog_more" target="_blank">更多存档...</a></p>
+<h3 id="-">评论排行榜</h3>
+</li>
+<li><p><a href="http://java-mzd.iteye.com/blog/1050043" title="腾讯、淘宝、金山网络，实习生我该何去何从" target="_blank">腾讯、淘宝、金山网络，实习生我该何去何从</a></p>
+</li>
+<li><a href="http://java-mzd.iteye.com/blog/1050926" title="淘宝、金山网络，百感交集" target="_blank">淘宝、金山网络，百感交集</a></li>
+<li><a href="http://java-mzd.iteye.com/blog/1007577" title="TCP/IP传输层，你懂多少？" target="_blank">TCP/IP传输层，你懂多少？</a></li>
+<li><a href="http://java-mzd.iteye.com/blog/1004784" title="淘宝武汉*面试归来" target="_blank">淘宝武汉/*面试归来</a></li>
+<li><p><a href="http://java-mzd.iteye.com/blog/862787" title="开源软件？自由软件？免费软件？你了解多少？" target="_blank">开源软件？自由软件？免费软件？你了解多少 ...</a></p>
+</li>
+<li><p><a href="http://java-mzd.iteye.com/rss" target="_blank"><img src="" alt="Rss"></a></p>
+</li>
+<li><a href="http://fusion.google.com/add?feedurl=http://java-mzd.iteye.com/rss" target="_blank"><img src="" alt="Rss_google"></a>
+声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
+© 2003-2011 ITeye.com. All rights reserved. [ 京ICP证110151号 ]
+<img src="" alt=""></li>
+</ul>
 
       
     </div>
@@ -924,8 +362,8 @@ linuxtone <a href="http://bbs.linuxtone.org/thread-73-1-1.html" target="_blank">
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/TCPIP/">TCPIP</a></li></span></span> | <span class="tags">Tagged <a href="/tags/TCPIP/" class="label label-primary">TCPIP</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-TCPIP--TCPIP网络层谜云--ITeye技术网站/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-TCPIP--TCPIP网络层谜云--ITeye技术网站" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -940,391 +378,186 @@ linuxtone <a href="http://bbs.linuxtone.org/thread-73-1-1.html" target="_blank">
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxykeepalived实现高可用负载均衡/">haproxy+keepalived实现高可用负载均衡</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-TCPIP--TCPIP网络层谜云之ICMP--ITeye技术网站/">TCP IP网络层谜云之ICMP </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxykeepalived实现高可用负载均衡/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-TCPIP--TCPIP网络层谜云之ICMP--ITeye技术网站/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="haproxy-keepalived-">haproxy+keepalived实现高可用负载均衡</h1>
-<p>软件负载均衡一般通过两种方式来实现：基于操作系统的软负载实现和基于第三方应用的软负载实现。LVS就是基于Linux操作系统实现的一种软负载，HAProxy就是开源的并且基于第三应用实现的软负载。</p>
-<p>HAProxy相比LVS的使用要简单很多，功能方面也很丰富。当 前，HAProxy支持两种主要的代理模式:&quot;tcp&quot;也即4层（大多用于邮件服务器、内部协议通信服务器等），和7层（HTTP）。在4层模式 下，HAProxy仅在客户端和服务器之间转发双向流量。7层模式下，HAProxy会分析协议，并且能通过允许、拒绝、交换、增加、修改或者删除请求 (request)或者回应(response)里指定内容来控制协议，这种操作要基于特定规则。</p>
-<p>我现在用HAProxy主要在于它有以下优点，这里我总结下：</p>
-<p><strong>一、</strong>免费开源，稳定性也是非常好，这个可通过我做的一些小项目可以看出来，单Haproxy也跑得不错，稳定性可以与LVS相媲美；</p>
-<p><strong>二、</strong>根据官方文档，HAProxy可以跑满10Gbps-New benchmark of HAProxy at 10 Gbps using Myricom&#39;s 10GbE NICs (Myri-10G PCI-Express)，这个作为软件级负载均衡，也是比较惊人的；</p>
-<p><strong>三、</strong>HAProxy可以作为MySQL、邮件或其它的非web的负载均衡，我们常用于它作为MySQL(读)负载均衡；</p>
-<p>四<strong>、</strong>自带强大的监控服务器状态的页面，实际环境中我们结合Nagios进行邮件或短信报警，这个也是我非常喜欢它的原因之一；</p>
-<p>五<strong>、</strong>HAProxy支持虚拟主机。</p>
-<p>===================================================================================</p>
-<p>在做反向代理服务器的负载均衡时，我们通常会使用nginx的均衡配置。其实，haproxy的负载均衡也是属于这一类的。那么关于这方面的配置过程我们现在来进行一下讲解。首先，对haproxy进行一个简单的介绍，之后就是安装和配置环节了。</p>
-<p><strong>HAProxy介绍</strong></p>
-<p>反向代理服务器,支持双机热备支持虚拟主机,但其配置简单,拥有非常不错的服务器健康检查功能,当其代理的后端服务器出现故障, HAProxy会自动将该服务器摘除,故障恢复后再自动将该服务器加入｡新的1.3引入了frontend,backend；frontend根据任意 HTTP请求头内容做规则匹配,然后把请求定向到相关的backend.</p>
-<p><a href="http://blog.liuts.com/post/223/" target="_blank"><a href="http://blog.liuts.com/post/223/">http://blog.liuts.com/post/223/</a></a> （搭建四层负载均衡器）</p>
-<p><a href="http://rfyimcool.blog.51cto.com/1030776/413187" target="_blank"><a href="http://rfyimcool.blog.51cto.com/1030776/413187">http://rfyimcool.blog.51cto.com/1030776/413187</a></a> （搭建七层负载均衡器）</p>
-<p>===================================================================================</p>
-<p>keepalived简介　　</p>
-<p><a href="http://www.keepalived.org/" target="_blank"><a href="http://www.keepalived.org">http://www.keepalived.org</a></a></p>
-<p>keepalived是一个类似于layer3, 4 &amp; 5交换机制的软件，也就是我们平时说的第3层、第4层和第5层交换。Keepalived的作用是检测web服务器的状态，如果有一台web服务器死机，或工作出现故障，Keepalived将检测到，并将有故障的web服务器从系统中剔除，当web服务器工作正常后Keepalived自动将web服务器加入到服务器群中，这些工作全部自动完成，不需要人工干涉，需要人工做的只是修复故障的web服务器。</p>
-<p>类似的HA工具还有heatbeat、drbd等，heatbeat、drbd配置都较为复杂。</p>
-<h2 id="keepalived-">keepalived理论工作原理</h2>
-<p>keepalived可提供vrrp以及health-check功能，可以只用它提供双机浮动的vip（vrrp虚拟路由功能），这样可以简单实现一个双机热备高可用功能。</p>
-<p>keepalived是一个类似于layer3, 4 &amp; 5交换机制的软件，也就是我们平时说的第3层、第4层和第5层交换。Keepalived的作用是检测web 服务器的状态。 Layer3,4&amp;5工作在IP/TCP协议栈的IP层，TCP层，及应用层,原理分别如下：</p>
-<p>Layer3：Keepalived使用Layer3的方式工作式时，Keepalived会定期向服务器群中的服务器</p>
-<p>发送一个ICMP的数据包（既我们平时用的Ping程序）,如果发现某台服务的IP地址没有激活，Keepalived便报告这台服务器失效，并将它从服务器群中剔除，这种情况的典型例子是某台服务器被非法关机。Layer3的方式是以服务器的IP地址是否有效作为服务器工作正常与否的标准。在本文中将采用这种方式。</p>
-<p>Layer4:如果您理解了Layer3的方式，Layer4就容易了。Layer4主要以TCP端口的状态来决定服务器工作正常与否。如web server的服务端口一般是80，如果Keepalived检测到80端口没有启动，则Keepalived将把这台服务器从服务器群中剔除。</p>
-<p>Layer5：Layer5就是工作在具体的应用层了，比Layer3,Layer4要复杂一点，在网络上占用的带宽也要大一些。Keepalived将根据用户的设定检查服务器程序的运行是否正常，如果与用户的设定不相符，则Keepalived将把服务器从服务器群中剔除。</p>
-<p>vip即虚拟ip，是附在主机网卡上的，即对主机网卡进行虚拟，此IP仍然是占用了此网段的某个IP。</p>
-<h2 id="keepalived-">keepalived作用</h2>
-<p>随着你的网站业务量的增长你网站的服务器压力越来越大？需要负载均衡方案！商业的硬件如F5又太贵，你们又是创业型互联公司如何有效节约成本，节省不必要的浪费？同时实现商业硬件一样的高性能高可用的功能？有什么好的负载均衡可伸张可扩展的方案吗？答案是肯定的！有！我们利用 LVS+Keepalived基于完整开源软件的架构可以为你提供一个负载均衡及高可用的服务器。</p>
-<p>LVS+Keepalived 介绍</p>
-<p>LVS</p>
-<p>LVS是Linux Virtual Server的简写，意即Linux虚拟服务器，是一个虚拟的服务器集群系统。本项目在1998年5月由章文嵩博士成立，是中国国内最早出现的自由软件项目之一.目前有三种IP负载均衡技术（VS/NAT、VS/TUN和VS/DR）八种调度算法（rr,wrr,lc,wlc,lblc,lblcr,dh,sh）。</p>
-<p>Keepalvied</p>
-<p>Keepalived在这里主要用作RealServer的健康状态检查以及LoadBalance主机和BackUP主机之间failover的实现。keepalived简介　　keepalived是一个类似于layer3, 4 &amp; 5交换机制的软件，也就是我们平时说的第3层、第4层和第5层交换。Keepalived的作用是检测web服务器的状态，如果有一台web服务器死机，或工作出现故障，Keepalived将检测到，并将有故障的web服务器从系统中剔除，当web服务器工作正常后Keepalived自动将web服务器加入到服务器群中，这些工作全部自动完成，不需要人工干涉，需要人工做的只是修复故障的web服务器。</p>
-<p>===================================================================================</p>
-<p><strong>**</strong>Keepalived<strong>介绍**</strong></p>
-<p>Keepalived是一个基于VRRP协议来实现的WEB 服务高可用方案，可以利用其来避免单点故障。一个WEB服务至少会有2台服务器运行Keepalived，一台为主服务器（MASTER），一台为备份服务器（BACKUP），但是对外表现为一个虚拟IP，主服务器会发送特定的消息给备份服务器，当备份服务器收不到这个消息的时候，即主服务器宕机的时候，备份服务器就会接管虚拟IP，继续提供服务，从而保证了高可用性。
-1 +-------------VIP(192.168.0.7)------------------+</p>
-<p>2 | | |
-3 | | |</p>
-<p>4 server(MASTER) &lt;----keepalived----&gt; server(BACKUP)
-5 (192.168.0.1) (192.168.0.2)</p>
-<p>keepalived是VRRP的完美实现，因此在介绍keepalived之前，先介绍一下VRRP的原理。</p>
-<p><strong>VRRP**</strong>协议简介**</p>
-<p>在现实的网络环境中，两台需要通信的主机大多数情况下并没有直接的物理连接。对于这样的情况，它们之间路由怎样选择？主机如何选定到达目的主机的下一跳路由，这个问题通常的解决方法有二种：</p>
-<p>· 在主机上使用动态路由协议(RIP、OSPF等)</p>
-<p>· 在主机上配置静态路由</p>
-<p>很明显，在主机上配置路态路由是非常不切实际的，因为管理、维护成本以及是否支持等诸多问题。配置静态路由就变得十分流行，但路由器(或者说默认网关default gateway)却经常成为单点。</p>
-<p>VRRP的目的就是为了解决静态路由单点故障问题。</p>
-<p>VRRP通过一竞选(election)协议来动态的将路由任务交给LAN中虚拟路由器中的某台VRRP路由器。</p>
-<p><strong>工作机制</strong></p>
-<p>在一个VRRP虚拟路由器中，有多台物理的VRRP路由器，但是这多台的物理的机器并不能同时工作，而是由一台称为MASTER的负责路由工作，其它的都是BACKUP，MASTER并非一成不变，VRRP让每个VRRP路由器参与竞选，最终获胜的就是MASTER。MASTER拥有一些特权，比如 拥有虚拟路由器的IP地址，我们的主机就是用这个IP地址作为静态路由的。拥有特权的MASTER要负责转发发送给网关地址的包和响应ARP请求。</p>
-<p>VRRP通过竞选协议来实现虚拟路由器的功能，所有的协议报文都是通过IP多播(multicast)包(多播地址 224.0.0.18)形式发送的。虚拟路由器由VRID(范围0-255)和一组IP地址组成，对外表现为一个周知的MAC地址。所以，在一个虚拟路由 器中，不管谁是MASTER，对外都是相同的MAC和IP(称之为VIP)。客户端主机并不需要因为MASTER的改变而修改自己的路由配置，对他们来 说，这种主从的切换是透明的。</p>
-<p>在一个虚拟路由器中，只有作为MASTER的VRRP路由器会一直发送VRRP广告包(VRRPAdvertisement message)，BACKUP不会抢占MASTER，除非它的优先级(priority)更高。当MASTER不可用时(BACKUP收不到广告包)， 多台BACKUP中优先级最高的这台会被抢占为MASTER。这种抢占是非常快速的(&lt;1s)，以保证服务的连续性。</p>
-<p>由于安全性考虑，VRRP包使用了加密协议进行加密。</p>
-<p>==========================================</p>
-<p><strong>vrrp简介</strong>
-随着Internet的迅猛发展，基于网络的应用逐渐增多。这就对网络的可靠性提出了越来越高的要求。斥资对所有网络设备进行更新当然是一种很好的可靠性解决方案；但本着保护现有投资的角度考虑，可以采用廉价冗余的思路，在可靠性和经济性方面找到平衡点。
-虚拟路由冗余协议就是一种很好的解决方案。在该协议中，对共享多存取访问介质（如以太网）上终端IP设备的默认网关(Default Gateway)进行冗余备份，从而在其中一台路由设备宕机时，备份路由设备及时接管转发工作，向用户提供透明的切换，提高了网络服务质量。
-一、协议概述
-在基于TCP/IP协议的网络中，为了保证不直接物理连接的设备之间的通信，必须指定路由。目前常用的指定路由的方法有两种：一种是通过路由协议（比如：内部路由协议RIP和OSPF）动态学习；另一种是静态配置。在每一个终端都运行动态路由协议是不现实的，大多客户端操作系统平台都不支持动态路由协议，即使支持也受到管理开销、收敛度、安全性等许多问题的限制。因此普遍采用对终端IP设备静态路由配置，一般是给终端设备指定一个或者多个默认网关(Default Gateway)。静态路由的方法简化了网络管理的复杂度和减轻了终端设备的通信开销，但是它仍然有一个缺点：如果作为默认网关的路由器损坏，所有使用该网关为下一跳主机的通信必然要中断。即便配置了多个默认网关，如不重新启动终端设备，也不能切换到新的网关。采用虚拟路由冗余协议 (Virtual Router Redundancy Protocol，简称VRRP)可以很好的避免静态指定网关的缺陷。
-在VRRP协议中，有两组重要的概念：VRRP路由器和虚拟路由器，主控路由器和备份路由器。VRRP路由器是指运行VRRP的路由器，是物理实体，虚拟路由器是指VRRP协议创建的，是逻辑概念。一组VRRP路由器协同工作，共同构成一台虚拟路由器。该虚拟路由器对外表现为一个具有唯一固定IP地址和MAC地址的逻辑路由器。处于同一个VRRP组中的路由器具有两种互斥的角色：主控路由器和备份路由器，一个VRRP组中有且只有一台处于主控角色的路由器，可以有一个或者多个处于备份角色的路由器。VRRP协议使用选择策略从路由器组中选出一台作为主控，负责ARP相应和转发IP数据包，组中的其它路由器作为备份的角色处于待命状态。当由于某种原因主控路由器发生故障时，备份路由器能在几秒钟的时延后升级为主路由器。由于此切换非常迅速而且不用改变IP地址和MAC地址，故对终端使用者系统是透明的。
-二、工作原理
-一个VRRP路由器有唯一的标识：VRID，范围为0—255。该路由器对外表现为唯一的虚拟MAC地址，地址的格式为00-00-5E-00-01-[VRID]。主控路由器负责对ARP请求用该MAC地址做应答。这样，无论如何切换，保证给终端设备的是唯一一致的IP和MAC地址，减少了切换对终端设备的影响。
-VRRP控制报文只有一种：VRRP通告(advertisement)。它使用IP多播数据包进行封装，组地址为224.0.0.18，发布范围只限于同一局域网内。这保证了VRID在不同网络中可以重复使用。为了减少网络带宽消耗只有主控路由器才可以周期性的发送VRRP通告报文。备份路由器在连续三个通告间隔内收不到VRRP或收到优先级为0的通告后启动新的一轮VRRP选举。
-在VRRP路由器组中，按优先级选举主控路由器，VRRP协议中优先级范围是0—255。若VRRP路由器的IP地址和虚拟路由器的接口IP地址相同，则称该虚拟路由器作VRRP组中的IP地址所有者；IP地址所有者自动具有最高优先级：255。优先级0一般用在IP地址所有者主动放弃主控者角色时使用。可配置的优先级范围为1—254。优先级的配置原则可以依据链路的速度和成本、路由器性能和可靠性以及其它管理策略设定。主控路由器的选举中，高优先级的虚拟路由器获胜，因此，如果在VRRP组中有IP地址所有者，则它总是作为主控路由的角色出现。对于相同优先级的候选路由器，按照IP地址大小顺序选举。VRRP还提供了优先级抢占策略，如果配置了该策略，高优先级的备份路由器便会剥夺当前低优先级的主控路由器而成为新的主控路由器。
-为了保证VRRP协议的安全性，提供了两种安全认证措施：明文认证和IP头认证。明文认证方式要求：在加入一个VRRP路由器组时，必须同时提供相同的VRID和明文密码。适合于避免在局域网内的配置错误，但不能防止通过网络监听方式获得密码。IP头认证的方式提供了更高的安全性，能够防止报文重放和修改等攻击。
-三、 应用实例
-最典型的VRRP应用：RTA、RTB组成一个VRRP路由器组，假设RTB的处理能力高于RTA，则将RTB配置成IP地址所有者，H1、H2、H3的默认网关设定为RTB。则RTB成为主控路由器，负责ICMP重定向、ARP应答和IP报文的转发；一旦RTB失败，RTA立即启动切换，成为主控，从而保证了对客户透明的安全切换。
-在VRRP应用中，RTA在线时RTB只是作为后备，不参与转发工作，闲置了路由器RTA和链路L1。通过合理的网络设计，可以到达备份和负载分担双重效果。让RTA、RTB同时属于互为备份的两个VRRP组：在组1中RTA为IP地址所有者；组2中RTB为IP地址所有者。将H1的默认网关设定为RTA；H2、H3的默认网关设定为RTB。这样，既分担了设备负载和网络流量，又提高了网络可靠性。
-VRRP协议的工作机理与CISCO公司的HSRP（Hot Standby Routing Protocol）有许多相似之处。但二者主要的区别是在CISCO的HSRP中，需要单独配置一个IP地址作为虚拟路由器对外体现的地址，这个地址不能是组中任何一个成员的接口地址。</p>
-<h1 id="-vrrp-">使用VRRP协议，不用改造目前的网络结构，最大限度保护了当前投资，只需最少的管理费用，却大大提升了网络性能，具有重大的应用价值。</h1>
-<h1 id="keepalive-vip-">keepalive的简单应用——管理VIP的飘动</h1>
-<p>from:<a href="http://www.cnblogs.com/killkill/archive/2010/12/31/1922360.html" target="_blank">http://www.cnblogs.com/killkill/archive/2010/12/31/1922360.html</a></p>
-<p>VIP的飘动可以为我们解决很多问题，以前我试过使用ifup/ifdown的方式控制网卡的up/down来实现，这种方式有个小问题，就是每次VIP 飘动之后都要等上几十秒才能生效，感觉时间比较长，而且还要配合一些逻辑脚本才能很好地工作，有没有更好的方法呢？当然有，这就是本文的主角—— keepalived。</p>
-<p>安装很简单：
-1</p>
-<p>tar zxvf keepalived-1.1.20.tar.gz</p>
-<p>2</p>
-<p>cd keepalived-1.1.20
-3</p>
-<p>./configure --prefix=/</p>
-<p>4</p>
-<p>make
-5</p>
-<p>make install</p>
-<p>修改一下 /etc/keepalived/keepalived.conf 这个配置文件就可以用了，以下是我的环境，192.168.10.141和192.168.10.142是两个VIP，可以在两台服务器之间飘动：</p>
-<p><img src="" alt=""></p>
-<p>主机的配置：
-01</p>
-<p>global_defs {</p>
-<p>02</p>
-<p>notification_email {
-03</p>
-<p>failover@firewall.loc</p>
-<p>04</p>
-<p>}
-05</p>
-<p>notification_email_from Alexandre.Cassen@firewall.loc</p>
-<p>06</p>
-<p>smtp_server 192.168.0.48
-07</p>
-<p>smtp_connect_timeout 10</p>
-<p>08</p>
-<p>router_id nginx
-09</p>
-<p>}</p>
-<p>10
-11</p>
-<p>vrrp_instance VI_141 {</p>
-<p>12</p>
-<p>state BACKUP
-13</p>
-<p>interface eth0</p>
-<p>14</p>
-<p>virtual_router_id 141
-15</p>
-<p>priority 50</p>
-<p>16</p>
-<p>advert_int 1
-17</p>
-<p>authentication {</p>
-<p>18</p>
-<p>auth_type PASS
-19</p>
-<p>auth_pass 141</p>
-<p>20</p>
-<p>}
-21</p>
-<p>virtual_ipaddress {</p>
-<p>22</p>
-<p>192.168.10.141/26 dev eth0
-23</p>
-<p>}</p>
-<p>24</p>
-<p>}
-25</p>
-<p>26</p>
-<p>vrrp_instance VI_142 {
-27</p>
-<p>state BACKUP</p>
-<p>28</p>
-<p>interface eth0
-29</p>
-<p>virtual_router_id 142</p>
-<p>30</p>
-<p>priority 100
-31</p>
-<p>advert_int 1</p>
-<p>32</p>
-<p>authentication {
-33</p>
-<p>auth_type PASS</p>
-<p>34</p>
-<p>auth_pass 142
-35</p>
-<p>}</p>
-<p>36</p>
-<p>virtual_ipaddress {
-37</p>
-<p>192.168.10.142/26 dev eth0</p>
-<p>38</p>
-<p>}
-39</p>
-<p>}</p>
-<p>备机的配置：</p>
-<p>01</p>
-<p>global_defs {</p>
-<p>02</p>
-<p>notification_email {
-03</p>
-<p>failover@firewall.loc</p>
-<p>04</p>
-<p>}
-05</p>
-<p>notification_email_from Alexandre.Cassen@firewall.loc</p>
-<p>06</p>
-<p>smtp_server 10.168.0.48
-07</p>
-<p>smtp_connect_timeout 10</p>
-<p>08</p>
-<p>router_id nginx
-09</p>
-<p>}</p>
-<p>10
-11</p>
-<p>vrrp_instance VI_141 {</p>
-<p>12</p>
-<p>state BACKUP
-13</p>
-<p>interface eth0</p>
-<p>14</p>
-<p>virtual_router_id 141
-15</p>
-<p>priority 100</p>
-<p>16</p>
-<p>advert_int 1
-17</p>
-<p>authentication {</p>
-<p>18</p>
-<p>auth_type PASS
-19</p>
-<p>auth_pass 141</p>
-<p>20</p>
-<p>}
-21</p>
-<p>virtual_ipaddress {</p>
-<p>22</p>
-<p>192.168.10.141/26 dev eth0
-23</p>
-<p>}</p>
-<p>24</p>
-<p>}
-25</p>
-<p>26</p>
-<p>vrrp_instance VI_142 {
-27</p>
-<p>state BACKUP</p>
-<p>28</p>
-<p>interface eth0
-29</p>
-<p>virtual_router_id 142</p>
-<p>30</p>
-<p>priority 50
-31</p>
-<p>advert_int 1</p>
-<p>32</p>
-<p>authentication {
-33</p>
-<p>auth_type PASS</p>
-<p>34</p>
-<p>auth_pass 142
-35</p>
-<p>}</p>
-<p>36</p>
-<p>virtual_ipaddress {
-37</p>
-<p>192.168.10.142/26 dev eth0</p>
-<p>38</p>
-<p>}
-39</p>
-<p>}</p>
-<p>乍一看，主机和备机的配置文件是一样的，仔细看一下priority的值，使用以下命令即可将keepalived加入linux的服务中：</p>
-<p>1</p>
-<p>chkconfig --add keepalived ;</p>
-<p>通过启、停keepalived这个服务即可观察到VIP的飘动，至于为什么VIP飘动后可以很快地生效，还有待研究。</p>
-<p>===================================================================================</p>
-<h2 id="haproxy-keepalived-">haproxy+keepalived实现高可用负载均衡</h2>
-<p><img src="http://www.cnblogs.cc2/2054285_112154067_files/11207101_1.gif" alt="" title="此博文包含图片"> 我的环境：
-haproxy keepalived 主：192.168.1.192
-haproxy keepalived 备：192.168.1.193
-vip：192.168.1.200
-web：192.168.1.187:80 192.168.1.187:8000
-<img src="" alt="">
-一：安装过程，在192.168.1.192上：
-keepalived的安装:
-/#tar -zxvf keepalived-1.1.17.tar.gz
-/#ln -s /usr/src/kernels/2.6.18-128.el5-i686/ /usr/src/linux
-/#cd keepalived-1.1.17
-/#./configure --prefix=/ --mandir=/usr/local/share/man/ --with-kernel-dir=/usr/src/kernels/2.6.18-128.el5-i686/
-/#make &amp;&amp; make install
-/#cd /etc/keepalived/
-/#mv keepalived.conf keepalived.conf.default
-/#vi keepalived.conf
-! Configuration File for keepalived
-vrrp_script chk_http_port {
-script &quot;/etc/keepalived/check_haproxy.sh&quot;
-interval 2
-weight 2
-global_defs {
-router_id LVS_DEVEL
-}
-vrrp_instance VI_1 {
-state MASTER /#192.168.1.193上改为BACKUP
-interface eth0
-virtual_router_id 51
-priority 150 /#192.168.1.193上改为120
-advert_int 1
-authentication {
-auth_type PASS
-auth_pass 1111
-}
-track_script {
-chk_http_port
-}
-virtual_ipaddress {
-192.168.1.200
-}
-}
-}
-/#vi /etc/keepalived/check_haproxy.sh
-/#!/bin/bash
-A=<code>ps -C haproxy --no-header |wc -l</code>
-if [ $A -eq 0 ];then
-/usr/local/haproxy/sbin/haproxy -f /usr/local/haproxy/conf/haproxy.cfg
-sleep 3
-if [ <code>ps -C haproxy --no-header |wc -l</code> -eq 0 ];then
-/etc/init.d/keepalived stop
-fi
-fi
-/#chmod 755 /etc/keepalived/check_haproxy.sh
-haproxy的安装(主备都一样)：
-/#tar -zxvf haproxy-1.4.9.tar.gz
-/#cd haproxy-1.4.9
-/#make TARGET=linux26 PREFIX=/usr/local/haproxy install
-/#cd /usr/local/haproxy/
-/#mkdir conf logs
-/#cd conf
-/#vi haproxy.cfg
-global
-log 127.0.0.1 local3 info
-maxconn 4096
-user nobody
-group nobody
-daemon
-nbproc 1
-pidfile /usr/local/haproxy/logs/haproxy.pid
-defaults
-maxconn 2000
-contimeout 5000
-clitimeout 30000
-srvtimeout 30000
-mode http
-log global
-log 127.0.0.1 local3 info
-stats uri /admin?stats
-option forwardfor
-frontend http_server
-bind :80
-log global
-default_backend info_cache
-acl test hdr_dom(host) -i test.domain.com
-use_backend cache_test if test
-backend info_cache
-/#balance roundrobin
-balance source
-option httpchk HEAD /haproxy.txt HTTP/1.1\r\nHost:192.168.1.187
-server inst2 192.168.1.187:80 check inter 5000 fall 3
-backend cache_test
-balance roundrobin
-/#balance source
-option httpchk HEAD /haproxy.txt HTTP/1.1\r\nHost:test.domain.com
-server inst1 192.168.1.187:8000 check inter 5000 fall 3
-二：再两台机器上都分别启动：
-/etc/init.d/keepalived start （这条命令会自动把haproxy启动）
-三：测试：
-1.再两台机器上分别执行ip add
-主: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast qlen 1000
-link/ether 00:0c:29:98:cd:c0 brd ff:ff:ff:ff:ff:ff
-inet 192.168.1.192/24 brd 192.168.1.255 scope global eth0
-inet 192.168.1.200/32 scope global eth0
-inet6 fe80::20c:29ff:fe98:cdc0/64 scope link
-valid_lft forever preferred_lft forever
-备: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast qlen 1000
-link/ether 00:0c:29:a6:0c:7e brd ff:ff:ff:ff:ff:ff
-inet 192.168.1.193/24 brd 255.255.255.254 scope global eth0
-inet6 fe80::20c:29ff:fea6:c7e/64 scope link
-valid_lft forever preferred_lft forever
-2.停掉主上的haproxy，3秒后keepalived会自动将其再次启动
-3.停掉主的keepalived，备机马上接管服务
-备: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast qlen 1000
-link/ether 00:0c:29:a6:0c:7e brd ff:ff:ff:ff:ff:ff
-inet 192.168.1.193/24 brd 255.255.255.254 scope global eth0
-inet 192.168.1.200/32 scope global eth0
-inet6 fe80::20c:29ff:fea6:c7e/64 scope link
-valid_lft forever preferred_lft forever
-4.更改hosts
-192.168.1.200 test.com
-192.168.1.200 test.domain.com
-通过IE测试，可以发现
-test.com的请求发向了192.168.1.187:80
-test.domain.com的请求发向了192.168.1.187:8000
-<img src="" alt=""></p>
-<p><img src="" alt="">
-from:<a href="http://www.360doc.com/content/11/0425/11/2054285_112154067.shtml" target="_blank"><a href="http://www.360doc.com/content/11/0425/11/2054285_112154067.shtml">http://www.360doc.com/content/11/0425/11/2054285_112154067.shtml</a></a></p>
-<p>来源： &lt;<a href="http://www.cnblogs.com/dkblog/archive/2011/07/06/2098949.html" target="_blank">haproxy+keepalived实现高可用负载均衡 - dkcndk - 博客园</a>&gt;</p>
+        <h1 id="tcp-ip-icmp-iteye-">TCP IP网络层谜云之ICMP - - ITeye技术网站</h1>
+<p><a href="http://www.iteye.com/" target="_blank">首页</a> <a href="http://www.iteye.com/news" target="_blank">新闻</a> <a href="http://www.iteye.com/forums" target="_blank">论坛</a> <a href="http://www.iteye.com/ask" target="_blank">问答</a> <a href="http://www.iteye.com/blogs" target="_blank">博客</a> <a href="http://www.iteye.com/job" target="_blank">招聘</a> <a href="http://java-mzd.iteye.com/blog/1019089#" target="_blank">更多 ▼</a></p>
+<p><a href="http://www.iteye.com/wiki" target="_blank">专栏</a>  <a href="http://www.iteye.com/groups" target="_blank">群组</a> <a href="http://www.iteye.com/search" target="_blank">搜索</a></p>
+<p><a href="http://java-mzd.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.iteye.com/all" target="_blank">我的应用</a> <a href="http://java-mzd.iteye.com/login" target="_blank">登录</a> <a href="http://java-mzd.iteye.com/signup" target="_blank">注册</a></p>
+<h1 id="-java-mzd-http-java-mzd-iteye-com-"><a href="http://java-mzd.iteye.com/" target="_blank">java-mzd</a></h1>
+<p>永久域名 <a href="http://java-mzd.iteye.com/" target="_blank"><a href="http://java-mzd.iteye.com">http://java-mzd.iteye.com</a></a></p>
+<p><a href="http://java-mzd.iteye.com/blog/1019089#" target="_blank">2顶</a>
+<a href="http://java-mzd.iteye.com/blog/1019089#" target="_blank">4踩</a></p>
+<p><a href="http://java-mzd.iteye.com/blog/1050043" title="腾讯、淘宝、金山网络，实习生我该何去何从" target="_blank">腾讯、淘宝、金山网络，实习生我该何去何从</a> | <a href="http://java-mzd.iteye.com/blog/1019088" title="TCP/IP网络层谜云" target="_blank">TCP/IP网络层谜云</a></p>
+<p>2011-04-27</p>
+<h3 id="-tcp-ip-icmp-"><a href="">TCP/IP网络层谜云之ICMP</a></h3>
+<p><strong>文章分类:<a href="http://www.iteye.com/blogs/category/java" target="_blank">Java编程</a></strong>
+本文上接《<a href="http://java-mzd.iteye.com/blog/1019088" target="_blank">TCP/IP网络层谜云</a>》 <a href="http://java-mzd.iteye.com/blog/1019088" target="_blank"><a href="http://java-mzd.iteye.com/blog/1019088">http://java-mzd.iteye.com/blog/1019088</a></a></p>
+<p><strong>十四。为什么需要ICMP？</strong></p>
+<p><strong>因为IP协议不提供可靠性且不能保证信息传递，因此发生问题时，通知发送人是很重要的。</strong>（IP协议是一种不可靠的协议，无法进行差错控制。但IP协议可以借助其他协议来实现这一功能，如ICMP）</p>
+<p><strong>十五。什么是ICMP？</strong> </p>
+<p>ICMP： Internet Control Message Protocol 即Internet消息控制协议。</p>
+<p>ICMP定义了一套<strong>差错报文</strong>和<strong>控制报文</strong>，用于用户主机与路由之间交换不可到达地址、网络拥塞、重定向到更好的路径、报文生命周期超时等信息。</p>
+<p><strong>ICMP协议是一种提供</strong>（有关阻止数据包传递的）<strong>网络故障问题反馈信息的机制</strong>。（针对阻止数据包传递或者网络故障。）它让TCP等上层协议能够意识到数据包没有送达目的地。
+<strong>关于ICMP与TCP的差错控制对比？</strong></p>
+<p>比如主机A到主机B的通信，中间Router  r1 到Router  r2 的网络连接断了。</p>
+<p>通过ICMP，则<strong>可以快速诊断出出错原因</strong>，并且报告主机。（差错诊断）</p>
+<p>TCP的差错控制，主要是体现在，网络断了，收不到确认回复，TCP会一直再次发送数据包，直到收到确认回复。（差错处理）</p>
+<p>ICMP提供一组易懂的出错报告信息。发送的出错报文返回到发送原数据的设备，因为<strong>只有发送设备才是出错报文的逻辑接受者</strong>。<strong>发送设备随后可根据ICMP报文确定发生错误的类型，确定如何才能更好地重发失败的数据报</strong>。但是<strong>ICMP唯一的功能是报告问题而不是纠正错误，纠正错误的任务由发送方完成。</strong></p>
+<p><strong>十六。ICMP协议有哪些数据包？</strong></p>
+<p><strong>**</strong>一个ICMP数据包实际上就是一个（数据部分为ICMP协议数据的）<strong>**IP数据包。</strong> </p>
+<p>IP头</p>
+<p>ICMP头
+Type</p>
+<p>Code</p>
+<p>Checksum 
+ICMP数据</p>
+<p>如前所述，ICMP主要分为<strong>差错报文</strong>和<strong>控制报文</strong>。</p>
+<p><strong>差错报文包括</strong>：目标不可到达（网络、协议、主机、端口不可到达；禁止分割、目标网络不认识、目标主机不认识等等）、超时、参数问题、重定向（网络重定向、主机重定向等）等等</p>
+<p><strong>控制报文包括</strong>：请求回显（ping请求）、回显应答（ping应答）、地址掩码请求、地址掩码应答等等</p>
+<p>如上，我们可以发现，同一类型的错误（不可到达）可能有不同种类（网络不可到达、主机不可到达），因此，<strong>我们使用type来code两个标志来确定一个具体的错误。</strong></p>
+<p><strong>因为需要指出具体是哪个主机上的哪个程序发出的信息没有到达。</strong></p>
+<p><strong>因此，每一个ICMP的错误消息，应该包含：</strong></p>
+<p>1.具体的错误类型（Type/code 决定）</p>
+<p>2.引发ICMP错误消息的数据包的完全IP包头（哪个主机的数据）</p>
+<p>3.数据报的前8个字节----UDP报头或者TCP中的port部分(主机上的哪个程序)</p>
+<p>因此，<strong>ICMP错误消息的格式应该为如下</strong>：
+Type(8)</p>
+<p>Code(8)</p>
+<p>Checksum(16) Unused(32) Internet Header +64 Bits of Original Data Datagram</p>
+<p>控制报文因为控制的消息各不相同，所以有所差异。下面分析下请求回显（ping）和回显应答，其他的消息，大家可以触类旁通。</p>
+<hr>
+<p>Type</p>
+<p>Code</p>
+<p>Checksum Identifier</p>
+<p>Sequence Number Data</p>
+<p><strong>当主机**</strong>A<strong><strong>需要知道和主机</strong></strong>B<strong><strong>通信的状况</strong></strong>(<strong><strong>信息传递延时、丢包率</strong></strong>)<strong><strong>时，我们该怎么办呢？**</strong></strong>
+我们可以参考声纳和雷达的原理：主机A发送一个ICMP回显请求（type=8,code=0）报文,数据域中存放当前时间T1，目的IP为主机B。主机B收到该ICMP回显请求报文后，将目的IP和源IP调换位置，其他信息都不变（Indentifier，Sequence Number）,回复一个ICMP回显应答（type=0,code=0）。主机A收到改ICMP回显应答的时间为T2。则，到主机B的通信时间为：T2-T1。</p>
+<p>又因为，要考虑丢包，所以我们向主机B发送多个回显请求，用Sequence Number来区分各个请求，根据Sequence Number，即可知道应答对应的请求数据包。</p>
+<p>Ping命令就是这样的一个实现，其实我们在命令行下输入ping ip命令时，就是调用Ping程序。Ping程序根据输入的IP（域名）封装ICMP请求应答，发送出去，并且接受ICMP回显应答，进行解析，输出。</p>
+<p><strong>关于超时</strong>：IP报头中的生存期（TTL）属性，用来控制报文段在网络中的生存期。</p>
+<p>试想一下，当网络中的某些路由出现问题，Router A将IP a 的下一跳路由为Router B。同时在Router B中，又将IP a 的下一跳路由为 Router A。那么显然，两个路由器之将会间形成回路，通往网段a的数据包，将会一直在两个路由之间发送，导致网络流量爆炸，同时，数据包也无法正确的到达网络a。</p>
+<p>因此，当IP数据包每经过一个路由器时，路由器将IP数据包中的TTL值减一。当TTL值为0时，路由器判断数据包超时，发送ICMP超时信息给源主机。</p>
+<p><strong>当我们想知道：从主机**</strong>A<strong><strong>发送到主机</strong></strong>B<strong><strong>的数据包在网络中都经过了哪些路由器的时候，我们有什么办法呢？**</strong></strong>
+我们知道，当IP数据包在路由中出错时，路由器会向发送源发送一个ICMP错误报文，发送端从该ICMP错误报文中，可以得到该路由的IP。</p>
+<p>我们可以利用此原理。要得到从主机A到目标主机B之间的所有路由的IP，那么我们必须让IP数据包在每个路由器中都出错一次。</p>
+<p>又因此，TTL值在经过的每个路由器中都会减1。因此，我们可以利用TTL的超时信息，在每个路由中都发生一次。即可得到从从主机A到主机B之间的所有路由的IP。</p>
+<p>PS.怎么判断数据包正确到达了目标主机B？</p>
+<p>当IP数据包到达了目标主机，将不会再发送TTL超时错误。而且在目标主机B中，没有运行相对应的应用层程序，因此，将没有程序会回应我们发送的IP数据包。那么，我们将如何知道IP数据包已经到达了目标主机呢？</p>
+<p>我们可以为数据包分配一个目标主机几乎不可能监听的端口，从而，当IP数据包到达目标主机后，目标主机会回复相应的”不可到达、端口不可到达”的ICMP错误信息，从而，我们可以确认IP数据包已经到达了目标主机。</p>
+<p>综上，我们可以：源主机A发送IP数据包，IP为目标主机B，port几乎不可能监听的port，TTL从一开始一直往上增加，直道收到来自主机B的ICMP 不可到达（端口不可到达）信息。</p>
+<p>Tracerouter 命令就是实现这样功能的一个程序。我们可以通过tracerouter ip来调用此功能。</p>
+<p>PS.因为每次路由时的路由路径可能不一样，那么在tracerouter过程中，我们又如何解决这个问题？</p>
+<p>而且，如果目标主机正好监听了这一我们认为不可能监听的端口呢？</p>
+<p>针对这些问题，欢迎各位读者回答。</p>
+<p>PS。这是第四次更改了。。希望JE别抽风了。。让他们正常显示吧。。</p>
+<p>这年头，每个用心写总结的人。。你们都伤不起啊。。。</p>
+<p>好不容易写了一周啊。。</p>
+<p>从2000写到8000啊。。又从8000改到4000啊。。又从4000改到6600啊</p>
+<p>写了改</p>
+<p>改了啊。。</p>
+<p>伤不起啊。。</p>
+<p>好不容易写好了。。</p>
+<p>JE还不给力。。显示不正常啊。。</p>
+<p>又重新写了后面两个大问题好几遍啊。。好几遍啊</p>
+<p>伤不起啊。。。</p>
+<p><a href="http://java-mzd.iteye.com/blog/1019089#"><strong>2</strong>
+顶</a><a href="http://java-mzd.iteye.com/blog/1019089#"><strong>4</strong>
+踩</a>
+<a href="http://java-mzd.iteye.com/blog/1050043" title="腾讯、淘宝、金山网络，实习生我该何去何从" target="_blank">腾讯、淘宝、金山网络，实习生我该何去何从</a> | <a href="http://java-mzd.iteye.com/blog/1019088" title="TCP/IP网络层谜云" target="_blank">TCP/IP网络层谜云</a></p>
+<ul>
+<li>00:39</li>
+<li>浏览 (277)</li>
+<li><a href="http://java-mzd.iteye.com/blog/1019089#comments" target="_blank">评论</a> (2)</li>
+<li>分类: <a href="http://java-mzd.iteye.com/category/153171" target="_blank">TCP/IP</a></li>
+<li><a href="http://www.iteye.com/wiki/topic/1019089" target="_blank">相关推荐</a><h3 id="-">评论</h3>
+</li>
+</ul>
+<p><a href=""></a></p>
+<p>2 楼 <a href="http://leelege.iteye.com/" target="_blank">leelege</a> 2011-05-04   <a href="http://java-mzd.iteye.com/blog/1019089#" target="_blank">引用</a></p>
+<p>感谢楼主分享 期待更多内容～～
+1 楼 <a href="http://cosina.iteye.com/" target="_blank">cosina</a> 2011-04-28   <a href="http://java-mzd.iteye.com/blog/1019089#" target="_blank">引用</a></p>
+<p><img src="" alt="">   学倒不少！ 继续写哈哈</p>
+<h3 id="-">发表评论</h3>
+<h3 id="-">表情图标</h3>
+<p><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""><img src="" alt=""></p>
+<p>字体颜色: 标准深红红色橙色棕色黄色绿色橄榄青色蓝色深蓝靛蓝紫色灰色白色黑色 字体大小: 标准1 (xx-small)2 (x-small)3 (small)4 (medium)5 (large)6 (x-large)7 (xx-large) 对齐: 标准居左居中居右</p>
+<p>提示：选择您需要装饰的文字, 按上列按钮即可添加上相应的标签</p>
+<p>您还没有登录，请<a href="http://java-mzd.iteye.com/login" target="_blank">登录</a>后发表评论(快捷键 Alt+S / Ctrl+Enter)</p>
+<p><a href="http://java-mzd.iteye.com/" target="_blank"><img src="&quot;java_mzd的博客: &quot;" alt="java_mzd的博客"></a></p>
+<p>java_mzd</p>
+<ul>
+<li>浏览: 70753 次</li>
+<li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
+<li>来自: 长沙</li>
+<li><img src="" alt=""></li>
+<li><a href="http://java-mzd.iteye.com/blog/profile" target="_blank">详细资料</a> <a href="http://java-mzd.iteye.com/blog/guest_book" target="_blank">留言簿</a></li>
+</ul>
+<h3 id="-">搜索本博客</h3>
+<h3 id="-http-java-mzd-iteye-com-blog-user_visits-">最近访客 <a href="http://java-mzd.iteye.com/blog/user_visits" target="_blank">&gt;&gt;更多访客</a></h3>
+<p><a href="http://aria.iteye.com/" target="_blank"><img src="&quot;aria的博客: &quot;" alt="aria的博客"></a></p>
+<p><a href="http://aria.iteye.com/" target="_blank">aria</a></p>
+<p><a href="http://zhxing.iteye.com/" target="_blank"><img src="&quot;zhxing的博客: ヾ孤星随缘ツ  http://t.sina.com.cn/samzhxing&quot;" alt="zhxing的博客"></a></p>
+<p><a href="http://zhxing.iteye.com/" target="_blank">zhxing</a>
+<a href="http://java-suddy.iteye.com/" target="_blank"><img src="&quot;java_suddy的博客: “平凡”的思想&quot;" alt="java_suddy的博客"></a></p>
+<p><a href="http://java-suddy.iteye.com/" target="_blank">java_suddy</a></p>
+<p><a href="http://liuxinglanyue.iteye.com/" target="_blank"><img src="&quot;liuxinglanyue的博客: liuxinglanyue&quot;" alt="liuxinglanyue的博客"></a></p>
+<p><a href="http://liuxinglanyue.iteye.com/" target="_blank">liuxinglanyue</a></p>
+<h3 id="-">博客分类</h3>
+<ul>
+<li><a href="http://java-mzd.iteye.com/" target="_blank">全部博客 (43)</a></li>
+<li><a href="http://java-mzd.iteye.com/category/133623" target="_blank">数据结构----------JAVA类集 (5)</a></li>
+<li><p><a href="http://java-mzd.iteye.com/category/153171" target="_blank">TCP/IP (7)</a></p>
+<h3 id="-http-java-mzd-iteye-com-blog-guest_book-">我的留言簿 <a href="http://java-mzd.iteye.com/blog/guest_book" target="_blank">&gt;&gt;更多留言</a></h3>
+</li>
+<li><p>楼主 你工作多久了。。。。
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39913" target="_blank">fanmingxing</a></p>
+</li>
+<li>写的不错，学习，谢谢！
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39693" target="_blank">chenge2k</a></li>
+<li>看了LZ的文章，发现工作快两年的我，就像是一块浮起来的木头，真的很惭愧！也不怪我拿 ...
+-- by <a href="http://java-mzd.iteye.com/blog/guest_book#39618" target="_blank">GoTiger</a></li>
+</ul>
+<h3 id="-">其他分类</h3>
+<ul>
+<li><a href="http://java-mzd.iteye.com/blog/favorite" target="_blank">我的收藏</a> (23)</li>
+<li><a href="http://java-mzd.iteye.com/blog/code_favorite" target="_blank">我的代码</a> (0)</li>
+<li><a href="http://java-mzd.iteye.com/blog/topic" target="_blank">我的论坛主题帖</a> (3)</li>
+<li><a href="http://java-mzd.iteye.com/blog/post" target="_blank">我的所有论坛帖</a> (37)</li>
+<li><p><a href="http://java-mzd.iteye.com/blog/article" target="_blank">我的精华良好帖</a> (0)</p>
+<h3 id="-">最近加入群组</h3>
+</li>
+<li><p><a href="http://android.group.iteye.com/" target="_blank">Android</a></p>
+</li>
+</ul>
+<h3 id="-">存档</h3>
+<ul>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-05" target="_blank">2011-05</a> (2)</li>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-04" target="_blank">2011-04</a> (7)</li>
+<li><a href="http://java-mzd.iteye.com/blog/monthblog/2011-03" target="_blank">2011-03</a> (2)</li>
+<li><p><a href="http://java-mzd.iteye.com/blog/monthblog_more" target="_blank">更多存档...</a></p>
+<h3 id="-">评论排行榜</h3>
+</li>
+<li><p><a href="http://java-mzd.iteye.com/blog/1050043" title="腾讯、淘宝、金山网络，实习生我该何去何从" target="_blank">腾讯、淘宝、金山网络，实习生我该何去何从</a></p>
+</li>
+<li><a href="http://java-mzd.iteye.com/blog/1050926" title="淘宝、金山网络，百感交集" target="_blank">淘宝、金山网络，百感交集</a></li>
+<li><a href="http://java-mzd.iteye.com/blog/1007577" title="TCP/IP传输层，你懂多少？" target="_blank">TCP/IP传输层，你懂多少？</a></li>
+<li><a href="http://java-mzd.iteye.com/blog/1004784" title="淘宝武汉*面试归来" target="_blank">淘宝武汉/*面试归来</a></li>
+<li><p><a href="http://java-mzd.iteye.com/blog/862787" title="开源软件？自由软件？免费软件？你了解多少？" target="_blank">开源软件？自由软件？免费软件？你了解多少 ...</a></p>
+</li>
+<li><p><a href="http://java-mzd.iteye.com/rss" target="_blank"><img src="" alt="Rss"></a></p>
+</li>
+<li><a href="http://fusion.google.com/add?feedurl=http://java-mzd.iteye.com/rss" target="_blank"><img src="" alt="Rss_google"></a>
+声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
+© 2003-2011 ITeye.com. All rights reserved. [ 京ICP证110151号 ]
+<img src="" alt=""></li>
+</ul>
 
       
     </div>
@@ -1334,8 +567,229 @@ from:<a href="http://www.360doc.com/content/11/0425/11/2054285_112154067.shtml" 
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--haproxykeepalived实现高可用负载均衡/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--haproxykeepalived实现高可用负载均衡" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/TCPIP/">TCPIP</a></li></span></span> | <span class="tags">Tagged <a href="/tags/TCPIP/" class="label label-primary">TCPIP</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-TCPIP--TCPIP网络层谜云之ICMP--ITeye技术网站/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-TCPIP--TCPIP网络层谜云之ICMP--ITeye技术网站" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-TCPIP--HTTPS是如何保证连接安全：每位Web开发者都应知道的-博客-伯乐在线/">HTTPS是如何保证连接安全：每位Web开发者都应知道的 </a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-TCPIP--HTTPS是如何保证连接安全：每位Web开发者都应知道的-博客-伯乐在线/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="https-web-">HTTPS是如何保证连接安全：每位Web开发者都应知道的 - 博客 - 伯乐在线</h1>
+<p><strong>本文由 <a href="http://blog.jobbole.com/" target="_blank">伯乐在线</a> - <a href="http://blog.jobbole.com/author/jobbole/" target="_blank">伯乐在线读者</a> 翻译自 <a href="http://blog.hartleybrody.com/https-certificates/" target="_blank">hartley brody</a>。转载请参见文章末尾处的要求。</strong></p>
+<p>【感谢<a href="http://weibo.com/aimujie0" target="_blank">@埃姆杰</a> 的热心翻译。如果其他朋友也有不错的原创或译文，可以尝试<a href="http://blog.jobbole.com/tougao/" target="_blank">推荐给伯乐在线</a>。】</p>
+<p>“HTTPS协议的工作原理是什么？”这是我在数天前工作项目中需要解决的问题。</p>
+<p>作为一名Web开发者，我当然知道 HTTPS 协议是保障用户敏感数据的好办法，但并不知道这种协议的内在工作机制。</p>
+<p>它怎么保护数据？有人监听线路的情况下，服务器与客户端之间如何建立安全的连接？安全证书又是什么，为什么还要花钱买呢？</p>
+<p><strong>一系列通道</strong></p>
+<p>在深入讲解原理细节之前，让我们首先简单了解下HTTPS所防范的的问题，以及安全连接为何如此重要吧。</p>
+<p>在你访问自己喜欢的站点时，从你的电脑发送的请求会在各个不同的网络之间传递——这些网络很有可能是用来偷听，甚至篡改你的信息。</p>
+<p><img src="" alt=""></p>
+<p>局域网中，信息从你的电脑传输到其他电脑，传输到接入点，到ISP的路由器、交换机，最后到达骨干网线路。这样的一个过程中，有许多不同的组织在传送着你的请求。这时，如果不怀好意的用户侵入这条线路之中的任何一个系统中时，他们将很有可能看到线路中传送的内容。</p>
+<p>而一般情况下，Web请求和相应都经由普通的HTTP协议明文传送。HTTP协议默认不使用加密协议，都是由于这些原因：</p>
+<ul>
+<li>加密消耗了很多计算资源。</li>
+<li>加密占用了更多的传输带宽。</li>
+<li>加密后缓存机制会失效。</li>
+</ul>
+<p>不过，Web开发者会时不时遇到在连接中传送密码、信用卡号等敏感信息的情况。所以，有必要为这些页面做好防嗅探的准备措施。</p>
+<p><strong>传输层安全协议（TLS）</strong></p>
+<p>虽然下面讲解的内容和密码学有关，但是这里只是一个简单的介绍，不熟悉相关知识也应该看得懂。在实践中，是密码学算法确保了通信过程的安全，同时也抵御了潜在的信息黑手——干扰通信和监听的人。</p>
+<p>SSL协议的继任者——TLS协议，常被用来实现安全HTTP连接（HTTPS）协议。在OSI网络模型中，TLS协议比HTTP协议的工作更加底层。确切来说，就是TLS的那部分连接发生在HTTP的连接之前。</p>
+<p>TLS是一种混合的加密机制。它具有多种范式，接下来所看到的是对于这两种范式（用于共享秘密信息和身份认证（确保声称的身份和实际身份一致）的公钥算法和用于加密请求与回应机密信息的对称式算法）的说明：</p>
+<p><strong>公钥加密机制</strong></p>
+<p>使用公钥加密机制，双方各自拥有一份公钥和一份私钥，公钥和私钥通过数学演算联系在一起。公钥用于将明文转化为密文（变成了一堆乱码），私钥用来解密这一堆乱码般的信息。</p>
+<p>一旦信息被公钥加密，它将只能由相应的私钥解密。两者缺一不可，而且也不能反过来使用。公钥可以自由传播，无需担心系统安全性降低；但私钥应妥善保管，不可将其泄露给未经授权解密的信息的用户，这就是公钥和私钥这两个名称的由来。</p>
+<p>公钥机制相当酷的地方在于，通信双方可以在最初不安全的通道上建立起安全可靠的通信连接。</p>
+<p>客户端和服务器都可以使用各自的私钥，只要共享了一部分公开信息，也就是共用了同一个公钥的情况下，就可以建立起相应的会话。</p>
+<p>这意味着即使有人坐在客户端或者服务器前查看连接过程，他们也不会知道客户端或者服务的的私钥，也不会知道会话所共享的密码。</p>
+<p>这得靠什么实现？靠数学！</p>
+<p><strong>Diffie-Hellman</strong></p>
+<p>这种密钥交换最常使用是Diffie-Hellman的密钥交换法。这项过程允许服务器和客户端双方商定共同的保密信息，而不需要在传输过程中交换这个信息。这样一来，即使嗅探者查看每个数据包，也不能确定连接上传输的共享密码是什么。</p>
+<p>在最初的DH式密钥交换发生之后所生成的共享信息，可以在会话接下来的通信中使用更简洁的对称式加密法，我们之后就会看到对称式加密法的说明。</p>
+<p><strong>一点点数学</strong></p>
+<p>公钥算法的特点就是很容易由算子计算出结果，而基本上不可能作逆向运算。这也就是使用了两个质数的所要达到的目的。</p>
+<p>现在假设Alice和Bob分别是参与DH式密钥交换过程的两方，他们一开始会商议确定一个小质数（一般是2,3,5这样的小数字）和一个大质数（有300位以上）作为加密的原始信息。小质数和大质数都可以直接传输，不必担心交换过程中的不安全。</p>
+<p>需要明白的是，Alice和Bob各自都持有着自己的私钥（100多位的数），而且也永远不应该共享自己的私钥。不光是两人之间，也包括其他不相关的人都不应该拥有这两组私钥。网络中传输的是他们的私钥、小质数和大质数混合运算得到的结果。更确切来说，就是：</p>
+<ul>
+<li>Alice的结果 = （小质数Alice的密码）% 大质数</li>
+<li>Bob的结果 = （小质数Bob的密码）% 大质数</li>
+<li>（“%” 符号表示取模运算，即取得除法运算的余数）</li>
+</ul>
+<p>所以Alice使用大质数和小质数加上自己的私钥运算，就会得出结果，而Bob做同样的计算，也能得到相同的结果。当他们接收到对方的运算结果时，他们可以由数学计算导出会话中所要传输的信息，也就是说：</p>
+<p>Alice计算的是</p>
+<ul>
+<li>（Bob的结果Alice的密码）% 大质数</li>
+</ul>
+<p>而Bob则计算</p>
+<ul>
+<li>（Alice的结果Bob的密码）% 大质数</li>
+</ul>
+<p>Alice和Bob得出来的数字相同，这个数字也就是会话中所要共享的密码。请注意，双方都没有向对方传输各自的私钥，而连接过程中也没有明文传递保密信息。这一点真是太棒了！</p>
+<p>对数学不好的人而言，维基百科上有一张混合颜料的图可以用来说明情况：
+<img src="" alt=""></p>
+<p>请注意图中一开始的颜色（黄色）最后都会有Alice和Bob的颜色参与计算。这就是双方会得到同样结果的原因。对于观看中间过程的人来说，唯一在连接中发送的半合成信息是毫无意义的。</p>
+<p><strong>对称式加密机制</strong></p>
+<p>每次会话中只需要产生一次公钥交换的过程。在接受了同一个共享保密信息以后，服务器和客户端之间会使用更为高效的对称式加密机制进行通信，省去了来回交换的额外花销。</p>
+<p>在接受了之前的共享保密信息之后，还会使用一套密码机制（一般是一组加密算法），使用共享的密码安全地通信，加密解密各自的信息。而窃听者只会看到一堆乱码在传来传去。</p>
+<p><strong>身份认证</strong></p>
+<p>DH式密钥交换允许双方创建私有的，共有的密码，但通信双方怎么确保是真正想要对话的人呢？这里就涉及到了身份认证的问题。</p>
+<p>假设我拿起电话，跟我的朋友进行DH式密钥交换，在电话已经被干扰的情况，实际上是在跟其他人交换信息。在使用共享密码了以后，我仍然可以安全地与“朋友”交换信息，没有人可以解密我们的通信信息，但是“朋友”并不真的是我的朋友，这可是十分不安全的！</p>
+<p>要解决身份认证问题，需要有配套的公钥基本设施，来核实用户的真实身份。这些设施用来创建，管理，发布，收回数字证书。而数字证书正是你需要为站点使用HTTPS协议付费的恼人事项。</p>
+<p>但是，什么是数字证书，数字证书又是如何保证信息更加安全的呢？</p>
+<p><strong>证书</strong></p>
+<p>从更高的层次来讲，数字证书是将机器上的公钥和身份信息绑在一起的数字签名。数字签名担保某份公钥属于某个特定的组织和机构。</p>
+<p>证书将域名（身份信息）和特定公钥关联起来。这就避免了窃听者将自己的服务器伪装成用户将要连接的服务器，并进行攻击的行为。</p>
+<p>在上面打电话的例子中，攻击者可以尝试展示自己的公钥，装作是你的“朋友”，但是证书上面的签名信息便显示出：这份证书不是来自我信任的人的。</p>
+<p>要受到一般<a href="http://blog.jobbole.com/12749/" title="浏览器" target="_blank">浏览器</a>的信任，证书本身还应当受到CA的信任。CA公司对认证会进行人工核查，确定申请主体满足以下两个条件：</p>
+<ol>
+<li>在公共记录中存在着这个人/这家公司。</li>
+<li>需要签名的证书上标明的域名的确由申请主体实际控制。</li>
+</ol>
+<p>当CA查证，得出申请人属实，并且的确拥有这个域名的结果，CA便会为证书颁发签证，盖上“已核准”的戳记，表明网站的公钥属于这个网站，而且可以信任。</p>
+<p>你的浏览器中会内置一系列受信任的CA列表。如果服务器返回的是未经过受信任CA签证的证书，浏览器会弹出大大的警告，这就在系统中多了一层安全措施，如果不然，任何人都可以四处签售伪造的证书。
+<img src="" alt=""></p>
+<p>这样一来，即使攻击者将自己的公钥拿出来，生成这份密钥，声称自己的伪造服务器就是“facebook.com”，浏览器也会因为检查到“未经受信任CA签名的证书”而弹出提示。</p>
+<p><strong>一些关于证书的其他事项</strong></p>
+<p><strong>增强式认证</strong></p>
+<p>在常规的X.509 证书之外，增强式认证证书提供了更强力的认证。</p>
+<p>要授予增强式认证证书，CA会对域名持有着做更加深入的查验（通常需要提供护照和水电费账单等信息）。</p>
+<p>这种类型的证书，浏览器中大锁图标的显示位置背景也会变成绿色。</p>
+<p><strong>在同一台服务器上运行的多个网站</strong></p>
+<p>在HTTP协议连接开始之前进行的TLS协议握手流程，很有可能存在着多个网站存放在同一个服务器，使用相同IP地址的情况。</p>
+<p>虚拟主机的Web路由是由Web服务器分发，但是TCP握手的过程，却是发生在连接之前。整个系统的单张证书会被发送到服务器的所有请求之中，这种流程会在共享主机的环境中发生问题。</p>
+<p>如果你正在使用Web主机上提供的服务，他们会在你使用HTTPS协议之前要求使用独立的IP地址。不然主体提供商就需要每次在服务器上有新站点的时候，取得新证书（并且向CA重新申请认证）。
+<img src="&quot;3 votes, average: 5.00 out of 5&quot;" alt="3 votes, average: 5.00 out of 5"><img src="&quot;3 votes, average: 5.00 out of 5&quot;" alt="3 votes, average: 5.00 out of 5"><img src="&quot;3 votes, average: 5.00 out of 5&quot;" alt="3 votes, average: 5.00 out of 5"><img src="&quot;3 votes, average: 5.00 out of 5&quot;" alt="3 votes, average: 5.00 out of 5"><img src="&quot;3 votes, average: 5.00 out of 5&quot;" alt="3 votes, average: 5.00 out of 5"> (<strong>*3</strong> 个评分，平均: <strong>5.00*</strong>)</p>
+<p><img src="&quot;Loading ...&quot;" alt="Loading ..."> Loading ...
+原文链接： <a href="http://blog.hartleybrody.com/https-certificates/" target="_blank">hartley brody</a>   翻译： <a href="http://blog.jobbole.com/" target="_blank">伯乐在线</a> - <a href="http://blog.jobbole.com/author/jobbole/" target="_blank">伯乐在线读者</a>
+译文链接： <a href="http://blog.jobbole.com/45530/" target="_blank"><a href="http://blog.jobbole.com/45530/">http://blog.jobbole.com/45530/</a></a>
+[ <strong>转载必须在正文中标注并保留原文链接、译文链接和译者等信息。</strong>]</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/TCPIP/">TCPIP</a></li></span></span> | <span class="tags">Tagged <a href="/tags/TCPIP/" class="label label-primary">TCPIP</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-TCPIP--HTTPS是如何保证连接安全：每位Web开发者都应知道的-博客-伯乐在线/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-TCPIP--HTTPS是如何保证连接安全：每位Web开发者都应知道的-博客-伯乐在线" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">How Does Google Work  Learn How Google Works  Sear</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="how-does-google-work-learn-how-google-works-search-engine-adwords">How Does Google Work Learn How Google Works Search Engine + AdWords</h1>
+<ul>
+<li><a href="http://ppcblog.com/blog" target="_blank">Blog</a></li>
+<li><a href="http://ppcblog.com/ppc-assets" target="_blank">Free PPC Assets</a></li>
+<li><a href="http://ppcblog.com/about" target="_blank">About Us</a></li>
+<li><a href="http://ppcblog.com/member-tour-new-users-1" target="_blank">PPC Training Tour</a></li>
+<li><a href="https://ppcblog.com/amember/member.php" target="_blank">Member Login »</a></li>
+</ul>
+<h1 id="-ppc-blog-http-ppcblog-com-"><a href="http://ppcblog.com/" target="_blank">PPC Blog</a></h1>
+<h1 id="learn-how-google-works-in-gory-detail">Learn How Google Works: in Gory Detail</h1>
+<p><a href="http://pinterest.com/pin/create/button/?url=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2F&amp;media=http%3A%2F%2Fppcblog.com%2Fhow-google-works%2Fhow-google-works.jpg&amp;description=How%20Google%20Works" target="_blank">888</a>  <a href="http://twitter.com/share" target="_blank">Tweet</a> 388
+<a href="">inShare</a>  <a href="">digg</a></p>
+<p><img src="" alt="How Google Works."></p>
+<p><a href="http://news.ycombinator.com/item?id=1472981" target="_blank">Vote on Hacker News</a>, or <img src="http://static.delicious.com/img/delicious.small.gif" alt="Delicious"> <a href="http://delicious.com/save" target="_blank">Bookmark this on Delicious</a></p>
+<h2 id="free-add-this-infographic-to-your-website-">FREE: add this infographic to your website!</h2>
+<h3 id="600-pixel-wide-version">600 Pixel Wide Version</h3>
+<p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/600.jpg" border="0" alt="How Google Works." /></a></p><p>Infographic by the <a href="http://ppcblog.com/" target="_blank">Pay Per Click Blog</a></p>
+
+<h3 id="large-version">Large Version</h3>
+<p><p><a href="http://www.ppcblog.com/how-google-works/" target="_blank"><img src="http://ppcblog.com/how-google-works/how-google-works.jpg" border="0" alt="How Does Google Work?" /></a></p><p>Infographic by <a href="http://ppcblog.com/" target="_blank">PPCBlog</a></p>
+Copyright 2011 - 2013 PPC Training Inc. - All Rights Reserved</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--HowDoesGoogleWorkLearnHowGoogleWorksSear" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/">基于tomcat7 web开发中的一点小东西</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-tomcat7-web-">基于tomcat7 web开发中的一点小东西</h1>
+<p><a href="http://blog.csdn.net/benyuxy/article/details/7568386" target="_blank">基于tomcat7 web开发中的一点小东西</a></p>
+<h3 id="-">控制台：</h3>
+<p>org.apache.jasper.compiler.TldLocationsCache tldScanJar</p>
+<p>信息: At least one JAR was scanned for TLDs yet contained no TLDs. Enable debug logging for this logger for a complete list of JARs that were scanned but no TLDs were found in them. Skipping unneeded JARs during scanning can improve startup time and JSP compilation time.
+这样的问题是你的页面中含有<!---->的注释 去掉就好了，tomcat7.0.20.</p>
+<p>tomcat 7对EL表达式的语法要求比较严格，例如&quot;${owner.new}&quot;因包含关键字new就会导致解析出错。 
+问题是出来了，怎么解决呢？有三种，如下： 
+第一种：严格遵守java规范，修改对象的属性名称，要求不包含java关键字; 
+第二种：修改EL表达式，例如&quot;${owner.new}&quot;可以修改为&quot;${owner[&#39;new&#39;]}&quot;; 
+第三种：修改tomcat属性，忽略对EL表达式的关键字检查。修改$CATALINA_BASE/conf/catalina.properties文件，添加org.apache.el.parser.SKIP_IDENTIFIER_CHECK=true选项。</p>
+<p>来源： <a href="[http://blog.csdn.net/benyuxy/article/details/7568386](http://blog.csdn.net/benyuxy/article/details/7568386)">[http://blog.csdn.net/benyuxy/article/details/7568386](http://blog.csdn.net/benyuxy/article/details/7568386)</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器--基于tomcat7web开发中的一点小东西/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器--基于tomcat7web开发中的一点小东西" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1348,7 +802,7 @@ from:<a href="http://www.360doc.com/content/11/0425/11/2054285_112154067.shtml" 
 
 
 <ul id="pagination" class="pagination pagination-lg">
-  <li><a class="extend prev" href="/page/20/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/18/">18</a></li><li><a class="page-number" href="/page/19/">19</a></li><li><a class="page-number" href="/page/20/">20</a></li><li class="active"><li><span class="page-number current">21</span></li><li><a class="page-number" href="/page/22/">22</a></li><li><a class="page-number" href="/page/23/">23</a></li><li><a class="page-number" href="/page/24/">24</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/162/">162</a></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="extend next" href="/page/22/">&raquo;</a></li>
+  <li><a class="extend prev" href="/page/20/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/18/">18</a></li><li><a class="page-number" href="/page/19/">19</a></li><li><a class="page-number" href="/page/20/">20</a></li><li class="active"><li><span class="page-number current">21</span></li><li><a class="page-number" href="/page/22/">22</a></li><li><a class="page-number" href="/page/23/">23</a></li><li><a class="page-number" href="/page/24/">24</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/161/">161</a></li><li><a class="page-number" href="/page/162/">162</a></li><li><a class="extend next" href="/page/22/">&raquo;</a></li>
   <div class="clearfix"></div>
 </ul></div><!--wapper-->
        </div><!-- ID main-col END -->
@@ -1415,7 +869,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-30 14:30:15</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 17:26:53</em></span></div>
 </div>
 <div class="clearfix"></div>
 

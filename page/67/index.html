@@ -168,285 +168,6 @@ done</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">jvm crash 的崩溃日志详细分析及注意点</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="jvm-crash-">jvm crash 的崩溃日志详细分析及注意点</h1>
-<h2 id="-">生成</h2>
-<ol>
-<li><p>生成error 文件的路径：你可以通过参数设置-XX:ErrorFile=/path/hs_error%p.log, 默认是在java运行的当前目录 [default: ./hs_err_pid%p.log]</p>
-</li>
-<li><p>参数-XX:OnError  可以在crash退出的时候执行命令，格式是-XX:OnError=“string”,  <string> 可以是命令的集合，用分号做分隔符, 可以用&quot;%p&quot;来取到当前进程的ID.
-例如：</p>
-</li>
-</ol>
-<p>// -XX:OnError=&quot;pmap %p&quot;                // show memory map</p>
-<p>// -XX:OnError=&quot;gcore %p; dbx - %p&quot;     // dump core and launch debugger</p>
-<p>在linux中系统会fork出一个子进程去执行shell的命令，因为是用fork可能会内存不够的情况，注意修改你的 /proc/sys/vm/overcommit_memory 参数,不清楚为什么这里不使用vfork</p>
-<ol>
-<li>-XX:+ShowMessageBoxOnError 参数，当jvm crash的时候在linux里会启动gdb 去分析和调式，适合在测试环境中使用。</li>
-</ol>
-<h2 id="-error-"><a href=""></a>什么情况下不会生成error文件</h2>
-<p>linux 内核在发生OOM的时候会强制kill一些进程, 可以在/var/logs/messages中查找</p>
-<h2 id="-error-crash-"><a href=""></a>Error crash 文件的几个重要部分</h2>
-<p><strong>a.  错误信息概要</strong></p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>/# A fatal error has been detected by the Java Runtime Environment:  </li>
-<li>/#  </li>
-<li>/#  SIGSEGV (0xb) at pc=0x0000000000043566, pid=32046, tid=1121192256  </li>
-<li>/#  </li>
-<li>/# JRE version: 6.0_17-b04  </li>
-<li>/# Java VM: Java HotSpot(TM) 64-Bit Server VM (14.3-b01 mixed mode linux-amd64 )  </li>
-<li>/# Problematic frame:  </li>
-<li>/# C  0x0000000000043566  </li>
-<li>/#  </li>
-<li>/# If you would like to submit a bug report, please visit:  </li>
-<li>/#   <a href="http://java.sun.com/webapps/bugreport/crash.jsp" target="_blank">http://java.sun.com/webapps/bugreport/crash.jsp</a>  </li>
-<li>/# The crash happened outside the Java Virtual Machine in native code.  </li>
-<li>/# See problematic frame for where to report the bug.<br>SIGSEGV 错误的信号类型 </li>
-</ol>
-<p>pc 就是IP/PC寄存器值也就是执行指令的代码地址</p>
-<p>pid 就是进程id</p>
-<p>/# Problematic frame:</p>
-<p>/# V  [libjvm.so+0x593045]</p>
-<p>就是导致问题的动态链接库函数的地址</p>
-<p>pc 和 +0x593045 指的是同一个地址，只是一个是动态的偏移地址，一个是运行的虚拟地址</p>
-<p><strong>b.信号信息</strong></p>
-<p>Java中在linux 中注册的信号处理函数，中间有2个参数info, ucvoid</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>static void crash_handler(int sig, siginfo_t/<em> info, void/</em> ucVoid) {  </li>
-<li>// unmask current signal  </li>
-<li>sigset_t newset;  </li>
-<li>sigemptyset(&amp;newset);  </li>
-<li>sigaddset(&amp;newset, sig);  </li>
-<li>sigprocmask(SIG_UNBLOCK, &amp;newset, NULL);  </li>
-<li></li>
-<li>VMError err(NULL, sig, NULL, info, ucVoid);  </li>
-<li>err.report_and_die();  </li>
-<li>}<br>在crash report中的信号错误提示</li>
-</ol>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>siginfo:si_signo=SIGSEGV: si_errno=0, si_code=1 (SEGV_MAPERR), si_addr=0x0000000000043566<br>信号的详细信息和si_addr 出错误的内存，都保存在siginfo_t的结构体中，也就是信号注册函数crash_handler里的参数info,内核会保存导致错误的内存地址在用户空间的信号结构体中siginfo_t，这样在进程在注册的信号处理函数中可以取得导致错误的地址。</li>
-</ol>
-<p><strong>c.寄存器信息</strong></p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>Registers:  </li>
-<li>RAX=0x00002aacb5ae5de2, RBX=0x00002aaaaf46aa48, RCX=0x0000000000000219, RDX=0x00002aaaaf46b920  </li>
-<li>RSP=0x0000000042d3f968, RBP=0x0000000042d3f9c8, RSI=0x0000000042d3f9e8, RDI=0x0000000045aef9b8  </li>
-<li>R8 =0x0000000000000f80, R9 =0x00002aaab3d30ce8, R10=0x00002aaaab138ea1, R11=0x00002b017ae65110  </li>
-<li>R12=0x0000000042d3f6f0, R13=0x00002aaaaf46aa48, R14=0x0000000042d3f9e8, R15=0x0000000045aef800  </li>
-<li>RIP=0x0000000000043566, EFL=0x0000000000010202, CSGSFS=0x0000000000000033, ERR=0x0000000000000014  </li>
-<li>TRAPNO=0x000000000000000e<br>寄存器的信息就保存在b部分的信号处理函数参数 (ucontext_t/*)usVoid中</li>
-</ol>
-<p>在X86架构下：</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>void os::print_context(outputStream /<em>st, void /</em>context) {  </li>
-<li>if (context == NULL) return;  </li>
-<li></li>
-<li>ucontext_t /<em>uc = (ucontext_t/</em>)context;  </li>
-<li>st-&gt;print_cr(&quot;Registers:&quot;);  </li>
-<li>/#ifdef AMD64  </li>
-<li>st-&gt;print(  &quot;RAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RAX]);  </li>
-<li>st-&gt;print(&quot;, RBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBX]);  </li>
-<li>st-&gt;print(&quot;, RCX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RCX]);  </li>
-<li>st-&gt;print(&quot;, RDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDX]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;RSP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSP]);  </li>
-<li>st-&gt;print(&quot;, RBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBP]);  </li>
-<li>st-&gt;print(&quot;, RSI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSI]);  </li>
-<li>st-&gt;print(&quot;, RDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDI]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;R8 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R8]);  </li>
-<li>st-&gt;print(&quot;, R9 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R9]);  </li>
-<li>st-&gt;print(&quot;, R10=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R10]);  </li>
-<li>st-&gt;print(&quot;, R11=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R11]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;R12=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R12]);  </li>
-<li>st-&gt;print(&quot;, R13=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R13]);  </li>
-<li>st-&gt;print(&quot;, R14=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R14]);  </li>
-<li>st-&gt;print(&quot;, R15=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R15]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;RIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RIP]);  </li>
-<li>st-&gt;print(&quot;, EFL=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
-<li>st-&gt;print(&quot;, CSGSFS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_CSGSFS]);  </li>
-<li>st-&gt;print(&quot;, ERR=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ERR]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(&quot;  TRAPNO=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_TRAPNO]);  </li>
-<li>/#else  </li>
-<li>st-&gt;print(  &quot;EAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EAX]);  </li>
-<li>st-&gt;print(&quot;, EBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBX]);  </li>
-<li>st-&gt;print(&quot;, ECX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ECX]);  </li>
-<li>st-&gt;print(&quot;, EDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDX]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;ESP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_UESP]);  </li>
-<li>st-&gt;print(&quot;, EBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBP]);  </li>
-<li>st-&gt;print(&quot;, ESI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ESI]);  </li>
-<li>st-&gt;print(&quot;, EDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDI]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;EIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EIP]);  </li>
-<li>st-&gt;print(&quot;, CR2=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.cr2);  </li>
-<li>st-&gt;print(&quot;, EFLAGS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
-<li>/#endif // AMD64  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;cr();  </li>
-<li></li>
-<li>intptr_t /<em>sp = (intptr_t /</em>)os::Linux::ucontext_get_sp(uc);  </li>
-<li>st-&gt;print_cr(&quot;Top of Stack: (sp=&quot; PTR_FORMAT &quot;)&quot;, sp);  </li>
-<li>print_hex_dump(st, (address)sp, (address)(sp + 8/*sizeof(intptr_t)), sizeof(intptr_t));  </li>
-<li>st-&gt;cr();  </li>
-<li></li>
-<li>// Note: it may be unsafe to inspect memory near pc. For example, pc may  </li>
-<li>// point to garbage if entry point in an nmethod is corrupted. Leave  </li>
-<li>// this at the end, and hope for the best.  </li>
-<li>address pc = os::Linux::ucontext_get_pc(uc);  </li>
-<li>st-&gt;print_cr(&quot;Instructions: (pc=&quot; PTR_FORMAT &quot;)&quot;, pc);  </li>
-<li>print_hex_dump(st, pc - 16, pc + 16, sizeof(char));  </li>
-<li>}<br>寄存器的信息在分析出错的时候是非常重要的
-打印出执行附近的部分机器码</li>
-</ol>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>Instructions: (pc=0x00007f48f14ef51a)  </li>
-<li>0x00007f48f14ef4fa:   90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd  </li>
-<li>0x00007f48f14ef50a:   f8 5f ff ff 48 89 b5 f0 5f ff ff b8 00 00 00 00  </li>
-<li>0x00007f48f14ef51a:   c7 00 01 00 00 00 c6 85 00 60 ff ff ff c9 c3 90  </li>
-<li>0x00007f48f14ef52a:   90 90 90 90 90 90 55 48 89 e5 53 48 8d 1d 94 00<br>在instruction 部分中会打印出部分的机器码</li>
-</ol>
-<p>格式是</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>地址：机器码<br>第一种使用udis库里带的udcli工具来反汇编</li>
-</ol>
-<p>命令：</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>echo &#39;90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd&#39; | udcli -intel -x -64 -o 0x00007f48f14ef4fa<br>显示出对应的汇编</li>
-</ol>
-<p>第二种可以用</p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>objectdump -d -C libjvm.so &gt;&gt; jvmsodisass.dump   </li>
-</ol>
-<p>查找偏移地址  0x593045， 就是当时的执行的汇编，然后结合上下文，源码推测出问题的语句。</p>
-<p><strong>d.寄存器对应的内存的值</strong></p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>RAX=0x0000000000000000 is an unknown value  </li>
-<li>RBX=0x000000041a07d1e8 is an oop  </li>
-<li>{method}  </li>
-<li><ul>
-<li>klass: {other class}  </li>
-</ul>
-</li>
-<li>RCX=0x0000000000000000 is an unknown value  </li>
-<li>RDX=0x0000000040111800 is a thread  </li>
-<li>RSP=0x0000000041261b88 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RBP=0x000000004126bb20 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RSI=0x000000004126bb80 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RDI=0x00000000401119d0 is an unknown value  </li>
-<li>R8 =0x0000000040111c40 is an unknown value  </li>
-<li>R9 =0x00007f48fcc8b550: <offset 0xa85550> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
-<li>R10=0x00007f48f8ca7d41 is an Interpreter codelet  </li>
-<li>method entry point (kind = native)  [0x00007f48f8ca7ae0, 0x00007f48f8ca8320]  2112 bytes  </li>
-<li>R11=0x00007f48fc98f270: <offset 0x789270> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
-<li>R12=0x0000000000000000 is an unknown value  </li>
-<li>R13=0x000000041a07d1e8 is an oop  </li>
-<li>{method}  </li>
-<li><ul>
-<li>klass: {other class}  </li>
-</ul>
-</li>
-<li>R14=0x000000004126bb88 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>R15=0x0000000040111800 is a thread<br>jvm 会通过寄存器的值对找对应的对象，也是一个比较好的参考</li>
-</ol>
-<p><strong>e. 其他的信息</strong></p>
-<p>error 里面还有一些线程信息，还有当时内存映像信息，这些都可以作为分析的部分参考</p>
-<p>crash 报告可以大概的反应出一个当时的情况，特别是在没有core dump的时候，是比较有助于帮助分析的，但如果有core dump的话，最终还是core dump能快速准确的发现问题原因。
-来源： <a href="[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)">[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">一次Java内存溢出异常的分析过程</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-java-">一次Java内存溢出异常的分析过程</h1>
-<p>前些天，<a href="http://server.chinabyte.com/" target="_blank">服务器</a>上一个服务跑了一个多月突然当掉了。看了下日志，程序抛出了java.lang.OutOfMemoryError，之前也出现过同样的错误，服务跑了三个月内存溢出。出现这个异常，初步判断是程序有内存泄漏，接下来需要利用一些工具来分析具体原因。</p>
-<p>首先使用jdk自带的工具jmap转储(dump)java内存堆数据到本地文件中。jmap转储(dump)命令格式如下：</p>
-<p>jmap -dump:</p>
-<p>表示dump选项，表示需要dump的java应用程序的进程ID</p>
-<p>dump-options可以有以下三种参数，参数之间用逗号隔开：</p>
-<p>live，只dump活动的object，如果没有指定，表示dump所有object</p>
-<p>format=b，字节流格式</p>
-<p>file=，是转储文件的保存路径</p>
-<p>下面是dump命令的一个例子:</p>
-<p>jmap -dump:format=b,file=heap.bin 8023</p>
-<p>dump完成后，用Eclipse Memory Analyzer打开转储文件进行分析。Eclipse Memory Analyzer是一个java内存堆转储文件分析工具，可以生成内存分析报告(包括内存泄露Leak Suspects )。下面是分析完成后查看Top Consumers所看到的图表:</p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p>看到这两张图表，问题就比较明朗了。berkeley db中的数据结点com.sleepycat.je.tree.BIN占用了大量内存，导致内存溢出了。为了提高访问效率，berkeley db会缓存大量的结点，缓存大小限制可以在EnvironmentConfig设置，默认为jvm内存大小限制的60%。而这个应用程序中使用了5个EnvironmentImpl，并且都未单独设置缓存大小，总的缓存限制为jvm内存限制的300%(图表中BIN结点已经占用了94.55%的内存)，远远超出java的内存限制。随着服务的运行，缓存数据越来越多，最后导致内存溢出错误。因此，为每个EnvironmentImpl设置合适的缓存大小限制，就可以避免再次发生内存溢出。
-来源： <a href="[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)">[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--Java工具（jmap-jstack）在linux上的源码分析/">Java 工具（jmap</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--Java工具（jmap-jstack）在linux上的源码分析/">feb. 2 2014</a></time></span>      
@@ -1075,51 +796,211 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/">离线分析—— MAT(Memory Analyzer Tool)工具入门介绍</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">jvm crash 的崩溃日志详细分析及注意点</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-mat-memory-analyzer-tool-">离线分析—— MAT(Memory Analyzer Tool)工具入门介绍</h1>
-<p>1、MAT是什么？</p>
-<pre><code>MAT(Memory Analyzer Tool)，一个基于Eclipse的内存分析工具，是一个快速、功能丰富的JAVA heap分析工具，它可以帮助我们查找内存泄漏和减少内存消耗。使用内存分析工具从众多的对象中进行分析，快速的计算出在内存中对象的占用大小，看看是谁阻止了垃圾收集器的回收工作，并可以通过报表直观的查看到可能造成这种结果的对象。
-
-![](http://hi.csdn.net/attachment/201104/2/0_13017260876isZ.gif)
-</code></pre><p>2.为什么使用MAT？
-    当服务器应用占用了过多内存的时候，会遇到OutOfMemoryError。如何快速定位问题呢？Eclipse MAT的出现使这个问题变得非常简单。它能够离线分析dump的文件数据。
-    Eclipse MAT是SAP公司贡献的一个工具，可以在Eclipse网站下载到它，完全免费的。它可比Sun提供的内存镜像分析工具jhat要强太多了。
-3.
-首页：<a href="http://www.eclipse.org/mat/" target="_blank"><a href="http://www.eclipse.org/mat/![](http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif">http://www.eclipse.org/mat/![](http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif</a>)</a> 
-插件更新地址：
-<a href="http://download.eclipse.org/mat/1.0/update-site/" target="_blank"><a href="http://download.eclipse.org/mat/1.0/update-site/">http://download.eclipse.org/mat/1.0/update-site/</a></a><a href="http://d/" target="_blank"><img src="http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif" alt=""></a></p>
-<p>先调用jdk的工具得到heap使用情况</p>
-<p>我安装的是jdk1.6</p>
-<p>C:/&gt;java -version</p>
-<p>java version &quot;1.6.0_11&quot;</p>
-<p>Java(TM) SE Runtime Environment (build 1.6.0_11-b03)</p>
-<p>Java HotSpot(TM) Client VM (build 11.0-b16, mixed mode, sharing)</p>
-<p>调用jdk工具jps查看当前的java进程</p>
-<p>C:/&gt;jps</p>
-<p>3504 Jps</p>
-<p>3676 Bootstrap</p>
-<p>3496 org.eclipse.equinox.launcher_1.0.201.R35x_v20090715.jar</p>
-<p>调用jmap工具得到信息</p>
-<p>C:/&gt;jmap -dump:format=b,file=heap.bin 3676</p>
-<p>Dumping heap to C:/heap.bin ...</p>
-<p>Heap dump file created</p>
-<p>这时，我们的C盘根目录，就生成了heap.bin文件，用eclipse的file----&gt;open打开这个文件，首先是一个启动图：</p>
-<p><img src="http://hi.csdn.net/attachment/201104/2/0_13017267038hni.gif" alt=""></p>
-<p>这里可以选择查看</p>
-<p>1、内存泄露报表，自动检查可能存在内存泄露的对象，通过报表展示存活的对象以及为什么他们没有被垃圾收集；</p>
-<p>2、对象报表，对可颖对象的分析，如字符串是否定义重了，空的collection、finalizer以及弱引用等。</p>
-<p>我这里选择的是查看内存报表，以下是截的简略图：</p>
-<p><img src="http://hi.csdn.net/attachment/201104/2/0_1301726708zY2a.gif" alt=""></p>
-<p> <img src="http://hi.csdn.net/attachment/201104/2/0_1301726708zY2a.gif" alt=""></p>
-<p>通过报表展示，蛮清楚的，下面还有详细的说明，这里就没有帖图了，有兴趣的可以继续探究。
-来源： <a href="[http://blog.csdn.net/fenglibing/article/details/6298326](http://blog.csdn.net/fenglibing/article/details/6298326)">[http://blog.csdn.net/fenglibing/article/details/6298326](http://blog.csdn.net/fenglibing/article/details/6298326)</a> </p>
+        <h1 id="jvm-crash-">jvm crash 的崩溃日志详细分析及注意点</h1>
+<h2 id="-">生成</h2>
+<ol>
+<li><p>生成error 文件的路径：你可以通过参数设置-XX:ErrorFile=/path/hs_error%p.log, 默认是在java运行的当前目录 [default: ./hs_err_pid%p.log]</p>
+</li>
+<li><p>参数-XX:OnError  可以在crash退出的时候执行命令，格式是-XX:OnError=“string”,  <string> 可以是命令的集合，用分号做分隔符, 可以用&quot;%p&quot;来取到当前进程的ID.
+例如：</p>
+</li>
+</ol>
+<p>// -XX:OnError=&quot;pmap %p&quot;                // show memory map</p>
+<p>// -XX:OnError=&quot;gcore %p; dbx - %p&quot;     // dump core and launch debugger</p>
+<p>在linux中系统会fork出一个子进程去执行shell的命令，因为是用fork可能会内存不够的情况，注意修改你的 /proc/sys/vm/overcommit_memory 参数,不清楚为什么这里不使用vfork</p>
+<ol>
+<li>-XX:+ShowMessageBoxOnError 参数，当jvm crash的时候在linux里会启动gdb 去分析和调式，适合在测试环境中使用。</li>
+</ol>
+<h2 id="-error-"><a href=""></a>什么情况下不会生成error文件</h2>
+<p>linux 内核在发生OOM的时候会强制kill一些进程, 可以在/var/logs/messages中查找</p>
+<h2 id="-error-crash-"><a href=""></a>Error crash 文件的几个重要部分</h2>
+<p><strong>a.  错误信息概要</strong></p>
+<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>/# A fatal error has been detected by the Java Runtime Environment:  </li>
+<li>/#  </li>
+<li>/#  SIGSEGV (0xb) at pc=0x0000000000043566, pid=32046, tid=1121192256  </li>
+<li>/#  </li>
+<li>/# JRE version: 6.0_17-b04  </li>
+<li>/# Java VM: Java HotSpot(TM) 64-Bit Server VM (14.3-b01 mixed mode linux-amd64 )  </li>
+<li>/# Problematic frame:  </li>
+<li>/# C  0x0000000000043566  </li>
+<li>/#  </li>
+<li>/# If you would like to submit a bug report, please visit:  </li>
+<li>/#   <a href="http://java.sun.com/webapps/bugreport/crash.jsp" target="_blank">http://java.sun.com/webapps/bugreport/crash.jsp</a>  </li>
+<li>/# The crash happened outside the Java Virtual Machine in native code.  </li>
+<li>/# See problematic frame for where to report the bug.<br>SIGSEGV 错误的信号类型 </li>
+</ol>
+<p>pc 就是IP/PC寄存器值也就是执行指令的代码地址</p>
+<p>pid 就是进程id</p>
+<p>/# Problematic frame:</p>
+<p>/# V  [libjvm.so+0x593045]</p>
+<p>就是导致问题的动态链接库函数的地址</p>
+<p>pc 和 +0x593045 指的是同一个地址，只是一个是动态的偏移地址，一个是运行的虚拟地址</p>
+<p><strong>b.信号信息</strong></p>
+<p>Java中在linux 中注册的信号处理函数，中间有2个参数info, ucvoid</p>
+<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>static void crash_handler(int sig, siginfo_t/<em> info, void/</em> ucVoid) {  </li>
+<li>// unmask current signal  </li>
+<li>sigset_t newset;  </li>
+<li>sigemptyset(&amp;newset);  </li>
+<li>sigaddset(&amp;newset, sig);  </li>
+<li>sigprocmask(SIG_UNBLOCK, &amp;newset, NULL);  </li>
+<li></li>
+<li>VMError err(NULL, sig, NULL, info, ucVoid);  </li>
+<li>err.report_and_die();  </li>
+<li>}<br>在crash report中的信号错误提示</li>
+</ol>
+<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>siginfo:si_signo=SIGSEGV: si_errno=0, si_code=1 (SEGV_MAPERR), si_addr=0x0000000000043566<br>信号的详细信息和si_addr 出错误的内存，都保存在siginfo_t的结构体中，也就是信号注册函数crash_handler里的参数info,内核会保存导致错误的内存地址在用户空间的信号结构体中siginfo_t，这样在进程在注册的信号处理函数中可以取得导致错误的地址。</li>
+</ol>
+<p><strong>c.寄存器信息</strong></p>
+<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>Registers:  </li>
+<li>RAX=0x00002aacb5ae5de2, RBX=0x00002aaaaf46aa48, RCX=0x0000000000000219, RDX=0x00002aaaaf46b920  </li>
+<li>RSP=0x0000000042d3f968, RBP=0x0000000042d3f9c8, RSI=0x0000000042d3f9e8, RDI=0x0000000045aef9b8  </li>
+<li>R8 =0x0000000000000f80, R9 =0x00002aaab3d30ce8, R10=0x00002aaaab138ea1, R11=0x00002b017ae65110  </li>
+<li>R12=0x0000000042d3f6f0, R13=0x00002aaaaf46aa48, R14=0x0000000042d3f9e8, R15=0x0000000045aef800  </li>
+<li>RIP=0x0000000000043566, EFL=0x0000000000010202, CSGSFS=0x0000000000000033, ERR=0x0000000000000014  </li>
+<li>TRAPNO=0x000000000000000e<br>寄存器的信息就保存在b部分的信号处理函数参数 (ucontext_t/*)usVoid中</li>
+</ol>
+<p>在X86架构下：</p>
+<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>void os::print_context(outputStream /<em>st, void /</em>context) {  </li>
+<li>if (context == NULL) return;  </li>
+<li></li>
+<li>ucontext_t /<em>uc = (ucontext_t/</em>)context;  </li>
+<li>st-&gt;print_cr(&quot;Registers:&quot;);  </li>
+<li>/#ifdef AMD64  </li>
+<li>st-&gt;print(  &quot;RAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RAX]);  </li>
+<li>st-&gt;print(&quot;, RBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBX]);  </li>
+<li>st-&gt;print(&quot;, RCX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RCX]);  </li>
+<li>st-&gt;print(&quot;, RDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDX]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;RSP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSP]);  </li>
+<li>st-&gt;print(&quot;, RBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBP]);  </li>
+<li>st-&gt;print(&quot;, RSI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSI]);  </li>
+<li>st-&gt;print(&quot;, RDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDI]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;R8 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R8]);  </li>
+<li>st-&gt;print(&quot;, R9 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R9]);  </li>
+<li>st-&gt;print(&quot;, R10=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R10]);  </li>
+<li>st-&gt;print(&quot;, R11=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R11]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;R12=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R12]);  </li>
+<li>st-&gt;print(&quot;, R13=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R13]);  </li>
+<li>st-&gt;print(&quot;, R14=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R14]);  </li>
+<li>st-&gt;print(&quot;, R15=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R15]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;RIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RIP]);  </li>
+<li>st-&gt;print(&quot;, EFL=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
+<li>st-&gt;print(&quot;, CSGSFS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_CSGSFS]);  </li>
+<li>st-&gt;print(&quot;, ERR=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ERR]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(&quot;  TRAPNO=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_TRAPNO]);  </li>
+<li>/#else  </li>
+<li>st-&gt;print(  &quot;EAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EAX]);  </li>
+<li>st-&gt;print(&quot;, EBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBX]);  </li>
+<li>st-&gt;print(&quot;, ECX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ECX]);  </li>
+<li>st-&gt;print(&quot;, EDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDX]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;ESP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_UESP]);  </li>
+<li>st-&gt;print(&quot;, EBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBP]);  </li>
+<li>st-&gt;print(&quot;, ESI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ESI]);  </li>
+<li>st-&gt;print(&quot;, EDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDI]);  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;print(  &quot;EIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EIP]);  </li>
+<li>st-&gt;print(&quot;, CR2=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.cr2);  </li>
+<li>st-&gt;print(&quot;, EFLAGS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
+<li>/#endif // AMD64  </li>
+<li>st-&gt;cr();  </li>
+<li>st-&gt;cr();  </li>
+<li></li>
+<li>intptr_t /<em>sp = (intptr_t /</em>)os::Linux::ucontext_get_sp(uc);  </li>
+<li>st-&gt;print_cr(&quot;Top of Stack: (sp=&quot; PTR_FORMAT &quot;)&quot;, sp);  </li>
+<li>print_hex_dump(st, (address)sp, (address)(sp + 8/*sizeof(intptr_t)), sizeof(intptr_t));  </li>
+<li>st-&gt;cr();  </li>
+<li></li>
+<li>// Note: it may be unsafe to inspect memory near pc. For example, pc may  </li>
+<li>// point to garbage if entry point in an nmethod is corrupted. Leave  </li>
+<li>// this at the end, and hope for the best.  </li>
+<li>address pc = os::Linux::ucontext_get_pc(uc);  </li>
+<li>st-&gt;print_cr(&quot;Instructions: (pc=&quot; PTR_FORMAT &quot;)&quot;, pc);  </li>
+<li>print_hex_dump(st, pc - 16, pc + 16, sizeof(char));  </li>
+<li>}<br>寄存器的信息在分析出错的时候是非常重要的
+打印出执行附近的部分机器码</li>
+</ol>
+<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>Instructions: (pc=0x00007f48f14ef51a)  </li>
+<li>0x00007f48f14ef4fa:   90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd  </li>
+<li>0x00007f48f14ef50a:   f8 5f ff ff 48 89 b5 f0 5f ff ff b8 00 00 00 00  </li>
+<li>0x00007f48f14ef51a:   c7 00 01 00 00 00 c6 85 00 60 ff ff ff c9 c3 90  </li>
+<li>0x00007f48f14ef52a:   90 90 90 90 90 90 55 48 89 e5 53 48 8d 1d 94 00<br>在instruction 部分中会打印出部分的机器码</li>
+</ol>
+<p>格式是</p>
+<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>地址：机器码<br>第一种使用udis库里带的udcli工具来反汇编</li>
+</ol>
+<p>命令：</p>
+<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>echo &#39;90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd&#39; | udcli -intel -x -64 -o 0x00007f48f14ef4fa<br>显示出对应的汇编</li>
+</ol>
+<p>第二种可以用</p>
+<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>objectdump -d -C libjvm.so &gt;&gt; jvmsodisass.dump   </li>
+</ol>
+<p>查找偏移地址  0x593045， 就是当时的执行的汇编，然后结合上下文，源码推测出问题的语句。</p>
+<p><strong>d.寄存器对应的内存的值</strong></p>
+<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>RAX=0x0000000000000000 is an unknown value  </li>
+<li>RBX=0x000000041a07d1e8 is an oop  </li>
+<li>{method}  </li>
+<li><ul>
+<li>klass: {other class}  </li>
+</ul>
+</li>
+<li>RCX=0x0000000000000000 is an unknown value  </li>
+<li>RDX=0x0000000040111800 is a thread  </li>
+<li>RSP=0x0000000041261b88 is pointing into the stack for thread: 0x0000000040111800  </li>
+<li>RBP=0x000000004126bb20 is pointing into the stack for thread: 0x0000000040111800  </li>
+<li>RSI=0x000000004126bb80 is pointing into the stack for thread: 0x0000000040111800  </li>
+<li>RDI=0x00000000401119d0 is an unknown value  </li>
+<li>R8 =0x0000000040111c40 is an unknown value  </li>
+<li>R9 =0x00007f48fcc8b550: <offset 0xa85550> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
+<li>R10=0x00007f48f8ca7d41 is an Interpreter codelet  </li>
+<li>method entry point (kind = native)  [0x00007f48f8ca7ae0, 0x00007f48f8ca8320]  2112 bytes  </li>
+<li>R11=0x00007f48fc98f270: <offset 0x789270> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
+<li>R12=0x0000000000000000 is an unknown value  </li>
+<li>R13=0x000000041a07d1e8 is an oop  </li>
+<li>{method}  </li>
+<li><ul>
+<li>klass: {other class}  </li>
+</ul>
+</li>
+<li>R14=0x000000004126bb88 is pointing into the stack for thread: 0x0000000040111800  </li>
+<li>R15=0x0000000040111800 is a thread<br>jvm 会通过寄存器的值对找对应的对象，也是一个比较好的参考</li>
+</ol>
+<p><strong>e. 其他的信息</strong></p>
+<p>error 里面还有一些线程信息，还有当时内存映像信息，这些都可以作为分析的部分参考</p>
+<p>crash 报告可以大概的反应出一个当时的情况，特别是在没有core dump的时候，是比较有助于帮助分析的，但如果有core dump的话，最终还是core dump能快速准确的发现问题原因。
+来源： <a href="[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)">[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)</a> </p>
 
       
     </div>
@@ -1129,8 +1010,398 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-30 13:04:07"datetime="2014-03-30 13:04:07"> mar. 30 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--借助HotSpotSA来一窥PermGen上的对象/">借助HotSpot SA来一窥PermGen上的对象</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--借助HotSpotSA来一窥PermGen上的对象/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-hotspot-sa-permgen-">借助HotSpot SA来一窥PermGen上的对象</h1>
+<p><a href="http://www.javaeye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.javaeye.com/all" target="_blank">我的应用</a> <a href="http://www.javaeye.com/login" target="_blank">登录</a> <a href="http://www.javaeye.com/signup" target="_blank">注册</a></p>
+<p><a href="http://www.javaeye.com/" target="_blank"><img src="&quot;JavaEye-最棒的软件开发交流社区&quot;" alt="JavaEye-最棒的软件开发交流社区"></a></p>
+<p><a href="http://www.javaeye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.javaeye.com/forums/board/Java" target="_blank">Java编程和Java企业应用版</a> → <a href="http://www.javaeye.com/forums/tag/Java" target="_blank">Java综合</a> →</p>
+<h1 id="-hotspot-sa-permgen-">借助HotSpot SA来一窥PermGen上的对象</h1>
+<p><a href="http://www.javaeye.com/forums/board/Java" target="_blank">全部</a> <a href="http://www.javaeye.com/forums/tag/Hibernate" target="_blank">Hibernate</a> <a href="http://www.javaeye.com/forums/tag/Spring" target="_blank">Spring</a> <a href="http://www.javaeye.com/forums/tag/Struts" target="_blank">Struts</a> <a href="http://www.javaeye.com/forums/tag/iBATIS" target="_blank">iBATIS</a> <a href="http://www.javaeye.com/forums/tag/J2EE" target="_blank">企业应用</a> <a href="http://www.javaeye.com/forums/tag/Design-Pattern" target="_blank">设计模式</a> <a href="http://www.javaeye.com/forums/tag/DAO" target="_blank">DAO</a> <a href="http://www.javaeye.com/forums/tag/Object-Domain" target="_blank">领域模型</a> <a href="http://www.javaeye.com/forums/tag/OO" target="_blank">OO</a> <a href="http://www.javaeye.com/forums/tag/Tomcat" target="_blank">Tomcat</a> <a href="http://www.javaeye.com/forums/tag/SOA" target="_blank">SOA</a> <a href="http://www.javaeye.com/forums/tag/JBoss" target="_blank">JBoss</a> <a href="http://www.javaeye.com/forums/tag/Swing" target="_blank">Swing</a> <a href="http://www.javaeye.com/forums/tag/Java" target="_blank">Java综合</a>
+<a href="http://www.javaeye.com/forums/39/topics/730461/posts/new" title="发表回复"></a></p>
+<p><a href="http://www.javaeye.com/clicks/324" target="_blank">myApps快速开发平台，配置即开发、所见即所得，节约85%工作量</a></p>
+<p>« 上一页 1 <a href="http://www.javaeye.com/topic/730461?page=2" target="_blank">2</a> <a href="http://www.javaeye.com/topic/730461?page=2" target="_blank">下一页 »</a>
+浏览 2354 次
+ <a href="http://www.javaeye.com/topic/730461" target="_blank">主题：借助HotSpot SA来一窥PermGen上的对象</a></p>
+<p><strong>该帖已经被评为精华帖</strong> 作者 正文 * RednaxelaFX</p>
+<ul>
+<li>等级: <img src="&quot;一钻会员&quot;" alt="一钻会员"></li>
+<li><a href="http://rednaxelafx.javaeye.com/" target="_blank"><img src="&quot;RednaxelaFX的博客: Script Ahead, Code Behind&quot;" alt="RednaxelaFX的博客"></a></li>
+<li>文章: 385</li>
+<li>积分: 900</li>
+<li>来自: 杭州</li>
+<li><img src="" alt="">
+  发表时间：2010-08-05   最后修改：前天</li>
+</ul>
+<p><a href="http://www.javaeye.com/topic/730461#" target="_blank">&lt;</a> <a href="http://www.javaeye.com/topic/730461#" target="_blank">&gt;</a> 猎头职位:</p>
+<p>相关文章: <a href="http://www.javaeye.com/topic/730461#" title="关闭" target="_blank"> </a></p>
+<ul>
+<li><a href="http://www.javaeye.com/topic/247391" title="问题的产生(解决)??" target="_blank">问题的产生(解决)??</a></li>
+<li><a href="http://www.javaeye.com/topic/80620" title="分析java.lang.OutOfMemoryError: PermGen space" target="_blank">分析java.lang.OutOfMemoryError: PermGen space</a></li>
+<li><a href="http://www.javaeye.com/topic/555998" title="IKVM 编程武林之.NET派的北冥神功" target="_blank">IKVM 编程武林之.NET派的北冥神功</a></li>
+<li><a href="http://www.javaeye.com/topic/212967" title="一次Java垃圾收集调优实战" target="_blank">一次Java垃圾收集调优实战</a>
+推荐圈子: <a href="http://hllvm.group.javaeye.com/" target="_blank">高级语言虚拟机</a>
+<a href="http://www.javaeye.com/wiki/topic/730461" target="_blank">更多相关推荐</a>
+（Disclaimer：如果需要转载请先与我联系；
+作者：RednaxelaFX -&gt; rednaxelafx.javaeye.com）
+接着<a href="http://rednaxelafx.javaeye.com/blog/727938" target="_blank">昨天的</a>与<a href="http://rednaxelafx.javaeye.com/blog/729214" target="_blank">前天的帖</a>，今天也来介绍一个<a href="http://openjdk.java.net/groups/hotspot/" target="_blank">HotSpot</a>的<a href="http://openjdk.java.net/groups/hotspot/docs/Serviceability.html" target="_blank">Serviceability Agent</a>（以下简称SA）的玩法例子。
+昨天用SA把x86机器码反汇编到汇编代码，或许对多数Java程序员来说并不怎么有趣。那么今天就来点更接近Java，但又经常被误解的话题——HotSpot的GC堆的permanent generation。
+要用SA里最底层的API来连接上一个Java进程并不困难，不过SA还提供了更方便的封装：只要继承 <em>sun.jvm.hotspot.tools.Tool</em> 并实现一个 <em>run()</em> 方法，在该方法内使用SA的API访问JVM即可。
+这次我们就把一个跑在HotSpot上的Java进程的perm gen里所有对象的信息打到标准输出流上看看吧。
+测试环境是32位Linux，x86，Sun JDK 6 update 2
+（手边可用的JDK版本很多，随便拿了一个来用，呵呵 &gt;_&lt;）
+代码如下：
+import sun.jvm.hotspot.gc_implementation.parallelScavenge.PSPermGen; import sun.jvm.hotspot.gc_implementation.parallelScavenge.ParallelScavengeHeap; import sun.jvm.hotspot.gc_implementation.shared.MutableSpace; import sun.jvm.hotspot.gc_interface.CollectedHeap; import sun.jvm.hotspot.memory.Universe; import sun.jvm.hotspot.oops.HeapPrinter; import sun.jvm.hotspot.oops.HeapVisitor; import sun.jvm.hotspot.oops.ObjectHeap; import sun.jvm.hotspot.runtime.VM; import sun.jvm.hotspot.tools.Tool; //<em>/</em> /<em> @author sajia /</em> /<em>/ public class TestPrintPSPermGen extends Tool { public static void main(String[] args) { TestPrintPSPermGen test = new TestPrintPSPermGen(); test.start(args); test.stop(); } @Override public void run() { VM vm = VM.getVM(); Universe universe = vm.getUniverse(); CollectedHeap heap = universe.heap(); puts(&quot;GC heap name: &quot; + heap.kind()); if (heap instanceof ParallelScavengeHeap) { ParallelScavengeHeap psHeap = (ParallelScavengeHeap) heap; PSPermGen perm = psHeap.permGen(); MutableSpace permObjSpace = perm.objectSpace(); puts(&quot;Perm gen: [&quot; + permObjSpace.bottom() + &quot;, &quot; + permObjSpace.end() + &quot;)&quot;); long permSize = 0; for (VM.Flag f : VM.getVM().getCommandLineFlags()) { if (&quot;PermSize&quot;.equals(f.getName())) { permSize = Long.parseLong(f.getValue()); break; } } puts(&quot;PermSize: &quot; + permSize); } puts(); ObjectHeap objHeap = vm.getObjectHeap(); HeapVisitor heapVisitor = new HeapPrinter(System.out); objHeap.iteratePerm(heapVisitor); } private static void puts() { System.out.println(); } private static void puts(String s) { System.out.println(s); } }
+很简单，假定目标Java进程用的是Parallel Scavenge（PS）算法的GC堆，输出GC堆的名字，当前perm gen的起始和结束地址，VM参数中设置的PermSize（perm gen的初始大小）；然后是perm gen中所有对象的信息，包括对象摘要、地址、每个成员域的名字、偏移量和值等。
+对HotSpot的VM参数不熟悉的同学可以留意一下几个参数在HotSpot源码中的定义：
+product(ccstrlist, OnOutOfMemoryError, &quot;&quot;, &quot;Run user-defined commands on first java.lang.OutOfMemoryError&quot;) product(bool, UseParallelGC, false, &quot;Use the Parallel Scavenge garbage collector&quot;) product_pd(uintx, PermSize, &quot;Initial size of permanent generation (in bytes)&quot;) product_pd(uintx, MaxPermSize, &quot;Maximum size of permanent generation (in bytes)&quot;)
+要让SA连接到一个正在运行的Java进程最重要是提供进程ID。获取pid的方法有很多，今天演示的是利用OnOutOfMemoryError参数指定让HotSpot在遇到内存不足而抛出OutOfMemoryError时执行一段用户指定的命令；在这个命令中可以使用%p占位符表示pid，HotSpot在执行命令时会把真实pid填充进去。
+然后来造一个引发OOM的导火索：
+public class Foo { public static void main(String[] args) { Long[] array = new Long[256/</em>1024/<em>1024]; } }
+对32位HotSpot来说，main()方法里的new Long[256/</em>1024/<em>1024]会试图创建一个大于1GB的数组对象，那么只要把-Xmx参数设到1GB或更小便足以引发OOM了。
+如何知道这个数组对象会占用超过1GB的呢？Long[]是一个引用类型的数组，只要知道HotSpot中采用的对象布局：
+----------------------- （+0） | _mark | ----------------------- （+4） | _metadata | ----------------------- （+8） | 数组长度 length | ----------------------- （+12+4/</em>0） | 下标为0的元素 | ----------------------- （+12+4/<em>1） | 下标为1的元素 | ----------------------- | ... | ----------------------- （+12+4/</em>n） | 下标为n的元素 | ----------------------- | ... | -----------------------
+就知道一大半了～
+跑一下Foo程序。留意到依赖SA的代码要编译的话需要$JAVA_HOME/lib/sa-jdi.jar在classpath上，执行时同理。指定GC算法为Parallel Scavenge，并指定GC堆（不包括perm gen）的初始和最大值都为1GB：
+[sajia@sajia ~]$ java -server -version java version &quot;1.6.0_02&quot; Java(TM) SE Runtime Environment (build 1.6.0_02-b05) Java HotSpot(TM) Server VM (build 1.6.0_02-b05, mixed mode) [sajia@sajia ~]$ javac Foo.java [sajia@sajia ~]$ javac -classpath &quot;.:$JAVA_HOME/lib/sa-jdi.jar&quot; TestPrintPSPermGen.java [sajia@sajia ~]$ java -server -XX:+UseParallelGC -XX:OnOutOfMemoryError=&#39;java -cp $JAVA_HOME/lib/sa-jdi.jar:. TestPrintPSPermGen %p &gt; foo.txt&#39; -Xms1g -Xmx1g Foo /# /# java.lang.OutOfMemoryError: Java heap space /# -XX:OnOutOfMemoryError=&quot;java -cp $JAVA_HOME/lib/sa-jdi.jar:. TestPrintPSPermGen %p &gt; foo.txt&quot; /# Executing /bin/sh -c &quot;java -cp $JAVA_HOME/lib/sa-jdi.jar:. TestPrintPSPermGen 23373 &gt; foo.txt&quot;... Attaching to process ID 23373, please wait... Debugger attached successfully. Server compiler detected. JVM version is 1.6.0_02-b05 Exception in thread &quot;main&quot; java.lang.OutOfMemoryError: Java heap space at Foo.main(Foo.java:5) [sajia@sajia ~]$
+得到的foo.txt就是要演示的输出结果。把它压缩了放在附件里，有兴趣但懒得自己实验的同学也可以观摩一下～
+在foo.txt的开头可以看到：
+GC heap name: ParallelScavengeHeap Perm gen: [0x70e60000, 0x71e60000) PermSize: 16777216
+这里显示了GC堆确实是Parallel Scavenge的，其中perm gen当前的起始地址为0x70e60000，结束地址为0x71e60000，中间连续的虚拟内存空间都分配给perm gen使用。简单计算一下可知perm gen大小为16MB，与下面打出的PermSize参数的值完全吻合。
+通过阅读该日志文件，可以得知HotSpot在perm gen里存放的对象主要有：</li>
+</ul>
+<ul>
+<li>Klass系对象</li>
+<li>java.lang.Class对象</li>
+<li>字符串常量</li>
+<li>符号（Symbol/symbolOop）常量</li>
+<li>常量池对象</li>
+<li>方法对象
+等等，以及它们所直接依赖的一些对象。具体这些都是什么留待以后有空再写。
+接下来挑几个例子来简单讲解一下如何阅读这个日志文件里的对象描述。
+首先看一个String对象。先看看JDK里java.lang.String对象的声明是什么样的：
+package java.lang; // imports ... public final class String implements java.io.Serializable, Comparable<String>, CharSequence { //<em>/</em> The value is used for character storage. /<em>/ private final char value[]; //</em>/<em> The offset is the first index of the storage that is used. /</em>/ private final int offset; //<em>/</em> The count is the number of characters in the String. /<em>/ private final int count; //</em>/<em> Cache the hash code for the string /</em>/ private int hash; // Default to 0 //<em>/</em> use serialVersionUID from JDK 1.0.2 for interoperability /<em>/ private static final long serialVersionUID = -6849794470754667710L; private static final ObjectStreamField[] serialPersistentFields = new ObjectStreamField[0]; public static final Comparator<String> CASE_INSENSITIVE_ORDER = new CaseInsensitiveComparator(); private static class CaseInsensitiveComparator implements Comparator<String>, java.io.Serializable { // ... } }
+留意到String对象有4个成员域，分别是：
+<strong>名字</strong> <strong>类型</strong> <strong>引用类型还是值类型</strong> value char[] 引用类型 offset int 值类型 count int 值类型 hash int 值类型
+String类自身有三个静态变量，分别是：
+<strong>名字</strong> <strong>类型</strong> <strong>引用类型还是值类型</strong> <strong>备注</strong> serialVersionUID long 值类型 常量 serialPersistentFields java.io.ObjectStreamField[] 引用类型 只读变量 CASE_INSENSITIVE_ORDER java.lang.String.CaseInsensitiveComparator 引用类型 只读变量
+回到我们的foo.txt日志文件来看一个String的对象实例：
+&quot;main&quot; @ 0x7100b140 (object size = 24) - _mark: {0} :1 - _klass: {4} :InstanceKlass for java/lang/String @ 0x70e6c6a0 - value: {8} :[C @ 0x7100b158 - offset: {12} :0 - count: {16} :4 - hash: {20} :0
+这是在HotSpot的字符串池里的一个字符串常量对象，&quot;main&quot;。
+日志中的“&quot;main&quot;”是对象的摘要，String对象有特别处理显示为它的内容，其它多数类型的对象都是显示类型名之类的。
+在@符号之后的就是对象的起始地址，十六进制表示。
+紧接着后面是对象占用GC堆的大小。很明显这个String对象自身占用了24字节。这里强调是“占用”的大小是因为对象除了存储必要的数据需要空间外，为了满足数据对齐的要求可能会有一部分空间作为填充数据而空占着。
+String在内存中的布局是：
+----------------------- （+0） | _mark | ----------------------- （+4） | _metadata | ----------------------- （+8） | value | ----------------------- （+12）| offset | ----------------------- （+16）| count | ----------------------- （+20）| hash | -----------------------
+32位HotSpot上要求64位/8字节对齐，String占用的24字节正好全部都是有效数据，不需要填充空数据。
+上面的String实例在内存中的实际数据如下：
+<strong>偏移量（字节）</strong> <strong>数值（二进制表示）</strong> <strong>数值（十六进制表示）</strong> <strong>宽度（位/字节）</strong>   +0 00000000000000000000000000000001 00000001 32位/4字节   +4 01110000111001101100011010100000 70e6c6a0 32位/4字节   +8 01110001000000001011000101011000 7100b158 32位/4字节 +12 00000000000000000000000000000000 00000000 32位/4字节 +16 00000000000000000000000000000100 00000004 32位/4字节 +20 00000000000000000000000000000000 00000000 32位/4字节
+OK，那我们来每个成员域都过一遍，看看有何玄机。
+第一个是_mark。在HotSpot的C++代码里它的类型是markOop，在SA里以sun.jvm.hotspot.oops.Mark来表现。
+它属于对象头（object header）的一部分，是个多用途标记，可用于记录GC的标记（mark）状态、锁状态、偏向锁（bias-locking）状态、身份哈希值（identity hash）缓存等等。它的可能组合包括：
+<strong>比特域（名字或常量值:位数）</strong> <strong>标识（tag）</strong>  <em>*状态</em></em> 身份哈希值:25, 年龄:4, 0:1 01  未锁 锁记录地址:30 00  被轻量级锁住 monitor对象地址:30 10  被重量级锁住 转向地址:30 11  被GC标记 线程ID:23, 纪元:2, 年龄:4, 1:1 01  被偏向锁住/可被偏向锁
+例子中的&quot;main&quot;字符串的_mark值为1，也就是说它：</li>
+<li>没有被锁住；</li>
+<li>现在未被GC标记；</li>
+<li>年龄为0（尚未经历过GC）；</li>
+<li>身份哈希值尚未被计算。
+HotSpot的GC堆中许多创建没多久的对象的<em>mark值都会是1，属于正常现象。
+接下来看SA输出的日志中写为_klass而在我的图示上写为_metadata的这个域。
+在HotSpot的C++代码里，oopDesc是所有放在GC堆上的对象的顶层类，它的成员就构成了对象头。HotSpot在C++代码中用instanceOopDesc类来表示Java对象，而该类继承oopDesc，所以HotSpot中的Java对象也自然拥有oopDesc所声明的头部。
+hotspot/src/share/vm/oops/oop.hpp：
+class oopDesc { private: volatile markOop _mark; union _metadata { wideKlassOop _klass; narrowOop _compressed_klass; } _metadata; };
+_metadata与前面提过的_mark一同构成了对象头。
+_metadata是个union，为了能兼容32位、64位与开了压缩指针（CompressedOops）等几种情况。无论是这个union中的_klass还是_compressed_klass域，它们都是用于指向一个描述该对象的klass对象的指针。SA的API屏蔽了普通指针与压缩指针之间的差异，所以就直接把_metadata._klass称为了_klass。
+对象头的格式是固定的，而对象自身内容的布局则由HotSpot根据一定规则来决定。Java类在被HotSpot加载时，其对象实例的布局与类自身的布局都会被计算出来。这个计算规则有机会以后再详细写。
+现在来看看&quot;main&quot;这个String对象实例自身的域都是些什么。
+value：指向真正保存字符串内容的对象的引用。留意Java里String并不把真正的字符内容直接存在自己里面，而是引用一个char[]对象来承载真正的存储。
+从Java一侧看value域的类型是char[]，而从HotSpot的C++代码来看它就是个普通的指针而已。它当前值是0x7100b158，指向一个char[]对象的起始位置。
+offset：字符串的内容从value指向的char[]中的第几个字符开始算（0-based）。int型，32位带符号整数，这从Java和C++来看都差不多。当前值为0。
+count：该字符串的长度，或者说包含的UTF-16字符的个数。类型同上。当前值为4，说明该字符串有4个UTF-16字符。
+hash：缓存该String对象的哈希值的成员域。类型同上。当前值为0，说明该实例的String.hashCode()方法尚未被调用过，因而尚未缓存住该字符串的哈希值。
+String对象的成员域都走过一遍了，来看看value所指向的对象状况。
+[C @ 0x7100b158 (object size = 24) - _mark: {0} :1 - _klass: {4} :TypeArrayKlass for [C @ 0x70e60440 - _length: {8} :4 - 0: {12} :m - 1: {14} :a - 2: {16} :i - 3: {18} :n
+这就是&quot;main&quot;字符串的value所引用的char[]的日志。
+[C 是char[]在JVM中的内部名称。
+在@符号之后的0x7100b158是该对象的起始地址。
+该对象占用GC堆的大小是24字节。留意了哦。
+看看它的成员域。
+_mark与_klass构成的对象头就不重复介绍了。可以留意的是元素类型为原始类型（boolean、char、short、int、long、float、double）的数组在HotSpot的C++代码里是用typeArrayOopDesc来表示的；这里的char[]也不例外。描述typeArrayOopDesc的klass对象是typeArrayKlass类型的，所以可以看到日志里_klass的值写着TypeArrayKlass for [C。
+接下来是_length域。HotSpot中，数组对象比普通对象的头要多一个域，正是这个描述数组元素个数的_length。Java语言中数组的.length属性、JVM字节码中的arraylength要取的也正是这个值。
+日志中的这个数组对象有4个字符，所以_length值为4。
+再后面就是数组的内容了。于是该char[]在内存中的布局是：
+----------------------- （+0） | _mark | ----------------------- （+4） | _metadata | ----------------------- （+8） | 数组长度 length | ----------------------- （+12） | char[0] | char[1] | ----------------------- （+16） | char[2] | char[3] | ----------------------- （+20） | 填充0 | -----------------------
+Java的char是UTF-16字符，宽度是16位/2字节；4个字符需要8字节，加上对象头的4/<em>3=12字节，总共需要20字节。但该char[]却占用了GC堆上的24字节，正是因为前面提到的数据对齐要求——HotSpot要求GC堆上的对象是8字节对齐的，20向上找最近的8的倍数就是24了。用于对齐的这部分会被填充为0。
+&quot;main&quot;对象的value指向的char[]也介绍过了，回过头来看看它的_metadata._klass所指向的klass对象又是什么状况。
+从HotSpot的角度来看，klass就是用于描述GC堆上的对象的对象；如果一个对象的大小、域的个数与类型等信息不固定的话，它就需要特定的klass对象来描述。
+instanceOopDesc用于表示Java对象，instanceKlass用于描述它，但自身却又有些不固定的信息需要被描述，因而又有instanceKlassKlass；如此下去会没完没了，所以有个klassKlass作为这个描述链上的终结符。
+klass的关系图：
+<img src="" alt="">
+<a href="http://openjdk.java.net/groups/hotspot/docs/FOSDEM-2007-HotSpot.pdf" target="_blank">（图片来源）</a>
+回到foo.txt日志文件上来，找到&quot;main&quot;对象的_klass域所引用的instanceKlass对象：
+InstanceKlass for java/lang/String @ 0x70e6c6a0 (object size = 384) - _mark: {0} :1 - _klass: {4} :InstanceKlassKlass @ 0x70e60168 - _java_mirror: {60} :Oop for java/lang/Class @ 0x70e77760 - _super: {64} :InstanceKlass for java/lang/Object @ 0x70e65af8 - _size_helper: {12} :6 - _name: {68} :/#java/lang/String @ 0x70e613e8 - _access_flags: {84} :134217777 - _subklass: {72} :null - _next_sibling: {76} :InstanceKlass for java/lang/CharSequence @ 0x70e680e8 - _alloc_count: {88} :0 - _array_klasses: {112} :ObjArrayKlass for InstanceKlass for java/lang/String @ 0x70ef6298 - _methods: {116} :ObjArray @ 0x70e682a0 - _method_ordering: {120} :[I @ 0x70e61330 - _local_interfaces: {124} :ObjArray @ 0x70e67998 - _transitive_interfaces: {128} :ObjArray @ 0x70e67998 - _nof_implementors: {268} :0 - _implementors[0]: {164} :null - _implementors[0]: {168} :null - _fields: {132} :[S @ 0x70e68230 - _constants: {136} :ConstantPool for java/lang/String @ 0x70e65c38 - _class_loader: {140} :null - _protection_domain: {144} :null - _signers: {148} :null - _source_file_name: {152} :/#String.java @ 0x70e67980 - _inner_classes: {160} :[S @ 0x70e6c820 - _nonstatic_field_size: {196} :4 - _static_field_size: {200} :4 - _static_oop_field_size: {204} :2 - _nonstatic_oop_map_size: {208} :1 - _is_marked_dependent: {212} :0 - _init_state: {220} :5 - _vtable_len: {228} :5 - _itable_len: {232} :9 - serialVersionUID: {368} :-6849794470754667710 - serialPersistentFields: {360} :ObjArray @ 0x74e882c8 - CASE_INSENSITIVE_ORDER: {364} :Oop for java/lang/String$CaseInsensitiveComparator @ 0x74e882c0
+还记得上文提到过的String类的3个静态变量么？有没有觉得有什么眼熟的地方？
+没错，在HotSpot中，Java类的静态变量就是作为该类对应的instanceKlass的实例变量出现的。上面的日志里最后三行描述了String的静态变量所在。
+这是件非常自然的事：类用于描述对象，类自身也是对象，有用于描述自身的类；某个类的所谓“静态变量”就是该类对象的实例变量。很多对象系统都是这么设计的。HotSpot的这套oop体系（指“普通对象指针”，不是指“面向对象编程”）继承自<a href="http://www.strongtalk.org/" target="_blank">Strongtalk</a>，实际上反而比暴露给Java的对象模型显得更加面向对象一些。
+HotSpot并不把instanceKlass暴露给Java，而会另外创建对应的java.lang.Class对象，并将后者称为前者的“Java镜像”，两者之间互相持有引用。日志中的_java_mirror便是该instanceKlass对Class对象的引用。
+镜像机制被认为是良好的面向对象的反射与元编程设计的重要机制。Gilad Bracha与David Ungar还专门写了篇论文来阐述此观点，参考<a href="http://bracha.org/mirrors.pdf" target="_blank">Mirrors: Design Principles for Meta-level Facilities of Object-Oriented Programming Languages</a>。
+顺带把&quot;main&quot;对象的_klass链上余下的两个对象的日志也贴出来：
+InstanceKlassKlass @ 0x70e60168 (object size = 120) - _mark: {0} :1 - _klass: {4} :KlassKlass @ 0x70e60000 - _java_mirror: {60} :Oop for java/lang/Class @ 0x70e76f20 - _super: {64} :null - _size_helper: {12} :0 - _name: {68} :null - _access_flags: {84} :0 - _subklass: {72} :null - _next_sibling: {76} :null - _alloc_count: {88} :0
+所有instanceKlass对象都是被这个instanceKlassKlass对象所描述的。
+KlassKlass @ 0x70e60000 (object size = 120) - _mark: {0} :1 - _klass: {4} :KlassKlass @ 0x70e60000 - _java_mirror: {60} :Oop for java/lang/Class @ 0x70e76e00 - _super: {64} :null - _size_helper: {12} :0 - _name: {68} :null - _access_flags: {84} :0 - _subklass: {72} :null - _next_sibling: {76} :null - _alloc_count: {88} :0
+而所有/</em>KlassKlass对象都是被这个klassKlass对象所描述的。
+klass对象的更详细的介绍也留待以后再写吧～至少得找时间写写instanceKlass与vtable、itable的故事。
+嘛，今天的废话到此结束 ^</em>^
+希望这帖能解答先前<a href="http://hllvm.group.javaeye.com/group/topic/20168" target="_blank">关于java里面的全局变量的内存分配</a>一帖中的疑问。也希望大家能多多支持<a href="http://hllvm.group.javaeye.com/" target="_blank">高级语言虚拟机</a>圈子，有什么HLL VM相关的话题想讨论的欢迎来转转～</li>
+</ul>
+<ul>
+<li><a href="http://dl.javaeye.com/topics/download/4e07be37-e608-3954-9a5f-7015fdb0a687" target="_blank">foo.zip</a> (1.7 MB)</li>
+<li>描述: 文中例子的输出</li>
+<li><p>下载次数: 0</p>
+</li>
+<li><p><a href=""><img src="&quot;点击查看原始大小图片&quot;" alt=""></a></p>
+</li>
+<li><p>大小: 36.1 KB</p>
+</li>
+<li><p><a href="http://www.javaeye.com/topic/730461#" target="_blank">查看图片附件</a></p>
+</li>
+</ul>
+<p>声明：JavaEye文章版权属于作者，受法律保护。没有作者书面许可不得转载。
+推荐链接</p>
+<ul>
+<li><a href="http://www.javaeye.com/clicks/373" target="_blank"><img src="&quot;adobe&quot;" alt="adobe"></a> <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://rednaxelafx.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://rednaxelafx.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=RednaxelaFX" title="发送站内短信" target="_blank"> </a> <a href="http://rednaxelafx.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=RednaxelaFX" title="关注作者" target="_blank"> </a>  * melin</li>
+<li>等级: <img src="&quot;三星会员&quot;" alt="三星会员"></li>
+<li><a href="http://melin.javaeye.com/" target="_blank"><img src="&quot;melin的博客: melin&quot;" alt="melin的博客"></a></li>
+<li>文章: 327</li>
+<li>积分: 383</li>
+<li>来自: 合肥</li>
+<li><img src="" alt="">
+  发表时间：前天  </li>
+</ul>
+<p>兄弟有点入魔了。。。 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://melin.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://melin.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=melin" title="发送站内短信" target="_blank"> </a> <a href="http://melin.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=melin" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613583" title="melin回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * kimmking</p>
+<ul>
+<li>等级: <img src="&quot;二钻会员&quot;" alt="二钻会员"></li>
+<li><a href="http://setting.javaeye.com/" target="_blank"><img src="&quot;kimmking的博客: 程序人生&quot;" alt="kimmking的博客"></a></li>
+<li>文章: 2091</li>
+<li>积分: 1160</li>
+<li>来自: 中华大丈夫学院</li>
+<li><img src="" alt="">
+  发表时间：前天  </li>
+</ul>
+<p>RednaxelaFX 的帖子，太深奥了。
+我找本编译原理补补先。 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://setting.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://setting.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=kimmking" title="发送站内短信" target="_blank"> </a> <a href="http://setting.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=kimmking" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613655" title="kimmking回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * youjianbo_han_87</p>
+<ul>
+<li>等级: 初级会员</li>
+<li><a href="http://youjianbo-han-87.javaeye.com/" target="_blank"><img src="&quot;youjianbo_han_87的博客: &quot;" alt="youjianbo_han_87的博客"></a></li>
+<li>文章: 62</li>
+<li>积分: 0</li>
+<li>来自: 上海</li>
+<li><img src="" alt="">
+  发表时间：前天  </li>
+</ul>
+<p>确实不错，基础基础。 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://youjianbo-han-87.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://youjianbo-han-87.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=youjianbo_han_87" title="发送站内短信" target="_blank"> </a> <a href="http://youjianbo-han-87.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=youjianbo_han_87" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613721" title="youjianbo_han_87回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * reilost</p>
+<ul>
+<li>等级: 初级会员</li>
+<li><a href="http://reilost.javaeye.com/" target="_blank"><img src="&quot;reilost的博客: Reilost&quot;" alt="reilost的博客"></a></li>
+<li>文章: 74</li>
+<li>积分: 20</li>
+<li>来自: 北京</li>
+<li><a href="http://www.javaeye.com/topic/731832" title="我正在看《终于忍不住诱惑，脱身出来做Contractor了。》" target="_blank"><img src="" alt=""></a>
+  发表时间：前天  </li>
+</ul>
+<p>-。-fx同学威武。。每次看你的帖子都想回去再看一遍编译原理 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://reilost.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://reilost.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=reilost" title="发送站内短信" target="_blank"> </a> <a href="http://reilost.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=reilost" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613784" title="reilost回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * kaka2008</p>
+<ul>
+<li>等级: <img src="&quot;二星会员&quot;" alt="二星会员"></li>
+<li><a href="http://kaka2008.javaeye.com/" target="_blank"><img src="&quot;kaka2008的博客: 真的勇士，敢于直面这扯淡的人生&quot;" alt="kaka2008的博客"></a></li>
+<li>文章: 241</li>
+<li>积分: 200</li>
+<li>来自: 北京</li>
+<li><img src="" alt="">
+  发表时间：前天  </li>
+</ul>
+<p>fx同学出手即精华
+而且帖子太深奥。。。 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://kaka2008.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://kaka2008.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=kaka2008" title="发送站内短信" target="_blank"> </a> <a href="http://kaka2008.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=kaka2008" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613802" title="kaka2008回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * liujun999999</p>
+<ul>
+<li>等级: 初级会员</li>
+<li><a href="http://liujun999999.javaeye.com/" target="_blank"><img src="&quot;liujun999999的博客: liujun999999&quot;" alt="liujun999999的博客"></a></li>
+<li>文章: 35</li>
+<li>积分: 30</li>
+<li>来自: 广州</li>
+<li><img src="" alt="">
+  发表时间：前天  </li>
+</ul>
+<p>晕，说实话，我没有看懂，看出差距来了，唉 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://liujun999999.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://liujun999999.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=liujun999999" title="发送站内短信" target="_blank"> </a> <a href="http://liujun999999.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=liujun999999" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613905" title="liujun999999回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * hymanyung</p>
+<ul>
+<li>等级: 初级会员</li>
+<li><a href="http://hymanyung.javaeye.com/" target="_blank"><img src="&quot;hymanyung的博客: &quot;" alt="hymanyung的博客"></a></li>
+<li>文章: 5</li>
+<li>积分: 30</li>
+<li>来自: 东莞</li>
+<li><img src="" alt="">
+  发表时间：前天  </li>
+</ul>
+<p>看得頭暈了. <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://hymanyung.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://hymanyung.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=hymanyung" title="发送站内短信" target="_blank"> </a> <a href="http://hymanyung.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=hymanyung" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613949" title="hymanyung回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * seraphim871211</p>
+<ul>
+<li>等级: 初级会员</li>
+<li><a href="http://seraphim871211.javaeye.com/" target="_blank"><img src="&quot;seraphim871211的博客: &quot;" alt="seraphim871211的博客"></a></li>
+<li>文章: 58</li>
+<li>积分: 50</li>
+<li>来自: 杭州</li>
+<li><img src="" alt="">
+  发表时间：前天  </li>
+</ul>
+<p>“大叔”，你最近的帖子都看不下去了。。。<img src="" alt=""> <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://seraphim871211.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://seraphim871211.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=seraphim871211" title="发送站内短信" target="_blank"> </a> <a href="http://seraphim871211.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=seraphim871211" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1613969" title="seraphim871211回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票  * AlwenS</p>
+<ul>
+<li>等级: 初级会员</li>
+<li><a href="http://alwens.javaeye.com/" target="_blank"><img src="&quot;AlwenS的博客: &quot;" alt="AlwenS的博客"></a></li>
+<li>文章: 20</li>
+<li>积分: 30</li>
+<li>来自: 深圳</li>
+<li><img src="" alt="">
+  发表时间：前天   最后修改：前天</li>
+</ul>
+<p>看完鸟,楼主的动手能力真强。<img src="" alt="">
+我也喜欢探究这些东西，只是功力还不如楼主深。
+其实这东东和编译原理倒没多大关系了，主要看的是具体OO语言的Runtime Env模型。
+比如c++就是没有penmgen的，所以他的动态能力和RTTI都非常弱。 <a href="http://www.javaeye.com/topic/730461#" target="_blank">返回顶楼</a> <a href="http://alwens.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://alwens.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=AlwenS" title="发送站内短信" target="_blank"> </a> <a href="http://alwens.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://app.javaeye.com/feed?subscription%5Bsubscribed_user_name%5D=AlwenS" title="关注作者" target="_blank"> </a> <a href="http://www.javaeye.com/topic/730461#1614028" title="AlwenS回帖:借助HotSpot SA来一窥PermGen上的对象" target="_blank">回帖地址</a></p>
+<p><a href="http://www.javaeye.com/topic/730461#" title="好" target="_blank">0</a> <a href="http://www.javaeye.com/topic/730461#" title="差" target="_blank">0</a> 请登录后投票</p>
+<p><a href="http://www.javaeye.com/forums/39/topics/730461/posts/new" title="发表回复"></a></p>
+<p>« 上一页 1 <a href="http://www.javaeye.com/topic/730461?page=2" target="_blank">2</a> <a href="http://www.javaeye.com/topic/730461?page=2" target="_blank">下一页 »</a>
+<a href="http://www.javaeye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.javaeye.com/forums/board/Java" target="_blank">Java编程和Java企业应用版</a> → <a href="http://www.javaeye.com/forums/tag/Java" target="_blank">Java综合</a>
+跳转论坛:Java编程和Java企业应用 Web前端技术 移动编程和手机应用开发 C/C++编程 Ruby编程 Python编程 PHP编程 Flash编程和RIA Microsoft .Net 综合技术 软件开发和项目管理 行业应用 入门讨论 招聘求职 海阔天空</p>
+<ul>
+<li><a href="http://www.javaeye.com/jobs/712" title="北京:JavaEye猎头诚聘Java搜索工程师" target="_blank">北京: JavaEye猎头诚聘Java搜索工程师</a></li>
+<li><a href="http://www.javaeye.com/jobs/779" title="浙江:VMKID诚聘Java开发工程师(J2SE)（Client端方向）" target="_blank">浙江: VMKID诚聘Java开发工程师(J2SE)（Client端方</a></li>
+<li><a href="http://www.javaeye.com/jobs/794" title="广东:穆迪moody&#39;s诚聘Java Developer" target="_blank">广东: 穆迪moody&#39;s诚聘Java Developer</a></li>
+<li><a href="http://www.javaeye.com/jobs/523" title="北京:去哪儿旅游搜索引擎诚聘java开发工程师" target="_blank">北京: 去哪儿旅游搜索引擎诚聘java开发工程师</a></li>
+<li><a href="http://www.javaeye.com/jobs/838" title="上海:BShare诚聘资深Java Web开发工程师" target="_blank">上海: BShare诚聘资深Java Web开发工程师</a></li>
+<li><a href="http://www.javaeye.com/jobs/728" title="北京:chinacache诚聘Java应用架构师" target="_blank">北京: chinacache诚聘Java应用架构师</a></li>
+<li><a href="http://www.javaeye.com/jobs/839" title="北京:glodon诚聘Eclipse插件开发工程师" target="_blank">北京: glodon诚聘Eclipse插件开发工程师</a></li>
+<li><a href="http://www.javaeye.com/jobs/769" title="北京:掌中魔力诚聘java资深工程师" target="_blank">北京: 掌中魔力诚聘java资深工程师</a></li>
+<li><a href="http://www.javaeye.com/jobs/726" title="北京:chinacache诚聘高级Java开发工程师（后台应用）" target="_blank">北京: chinacache诚聘高级Java开发工程师（后台应用</a></li>
+<li><a href="http://www.javaeye.com/jobs/825" title="上海:上海汉得诚聘高级基础架构研发工程师——IDE方向" target="_blank">上海: 上海汉得诚聘高级基础架构研发工程师——IDE</a></li>
+<li><a href="http://www.javaeye.com/jobs/806" title="北京:上海幽幽诚聘手机网游服务器端开发工程师" target="_blank">北京: 上海幽幽诚聘手机网游服务器端开发工程师</a></li>
+<li><a href="http://www.javaeye.com/jobs/800" title="北京:网易（NETEASE）诚聘高级Java开发工程师" target="_blank">北京: 网易（NETEASE）诚聘高级Java开发工程师</a></li>
+<li><a href="http://www.javaeye.com/jobs/817" title="北京:Laszlo Systems 诚聘高级Java程序员" target="_blank">北京: Laszlo Systems 诚聘高级Java程序员</a></li>
+<li><a href="http://www.javaeye.com/jobs/682" title="上海:恺英网络诚聘JS工程师" target="_blank">上海: 恺英网络诚聘JS工程师</a></li>
+<li><p><a href="http://www.javaeye.com/jobs/804" title="福建:福州几维网络诚聘游戏服务端程序员(Java)" target="_blank">福建: 福州几维网络诚聘游戏服务端程序员(Java)</a></p>
+</li>
+<li><p><a href="http://www.javaeye.com/" target="_blank">首页</a></p>
+</li>
+<li><a href="http://www.javaeye.com/news" target="_blank">新闻</a></li>
+<li><a href="http://www.javaeye.com/forums" target="_blank">论坛</a></li>
+<li><a href="http://www.javaeye.com/ask" target="_blank">问答</a></li>
+<li><a href="http://www.javaeye.com/wiki" target="_blank">专栏</a></li>
+<li><a href="http://www.javaeye.com/blogs" target="_blank">博客</a></li>
+<li><a href="http://www.javaeye.com/groups" target="_blank">圈子</a></li>
+<li><a href="http://www.javaeye.com/job" target="_blank">招聘</a></li>
+<li><a href="http://www.javaeye.com/index/service" target="_blank">服务</a></li>
+<li><a href="http://www.javaeye.com/search" target="_blank">搜索</a></li>
+<li><a href="http://java.javaeye.com/" target="_blank">Java</a></li>
+<li><a href="http://webapp.javaeye.com/" target="_blank">Web</a></li>
+<li><a href="http://ruby.javaeye.com/" target="_blank">Ruby</a></li>
+<li><a href="http://python.javaeye.com/" target="_blank">Python</a></li>
+<li><a href="http://agile.javaeye.com/" target="_blank">敏捷</a></li>
+<li><a href="http://mysql.javaeye.com/" target="_blank">MySQL</a></li>
+<li><a href="http://runqian.javaeye.com/" target="_blank">润亁报表</a></li>
+<li><a href="http://book.javaeye.com/" target="_blank">图书</a></li>
+<li><a href="http://www.javaeye.com/index/service" target="_blank">广告服务</a></li>
+<li><a href="http://webmaster.javaeye.com/" target="_blank">JavaEye黑板报</a></li>
+<li><a href="http://www.javaeye.com/index/aboutus" target="_blank">关于我们</a></li>
+<li><a href="http://www.javaeye.com/index/contactus" target="_blank">联系我们</a></li>
+<li><a href="http://www.javaeye.com/index/friend_links" target="_blank">友情链接</a></li>
+</ul>
+<p>© 2003-2010 JavaEye.com. 上海炯耐计算机软件有限公司版权所有 [ <a href="http://www.miibeian.gov.cn/" target="_blank">沪ICP备05023328号</a> ]</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/优化/">优化</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/优化/" class="label label-success">优化</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--借助HotSpotSA来一窥PermGen上的对象/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-优化--借助HotSpotSA来一窥PermGen上的对象" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">一次Java内存溢出异常的分析过程</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-java-">一次Java内存溢出异常的分析过程</h1>
+<p>前些天，<a href="http://server.chinabyte.com/" target="_blank">服务器</a>上一个服务跑了一个多月突然当掉了。看了下日志，程序抛出了java.lang.OutOfMemoryError，之前也出现过同样的错误，服务跑了三个月内存溢出。出现这个异常，初步判断是程序有内存泄漏，接下来需要利用一些工具来分析具体原因。</p>
+<p>首先使用jdk自带的工具jmap转储(dump)java内存堆数据到本地文件中。jmap转储(dump)命令格式如下：</p>
+<p>jmap -dump:</p>
+<p>表示dump选项，表示需要dump的java应用程序的进程ID</p>
+<p>dump-options可以有以下三种参数，参数之间用逗号隔开：</p>
+<p>live，只dump活动的object，如果没有指定，表示dump所有object</p>
+<p>format=b，字节流格式</p>
+<p>file=，是转储文件的保存路径</p>
+<p>下面是dump命令的一个例子:</p>
+<p>jmap -dump:format=b,file=heap.bin 8023</p>
+<p>dump完成后，用Eclipse Memory Analyzer打开转储文件进行分析。Eclipse Memory Analyzer是一个java内存堆转储文件分析工具，可以生成内存分析报告(包括内存泄露Leak Suspects )。下面是分析完成后查看Top Consumers所看到的图表:</p>
+<p><img src="" alt=""></p>
+<p><img src="" alt=""></p>
+<p>看到这两张图表，问题就比较明朗了。berkeley db中的数据结点com.sleepycat.je.tree.BIN占用了大量内存，导致内存溢出了。为了提高访问效率，berkeley db会缓存大量的结点，缓存大小限制可以在EnvironmentConfig设置，默认为jvm内存大小限制的60%。而这个应用程序中使用了5个EnvironmentImpl，并且都未单独设置缓存大小，总的缓存限制为jvm内存限制的300%(图表中BIN结点已经占用了94.55%的内存)，远远超出java的内存限制。随着服务的运行，缓存数据越来越多，最后导致内存溢出错误。因此，为每个EnvironmentImpl设置合适的缓存大小限制，就可以避免再次发生内存溢出。
+来源： <a href="[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)">[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1143,7 +1414,7 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
 
 
 <ul id="pagination" class="pagination pagination-lg">
-  <li><a class="extend prev" href="/page/66/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/64/">64</a></li><li><a class="page-number" href="/page/65/">65</a></li><li><a class="page-number" href="/page/66/">66</a></li><li class="active"><li><span class="page-number current">67</span></li><li><a class="page-number" href="/page/68/">68</a></li><li><a class="page-number" href="/page/69/">69</a></li><li><a class="page-number" href="/page/70/">70</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/162/">162</a></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="extend next" href="/page/68/">&raquo;</a></li>
+  <li><a class="extend prev" href="/page/66/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/64/">64</a></li><li><a class="page-number" href="/page/65/">65</a></li><li><a class="page-number" href="/page/66/">66</a></li><li class="active"><li><span class="page-number current">67</span></li><li><a class="page-number" href="/page/68/">68</a></li><li><a class="page-number" href="/page/69/">69</a></li><li><a class="page-number" href="/page/70/">70</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/161/">161</a></li><li><a class="page-number" href="/page/162/">162</a></li><li><a class="extend next" href="/page/68/">&raquo;</a></li>
   <div class="clearfix"></div>
 </ul></div><!--wapper-->
        </div><!-- ID main-col END -->
@@ -1210,7 +1481,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-30 14:30:15</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 17:26:53</em></span></div>
 </div>
 <div class="clearfix"></div>
 

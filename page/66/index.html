@@ -110,131 +110,6 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/">redis源码分析</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="redis-">redis源码分析-多集合求交集算法</h1>
-<p>源码redis源码过程中学习了它内部多个set求交集的算法，觉得挺不错的，实现也相对简单。</p>
-<p>不过要发挥这个算法的效果，前提是保证集合是<strong>散列型</strong>的，比如hash，set。 对链表或者数组等集合求交集方法后面介绍。</p>
-<p>先来看看redis中多个set求交集的主要部分。
-//<em> Sort sets from the smallest to largest, this will improve our     /</em> algorithm&#39;s performace /<em>/    qsort(dv,setsnum,sizeof(dict/</em>),qsortCompareSetsByCardinality);</p>
-<p>di= dictGetIterator(dv[0]); while((de = dictNext(di)) != NULL) {</p>
-<p>robj/<em>ele; for (j = 1; j &lt; setsnum; j++) if (dictFind(dv[j],dictGetEntryKey(de)) == NULL) break; if (j != setsnum) continue; //</em> at least one set does not contain the member /*/</p>
-<p>ele= dictGetEntryKey(de); if (!dstkey) {</p>
-<p>addReplyBulk(c,ele);</p>
-<p>cardinality++; } else {</p>
-<p>dictAdd(dstset-&gt;ptr,ele,NULL);</p>
-<p>incrRefCount(ele); } }</p>
-<p>看代码比较难理解，redis里的set数据结构本质就是个dict(hash表), 所以可以利用本身就做过hash这点，交集算法主要步骤u如下：</p>
-<p>1、对多个set集合根据集合大小排序，最小的排最前面，下标0，</p>
-<p>2、得到最小set集合的迭代器，后面需要</p>
-<p>3、遍历第二步得到的迭代器，本质上就是遍历最小的set集合中所有的元素，然后把每一步遍历得到的元素去其他set集合里查看是否存在，只要发现在一个集合中不存在就直接跳出，因为对其他集合(下标0到N)比较是按前面排序的顺序，即从第二小的集合比较，到最大集合。这样可以最大程度的提前跳出比较。当这个元素在其他集合都存在的时候，说明这个元素是交集中的值。</p>
-<p>redis求交的大致思路如此。但是如果我们的集合是数组类的，那么要使用这种算法，需要先把所有数组集合的元素都计算hash值，这样做根本没必要，反而得不偿失。</p>
-<p>我对这类集合求交算法如下(java代码)：</p>
-<p> Collections.sort(sort_list); //第一步和redis的交集算法一样，也是根据集合大小从小到大的排序</p>
-<p>// hashMap 求交</p>
-<p>HashMap<Long, Integer> hashMap = new HashMap<Long, Integer>();// 我需要再创建一个hashMap</p>
-<p>boolean first = true; //是否是最小集合</p>
-<p>List<Long> list = null;</p>
-<p>for (int i = 0; i &lt; sort_list.size(); i++) {</p>
-<p>int index = sort_list.get(i).getIndex();// 得到集合的下标</p>
-<p>list = values[index].getLongList();//真正的多个集合是通过values[]保存的，这里根据上面的下标就得到了这个集合</p>
-<p>for (int j = 0; j &lt; list.size(); j++) {//遍历这个集合</p>
-<p>if (first) {//如果是最小的集合，直接将元素插入到前面的hashmap中，value值为1，表示出现一次</p>
-<p>hashMap.put(list.get(j), 1);</p>
-<p>} else {//当不是最小集合的时候，取出元素先判断hashmap里是否存在，不存在的话就根本不需要做无谓的插入，这里的插入前提是之前一直有同样的数据存在，但hashmap存在这个值，并不表示是有效值，比如第一次出现了，但是后面的集合没有出现，所以需要一个value的计数器。</p>
-<p>if (hashMap.containsKey(list.get(j))) {</p>
-<p>int temp = hashMap.get(list.get(j));</p>
-<p>hashMap.put(list.get(j), temp + 1);//如果存在这个元素，则给对应的value+1</p>
-<p>}</p>
-<p>}</p>
-<p>}</p>
-<p>first = false;//第一次遍历后，就标记为false</p>
-<p>}</p>
-<p>//<em>/</em></p>
-<p> /* 得到交集后的结果，这个需要遍历之前的hashmap，判断value值等于集合的数量就表示这个是交集中的值</p>
-<p> /*/</p>
-<p>List<String> result = new ArrayList();</p>
-<p>Entry<Long, Integer> entry = null;</p>
-<p>for (Iterator iterator = hashMap.entrySet().iterator(); iterator</p>
-<p>.hasNext();) {</p>
-<p>entry = (Entry<Long, Integer>) iterator.next();</p>
-<p>if (entry.getValue() &gt;= keyN.length) {// 多个集合的交集</p>
-<p>result.add(entry.getKey());//把结果保存到结果集中</p>
-<p>}</p>
-<p>}
-上面的算法其实没有必要对集合做排序，只需要得出最小的集合就可以了。</p>
-<p>两个算法的相似处是对比较都做了优化。redis的交集算法，从最小集合开始比较，使判断提前跳出，不做无谓的比较。</p>
-<p>第二个算法也是做了排序，从最小集合开始，首先就把这个hashmap的大小限制住了，后面不管有多大的集合，都不可能超过hashmap的范围。其次减少了无谓的数据插入，只要在之前有这个元素才做插入。</p>
-<p>用哪种交集算法还要考虑自己的数据特点。单论两种算法，不管是在空间和时间上，前者都比后者强。但是一般的集合并不是散列类型的数据，那么还是用第二种吧，再根据自己的数据特点做优化。
-来源： <a href="[http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/](http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/)">[http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/](http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/">java集合类总结</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-">java集合类总结</h1>
-<p><img src="" alt=""> Saving Data...
-正在保存数据...
-正在儲存資料...</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--java集合类总结" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Java集合框架之小结/">Java集合框架之小结</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Java集合框架之小结/">feb. 2 2014</a></time></span>      
@@ -641,6 +516,131 @@ System.out.println(map);</p>
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
 <a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--Java集合框架之小结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--Java集合框架之小结" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/">redis源码分析</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="redis-">redis源码分析-多集合求交集算法</h1>
+<p>源码redis源码过程中学习了它内部多个set求交集的算法，觉得挺不错的，实现也相对简单。</p>
+<p>不过要发挥这个算法的效果，前提是保证集合是<strong>散列型</strong>的，比如hash，set。 对链表或者数组等集合求交集方法后面介绍。</p>
+<p>先来看看redis中多个set求交集的主要部分。
+//<em> Sort sets from the smallest to largest, this will improve our     /</em> algorithm&#39;s performace /<em>/    qsort(dv,setsnum,sizeof(dict/</em>),qsortCompareSetsByCardinality);</p>
+<p>di= dictGetIterator(dv[0]); while((de = dictNext(di)) != NULL) {</p>
+<p>robj/<em>ele; for (j = 1; j &lt; setsnum; j++) if (dictFind(dv[j],dictGetEntryKey(de)) == NULL) break; if (j != setsnum) continue; //</em> at least one set does not contain the member /*/</p>
+<p>ele= dictGetEntryKey(de); if (!dstkey) {</p>
+<p>addReplyBulk(c,ele);</p>
+<p>cardinality++; } else {</p>
+<p>dictAdd(dstset-&gt;ptr,ele,NULL);</p>
+<p>incrRefCount(ele); } }</p>
+<p>看代码比较难理解，redis里的set数据结构本质就是个dict(hash表), 所以可以利用本身就做过hash这点，交集算法主要步骤u如下：</p>
+<p>1、对多个set集合根据集合大小排序，最小的排最前面，下标0，</p>
+<p>2、得到最小set集合的迭代器，后面需要</p>
+<p>3、遍历第二步得到的迭代器，本质上就是遍历最小的set集合中所有的元素，然后把每一步遍历得到的元素去其他set集合里查看是否存在，只要发现在一个集合中不存在就直接跳出，因为对其他集合(下标0到N)比较是按前面排序的顺序，即从第二小的集合比较，到最大集合。这样可以最大程度的提前跳出比较。当这个元素在其他集合都存在的时候，说明这个元素是交集中的值。</p>
+<p>redis求交的大致思路如此。但是如果我们的集合是数组类的，那么要使用这种算法，需要先把所有数组集合的元素都计算hash值，这样做根本没必要，反而得不偿失。</p>
+<p>我对这类集合求交算法如下(java代码)：</p>
+<p> Collections.sort(sort_list); //第一步和redis的交集算法一样，也是根据集合大小从小到大的排序</p>
+<p>// hashMap 求交</p>
+<p>HashMap<Long, Integer> hashMap = new HashMap<Long, Integer>();// 我需要再创建一个hashMap</p>
+<p>boolean first = true; //是否是最小集合</p>
+<p>List<Long> list = null;</p>
+<p>for (int i = 0; i &lt; sort_list.size(); i++) {</p>
+<p>int index = sort_list.get(i).getIndex();// 得到集合的下标</p>
+<p>list = values[index].getLongList();//真正的多个集合是通过values[]保存的，这里根据上面的下标就得到了这个集合</p>
+<p>for (int j = 0; j &lt; list.size(); j++) {//遍历这个集合</p>
+<p>if (first) {//如果是最小的集合，直接将元素插入到前面的hashmap中，value值为1，表示出现一次</p>
+<p>hashMap.put(list.get(j), 1);</p>
+<p>} else {//当不是最小集合的时候，取出元素先判断hashmap里是否存在，不存在的话就根本不需要做无谓的插入，这里的插入前提是之前一直有同样的数据存在，但hashmap存在这个值，并不表示是有效值，比如第一次出现了，但是后面的集合没有出现，所以需要一个value的计数器。</p>
+<p>if (hashMap.containsKey(list.get(j))) {</p>
+<p>int temp = hashMap.get(list.get(j));</p>
+<p>hashMap.put(list.get(j), temp + 1);//如果存在这个元素，则给对应的value+1</p>
+<p>}</p>
+<p>}</p>
+<p>}</p>
+<p>first = false;//第一次遍历后，就标记为false</p>
+<p>}</p>
+<p>//<em>/</em></p>
+<p> /* 得到交集后的结果，这个需要遍历之前的hashmap，判断value值等于集合的数量就表示这个是交集中的值</p>
+<p> /*/</p>
+<p>List<String> result = new ArrayList();</p>
+<p>Entry<Long, Integer> entry = null;</p>
+<p>for (Iterator iterator = hashMap.entrySet().iterator(); iterator</p>
+<p>.hasNext();) {</p>
+<p>entry = (Entry<Long, Integer>) iterator.next();</p>
+<p>if (entry.getValue() &gt;= keyN.length) {// 多个集合的交集</p>
+<p>result.add(entry.getKey());//把结果保存到结果集中</p>
+<p>}</p>
+<p>}
+上面的算法其实没有必要对集合做排序，只需要得出最小的集合就可以了。</p>
+<p>两个算法的相似处是对比较都做了优化。redis的交集算法，从最小集合开始比较，使判断提前跳出，不做无谓的比较。</p>
+<p>第二个算法也是做了排序，从最小集合开始，首先就把这个hashmap的大小限制住了，后面不管有多大的集合，都不可能超过hashmap的范围。其次减少了无谓的数据插入，只要在之前有这个元素才做插入。</p>
+<p>用哪种交集算法还要考虑自己的数据特点。单论两种算法，不管是在空间和时间上，前者都比后者强。但是一般的集合并不是散列类型的数据，那么还是用第二种吧，再根据自己的数据特点做优化。
+来源： <a href="[http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/](http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/)">[http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/](http://www.yiihsia.com/2011/04/redis%e6%ba%90%e7%a0%81%e5%88%86%e6%9e%90-%e5%a4%9a%e9%9b%86%e5%90%88%e6%b1%82%e4%ba%a4%e9%9b%86%e7%ae%97%e6%b3%95/)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--redis源码分析-多集合求交集算法" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/">java集合类总结</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-">java集合类总结</h1>
+<p><img src="" alt=""> Saving Data...
+正在保存数据...
+正在儲存資料...</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_集合/">Java_集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_集合/" class="label label-success">Java_集合</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_集合--java集合类总结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_集合--java集合类总结" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1286,7 +1286,7 @@ jstack [ option ] [server-id@]remote-hostname-or-IP</p>
 
 
 <ul id="pagination" class="pagination pagination-lg">
-  <li><a class="extend prev" href="/page/65/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/63/">63</a></li><li><a class="page-number" href="/page/64/">64</a></li><li><a class="page-number" href="/page/65/">65</a></li><li class="active"><li><span class="page-number current">66</span></li><li><a class="page-number" href="/page/67/">67</a></li><li><a class="page-number" href="/page/68/">68</a></li><li><a class="page-number" href="/page/69/">69</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/162/">162</a></li><li><a class="page-number" href="/page/163/">163</a></li><li><a class="extend next" href="/page/67/">&raquo;</a></li>
+  <li><a class="extend prev" href="/page/65/">&laquo;</a></li><li><a class="page-number" href="/">1</a></li><li><a class="page-number" href="/page/2/">2</a></li><li><span class="space">&hellip;</span></li><li><a class="page-number" href="/page/63/">63</a></li><li><a class="page-number" href="/page/64/">64</a></li><li><a class="page-number" href="/page/65/">65</a></li><li class="active"><li><span class="page-number current">66</span></li><li><a class="page-number" href="/page/67/">67</a></li><li><a class="page-number" href="/page/68/">68</a></li><li><a class="page-number" href="/page/69/">69</a></li><li><span class="space">&hellip;</span></li></li><li><a class="page-number" href="/page/161/">161</a></li><li><a class="page-number" href="/page/162/">162</a></li><li><a class="extend next" href="/page/67/">&raquo;</a></li>
   <div class="clearfix"></div>
 </ul></div><!--wapper-->
        </div><!-- ID main-col END -->
@@ -1353,7 +1353,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-03-30 14:30:15</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 17:26:53</em></span></div>
 </div>
 <div class="clearfix"></div>
 
