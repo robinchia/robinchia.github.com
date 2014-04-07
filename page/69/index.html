@@ -738,211 +738,90 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">jvm crash 的崩溃日志详细分析及注意点</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-性能--影响JavaEE性能的十大问题/">影响Java EE性能的十大问题</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-性能--影响JavaEE性能的十大问题/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jvm-crash-">jvm crash 的崩溃日志详细分析及注意点</h1>
-<h2 id="-">生成</h2>
-<ol>
-<li><p>生成error 文件的路径：你可以通过参数设置-XX:ErrorFile=/path/hs_error%p.log, 默认是在java运行的当前目录 [default: ./hs_err_pid%p.log]</p>
-</li>
-<li><p>参数-XX:OnError  可以在crash退出的时候执行命令，格式是-XX:OnError=“string”,  <string> 可以是命令的集合，用分号做分隔符, 可以用&quot;%p&quot;来取到当前进程的ID.
-例如：</p>
-</li>
-</ol>
-<p>// -XX:OnError=&quot;pmap %p&quot;                // show memory map</p>
-<p>// -XX:OnError=&quot;gcore %p; dbx - %p&quot;     // dump core and launch debugger</p>
-<p>在linux中系统会fork出一个子进程去执行shell的命令，因为是用fork可能会内存不够的情况，注意修改你的 /proc/sys/vm/overcommit_memory 参数,不清楚为什么这里不使用vfork</p>
-<ol>
-<li>-XX:+ShowMessageBoxOnError 参数，当jvm crash的时候在linux里会启动gdb 去分析和调式，适合在测试环境中使用。</li>
-</ol>
-<h2 id="-error-"><a href=""></a>什么情况下不会生成error文件</h2>
-<p>linux 内核在发生OOM的时候会强制kill一些进程, 可以在/var/logs/messages中查找</p>
-<h2 id="-error-crash-"><a href=""></a>Error crash 文件的几个重要部分</h2>
-<p><strong>a.  错误信息概要</strong></p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>/# A fatal error has been detected by the Java Runtime Environment:  </li>
-<li>/#  </li>
-<li>/#  SIGSEGV (0xb) at pc=0x0000000000043566, pid=32046, tid=1121192256  </li>
-<li>/#  </li>
-<li>/# JRE version: 6.0_17-b04  </li>
-<li>/# Java VM: Java HotSpot(TM) 64-Bit Server VM (14.3-b01 mixed mode linux-amd64 )  </li>
-<li>/# Problematic frame:  </li>
-<li>/# C  0x0000000000043566  </li>
-<li>/#  </li>
-<li>/# If you would like to submit a bug report, please visit:  </li>
-<li>/#   <a href="http://java.sun.com/webapps/bugreport/crash.jsp" target="_blank">http://java.sun.com/webapps/bugreport/crash.jsp</a>  </li>
-<li>/# The crash happened outside the Java Virtual Machine in native code.  </li>
-<li>/# See problematic frame for where to report the bug.<br>SIGSEGV 错误的信号类型 </li>
-</ol>
-<p>pc 就是IP/PC寄存器值也就是执行指令的代码地址</p>
-<p>pid 就是进程id</p>
-<p>/# Problematic frame:</p>
-<p>/# V  [libjvm.so+0x593045]</p>
-<p>就是导致问题的动态链接库函数的地址</p>
-<p>pc 和 +0x593045 指的是同一个地址，只是一个是动态的偏移地址，一个是运行的虚拟地址</p>
-<p><strong>b.信号信息</strong></p>
-<p>Java中在linux 中注册的信号处理函数，中间有2个参数info, ucvoid</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>static void crash_handler(int sig, siginfo_t/<em> info, void/</em> ucVoid) {  </li>
-<li>// unmask current signal  </li>
-<li>sigset_t newset;  </li>
-<li>sigemptyset(&amp;newset);  </li>
-<li>sigaddset(&amp;newset, sig);  </li>
-<li>sigprocmask(SIG_UNBLOCK, &amp;newset, NULL);  </li>
-<li></li>
-<li>VMError err(NULL, sig, NULL, info, ucVoid);  </li>
-<li>err.report_and_die();  </li>
-<li>}<br>在crash report中的信号错误提示</li>
-</ol>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>siginfo:si_signo=SIGSEGV: si_errno=0, si_code=1 (SEGV_MAPERR), si_addr=0x0000000000043566<br>信号的详细信息和si_addr 出错误的内存，都保存在siginfo_t的结构体中，也就是信号注册函数crash_handler里的参数info,内核会保存导致错误的内存地址在用户空间的信号结构体中siginfo_t，这样在进程在注册的信号处理函数中可以取得导致错误的地址。</li>
-</ol>
-<p><strong>c.寄存器信息</strong></p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>Registers:  </li>
-<li>RAX=0x00002aacb5ae5de2, RBX=0x00002aaaaf46aa48, RCX=0x0000000000000219, RDX=0x00002aaaaf46b920  </li>
-<li>RSP=0x0000000042d3f968, RBP=0x0000000042d3f9c8, RSI=0x0000000042d3f9e8, RDI=0x0000000045aef9b8  </li>
-<li>R8 =0x0000000000000f80, R9 =0x00002aaab3d30ce8, R10=0x00002aaaab138ea1, R11=0x00002b017ae65110  </li>
-<li>R12=0x0000000042d3f6f0, R13=0x00002aaaaf46aa48, R14=0x0000000042d3f9e8, R15=0x0000000045aef800  </li>
-<li>RIP=0x0000000000043566, EFL=0x0000000000010202, CSGSFS=0x0000000000000033, ERR=0x0000000000000014  </li>
-<li>TRAPNO=0x000000000000000e<br>寄存器的信息就保存在b部分的信号处理函数参数 (ucontext_t/*)usVoid中</li>
-</ol>
-<p>在X86架构下：</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>void os::print_context(outputStream /<em>st, void /</em>context) {  </li>
-<li>if (context == NULL) return;  </li>
-<li></li>
-<li>ucontext_t /<em>uc = (ucontext_t/</em>)context;  </li>
-<li>st-&gt;print_cr(&quot;Registers:&quot;);  </li>
-<li>/#ifdef AMD64  </li>
-<li>st-&gt;print(  &quot;RAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RAX]);  </li>
-<li>st-&gt;print(&quot;, RBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBX]);  </li>
-<li>st-&gt;print(&quot;, RCX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RCX]);  </li>
-<li>st-&gt;print(&quot;, RDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDX]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;RSP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSP]);  </li>
-<li>st-&gt;print(&quot;, RBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBP]);  </li>
-<li>st-&gt;print(&quot;, RSI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSI]);  </li>
-<li>st-&gt;print(&quot;, RDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDI]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;R8 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R8]);  </li>
-<li>st-&gt;print(&quot;, R9 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R9]);  </li>
-<li>st-&gt;print(&quot;, R10=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R10]);  </li>
-<li>st-&gt;print(&quot;, R11=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R11]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;R12=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R12]);  </li>
-<li>st-&gt;print(&quot;, R13=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R13]);  </li>
-<li>st-&gt;print(&quot;, R14=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R14]);  </li>
-<li>st-&gt;print(&quot;, R15=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R15]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;RIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RIP]);  </li>
-<li>st-&gt;print(&quot;, EFL=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
-<li>st-&gt;print(&quot;, CSGSFS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_CSGSFS]);  </li>
-<li>st-&gt;print(&quot;, ERR=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ERR]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(&quot;  TRAPNO=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_TRAPNO]);  </li>
-<li>/#else  </li>
-<li>st-&gt;print(  &quot;EAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EAX]);  </li>
-<li>st-&gt;print(&quot;, EBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBX]);  </li>
-<li>st-&gt;print(&quot;, ECX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ECX]);  </li>
-<li>st-&gt;print(&quot;, EDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDX]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;ESP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_UESP]);  </li>
-<li>st-&gt;print(&quot;, EBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBP]);  </li>
-<li>st-&gt;print(&quot;, ESI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ESI]);  </li>
-<li>st-&gt;print(&quot;, EDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDI]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;EIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EIP]);  </li>
-<li>st-&gt;print(&quot;, CR2=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.cr2);  </li>
-<li>st-&gt;print(&quot;, EFLAGS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
-<li>/#endif // AMD64  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;cr();  </li>
-<li></li>
-<li>intptr_t /<em>sp = (intptr_t /</em>)os::Linux::ucontext_get_sp(uc);  </li>
-<li>st-&gt;print_cr(&quot;Top of Stack: (sp=&quot; PTR_FORMAT &quot;)&quot;, sp);  </li>
-<li>print_hex_dump(st, (address)sp, (address)(sp + 8/*sizeof(intptr_t)), sizeof(intptr_t));  </li>
-<li>st-&gt;cr();  </li>
-<li></li>
-<li>// Note: it may be unsafe to inspect memory near pc. For example, pc may  </li>
-<li>// point to garbage if entry point in an nmethod is corrupted. Leave  </li>
-<li>// this at the end, and hope for the best.  </li>
-<li>address pc = os::Linux::ucontext_get_pc(uc);  </li>
-<li>st-&gt;print_cr(&quot;Instructions: (pc=&quot; PTR_FORMAT &quot;)&quot;, pc);  </li>
-<li>print_hex_dump(st, pc - 16, pc + 16, sizeof(char));  </li>
-<li>}<br>寄存器的信息在分析出错的时候是非常重要的
-打印出执行附近的部分机器码</li>
-</ol>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>Instructions: (pc=0x00007f48f14ef51a)  </li>
-<li>0x00007f48f14ef4fa:   90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd  </li>
-<li>0x00007f48f14ef50a:   f8 5f ff ff 48 89 b5 f0 5f ff ff b8 00 00 00 00  </li>
-<li>0x00007f48f14ef51a:   c7 00 01 00 00 00 c6 85 00 60 ff ff ff c9 c3 90  </li>
-<li>0x00007f48f14ef52a:   90 90 90 90 90 90 55 48 89 e5 53 48 8d 1d 94 00<br>在instruction 部分中会打印出部分的机器码</li>
-</ol>
-<p>格式是</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>地址：机器码<br>第一种使用udis库里带的udcli工具来反汇编</li>
-</ol>
-<p>命令：</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>echo &#39;90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd&#39; | udcli -intel -x -64 -o 0x00007f48f14ef4fa<br>显示出对应的汇编</li>
-</ol>
-<p>第二种可以用</p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>objectdump -d -C libjvm.so &gt;&gt; jvmsodisass.dump   </li>
-</ol>
-<p>查找偏移地址  0x593045， 就是当时的执行的汇编，然后结合上下文，源码推测出问题的语句。</p>
-<p><strong>d.寄存器对应的内存的值</strong></p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>RAX=0x0000000000000000 is an unknown value  </li>
-<li>RBX=0x000000041a07d1e8 is an oop  </li>
-<li>{method}  </li>
-<li><ul>
-<li>klass: {other class}  </li>
-</ul>
-</li>
-<li>RCX=0x0000000000000000 is an unknown value  </li>
-<li>RDX=0x0000000040111800 is a thread  </li>
-<li>RSP=0x0000000041261b88 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RBP=0x000000004126bb20 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RSI=0x000000004126bb80 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RDI=0x00000000401119d0 is an unknown value  </li>
-<li>R8 =0x0000000040111c40 is an unknown value  </li>
-<li>R9 =0x00007f48fcc8b550: <offset 0xa85550> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
-<li>R10=0x00007f48f8ca7d41 is an Interpreter codelet  </li>
-<li>method entry point (kind = native)  [0x00007f48f8ca7ae0, 0x00007f48f8ca8320]  2112 bytes  </li>
-<li>R11=0x00007f48fc98f270: <offset 0x789270> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
-<li>R12=0x0000000000000000 is an unknown value  </li>
-<li>R13=0x000000041a07d1e8 is an oop  </li>
-<li>{method}  </li>
-<li><ul>
-<li>klass: {other class}  </li>
-</ul>
-</li>
-<li>R14=0x000000004126bb88 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>R15=0x0000000040111800 is a thread<br>jvm 会通过寄存器的值对找对应的对象，也是一个比较好的参考</li>
-</ol>
-<p><strong>e. 其他的信息</strong></p>
-<p>error 里面还有一些线程信息，还有当时内存映像信息，这些都可以作为分析的部分参考</p>
-<p>crash 报告可以大概的反应出一个当时的情况，特别是在没有core dump的时候，是比较有助于帮助分析的，但如果有core dump的话，最终还是core dump能快速准确的发现问题原因。
-来源： <a href="[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)">[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)</a> </p>
+        <h1 id="-java-ee-">影响Java EE性能的十大问题</h1>
+<p>本文作者是一名有10多年经验的高级系统架构师，他的主要专业领域是Java                          EE、中间件和JVM技术。他在性能优化和提升方面也有很深刻的见解，下面他将和大家分享一下常见的10个影响Java                          EE性能问题。</p>
+<p>1.缺乏正确的容量规划</p>
+<p>容量规划是一个全面的和发展的过程标准，预测当前和未来的IT环境容量需求。制定合理的容量规划不仅会确保和跟踪当前IT生产能力和稳定性，同时也会确保新项目以最小的风险部署到现有的生产环境中。硬件、中间件、JVM、调整等在项目部署之前就应该准备好。</p>
+<p>2.Java EE中间件环境规范不足</p>
+<p>“没有规矩，不成方圆”。第二个比较普遍的原因是Java EE中间件或者基础架构不规范。在项目初始，新平台上面没有制定合理的规范，导致系统稳定性差。这会增加客户成本，所以花时间去制定合理的Java                          EE中间件环境规范是必须的。这项工作应与初始容量规划迭代相结合。</p>
+<p><img src="http://www.uml.org.cn/j2ee/images/2014021051.png" alt=""></p>
+<p>3.Java虚拟机垃圾回收过度</p>
+<p>各位对“java.lang.OutOfMemoryError”这个错误信息是不是很熟悉呢？由于JVM的内存空间过度消耗（Java堆、本机堆等）而抛出的异常。</p>
+<p><img src="http://www.uml.org.cn/j2ee/images/2014021052.png" alt=""></p>
+<p>垃圾收集问题并不一定会表现为一个OOM条件，过度的垃圾收集可以理解成是JVM                          GC线程在短时间里进行轻微或超量收集集合数据而导致的JVM暂停时间很长和性能下降。可能有以下几个原因：</p>
+<p>1、与JVM的负载量和应用程序内存占用量相比，Java堆可能选择的太小。</p>
+<p>2、JVM GC策略使用不合理。</p>
+<p>3、应用程序静态或动态内存占用量太大，不适合在32位JVM上使用。</p>
+<p>4、JVM OldGen随着时间推移，泄漏越来越严重，而GC在几个小时或者几天后才发现。</p>
+<p>5、JVM PermGen空间(只有HotSpot VM）或本机堆随着时间推移会泄露是一个非常普遍的问题；OOM的错误往往是观察一段时间后，应用程序进行动态调动。</p>
+<p>6、YoungGen和OldGen的比例空间与你的应用程序不匹配。</p>
+<p>7、Java堆在32位的VM上太大，导致本机堆溢出，具体可以表现为OOM试着去链接一个新的Java                          EE应用程序、创建一个新的Java线程或者需要计算本地内存分配任务。</p>
+<p>建议：</p>
+<p>1、观察和深入理解JVM垃圾回收。启动GC，根据健康合理的评估来提供所有的数据。</p>
+<p>2、记住，GC方面的相关问题不会在开发中或者功能测试时发现，它需要在多用户高负载的测试环境下发现。</p>
+<p>4.与外部系统集成过多或过少</p>
+<p>导致Java EE性能差的第四个原因是高分布式系统，典型案例是电信IT环境。在这个环境中，一个中间件领域（例如，服务总线）很少会做所有的工作，而仅仅是把一些业务“委托”给其他部分，例如产品质量，客户资料和订单管理，到其他Java                          EE中间件平台或遗留系统中，如支持各种不同的负载类型和通信协议的大型机。</p>
+<p><img src="http://www.uml.org.cn/j2ee/images/2014021053.png" alt=""></p>
+<p>这样的外部系统调用意味着客户端的Java EE应用程序触发创建或重用套接字链接从外部系统中读写数据。根据业务流程的实施和实现可以配置成同步调用或异步调用。需要注意的是，响应时间会根据外部系统的稳定状况进行改变，所以通过适当的使用超时来保护Java                          EE应用程序和中间件也是非常重要的。</p>
+<p><img src="http://www.uml.org.cn/j2ee/images/2014021054.png" alt=""></p>
+<p>下面这3种情况是经常出现问题和性能降低的地方：</p>
+<p>1、同步和相继调用太多的外部系统。</p>
+<p>2、在Java EE客户端应用程序和外部系统之间链接超时，使数据丢失或者值太高导致客户端线程被卡住，从而导致多米拉效应。</p>
+<p>3、超时，但程序仍正常执行，可是中间件不处理这种奇怪的路径。</p>
+<p>最后，建议多进行负面测试，这意味着需要“人为”创造产生这些问题的条件，用来测试应用程序和中间件之间是如何处理外部系统错误。</p>
+<p>5.缺乏适当的数据库SQL调优和容量规划</p>
+<p>大家可能会对这一个感到惊奇：数据库问题。大多数Java EE企业系统是依赖关系型数据库处理复杂的业务流程。一个基础扎实稳固的数据库环境可以确保IT环境有规模的增长，来支持日益不断扩大的业务。</p>
+<p><img src="http://www.uml.org.cn/j2ee/images/2014021055.png" alt=""></p>
+<p>在实际中，与数据库相关的性能问题是很常见的。由于多数数据库事务处理都是由JDBC数据源执行的（包括关系持久化API，例如Hibernate）。而性能问题最初都会表现为线程阻塞。</p>
+<p>以下是我在10年的工作中，经常出现的关于数据库方面的问题（以Oracle数据库为例）：</p>
+<p>1、孤立的，长时间运行的SQL。主要表现为线程阻塞、SQL没有进行优化、缺少索引、非最佳的执行计划、返回大量数据集等等。</p>
+<p>2、表或行级数据锁定。当提交一个双阶段事务模型时（例如，臭名昭著的Oracle可疑事务）。Java                          EE容器可能会留下一些未处理的事务等待最后的提交或回滚，留下的数据锁能触发性能问题，直到最后的锁被移除。例如中间件断电或者服务器崩溃都可能引起这些情况发生。</p>
+<p>3、缺乏合理规范的数据库管理工具。例如Oracle里面的REDO logs，数据库数据文件等。磁盘空间不足，日志文件不旋转等都会触发较大的性能问题和断电情况。</p>
+<p>建议：</p>
+<p>1、合理的容量规划，包括负载和性能测试都是必不可少的，优化数据环境和及时发现问题。</p>
+<p>2、如果是使用Oracle数据库，确保DBA团队定期审查AWR报告，尤其是在上下关联的事件和根源分析过程中。</p>
+<p>3、使用JVM线程存储和AWR报告查明SQL运行缓慢的原因或者使用监控工具来做。</p>
+<p>4、加强“操作”方面的数据库环境（磁盘空间、数据文件、重做日志、表空间等）以适当的监视和报警。如果不这么做，会让客户端IT环境出现较多的断电情况和花许多时间进行故障调修。</p>
+<p>6.特定应用程序性能问题</p>
+<p>下面关注的是比较严重的Java EE应用程序问题。关于特定应用程序性能问题，总结了以下几个点：</p>
+<p>1、线程安全的代码问题</p>
+<p>2、通信API缺少超时设置</p>
+<p>3、I/O、JDBC或者关系型API资源管理问题</p>
+<p>4、缺乏适当的数据缓存</p>
+<p>5、数据缓存过度</p>
+<p>6、过多的日志记录</p>
+<p>7.Java EE中间件调优问题</p>
+<p>一般Java EE中间件都已经够用了，只是缺少必要的优化。大多数Java                          EE容器都能有多种方案供你的应用程序和业务进程选择。</p>
+<p>如果没有进行适当的调整和实践，那么Java EE容器可能会处于一种消极的状态。</p>
+<p>下图是视图和检查列表示例：</p>
+<p><img src="http://www.uml.org.cn/j2ee/images/2014021056.png" alt=""></p>
+<p>8.主动监控不足</p>
+<p>缺乏监控，并不会带来实际性能问题，但它会影响你对Java EE平台性能和健康状况的了解。最终，这个环境可以达到一个破发点，这可能会暴露出一些缺陷和问题(JVM的内存泄漏，等等)。</p>
+<p>以我的经验来看，如果一开始不进行监控，而是运行几个月或者几年后再进行，平台稳定性将大打折扣。</p>
+<p>也就是说，改善现有的环境永远都不会晚。下面是一些建议：</p>
+<p>1、复查现有Java EE环境监测能力和找到需改进的地方。</p>
+<p>2、监测方案应该尽可能的覆盖整个环境。</p>
+<p>3、监控方案应该符合容量规划进程。</p>
+<p>9.公共基础设施硬件饱和</p>
+<p>这个问题经常在有太多的Java EE中间件环境随着JVM进程被部署到现有硬件上面时看到。太多的JVM进程对有限的物理CPU核心来说是一个真正的程序性能杀手。另外，随着客户端业务的增长，硬件方面也需要再次考虑。</p>
+<p><img src="http://www.uml.org.cn/j2ee/images/2014021057.png" alt=""></p>
+<p>10.网络延迟</p>
+<p>最后一个影响性能问题的是网络，网络问题时不时的都会发生，如路由器、交换机和DNS服务器失败。更常见的是在一个高度分散的IT环境中定期或间歇性延迟。下面图片中的例子是一个位于同一区域的Weblogic集群通信与Oracle数据库服务器之间的延迟。</p>
+<p><img src="http://www.uml.org.cn/j2ee/images/2014021058.png" alt=""></p>
+<p>间歇或定期的延迟会触发一些重要的性能问题，以不同的方式影响Java EE应用程序。</p>
+<p>1、因为大量的fetch迭代（网络传入和传出），涉及大数据集的数据查询问题的应用会非常受网络延迟的影响</p>
+<p>2、应用程序在处理外部系统大数据负载（例如XML数据）时也会很受网络延迟的影响，会在发送和接收响应时产生巨大的响应间隔。</p>
+<p>3、Java EE容器复制过程（集群）也会受到影响，并且会让故障转移功能（如多播或单播数据包损失）处于风险中。</p>
+<p>JDBC行数据“预取”、XML数据压缩和数据缓存可以减少网络延迟。在设计一个新的网络拓扑时，应该仔细检查这种网络延迟问题。</p>
+<p>希望本文能够帮助您理解一些常见的性能问题和压力点，每个IT环境都是独一无二的，所以文中提到的问题不一定会是您遇到的，您可以把您遇到的问题拿出来和大家一起分享一下！</p>
 
       
     </div>
@@ -952,8 +831,8 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/性能/">性能</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/性能/" class="label label-success">性能</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-性能--影响JavaEE性能的十大问题/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-性能--影响JavaEE性能的十大问题" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -968,30 +847,164 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">一次Java内存溢出异常的分析过程</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20/">优化技巧分享：把内存消耗降低至原来的1</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-java-">一次Java内存溢出异常的分析过程</h1>
-<p>前些天，<a href="http://server.chinabyte.com/" target="_blank">服务器</a>上一个服务跑了一个多月突然当掉了。看了下日志，程序抛出了java.lang.OutOfMemoryError，之前也出现过同样的错误，服务跑了三个月内存溢出。出现这个异常，初步判断是程序有内存泄漏，接下来需要利用一些工具来分析具体原因。</p>
-<p>首先使用jdk自带的工具jmap转储(dump)java内存堆数据到本地文件中。jmap转储(dump)命令格式如下：</p>
-<p>jmap -dump:</p>
-<p>表示dump选项，表示需要dump的java应用程序的进程ID</p>
-<p>dump-options可以有以下三种参数，参数之间用逗号隔开：</p>
-<p>live，只dump活动的object，如果没有指定，表示dump所有object</p>
-<p>format=b，字节流格式</p>
-<p>file=，是转储文件的保存路径</p>
-<p>下面是dump命令的一个例子:</p>
-<p>jmap -dump:format=b,file=heap.bin 8023</p>
-<p>dump完成后，用Eclipse Memory Analyzer打开转储文件进行分析。Eclipse Memory Analyzer是一个java内存堆转储文件分析工具，可以生成内存分析报告(包括内存泄露Leak Suspects )。下面是分析完成后查看Top Consumers所看到的图表:</p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p>看到这两张图表，问题就比较明朗了。berkeley db中的数据结点com.sleepycat.je.tree.BIN占用了大量内存，导致内存溢出了。为了提高访问效率，berkeley db会缓存大量的结点，缓存大小限制可以在EnvironmentConfig设置，默认为jvm内存大小限制的60%。而这个应用程序中使用了5个EnvironmentImpl，并且都未单独设置缓存大小，总的缓存限制为jvm内存限制的300%(图表中BIN结点已经占用了94.55%的内存)，远远超出java的内存限制。随着服务的运行，缓存数据越来越多，最后导致内存溢出错误。因此，为每个EnvironmentImpl设置合适的缓存大小限制，就可以避免再次发生内存溢出。
-来源： <a href="[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)">[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)</a> </p>
+        <h1 id="-1-20">优化技巧分享：把内存消耗降低至原来的1/20</h1>
+<p><strong><a href="http://www.jobbole.com/" title="伯乐在线" target="_blank">伯乐</a>在线注：</strong>昨天在微博中推荐了英文原文，感谢@<a href="http://weibo.com/fwlx" title="NULL_文龙" target="_blank">NULL_文龙</a> 和@<a href="http://weibo.com/1077006667" title="战斗的那美克星人" target="_blank">战斗的那美克星人</a> 的热情。以下是译文。</p>
+<p>——————————–</p>
+<p>这是最近发生的又一起内存相关的事件了。这个案例是从一个最近的客户报告中提取出来，一个异常运行的应用在其产品中反复报告内存耗尽。</p>
+<p>这个症状是由我们的一个实验性功能发现，它主要用来监测某一类数据结构的使用情况。它提供了一个信号探针，结果会指向问题源代码的某一位置。为了保护客户的隐私，我们人为重建了该例子并保持它同原真实场景在技术层面的一致性。你可以免费在此处<a href="http://www.plumbr.eu/files/plumbr-optimization-sample.zip" target="_blank">下载到源码</a>。</p>
+<p>故事开始于一组从外界源加载进来的对象。同外部的信息交互是基于XML的接口，这本身并没什么大不了的，但事实上“基于XML的格式进行通讯”的实现细节被分散到了系统的每一个角落。 传入系统的文档是首先被转换成XMLBean实例，然后在整个系统范围内被使用，这中做法听起来有点傻。</p>
+<p>整个问题中最核心的部分是一个延迟加载的缓冲方案。缓存的对象是“Person”的实例：
+1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7 // Imports and methods removed to improve readability</p>
+<p>public</p>
+<p>class</p>
+<p>Person {</p>
+<p>private</p>
+<p>String id;</p>
+<p>private</p>
+<p>Date dateOfBirth;</p>
+<p>private</p>
+<p>String forename;</p>
+<p>private</p>
+<p>String surname;
+}</p>
+<p>你也许会说这才能消耗多少内存呢。但当我们揭开进一步的细节时，发现事情就变了味了。表面上根据设计，声称实现只用到的诸如上文提到的那样一些简单的类，但真实的情形是使用了基于模型生成的数据结构。使用的模型是诸如下面的这个简化的XSD片段。</p>
+<p>1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+7</p>
+<p>8
+9</p>
+<p>10
+11</p>
+<p>12
+13</p>
+<p>14
+ &lt;</p>
+<p>xs:schema</p>
+<p>targetNamespace</p>
+<p>=</p>
+<p>&quot;<a href="http://plumbr.eu" target="_blank">http://plumbr.eu</a>&quot;</p>
+<p>xmlns:xs</p>
+<p>=</p>
+<p>&quot;<a href="http://www.w3.org/2001/XMLSchema" target="_blank">http://www.w3.org/2001/XMLSchema</a>&quot;</p>
+<p>elementFormDefault</p>
+<p>=</p>
+<p>&quot;qualified&quot;</p>
+<p>&gt;</p>
+<p>&lt;</p>
+<p>xs:element</p>
+<p>name</p>
+<p>=</p>
+<p>&quot;person&quot;</p>
+<p>&gt;</p>
+<p>&lt;</p>
+<p>xs:complexType</p>
+<p>&gt;</p>
+<p>&lt;</p>
+<p>xs:sequence</p>
+<p>&gt;</p>
+<p>&lt;</p>
+<p>xs:element</p>
+<p>name</p>
+<p>=</p>
+<p>&quot;id&quot;</p>
+<p>type</p>
+<p>=</p>
+<p>&quot;xs:string&quot;</p>
+<p>/&gt;</p>
+<p>&lt;</p>
+<p>xs:element</p>
+<p>name</p>
+<p>=</p>
+<p>&quot;dateOfBirth&quot;</p>
+<p>type</p>
+<p>=</p>
+<p>&quot;xs:dateTime&quot;</p>
+<p>/&gt;</p>
+<p>&lt;</p>
+<p>xs:element</p>
+<p>name</p>
+<p>=</p>
+<p>&quot;forename&quot;</p>
+<p>type</p>
+<p>=</p>
+<p>&quot;xs:string&quot;</p>
+<p>/&gt;</p>
+<p>&lt;</p>
+<p>xs:element</p>
+<p>name</p>
+<p>=</p>
+<p>&quot;surname&quot;</p>
+<p>type</p>
+<p>=</p>
+<p>&quot;xs:string&quot;</p>
+<p>/&gt;</p>
+<p>&lt;/</p>
+<p>xs:sequence</p>
+<p>&gt;</p>
+<p>&lt;/</p>
+<p>xs:complexType</p>
+<p>&gt;</p>
+<p>&lt;/</p>
+<p>xs:element</p>
+<p>&gt;</p>
+<p>&lt;/</p>
+<p>xs:schema</p>
+<p>&gt;</p>
+<p>使用<a href="http://xmlbeans.apache.org/" target="_blank">XMLBeans</a>，开发者生成了该模型，并在真实的场景中使用。现在我们回到开始的这个缓存的方案上来，假设它设计初衷是为了支持最多1.3M Person类的实例，而我们实际却要塞进去同等数量的大家伙，这从根上就注定了失败。</p>
+<p>跑一组测试用例后，发现1.3M个基于XMLBean的生成的实例需要消耗大概1.5GB的堆空间。我们当时想这肯定可以做的更好。</p>
+<p>第一个改进是显而易见的，外部同系统内部集成的实现细节是不应该把影响传递给系统的每一个角落的。所以我们把缓存改成了使用简单的<a href="http://docs.oracle.com/javase/7/docs/api/java/util/HashMap.html" target="_blank"> java.util.HashMap<Long, Person></a>。ID是键，Person是值。我们发现内存的消耗立即降低到了214MB。但这还不能令我们满意。</p>
+<p>由于Map中的键是一个数，我们有十足的理由使用<a href="http://trove.starlight-systems.com/" target="_blank">Trove Collections</a>来进一步降低它的内存消耗。这在实现上的改动很快，我们只需把 <a href="http://docs.oracle.com/javase/7/docs/api/java/util/HashMap.html" target="_blank">HashMap </a>改成 <a href="http://trove4j.sourceforge.net/javadocs/gnu/trove/map/hash/TLongObjectHashMap.html" target="_blank">TLongObjectHashMap<Person></a> ，堆的消耗进一步降低到了143MB。</p>
+<p>活干到这个程度我们已经可以收工了，但是工程师的好奇心驱使我们要更进一步。不由自主的我们发现了系统的数据存在着大量的重复信息。例如Date Of Birth其实已经在ID中编码了，所以Date Of Birth可以直接从ID中得到，而不必使用额外的空间去它。</p>
+<p>经过改良，Person类现在变成了这个样子：
+1</p>
+<p>2
+3</p>
+<p>4
+5</p>
+<p>6
+ // Imports and methods removed to improve readability</p>
+<p>public</p>
+<p>class</p>
+<p>Person {</p>
+<p>private</p>
+<p>String id;</p>
+<p>private</p>
+<p>String forename;</p>
+<p>private</p>
+<p>String surname;</p>
+<p>}</p>
+<p>重新跑一边测试证实我们的改进的确有效，堆消耗降低到了93MB。但是我们还未满足。</p>
+<p>该应用在64位的机器上使用老的JDK6。默认情况下，这么做不能<a href="https://wikis.oracle.com/display/HotSpotInternals/CompressedOops" target="_blank">压缩普通对象</a>的指针的。通过参数”<a href="https://wikis.oracle.com/display/HotSpotInternals/CompressedOops" target="_blank">-XX:UseCompressedOops</a>“切换到压缩模式使我们获得了额外的收获，现在我们的内存消耗降低到了73MB。</p>
+<p><a href="http://cdn2.jobbole.com/2013/06/comparing-heap-consumption.png" title="comparing-heap-consumption" target="_blank"><img src="&quot;comparing-heap-consumption&quot;" alt=""></a></p>
+<p>当然，我们还能走的更远。比如基于键值建立B-tree，但这已经开始影响到了代码的可读性，所以我们决定到此为止。降低21.5倍的堆内存应该已经是一个足够好的结果了。</p>
+<p><strong>让我们在重复一下学到了什么</strong></p>
+<ul>
+<li>别把同外部模块的整合影响到系统的每一个角落</li>
+<li>冗余的数据可能带来开销。在可能的情况下尽量消除它</li>
+<li>基本数据类型是你最经常打交道的朋友，务必知道些关于它们的工具，如果还没玩过<a href="http://trove.starlight-systems.com/" target="_blank">Trove</a>请立刻开始吧</li>
+<li>JVM自带的优化技术不可忽视</li>
+</ul>
+<p>如果你对这个实验很好奇，请在此处<a href="http://www.plumbr.eu/files/plumbr-optimization-sample.zip" target="_blank">下载相关的代码</a>。使用到的的测量工具和其具体描述可以在这篇<a href="http://plumbr.eu/blog/how-much-memory-do-i-need-part-3-measure-dont-guess" target="_blank">博文</a>找到。</p>
+<p>原文链接： <a href="http://plumbr.eu/blog/reducing-memory-consumption-by-20x" target="_blank">Nikita Salnikov-Tarnovski</a> ，编译：感谢@<a href="http://weibo.com/fwlx" title="NULL_文龙" target="_blank">NULL_文龙</a> 的热心翻译</p>
+<p>译文链接：<a href="http://blog.jobbole.com/40666/" target="_blank"><a href="http://blog.jobbole.com/40666/">http://blog.jobbole.com/40666/</a></a></p>
 
       
     </div>
@@ -1001,8 +1014,8 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/优化/">优化</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/优化/" class="label label-success">优化</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-优化--优化技巧分享：把内存消耗降低至原来的1-20" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1017,39 +1030,269 @@ sun.jvm.hotspot.debugger.DebuggerException: sun.jvm.hotspot.debugger.DebuggerExc
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/">内存离线分析——jhat命令(Java Heap Analyse Tool)</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--JAVAHOTSPOTVM参数大全/">JAVA HOTSPOT VM参数大全</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--JAVAHOTSPOTVM参数大全/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-jhat-java-heap-analyse-tool-">内存离线分析——jhat命令(Java Heap Analyse Tool)</h1>
-<p><strong>jhat命令 -- Java Head Analyse Tool</strong>
-用途：是用来分析java堆的命令，可以将堆中的对象以html的形式显示出来，包括对象的数量，大小等等，并支持对象查询语言
-第一步：导出堆
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290844064DW4R.gif" alt="">
-第二步：分析堆文件
-<img src="http://hi.csdn.net/attachment/201011/27/0_12908442022NhZ.gif" alt="">
-第三步：查看html
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290844795NW5d.gif" alt=""></p>
-<p>有时你dump出来的堆很大，在启动时会报堆空间不足的错误，可以使用如下参数：
-<strong>jhat -J-Xmx512m <heap dump file>
-对于jhat启动后显示的html页面中功能：
-（1）显示出堆中所包含的所有的类
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290845808988Q.gif" alt="">
-（2）从根集能引用到的对象
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290846435q4Lt.gif" alt="">
-（3）显示平台包括的所有类的实例数量
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290846620I6qt.gif" alt="">
-（4）堆实例的分布表
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290846932gSmq.gif" alt=""></strong></p>
-<p><strong>（5）执行对象查询语句
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290847142bSbC.gif" alt="">
-更多关于对象查询语言的信息，见这篇文章：
-<a href="http://blog.csdn.net/gtuu0123/archive/2010/11/27/6039592.aspx" target="_blank">http://blog.csdn.net/gtuu0123/archive/2010/11/27/6039592.aspx</a></strong>
-done</p>
+        <h1 id="java-hotspot-vm-">JAVA HOTSPOT VM参数大全</h1>
+<p><a href="http://www.javaeye.com/" target="_blank">首页</a> <a href="http://www.javaeye.com/news" target="_blank">新闻</a> <a href="http://www.javaeye.com/forums" target="_blank">论坛</a> <a href="http://www.javaeye.com/ask" target="_blank">问答</a> <a href="http://www.javaeye.com/blogs" target="_blank">博客</a> <a href="http://www.javaeye.com/job" target="_blank">招聘</a> <a href="http://longdick.javaeye.com/blog/472477#" target="_blank">更多 ▼</a></p>
+<p><a href="http://www.javaeye.com/wiki" target="_blank">专栏</a> <a href="http://www.javaeye.com/groups" target="_blank">圈子</a> <a href="http://www.javaeye.com/search" target="_blank">搜索</a></p>
+<p><a href="http://longdick.javaeye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.javaeye.com/all" target="_blank">我的应用</a> <a href="http://longdick.javaeye.com/login" target="_blank">登录</a> <a href="http://longdick.javaeye.com/signup" target="_blank">注册</a></p>
+<h1 id="-http-longdick-javaeye-com-"><a href="http://longdick.javaeye.com/" target="_blank">幸福的懦夫</a></h1>
+<p>永久域名 <a href="http://longdick.javaeye.com/" target="_blank"><a href="http://longdick.javaeye.com/">http://longdick.javaeye.com/</a></a></p>
+<p><a href="http://longdick.javaeye.com/blog/472477#" target="_blank">2顶</a>
+<a href="http://longdick.javaeye.com/blog/472477#" target="_blank">0踩</a></p>
+<p><a href="http://longdick.javaeye.com/blog/472881" title="Freaker与妖人" target="_blank">Freaker与妖人</a> | <a href="http://longdick.javaeye.com/blog/468368" title="图解JVM在内存中申请对象及垃圾回收流程" target="_blank">图解JVM在内存中申请对象及垃圾回收流程</a></p>
+<p>2009-09-20</p>
+<h3 id="-java-hotspot-vm-http-longdick-javaeye-com-blog-472477-"><a href="http://longdick.javaeye.com/blog/472477" target="_blank">JAVA HOTSPOT VM参数大全</a></h3>
+<p>关键字: hotspot vm 参数
+//<em>/</em></p>
+<p>/*  转载请注明作者longdick    <a href="http://longdick.javaeye.com" target="_blank">http://longdick.javaeye.com</a></p>
+<p>/*</p>
+<p>/*/</p>
+<p>（本文JDK版本6.0）</p>
+<p>SUN的JDK版本从1.3.1开始使用HotSpot虚拟机技术。
+HotSpot是较新的Java虚拟机技术，用来代替JIT（Just in Time）技术，可以大大提高Java运行的性能。
+Java原先是把源代码编译为字节码在虚拟机执行，这样执行速度较慢。而该技术将常用的部分代码编译为本地（原生，native）代码，这样
+显著提高了性能。
+用于服务器版和标准版的HotSpot有所不同。
+其他的Java虚拟机也有类似的技术。
+HotSpot JVM 参数可以分为标准参数（standard options）和非标准参数（non-standard options）。
+标准参数相对稳定，在JDK未来的版本里不会有太大的改动。
+非标准参数则有因升级JDK而改变的可能。
+<strong>标准参数：</strong>
+<strong>-client</strong>
+  使用Java HotSpot 客户端版VM。
+<strong>-server</strong>
+  使用Java HotSpot 服务器版VM。如果是64位的JDK，默认只有server版，所以以上两个参数对64位版本JDK无效。
+<strong>-agentlib:</strong> <em>libname</em> [=options]
+  加载本地代理函数库, e.g.
+  -agentlib:jdwp=help
+<strong>-agentpath</strong> :<em>pathname</em> [=options]
+  使用给定的路径加载本地代理库。
+<strong>-classpath</strong> <em>classpath</em>
+<strong>-cp</strong> <em>classpath</em>
+  不用说了。
+<strong>-Dproperty</strong> =value
+  设置一个系统属性。
+<strong>-d32
+-d64</strong>
+  要求程序在32位或64位下跑，未来这个参数可能有变。
+-<strong>enableassertions</strong> [:<package name>&quot;...&quot; | :<class name> ]
+-<strong>ea</strong> [:<package name>&quot;...&quot; | :<class name> ]
+  开启断言。
+<strong>-disableassertions</strong> [:<package name>&quot;...&quot; | :<class name> ]
+<strong>-da</strong> [:<package name>&quot;...&quot; | :<class name> ]
+  关闭断言。
+<strong>-enablesystemassertions
+-</strong> <strong>esa</strong>
+  启动所有系统类的断言。</p>
+<p><strong>-disablesystemassertions
+-dsa</strong>
+  关闭所有系统类的断言。
+<strong>-jar</strong>
+  这个也没什么说的。
+<strong>-javaagent</strong> :<em>jarpath</em> [=options]
+  加载Java 程序语言代理
+<strong>-verbose:class</strong>
+  输出每个加载的类详细信息。
+<strong>-verbose:gc</strong>
+  输出GC的详细信息。
+<strong>-verbose:jni</strong>
+  输出本地方法接口的调用信息。
+<strong>-version
+-help
+-?</strong>
+  不用说了。
+<strong>-X</strong>
+  显示可用的非标准参数
+<strong>非标准参数：</strong>
+<strong>-Xint</strong>
+  以解释模式运行。JVM不会使用HotSpot的新特性，不会将部分常用代码编译为本地代码，所有代码都以字节码的方式解释运行。你可以理解为使用JDK1.3.1以前的JIT方式运行程序。
+<strong>-Xbatch</strong>
+  不使用后台编译。
+<strong>-Xbootclasspath:bootclasspath</strong>
+  使用bootstrap classloader 加载指定路径的class或jar，这是种完全覆盖默认系统类加载的方案，慎用。
+<strong>-Xbootclasspath/a:bootclasspath</strong>
+  将指定的classpath追加到默认的bootclasspath的后面加载
+<strong>-Xbootclasspath/p:bootclasspath</strong>
+  将指定的classpath追加到默认的bootclasspath的前面加载
+<strong>-Xcheck:jni</strong>
+  在调用JNI函数时做额外的检查。这个参数会降低JVM的执行性能。
+<strong>-Xfuture</strong>
+  执行严格的class文件格式检查，不加这个参数，默认使用JDK1.1./<em> 版本的class格式检查方法。
+<strong>-Xnoclassgc</strong>
+  禁用class垃圾收集。
+<strong>-Xincgc</strong>
+  开启增量垃圾收集机制。默认为关闭。增量垃圾收集能减少因垃圾收集而引起的程序中断，它会在程序运行期间不定期地以并发的方式运行，在运行期间不会引起中断但是会减少分配给程序的cpu资源。
+<strong>-Xloggc:file</strong>
+  GC详情日志。效果如-verbose:gc ，不过这个可以输出到一个文件。除了-verbose:gc包含的信息，还有显示发生的时间。 文件可以是远程的，但是考虑到网络延迟会引起JVM中断，一般建议使用本地文件，
+<strong>-Xms</strong>
+  分配的堆空间初始值：
+  -Xms6291456
+  -Xms6144k
+  -Xms6m
+<strong>-Xmx</strong>
+  分配的堆空间最大值：
+  -Xmx83886080
+  -Xmx81920k
+  -Xmx80m
+<strong>-Xprof</strong>
+  在运行程序时给出分析数据。适用于开发环境，不适用于生产环境。
+<strong>-Xrs</strong>
+  减少JVM的操作系统信号的使用量。
+<strong>-Xss</strong>
+  线程栈内存。
+<em>*非标准-XX参数</em></em></p>
+<p>有三种-XX参数的形式：</p>
+<ul>
+<li>Boolean 型的参数 开启如 -XX:+<option> 关闭如 -XX:-<option>.</li>
+<li>Numeric 型参数 -XX:<option>=<number>. 数字可以包括单位 &#39;m&#39; 或 &#39;M&#39; 代表MB, &#39;k&#39; or &#39;K&#39; 代表KB， &#39;g&#39; or &#39;G&#39; 代表 GB ，没有单位意味着bytes。</li>
+<li>String 参数 -XX:<option>=<string></li>
+</ul>
+<p>以下是-XX参数列表，本来想都翻译过来，但是发现一些技术术语如果硬是翻译可能会导致词不达意，因此大部分描述都保持原文。</p>
+<p>参数名和默认值
+ 描述 -XX:-AllowUserSignalHandlers 允许使用用户自定义的信号处理器 (只对应Solaris和Linux) -XX:AltStackSize=16384 修改栈容量 (单位 Kb) (对应Solaris, JDK 5.0以后弃用) -XX:-DisableExplicitGC 禁止手动调用System.gc() -XX:+FailOverToOldVerifier 如果新的类型校验器验证失败使用旧版本的类型校验器 (开始于JDK6.) -XX:+HandlePromotionFailure The youngest generation collection does not require a guarantee of full promotion of all live objects. (Introduced in 1.4.2 update 11) [5.0 and earlier: false.] -XX:+MaxFDLimit 将文件描述符加到最大 (对应Solaris) -XX:PreBlockSpin=10 Spin count variable for use with -XX:+UseSpinning. Controls the maximum spin iterations allowed before entering operating system thread synchronization code. (Introduced in 1.4.2.) -XX:-RelaxAccessControlCheck 放宽类型校验机的准入控制(JDK6) -XX:+ScavengeBeforeFullGC 在full GC之前先做年轻代GC (开始于JDK1.4.1.) -XX:+UseAltSigs Use alternate signals instead of SIGUSR1 and SIGUSR2 for VM internal signals. (Introduced in 1.3.1 update 9, 1.4.1. Relevant to Solaris only.) -XX:+UseBoundThreads Bind user level threads to kernel threads. (Relevant to Solaris only.) -XX:-UseConcMarkSweepGC 使用并发的mark-sweep GC收集年老代 (始于JDK1.4.1) -XX:+UseGCOverheadLimit 使用一种限制VM做GC操作的时间所占比例过高的策略 (始于JDK6.) -XX:+UseLWPSynchronization 使用轻量级进程同步替代线程同步 (始于JDK1.4.0. Solaris相关) -XX:-UseParallelGC 使用并发平行GC(始于JDK1.4.1) -XX:-UseParallelOldGC 使用并发平行GC做 full GC. (始于JDK5.0 update 6.) -XX:-UseSerialGC 使用串行GC (始于JDK5.0.) -XX:-UseSpinning Enable naive spinning on Java monitor before entering operating system thread synchronizaton code. (Relevant to 1.4.2 and 5.0 only.) [1.4.2, multi-processor Windows platforms: true] -XX:+UseTLAB Use thread-local object allocation (Introduced in 1.4.0, known as UseTLE prior to that.) [1.4.2 and earlier, x86 or with -client: false] -XX:+UseSplitVerifier Use the new type checker with StackMapTable attributes. (Introduced in 5.0.)[5.0: false] -XX:+UseThreadPriorities Use native thread priorities. -XX:+UseVMInterruptibleIO Thread interrupt before or with EINTR for I/O operations results in OS_INTRPT. (Introduced in 6. Relevant to Solaris only.)</p>
+<p>参数名和默认值 描述 -XX:+AggressiveOpts Turn on point performance compiler optimizations that are expected to be default in upcoming releases. (Introduced in 5.0 update 6.) -XX:CompileThreshold=10000 Number of method invocations/branches before compiling [-client: 1,500] -XX:LargePageSizeInBytes=4m Sets the large page size used for the Java heap. (Introduced in 1.4.0 update 1.) [amd64: 2m.] -XX:MaxHeapFreeRatio=70 Maximum percentage of heap free after GC to avoid shrinking. -XX:MaxNewSize=size Maximum size of new generation (in bytes). Since 1.4, MaxNewSize is computed as a function of NewRatio. [1.3.1 Sparc: 32m; 1.3.1 x86: 2.5m.] -XX:MaxPermSize=64m Size of the Permanent Generation.  [5.0 and newer: 64 bit VMs are scaled 30% larger; 1.4 amd64: 96m; 1.3.1 -client: 32m.] -XX:MinHeapFreeRatio=40 Minimum percentage of heap free after GC to avoid expansion. -XX:NewRatio=2 Ratio of new/old generation sizes. [Sparc -client: 8; x86 -server: 8; x86 -client: 12.]-client: 4 (1.3) 8 (1.3.1+), x86: 12] -XX:NewSize=2.125m Default size of new generation (in bytes) [5.0 and newer: 64 bit VMs are scaled 30% larger; x86: 1m; x86, 5.0 and older: 640k] -XX:ReservedCodeCacheSize=32m Reserved code cache size (in bytes) - maximum code cache size. [Solaris 64-bit, amd64, and -server x86: 48m; in 1.5.0_06 and earlier, Solaris 64-bit and and64: 1024m.] -XX:SurvivorRatio=8 Ratio of eden/survivor space size [Solaris amd64: 6; Sparc in 1.3.1: 25; other Solaris platforms in 5.0 and earlier: 32] -XX:TargetSurvivorRatio=50 Desired percentage of survivor space used after scavenge. -XX:ThreadStackSize=512 Thread Stack Size (in Kbytes). (0 means use default stack size) [Sparc: 512; Solaris x86: 320 (was 256 prior in 5.0 and earlier); Sparc 64 bit: 1024; Linux amd64: 1024 (was 0 in 5.0 and earlier); all others 0.] -XX:+UseBiasedLocking Enable biased locking. For more details, see this <a href="http://java.sun.com/performance/reference/whitepapers/tuning.html#section4.2.5" target="_blank">tuning example</a> . (Introduced in 5.0 update 6.) [5.0: false] -XX:+UseFastAccessorMethods Use optimized versions of Get<Primitive>Field. -XX:-UseISM Use Intimate Shared Memory. [Not accepted for non-Solaris platforms.] For details, see <a href="http://java.sun.com/docs/hotspot/ism.html" target="_blank">Intimate Shared Memory</a> . -XX:+UseLargePages Use large page memory. (Introduced in 5.0 update 5.) For details, see <a href="http://java.sun.com/javase/technologies/hotspot/largememory.jsp" target="_blank">Java Support for Large Memory Pages</a> . -XX:+UseMPSS Use Multiple Page Size Support w/4mb pages for the heap. Do not use with ISM as this replaces the need for ISM. (Introduced in 1.4.0 update 1, Relevant to Solaris 9 and newer.) [1.4.1 and earlier: false] -XX:+StringCache Enables caching of commonly allocated strings. -XX:AllocatePrefetchLines=1 Number of cache lines to load after the last object allocation using prefetch instructions generated in JIT compiled code. Default values are 1 if the last allocated object was an instance and 3 if it was an array. -XX:AllocatePrefetchStyle=1 Generated code style for prefetch instructions.
+0 - no prefetch instructions are generate/<em>d/</em>,
+1 - execute prefetch instructions after each allocation,
+2 - use TLAB allocation watermark pointer to gate when prefetch instructions are executed.</p>
+<p>参数名和默认值 描述 -XX:-CITime Prints time spent in JIT Compiler. (Introduced in 1.4.0.) -XX:ErrorFile=./hs_err_pid<pid>.log If an error occurs, save the error data to this file. (Introduced in 6.) -XX:-ExtendedDTraceProbes Enable performance-impacting <a href="http://java.sun.com/javase/6/docs/technotes/guides/vm/dtrace.html" target="_blank">dtrace</a> probes. (Introduced in 6. Relevant to Solaris only.) -XX:HeapDumpPath=./java_pid<pid>.hprof Path to directory or filename for heap dump. <em>Manageable</em> . (Introduced in 1.4.2 update 12, 5.0 update 7.) -XX:-HeapDumpOnOutOfMemoryError Dump heap to file when java.lang.OutOfMemoryError is thrown. <em>Manageable</em> . (Introduced in 1.4.2 update 12, 5.0 update 7.) -XX:OnError=&quot;<cmd args>;<cmd args>&quot; Run user-defined commands on fatal error. (Introduced in 1.4.2 update 9.) -XX:OnOutOfMemoryError=&quot;<cmd args>;</p>
+<p><cmd args>&quot; Run user-defined commands when an OutOfMemoryError is first thrown. (Introduced in 1.4.2 update 12, 6) -XX:-PrintClassHistogram Print a histogram of class instances on Ctrl-Break. <em>Manageable</em> . (Introduced in 1.4.2.) The <a href="http://java.sun.com/javase/6/docs/technotes/tools/share/jmap.html" target="_blank">jmap -histo</a> command provides equivalent functionality. -XX:-PrintConcurrentLocks Print java.util.concurrent locks in Ctrl-Break thread dump. <em>Manageable</em> . (Introduced in 6.) The <a href="http://java.sun.com/javase/6/docs/technotes/tools/share/jstack.html" target="_blank">jstack -l</a> command provides equivalent functionality. -XX:-PrintCommandLineFlags Print flags that appeared on the command line. (Introduced in 5.0.) -XX:-PrintCompilation Print message when a method is compiled. -XX:-PrintGC Print messages at garbage collection. <em>Manageable</em> . -XX:-PrintGCDetails Print more details at garbage collection. <em>Manageable</em> . (Introduced in 1.4.0.) -XX:-PrintGCTimeStamps Print timestamps at garbage collection. <em>Manageable</em> (Introduced in 1.4.0.) -XX:-PrintTenuringDistribution Print tenuring age information. -XX:-TraceClassLoading Trace loading of classes. -XX:-TraceClassLoadingPreorder Trace all classes loaded in order referenced (not loaded). (Introduced in 1.4.2.) -XX:-TraceClassResolution Trace constant pool resolutions. (Introduced in 1.4.2.) -XX:-TraceClassUnloading Trace unloading of classes. -XX:-TraceLoaderConstraints Trace recording of loader constraints. (Introduced in 6.) -XX:+PerfSaveDataToFile Saves jvmstat binary data on exit.</p>
+<p>参考资料：</p>
+<p><a href="http://java.sun.com/javase/6/docs/technotes/tools/windows/java.html" target="_blank">http://java.sun.com/javase/6/docs/technotes/tools/windows/java.html</a></p>
+<p><a href="http://java.sun.com/javase/technologies/hotspot/vmoptions.jsp" target="_blank">http://java.sun.com/javase/technologies/hotspot/vmoptions.jsp</a></p>
+<ul>
+<li><a href="http://dl.javaeye.com/upload/attachment/148685/089c5f6b-6e67-3782-99d4-cef9ec353694.gif" target="_blank"><img src="&quot;点击查看原始大小图片&quot;" alt=""></a></li>
+<li><p>大小: 23.6 KB</p>
+</li>
+<li><p><a href="http://longdick.javaeye.com/blog/472477#" target="_blank">查看图片附件</a>
+<a href="http://longdick.javaeye.com/blog/472477#"><strong>2</strong>
+顶</a><a href="http://longdick.javaeye.com/blog/472477#"><strong>0</strong>
+踩</a></p>
+</li>
+</ul>
+<p><a href="http://longdick.javaeye.com/blog/472881" title="Freaker与妖人" target="_blank">Freaker与妖人</a> | <a href="http://longdick.javaeye.com/blog/468368" title="图解JVM在内存中申请对象及垃圾回收流程" target="_blank">图解JVM在内存中申请对象及垃圾回收流程</a></p>
+<ul>
+<li>20:06</li>
+<li>浏览 (447)</li>
+<li><a href="http://longdick.javaeye.com/blog/472477#comments" target="_blank">评论</a> (0)</li>
+<li>分类: <a href="http://longdick.javaeye.com/category/73063" target="_blank">JVM</a></li>
+<li><a href="http://www.javaeye.com/wiki/topic/472477" target="_blank">相关推荐</a></li>
+</ul>
+<h3 id="-">评论</h3>
+<p><a href=""></a></p>
+<h3 id="-">发表评论</h3>
+<p>您还没有登录，请<a href="http://longdick.javaeye.com/login" target="_blank">登录</a>后发表评论(快捷键 Alt+S / Ctrl+Enter)</p>
+<p><a href="http://longdick.javaeye.com/" target="_blank"><img src="&quot;longdick的博客: 幸福的懦夫&quot;" alt="longdick的博客"></a></p>
+<p>longdick</p>
+<ul>
+<li>浏览: 52771 次</li>
+<li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
+<li>来自: 0</li>
+<li><img src="" alt=""></li>
+<li><a href="http://longdick.javaeye.com/blog/profile" target="_blank">详细资料</a> <a href="http://longdick.javaeye.com/blog/guest_book" target="_blank">留言簿</a></li>
+</ul>
+<h3 id="-">搜索本博客</h3>
+<h3 id="-http-longdick-javaeye-com-blog-user_visits-">最近访客 <a href="http://longdick.javaeye.com/blog/user_visits" target="_blank">&gt;&gt;更多访客</a></h3>
+<p><a href="http://hqm1988.javaeye.com/" target="_blank"><img src="&quot;hqm1988的博客: &quot;" alt="hqm1988的博客"></a></p>
+<p><a href="http://hqm1988.javaeye.com/" target="_blank">hqm1988</a></p>
+<p><a href="http://cesc.javaeye.com/" target="_blank"><img src="&quot;cesc的博客: &quot;" alt="cesc的博客"></a></p>
+<p><a href="http://cesc.javaeye.com/" target="_blank">cesc</a>
+<a href="http://shirennostone.javaeye.com/" target="_blank"><img src="&quot;shirennostone的博客: &quot;" alt="shirennostone的博客"></a></p>
+<p><a href="http://shirennostone.javaeye.com/" target="_blank">shirennostone</a></p>
+<p><a href="http://etheme.javaeye.com/" target="_blank"><img src="&quot;etheme的博客: &quot;" alt="etheme的博客"></a></p>
+<p><a href="http://etheme.javaeye.com/" target="_blank">etheme</a></p>
+<h3 id="-">博客分类</h3>
+<ul>
+<li><a href="http://longdick.javaeye.com/" target="_blank">全部博客 (75)</a></li>
+<li><a href="http://longdick.javaeye.com/category/27870" target="_blank">java全文检索 (4)</a></li>
+<li><a href="http://longdick.javaeye.com/category/29876" target="_blank">开心最重要 (5)</a></li>
+<li><a href="http://longdick.javaeye.com/category/30468" target="_blank">Hibernate (2)</a></li>
+<li><a href="http://longdick.javaeye.com/category/32248" target="_blank">DWR (2)</a></li>
+<li><a href="http://longdick.javaeye.com/category/33473" target="_blank">Ubuntu (2)</a></li>
+<li><a href="http://longdick.javaeye.com/category/44947" target="_blank">杂项 (5)</a></li>
+<li><a href="http://longdick.javaeye.com/category/45536" target="_blank">Oracle (4)</a></li>
+<li><a href="http://longdick.javaeye.com/category/46583" target="_blank">Ajax (4)</a></li>
+<li><a href="http://longdick.javaeye.com/category/73061" target="_blank">spring (3)</a></li>
+<li><a href="http://longdick.javaeye.com/category/73062" target="_blank">应用服务器 (3)</a></li>
+<li><a href="http://longdick.javaeye.com/category/73063" target="_blank">JVM (8)</a></li>
+<li><a href="http://longdick.javaeye.com/category/73064" target="_blank">webservice (1)</a></li>
+<li><a href="http://longdick.javaeye.com/category/73065" target="_blank">IDE (1)</a></li>
+<li><a href="http://longdick.javaeye.com/category/73066" target="_blank">模式 (1)</a></li>
+<li><a href="http://longdick.javaeye.com/category/73067" target="_blank">简单心情 (17)</a></li>
+<li><a href="http://longdick.javaeye.com/category/77407" target="_blank">OSGI (1)</a></li>
+<li><a href="http://longdick.javaeye.com/category/77536" target="_blank">版本管理 (1)</a></li>
+<li><a href="http://longdick.javaeye.com/category/78703" target="_blank">jms (2)</a></li>
+<li><a href="http://longdick.javaeye.com/category/81824" target="_blank">uml (7)</a></li>
+<li><a href="http://longdick.javaeye.com/category/85447" target="_blank">java 基础 (7)</a></li>
+<li><a href="http://longdick.javaeye.com/category/86210" target="_blank">毋忘在莒 (0)</a><h3 id="-">我的相册</h3>
+</li>
+</ul>
+<p><a href="http://longdick.javaeye.com/album" target="_blank"><img src="" alt=""></a>HiYrh.jpg
+<a href="http://longdick.javaeye.com/album" target="_blank">共 3 张</a></p>
+<h3 id="-http-longdick-javaeye-com-blog-guest_book-">我的留言簿 <a href="http://longdick.javaeye.com/blog/guest_book" target="_blank">&gt;&gt;更多留言</a></h3>
+<ul>
+<li>楼主，你对JVM了解很深吧，我们能否联系一下，也许能合作哦！
+-- by <a href="http://longdick.javaeye.com/blog/guest_book#12981" target="_blank">linux1689</a></li>
+<li>漂过
+-- by <a href="http://longdick.javaeye.com/blog/guest_book#12953" target="_blank">suitmefine</a></li>
+<li><p>好厉害！
+-- by <a href="http://longdick.javaeye.com/blog/guest_book#11806" target="_blank">poson</a></p>
+<h3 id="-">其他分类</h3>
+</li>
+<li><p><a href="http://longdick.javaeye.com/blog/favorite" target="_blank">我的收藏</a> (44)</p>
+</li>
+<li><a href="http://longdick.javaeye.com/blog/topic" target="_blank">我的论坛主题贴</a> (15)</li>
+<li><a href="http://longdick.javaeye.com/blog/post" target="_blank">我的所有论坛贴</a> (12)</li>
+<li><a href="http://longdick.javaeye.com/blog/article" target="_blank">我的精华良好贴</a> (0)</li>
+</ul>
+<h3 id="-">最近加入圈子</h3>
+<h3 id="-">存档</h3>
+<ul>
+<li><a href="http://longdick.javaeye.com/blog/monthblog/2010-04" target="_blank">2010-04</a> (1)</li>
+<li><a href="http://longdick.javaeye.com/blog/monthblog/2009-11" target="_blank">2009-11</a> (3)</li>
+<li><a href="http://longdick.javaeye.com/blog/monthblog/2009-10" target="_blank">2009-10</a> (11)</li>
+<li><a href="http://longdick.javaeye.com/blog/monthblog_more" target="_blank">更多存档...</a></li>
+</ul>
+<h3 id="-">最新评论</h3>
+<ul>
+<li><a href="http://longdick.javaeye.com/blog/487640#comments" title="人人都是领域专家-类图关系说明" target="_blank">人人都是领域专家-类图关 ...</a>
+这个系列写得非常得好 楼主辛苦
+-- by <a href="http://luedipiaofeng.javaeye.com/" target="_blank">luedipiaofeng</a></li>
+<li><a href="http://longdick.javaeye.com/blog/483772#comments" title="人人都是领域专家-用例图" target="_blank">人人都是领域专家-用例图</a>
+非常清晰明了，非常精彩。
+-- by <a href="http://ziwen.javaeye.com/" target="_blank">ziwen</a></li>
+<li><a href="http://longdick.javaeye.com/blog/453615#comments" title="最简实例说明wait、notify、notifyAll的使用方法" target="_blank">最简实例说明wait、notify ...</a>
+感谢楼主啊！！讲得非常到位，解决了我的大问题！！！
+-- by <a href="http://itpentiuman.javaeye.com/" target="_blank">itpentiuman</a></li>
+<li><a href="http://longdick.javaeye.com/blog/453615#comments" title="最简实例说明wait、notify、notifyAll的使用方法" target="_blank">最简实例说明wait、notify ...</a>
+终于弄明白 wait notify notifyAll这三个方法的使用规则了
+-- by <a href="http://qingyunzh.javaeye.com/" target="_blank">qingyunzh</a></li>
+<li><p><a href="http://longdick.javaeye.com/blog/504864#comments" title="神秘的数字9" target="_blank">神秘的数字9</a>
+quote=&quot;nethibernate&quot;]1楼nb, 崇拜一下 ...
+-- by <a href="http://sunwenran.javaeye.com/" target="_blank">sunwenran</a></p>
+<h3 id="-">评论排行榜</h3>
+</li>
+<li><p><a href="http://longdick.javaeye.com/blog/483185" title="给思维做体操的谜题--光有IQ还不够（二）" target="_blank">给思维做体操的谜题--光有IQ还不够（二）</a></p>
+</li>
+<li><a href="http://longdick.javaeye.com/blog/468368" title="图解JVM在内存中申请对象及垃圾回收流程" target="_blank">图解JVM在内存中申请对象及垃圾回收流程</a></li>
+<li><a href="http://longdick.javaeye.com/blog/461144" title="完美解决甲醛问题的终极方案--只要人人都献出一点气，世界将变成更美好人间" target="_blank">完美解决甲醛问题的终极方案--只要人人都献 ...</a></li>
+<li><a href="http://longdick.javaeye.com/blog/483772" title="人人都是领域专家-用例图" target="_blank">人人都是领域专家-用例图</a></li>
+<li><p><a href="http://longdick.javaeye.com/blog/474764" title="三种GC大揭秘" target="_blank">三种GC大揭秘</a></p>
+</li>
+<li><p><a href="http://longdick.javaeye.com/rss" target="_blank"><img src="" alt="Rss"></a></p>
+</li>
+<li><a href="http://fusion.google.com/add?feedurl=http://longdick.javaeye.com/rss" target="_blank"><img src="" alt="Rss_google"></a></li>
+<li><a href="http://www.xianguo.com/subscribe.php?url=http://longdick.javaeye.com/rss" target="_blank"><img src="" alt="Rss_xianguo"></a></li>
+<li><a href="http://www.google.com/search?hl=zh-CN&amp;q=RSS" target="_blank">[什么是RSS?]</a>
+声明：JavaEye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
+© 2003-2010 JavaEye.com. All rights reserved. 上海炯耐计算机软件有限公司 [ 沪ICP备05023328号 ]</li>
+</ul>
 
       
     </div>
@@ -1059,8 +1302,8 @@ done</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-30 13:27:37"datetime="2014-03-30 13:27:37"> mar. 30 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/优化/">优化</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/优化/" class="label label-success">优化</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-优化--JAVAHOTSPOTVM参数大全/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-优化--JAVAHOTSPOTVM参数大全" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1075,672 +1318,731 @@ done</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-算法--数学之美番外篇：快排为什么那样快/">数学之美番外篇：快排为什么那样快</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC/">Java加密技术（一）——BASE64与单向加密算法MD5&SHA&MAC</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-算法--数学之美番外篇：快排为什么那样快/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-">数学之美番外篇：快排为什么那样快</h1>
-<ul>
-<li><a href="http://mindhacks.cn/about/" target="_blank">Mind Hacks 的含义</a></li>
-<li><a href="http://mindhacks.cn/former-life-of-mindhacks/" target="_blank">前世档案 | C++的罗浮宫</a></li>
-<li><a href="http://mindhacks.cn/archives/" target="_blank">所有文章</a></li>
-<li><a href="http://mindhacks.cn/about-toplanguage/" target="_blank">TopLanguage 讨论组</a></li>
-<li><a href="http://mindhacks.cn/friend-links/" target="_blank">价值博客们</a></li>
-</ul>
-<p><a href="http://mindhacks.cn/" target="_blank">刘未鹏 | Mind Hacks</a> 思维改变生活</p>
-<ul>
-<li><a href="http://mindhacks.cn/topics/learning-method/" target="_blank">学习方法</a></li>
-<li><a href="http://mindhacks.cn/topics/mind/" target="_blank">思维改变生活</a></li>
-<li><a href="http://mindhacks.cn/topics/algorithms/" target="_blank">算法</a></li>
-<li><a href="http://mindhacks.cn/topics/computer-science/" target="_blank">计算机科学</a></li>
-<li><a href="http://mindhacks.cn/topics/math/" target="_blank">数学</a></li>
-<li><a href="http://mindhacks.cn/topics/machine-learning/" target="_blank">机器学习与人工智能</a></li>
-<li><p><a href="http://mindhacks.cn/topics/programming/" target="_blank">编程</a></p>
+        <h1 id="java-base64-md5-sha-mac">Java加密技术（一）——BASE64与单向加密算法MD5&amp;SHA&amp;MAC</h1>
+<pre><code>加密解密，曾经是我一个毕业设计的重要组件。在工作了多年以后回想当时那个加密、解密算法，实在是太单纯了。![]()
+言归正传，这里我们主要描述Java已经实现的一些加密解密算法，最后介绍数字证书。
+如基本的单向加密算法：
+</code></pre><ul>
+<li>BASE64 严格地说，属于编码格式，而非加密算法</li>
+<li>MD5(Message Digest algorithm 5，信息摘要算法)</li>
+<li>SHA(Secure Hash Algorithm，安全散列算法)</li>
+<li><p>HMAC(Hash Message Authentication Code，散列消息鉴别码)
+  复杂的对称加密（DES、PBE）、非对称加密算法：</p>
 </li>
-<li><p><a href="http://mindhacks.cn/feed/" title="刘未鹏 | Mind Hacks RSS Feed" target="_blank">RSS Feed</a></p>
+<li><p>DES(Data Encryption Standard，数据加密算法)</p>
 </li>
+<li>PBE(Password-based encryption，基于密码验证)</li>
+<li>RSA(算法的名字以发明者的名字命名：Ron Rivest, AdiShamir 和Leonard Adleman)</li>
+<li>DH(Diffie-Hellman算法，密钥一致协议)</li>
+<li>DSA(Digital Signature Algorithm，数字签名)</li>
+<li>ECC(Elliptic Curves Cryptography，椭圆曲线密码编码学)
+  本篇内容简要介绍<strong>BASE64</strong>、<strong>MD5</strong>、<strong>SHA</strong>、<strong>HMAC</strong>几种方法。
+  <strong>MD5</strong>、<strong>SHA</strong>、<strong>HMAC</strong>这三种加密算法，可谓是非可逆加密，就是不可解密的加密方法。我们通常只把他们作为加密的基础。单纯的以上三种的加密并不可靠。
+<strong>BASE64</strong>
+按照RFC2045的定义，Base64被定义为：Base64内容传送编码被设计用来把任意序列的8位字节描述为一种不易被人直接识别的形式。（The Base64 Content-Transfer-Encoding is designed to represent arbitrary sequences of octets in a form that need not be humanly readable.）
+常见于邮件、http加密，截取http信息，你就会发现登录操作的用户名、密码字段通过BASE64加密的。
+<img src="" alt="">
+通过java代码实现如下：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></li>
 </ul>
-<h1 id="-http-mindhacks-cn-2008-06-13-why-is-quicksort-so-quick-"><a href="http://mindhacks.cn/2008/06/13/why-is-quicksort-so-quick/" target="_blank">数学之美番外篇：快排为什么那样快</a></h1>
-<p>By <a href="http://mindhacks.cn/author/pongba/" title="???" target="_blank">???</a> – June 13, 2008<strong>Posted in:</strong><a href="http://mindhacks.cn/topics/math/" target="_blank">数学</a>, <a href="http://mindhacks.cn/topics/algorithms/" target="_blank">算法</a>, <a href="http://mindhacks.cn/topics/computer-science/" target="_blank">计算机科学</a></p>
-<p><strong>目录</strong></p>
 <ol>
-<li><p>前言</p>
-</li>
-<li><p>猜数字</p>
-</li>
-<li><p>称球</p>
-</li>
-<li><p>排序</p>
-<p> 3.1 为什么堆排比快排慢</p>
-<p> 3.2 为什么快排其实也不是那么快</p>
-<p> 3.3 基排又为什么那么快呢</p>
-</li>
-<li><p>信息论！信息论？</p>
-</li>
-<li><p>小结</p>
+<li>//<em>/</em> </li>
+<li>/* BASE64解密 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] decryptBASE64(String key) throws Exception {  </li>
+<li>return (new BASE64Decoder()).decodeBuffer(key);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* BASE64加密 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static String encryptBASE64(byte[] key) throws Exception {  </li>
+<li>return (new BASE64Encoder()).encodeBuffer(key);  </li>
+<li><p>}  </p>
+<p> //<em>/</em></p>
+<p>  /<em> BASE64解密
+  /</em></p>
+<p>  /<em> @param key
+  /</em> @return</p>
+<p>  /<em> @throws Exception
+  /</em>/</p>
+<p> public static byte[] decryptBASE64(String key) throws Exception {</p>
+<pre><code> return (new BASE64Decoder()).decodeBuffer(key);
+</code></pre><p> }</p>
 </li>
 </ol>
-<p><strong>0.**</strong>前言**</p>
-<p>知道这个理论是在<a href="http://groups.google.com/group/pongba" target="_blank">TopLanguage</a>上的一次讨论，先是g9<a href="http://groups.google.com/group/pongba/msg/f95aa12feb4dfd67" target="_blank">转了David MacKay的一篇文章</a>，然后引发了牛人们的<a href="http://groups.google.com/group/pongba/browse_frm/thread/28ac39e0222becf2" target="_blank">一场关于信息论的讨论</a>。Anyway，正如g9很久以前在<a href="http://blog.csdn.net/g9yuayon" target="_blank">Blog</a>里面所<a href="http://blog.csdn.net/g9yuayon/archive/2007/04/22/1574518.aspx" target="_blank">说</a>的：
-有时无知是福。俺看到一点新鲜的科普也能觉得造化神奇。刚才读Gerald Jay Sussman（<a href="http://mitpress.mit.edu/sicp/" target="_blank">SICP</a>作者）的文章，<a href="http://swiss.csail.mit.edu/classes/symbolic/spring07/readings/robust-systems.pdf" target="_blank">Building Robust Systems – an essay</a>，竟然心如小鹿乱撞，手心湿润，仿佛第一次握住初恋情人温柔的手。</p>
-<p>而看到<a href="http://users.aims.ac.za/~mackay/" target="_blank">MacKay</a>的这篇文章我也有这种感觉——以前模糊的东西忽然有了深刻的解释，一切顿时变得明白无比。原来看问题的角度或层面能够带来这么大的变化。再一次印证了越是深刻的原理往往越是简单和强大。所以说，土鳖也有土鳖的幸福:P</p>
-<p>这篇文章相当于MacKay<a href="http://users.aims.ac.za/~mackay/sorting/sorting.html" target="_blank">原文</a>的白话文版。MacKay在原文中用到了信息论的知识，后者在我看来并不是必须的，尽管计算的时候方便，但与本质无关。所以我用大白话解释了一通。</p>
-<p><strong>1.**</strong>猜数字**</p>
-<p>我们先来玩一个猜数字游戏：我心里默念一个1~64之间的数，你来猜（你只能问答案是“是”或“否”的问题）。为了保证不论在什么情况下都能以尽量少的次数猜中，你应该采取什么策略呢？很显然，二分。先是猜是不是位于1~32之间，排除掉一半可能性，然后对区间继续二分。这种策略能够保证无论数字怎么跟你捉迷藏，都能在log_2{n}次以内猜中。用算法的术语来说就是它的下界是最好的。</p>
-<p>我们再来回顾一下这个游戏所蕴含的本质：为什么这种策略具有最优下界？答案也很简单，这个策略是平衡的。反之如果策略不是平衡的，比如问是不是在1~10之间，那么一旦发现不是在1~10之间的话就会剩下比N/2更多的可能性需要去考察了。</p>
-<p><a href="http://blog.youxu.info/" target="_blank">徐宥</a>在讨论中提到，这种策略的本质可以概括成“让未知世界无机可乘”。它是没有“弱点的”，<strong>答案的任何一个分支都是等概率的</strong>。反之，一旦某个分支蕴含的可能性更多，当情况落到那个分支上的时候你就郁闷了。比如猜数字游戏最糟糕的策略就是一个一个的猜：是1吗？是2吗？… 因为这种猜法最差的情况下需要64次才能猜对，下界非常糟糕。二分搜索为什么好，就是因为它每次都将可能性排除一半并且<strong>无论如何</strong>都能排除一半（它是最糟情况下表现最好的）。</p>
-<p><strong>2.**</strong>称球**</p>
-<p>12个小球，其中有一个是坏球。有一架天平。需要你用最少的称次数来确定哪个小球是坏的并且它到底是轻还是重。</p>
-<p>这个问题是一道流传已久的智力题。网络上也有很多讲解，还有泛化到N个球的情况下的严格证明。也有零星的一些地方提到从信息论的角度来看待最优解法。本来我一直认为这道题目除了试错之外没有其它高妙的思路了，只能一个个方法试，并尽量从结果中寻找信息，然后看看哪种方案最少。</p>
-<p>然而，实际上它的确有其它的思路，一个更本质的思路，而且根本用不着信息论这么拗口的知识。</p>
-<p>我们先回顾一下猜数字游戏。为了保证任何情况下以最少次数猜中，我们的策略是每次都排除恰好一半的可能性。类比到称球问题上：坏球可能是12个球中的任意一个，这就是12种可能性；而其中每种可能性下坏球可能轻也可能重。于是“坏球是哪个球，是轻是重”这个问题的答案就有12×2=24种可能性。现在我们用天平来称球，就等同于对这24种可能性发问，由于天平的输出结果有三种“平衡、左倾、右倾”，这就相当于我们的问题有三个答案，即可以将所有的可能性切成三份，根据猜数字游戏的启发，我们应当尽量让这三个分支概率均等，即平均切分所有的可能性为三等份。如此一来的话一次称量就可以将答案的可能性缩减为原来的1/3，三次就能缩减为1/27。而总共才有24种可能性，所以理论上是完全可以3次称出来的。</p>
-<p>如何称的指导原则有了，构造一个称的策略就不是什么太困难的事情了。首先不妨解释一下为什么最直观的称法不是最优的——6、6称：在6、6称的时候，天平平衡的可能性是0。刚才说了，最优策略应该使得天平三种状态的概率均等，这样才能三等分答案的所有可能性。</p>
-<p>为了更清楚的看待这个问题，我们不妨假设有6个球，来考虑一下3、3称和2、2称的区别：</p>
-<p>在未称之前，一共有12种可能性：1轻、1重、2轻、2重、…、6轻、6重。现在将1、2、3号放在左边，4、5、6放在右边3、3称了之后，不失一般性假设天平左倾，那么小球的可能性就变成了原来的一半（6种）：1重、2重、3重、4轻、5轻、6轻。即这种称法能排除一半可能性。</p>
-<p>现在再来看2、2称法，即1、2放左边，3、4放右边，剩下的5、6不称，放一边。假设结果是天平平衡，那么可能性剩下——4种：5重、5轻、6重、6轻。假设天平左倾，可能性也剩下4种：1重、2重、3轻、4轻。右倾和左倾的情况类似。总之，这种称法，不管天平结果如何，情况都被我们缩小到了原来的三分之一！我们充分利用了“天平的结果状态可能有三种”这个条件来三等分所有可能性，而不是二等分。</p>
-<p>说到这里，剩下的事情就实在很简单了：第二步称法，只要记着这样一个指导思想——你选择的称法必须使得当天平平衡的时候答案剩下的可能性和天平左倾（右倾）的时候答案剩下的可能性一样多。实际上，这等同于你得选择一种称法，使得天平输出三种结果的概率是均等的，因为天平输出某个结果的概率就等同于所有支持这个结果（左倾、右倾、平衡）的答案可能性的和，并且答案的每个可能性都是等概率的。</p>
-<p>MacKay在他的书《Information Theory: Inference and Learning Algorithms》（<a href="http://users.aims.ac.za/~mackay/itila/book.html" target="_blank">作者开放免费电子书</a>）里面4.1节专门讲了这个称球问题，还画了一张不错的图，我就照抄了：</p>
-<p><a href="http://mindhacks.cn/wp-content/uploads/2009/02/23131201.jpg" target="_blank"><img src="&quot;2313120&quot;" alt="2313120"></a></p>
-<p>图中“1+”是指“1号小球为重”这一可能性。一开始一共有24种可能性。4、4称了之后不管哪种情况（分支），剩下来的可能性总是4种。这是一个完美的三分。然后对每个分支构造第二次称法，这里你只要稍加演算就可以发现，分支1上的第二次称法，即“1、2、6对3、4、5”这种称法，天平输出三种结果的可能性是均等的（严格来说是几乎均等）。这就是为什么这个称法能够在最坏的情况下也能表现最好的原因，没有哪个分支是它的弱点，它必然能将情况缩小到原来的1/3。</p>
-<p><strong>3.**</strong>排序**</p>
-<p>用前面的看问题视角，排序的本质可以这样来表述：一组未排序的N个数字，它们一共有N!种重排，其中只有一种排列是满足题意的（譬如从大到小排列）。换句话说，排序问题的可能性一共有N!种。任何基于比较的排序的基本操作单元都是“比较a和b”，这就相当于猜数字游戏里面的一个问句，显然这个问句的答案只能是“是”或“否”，一个只有两种输出的问题最多只能将可能性空间切成两半，根据上面的思路，最佳切法就是切成1/2和1/2。也就是说，我们希望在比较了a和b的大小关系之后，如果发现a<b的话剩下的排列可能性就变成N!/2，如果发现a>b也是剩下N!/2种可能性。由于假设每种排列的概率是均等的，所以这也就意味着支持a<b的排列一共有N!/2个，支持a>b的也是N!/2个，换言之，a<b的概率等于a>b的概率。</p>
-<p>我们希望每次在比较a和b的时候，a<b和a>b的概率是均等的，这样我们就能保证无论如何都能将可能性缩小为原来的一半了！最优下界。</p>
-<p>一个直接的推论是，如果每次都像上面这样的完美比较，那么N个元素的N!种可能排列只需要log_2{N!}就排查玩了，而log_2{N!}近似于NlogN。这正是快排的复杂度。</p>
-<p><strong>3.1**</strong>为什么堆排比快排慢**</p>
-<p>回顾一下堆排的过程：</p>
+<pre><code>//*/*
+ /* BASE64加密
+
+ /*
+ /* @param key
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static String encryptBASE64(byte[] key) throws Exception {
+
+    return (new BASE64Encoder()).encodeBuffer(key);
+}
+</code></pre><p>主要就是BASE64Encoder、BASE64Decoder两个类，我们只需要知道使用对应的方法即可。另，BASE加密后产生的字节位数是8的倍数，如果不够位数以<strong>=</strong>符号填充。
+<strong>MD5</strong>
+MD5 -- message-digest algorithm 5 （信息-摘要算法）缩写，广泛用于加密和解密技术，常用于文件校验。校验？不管文件多大，经过MD5后都能生成唯一的MD5值。好比现在的ISO校验，都是MD5校验。怎么用？当然是把ISO经过MD5后产生MD5的值。一般下载linux-ISO的朋友都见过下载链接旁边放着MD5的串。就是用来验证文件是否一致的。
+<img src="" alt="">
+通过java代码实现如下：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
 <ol>
-<li><p>建立最大堆（堆顶的元素大于其两个儿子，两个儿子又分别大于它们各自下属的两个儿子… 以此类推）</p>
-</li>
-<li><p>将堆顶的元素和最后一个元素对调（相当于将堆顶元素（最大值）拿走，然后将堆底的那个元素补上它的空缺），然后让那最后一个元素从顶上往下滑到恰当的位置（重新使堆最大化）。</p>
-</li>
-<li><p>重复第2步。</p>
+<li>//<em>/</em> </li>
+<li>/* MD5加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptMD5(byte[] data) throws Exception {  </li>
+<li></li>
+<li>MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);  </li>
+<li>md5.update(data);  </li>
+<li></li>
+<li>return md5.digest();  </li>
+<li></li>
+<li><p>}  </p>
+<p> //<em>/</em></p>
+<p>  /<em> MD5加密
+  /</em></p>
+<p>  /<em> @param data
+  /</em> @return</p>
+<p>  /<em> @throws Exception
+  /</em>/</p>
+<p> public static byte[] encryptMD5(byte[] data) throws Exception {</p>
 </li>
 </ol>
-<p>这里的关键问题就在于第2步，堆底的元素肯定很小，将它拿到堆顶和原本属于最大元素的两个子节点比较，它比它们大的可能性是微乎其微的。实际上它肯定小于其中的一个儿子。而大于另一个儿子的可能性非常小。于是，这一次比较的结果就是概率不均等的，根据前面的分析，概率不均等的比较是不明智的，因为它并不能保证在糟糕情况下也能将问题的可能性削减到原本的1/2。可以想像一种极端情况，如果a肯定小于b，那么比较a和b就会什么信息也得不到——原本剩下多少可能性还是剩下多少可能性。</p>
-<p>在堆排里面有大量这种近乎无效的比较，因为被拿到堆顶的那个元素几乎肯定是很小的，而靠近堆顶的元素又几乎肯定是很大的，将一个很小的数和一个很大的数比较，结果几乎肯定是“小于”的，这就意味着问题的可能性只被排除掉了很小一部分。</p>
-<p>这就是为什么堆排比较慢（堆排虽然和快排一样复杂度都是O(NlogN)但堆排复杂度的常系数更大）。</p>
-<p>MacKay也提供了一个修改版的堆排：每次不是将堆底的元素拿到上面去，而是直接比较堆顶（最大）元素的两个儿子，即选出次大的元素。由于这两个儿子之间的大小关系是很不确定的，两者都很大，说不好哪个更大哪个更小，所以这次比较的两个结果就是概率均等的了。具体参考<a href="http://users.aims.ac.za/~mackay/sorting/sorting.html" target="_blank">这里</a>。</p>
-<p><strong>3.2**</strong>为什么快排其实也不是那么快**</p>
-<p>我们考虑快排的过程：随机选择一个元素做“轴元素”，将所有大于轴元素的移到左边，其余移到右边。根据这个过程，快排的第一次比较就是将一个元素和轴元素比较，这个时候显而易见的是，“大于”和“小于”的可能性各占一半。这是一次漂亮的比较。</p>
-<p>然而，快排的第二次比较就不那么高明了：我们不妨令轴元素为pivot，第一次比较结果是a1<pivot，那么可以证明第二次比较a2也小于pivot的可能性是2/3！这容易证明：如果a2>pivot的话，那么a1，a2，pivot这三个元素之间的关系就完全确定了——a1&lt;pivot&lt;a2，剩下来的元素排列的可能性我们不妨记为P（不需要具体算出来）。而如果a2&lt;pivot呢？那么a1和a2的关系就仍然是不确定的，也就是说，这个分支里面含有两种情况：a1&lt;a2&lt;pivot，以及a2&lt;a1&lt;pivot。对于其中任一种情况，剩下的元素排列的可能性都是P，于是这个分支里面剩下的排列可能性就是2P。所以当a2&lt;pivot的时候，还剩下2/3的可能性需要排查。</p>
-<p>再进一步，如果第二步比较果真发现a2&lt;pivot的话，第三步比较就更不妙了，模仿上面的推理，a3&lt;pivot的概率将会是3/4！</p>
-<p>这就是快排也不那么快的原因，因为它也没有做到每次比较都能将剩下的可能性砍掉一半。</p>
-<p><strong>3.3**</strong>鸡排为什么又那么快呢？**</p>
-<p>传统的解释是：<a href="http://en.wikipedia.org/wiki/Radix_sort" target="_blank">基排</a>不是基于比较的，所以不具有后者的局限性。话是没错，但其实还可以将它和基于比较的排序做一个类比。</p>
-<p>基排的过程也许是源于我们理顺一副牌的过程：如果你有N（N&lt;=13）张牌，乱序，如何理顺呢？我们假象桌上有十三个位置，然后我们将手里的牌一张一张放出去，如果是3，就放在位置3上，如果是J，就放在位置11上，放完了之后从位置1到位置13收集所有的牌（没有牌的位置上不收集任何牌）。</p>
-<p>我们可以这样来理解基排高效的本质原因：假设前i张牌都已经放到了它们对应的位置上，第i+1张牌放出去的时候，实际上就相当于“一下子”就确立了它和前i张牌的大小关系，用O(1)的操作就将这张牌正确地插入到了前i张牌中的正确位置上，这个效果就相当于插入排序的第i轮原本需要比较O(i)次的，现在只需要O(1)了。</p>
-<p>但是，为什么基排能够达到这个效果呢？上面只是解释了过程，解释了过程不代表解释了本质。</p>
-<p>当i张牌放到位之后，放置第i+1张牌的时候有多少种可能性？大约i+1种，因为前i张牌将13个位置分割成了i+1个区间——第i+1张牌可以落在任意一个区间。所以放置第i+1张牌就好比是询问这样一个问题：“这张牌落在哪个区间呢？”而这个问题的答案有i+1种可能性？所以它就将剩下来的可能性均分成了i+1份（换句话说，砍掉了i/i+1的可能性！）。再看看基于比较的排序吧：由于每次比较只有两种结果，所以最多只能将剩下的可能性砍掉一半。</p>
-<p>这就是为什么基排要快得多。而所有基于比较的排序都逃脱不了NlogN的宿命。</p>
-<p><strong>4.**</strong>信息论！信息论？**</p>
-<p>本来呢，MacKay写那篇文章是想用信息论来解释为什么堆排慢，以及为什么快排也慢的。MacKay在他的文章中的解释是，只有提出每种答案的概率都均等的问题，才能获得最大信息量。然而，仔细一想，其实这里信息论并不是因，而是果。这里不需要用信息论就完全能够解释，而且更明白。信息论只是对这个解释的一个形式化。当然，信息论在其它地方还是有应用的。但这里其实用不着信息论这么重量级的东西（也许具体计算一些数据的时候是需要的），而是只需要一种看问题的本质视角：将排序问题看成和猜数字一样，是通过问问题来缩小/排除（narrow down）结果的可能性区间，这样一来，就会发现，“最好的问题”就是那些能够均分所有可能性的问题，因为那样的话不管问题的答案如何，都能排除掉k-1/k（k为问题的答案有多少种输出——猜数字里面是2，称球里面是3）种可能性，而不均衡的问题总会有一个或一些答案分支排除掉的可能性要小于k-1/k。于是策略的下界就被拖累了。</p>
-<p><strong>5.**</strong>小结**</p>
-<p>这的确是“小结”，因为两点：</p>
+<pre><code>    MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);
+    md5.update(data);
+
+
+    return md5.digest();
+
+
+}
+</code></pre><p>通常我们不直接使用上述MD5加密。通常将MD5产生的字节数组交给BASE64再加密一把，得到相应的字符串。
+<strong>SHA</strong>
+SHA(Secure Hash Algorithm，安全散列算法），数字签名等密码学应用中重要的工具，被广泛地应用于电子商务等信息安全领域。虽然，SHA与MD5通过碰撞法都被破解了，<img src="" alt=""> 但是SHA仍然是公认的安全加密算法，较之MD5更为安全。<img src="" alt="">
+<img src="" alt="">
+通过java代码实现如下：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
 <ol>
-<li><p>这个问题可以有信息论的理论解释，而信息论则是一个相当大的领域了。</p>
-</li>
-<li><p>文中提到的这种看问题的视角除了用于排序、称球，还能够运用到哪些问题上（比如搜索）。</p>
+<li>//<em>/</em> </li>
+<li>/* SHA加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptSHA(byte[] data) throws Exception {  </li>
+<li></li>
+<li>MessageDigest sha = MessageDigest.getInstance(KEY_SHA);  </li>
+<li>sha.update(data);  </li>
+<li></li>
+<li>return sha.digest();  </li>
+<li></li>
+<li>}  </li>
+<li><p>}  </p>
+<p> //<em>/</em></p>
+<p>  /<em> SHA加密
+  /</em></p>
+<p>  /<em> @param data
+  /</em> @return</p>
+<p>  /<em> @throws Exception
+  /</em>/</p>
+<p> public static byte[] encryptSHA(byte[] data) throws Exception {</p>
 </li>
 </ol>
-<p><strong>Update(06/13/2008)</strong> : <a href="http://blog.youxu.info/" target="_blank">徐宥</a>在讨论中<a href="http://groups.google.com/group/pongba/msg/07493e329ed920ff" target="_blank">继续提到</a>：
-另外，这几天我重新把TAOCP 第三卷(第二版)翻出来看了看 Knuth 怎么说这个问题的, 发现真是牛大了：</p>
-<p>先说性能：</p>
-<p>pp148, section 5.2.3 说：</p>
-<p>When N = 1000, the approximate average runiing time on MIX are
-160000u for heapsort
-130000u for shellsort
-80000u  for quicksort</p>
-<p>这里,  Knuth 同学发现一般情况下 heapsort 表现很不好. 于是，在下文他就说，习题18 (pp156, 难度21)</p>
-<p>(R.W.Floyd) During the selection phase of heapsort, the key K tends to
-be quite small, so that nearly all the comparisons in step H6 find
-K&lt;K_j. Show how to modify the algorithm so that K is not compared with
-K_j in the main loop of the computation, thereby nearly cutting the
-average number of comparisons in half.</p>
-<p>答案里面的方法和DMK的方法是一样的。(我觉得DMK是看了这个论文或者TAoCP的) 这里说 by half，就正好和快排差不多了。</p>
-<p>再说信息论分析：</p>
-<p>在5.3.1 (pp181) 高爷爷就说, “排序问题可以看成是一个树上的鸟儿排排站的问题. (还特地画了一棵树), 下一段就说, 其实这个也
-有等价说法, 就是信息论, 我们从称球问题说起…”</p>
-<p>然后后面一直讲信息论和最小比较排序…</p>
-<p>高爷爷真不愧是姓高的，囧rz..
-<strong>Tags:</strong> <a href="http://mindhacks.cn/tags/%e6%95%b0%e5%ad%a6/" target="_blank">数学</a>, <a href="http://mindhacks.cn/tags/%e7%ae%97%e6%b3%95/" target="_blank">算法</a>, <a href="http://mindhacks.cn/tags/%e8%ae%a1%e7%ae%97%e6%9c%ba%e7%a7%91%e5%ad%a6/" target="_blank">计算机科学</a></p>
-<p><a href="http://mindhacks.cn/author/pongba/"></a></p>
-<h3 id="about-">About ???</h3>
-<p> <a href=""></a> <a href=""></a></p>
-<p><a href="">喜欢取消喜欢</a>2 人喜欢</p>
-<p><a href="">最新</a><a href="">最早</a><a href="">最热</a></p>
-<ul>
-<li><a href="">26条评论</a></li>
-<li><a href="">14条转载</a></li>
-<li><a href="">28条新浪微博</a></li>
-<li><p><a href="">1条腾讯微博</a></p>
-</li>
-<li><p><img src="" alt="chaonin"></p>
-</li>
-</ul>
-<p>chaonin</p>
-<p>@@之前就在你的卢浮宫看到了，写的直白明了！
-小弟学的是编码，呵呵。
-Mackay的那本书重点是介绍编码的，具体的说是纠错码的。编码理论的重要基础是信息论。
-他对这些问题的分析不是专门要来分析这写问题的，而只是用信息论的方法来解释这些现象。</p>
-<p>2009年2月17日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://stupidpig.cublog.cn/" title="帅得不敢出门" target="_blank"><img src="" alt="帅得不敢出门"></a></li>
-</ul>
-<p><a href="http://stupidpig.cublog.cn/" target="_blank">帅得不敢出门</a></p>
-<p>受益良多
-每每看到一些精妙的解法(算法),都想拍手称快.</p>
-<p>2009年3月23日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://www.cloved.cn/" title="conan" target="_blank"><img src="" alt="conan"></a></li>
-</ul>
-<p><a href="http://www.cloved.cn/" target="_blank">conan</a></p>
-<p>关注toplanguage很久了.只是一直不敢在上面留言,看上面的聊天就感觉自己是沧海一粟.今天看到一篇.可能你是幸运的吧.我大概算了下,你应该是和我同届的.不过我比你小一岁.马上就毕业两年了.研究生们也快毕业了....回忆这些日子,感觉偏离了自己的目标,也感觉工作后并没有自己希望的成长着.一直觉得学校的东西很迂腐,什么都需要自己去学习.曾经也深深相信自己能好好成长起来.只是,到了今天,不知道自己是否还跟着大家的脚步....</p>
-<p>2009年5月11日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="metal-fan"></li>
-</ul>
-<p>metal-fan</p>
-<p>写的太棒了～深入本质～受益匪浅！！！</p>
-<p>2009年10月15日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="raymond"></li>
-</ul>
-<p>raymond</p>
-<p>这是最大熵原则的几个例子，即保留最大的不确定性，因为这样才能保留最大的信息。生活中很多问题都可以归结为一些简单的法则，而在实际处理问题的时候，这些简单的法则会被以各种各样的形式掩盖，从而让我们失去探索的机会。博主是个有心人啊</p>
-<p>2009年12月25日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="bigining"></li>
-</ul>
-<p>bigining</p>
-<p>在说到12个的例子时，第二次称时：“这是一个完美的三分。然后对每个分支构造第二次称法，这里你只要稍加演算就可以发现，分支1上的第二次称法，即“1、2、6对3、4、5”这种称法，天平输出三种结果的可能性是均等的（严格来说是几乎均等）。”，但是这样好像是找不出那个不同的球的。不知道1、2、6对3、4、5之后要怎么进行判断？（可以假设1、2、6比3、4、5重，然后只能说明1、 2较重或5较轻，然后第三次要怎么进行？）</p>
-<p>2010年4月24日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="Ted"></li>
-</ul>
-<p>Ted</p>
-<p>晕，你都说了“然后只能说明1、 2较重或5较轻”，这还不明显，再把1，2分别放2边，哪个重，哪个就是，否则就是平衡，那5就是目标。</p>
-<p>2011年11月28日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="simple"></li>
-</ul>
-<p>simple</p>
-<p>以6个球的例子来说，这个策略的“答案”是随着剩下的可能性（或者说剩下的球）的数量而发生变化的，比如，当球剩下2个时，那么天平的输出结果只可能有两种：左或右倾。因此，这时候应该是以以2去平分剩下的可能性。</p>
-<p>2012年9月21日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="rrison"></li>
-</ul>
-<p>rrison</p>
-<p>离散数学里的博弈树</p>
-<p>2010年5月6日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://www.usbphoneworld.com/lbded6620.html" title="dell latitude d620 laptop battery" target="_blank"><img src="" alt="dell latitude d620 laptop battery"></a></li>
-</ul>
-<p><a href="http://www.usbphoneworld.com/lbded6620.html" target="_blank">dell latitude d620 laptop battery</a></p>
-<p>非常感谢。受益良多。</p>
-<p>2010年6月13日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="kmplayer"></li>
-</ul>
-<p>kmplayer</p>
-<p>&quot;那么可以证明第二次比较a2也小于pivot的可能性是2/3！&quot;
-”a3&lt;pivot的概率将会是3/4！“
-这两个地方的”叹号“很容易误解为”阶层“</p>
-<p>2010年12月16日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="hit_alex"></li>
-</ul>
-<p>hit_alex</p>
-<p>把这西抽象出来确实也挺有意思的。另外，我注意到标题：<strong>鸡排为什么又那么快呢？</strong>中“鸡排”是不是写错了？莫非是作者故意为之？</p>
-<p>2010年12月26日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://www.lisher.tk/" title="Miller" target="_blank"><img src="" alt="Miller"></a></li>
-</ul>
-<p><a href="http://www.lisher.tk/" target="_blank">Miller</a></p>
-<p>4、4称了之后不管哪种情况（分支），剩下来的可能性总是》 8 《种吧</p>
-<p>2011年2月14日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="wosunziwuwan"></li>
-</ul>
-<p>wosunziwuwan</p>
-<p>&quot;那么可以证明第二次比较a2也小于pivot的可能性是2/3&quot;这句话有问题吧，可能性应该还是1/2吧？因为只是a2和pivot相对次序的比较，和a1无关，是一次独立的比较。这和取排问题不同，确定了2张牌后，第3张牌只有从剩下的牌中去取</p>
-<p>2011年11月27日<a href="">回复</a><a href="">顶(1)</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://yeasy.blogspot.com/" title="yeasy" target="_blank"><img src="" alt="yeasy"></a></li>
-</ul>
-<p><a href="http://yeasy.blogspot.com/" target="_blank">yeasy</a></p>
-<p>更为本质一些，我觉得跟最大熵原理有些关系。
-参考<a href="http://yeasy.blogspot.com/2011/11/blog-post.html" target="_blank"><a href="http://yeasy.blogspot.com/2011/11/blog-post.html">http://yeasy.blogspot.com/2011/11/blog-post.html</a></a></p>
-<p>2011年12月15日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="LittleJ"></li>
-</ul>
-<p>LittleJ</p>
-<p>&quot;第一次比较结果是a1&lt;pivot，那么可以证明第二次比较a2也小于pivot的可能性是2/3！&quot;这里我也不是很明白。这里指的第一次第二次都是相对于快排的一次排序来说的吧？那么第一次将a1和pivot比较，大或者小的概率是相等的这里没有问题。为什么第二次比较a2要“也”小于pivot呢？我的意思就是第一次比较和第二次比较之间有什么关联？这里我没有看明白，能不能解释一下呢？谢谢：）</p>
-<p>2012年3月19日<a href="">回复</a><a href="">顶(1)</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://www.douban.com/people/49902334/" title="透明的沙子" target="_blank"><img src="" alt="透明的沙子"></a></li>
-</ul>
-<p><a href="http://www.douban.com/people/49902334/" target="_blank">透明的沙子</a></p>
-<p>看起来很多人不理解这个，反复想不明白，坐等解答啊</p>
-<p>2012年9月3日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://www.douban.com/people/49902334/" title="透明的沙子" target="_blank"><img src="" alt="透明的沙子"></a></li>
-</ul>
-<p><a href="http://www.douban.com/people/49902334/" target="_blank">透明的沙子</a></p>
-<p>“然而，快排的第二次比较就不那么高明了：我们不妨令轴元素为pivot，第一次比较结果是a1pivot的话，那么a1，a2，pivot这三个元素之间的关系就完全确定了——a1</p>
-<p>2012年9月3日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://weibo.com/1742521405" title="滔要考研" target="_blank"><img src="" alt="滔要考研"></a></li>
-</ul>
-<p><a href="http://weibo.com/1742521405" target="_blank">滔要考研</a></p>
-<p>关于快排的部分，其实本质是指轴元素如果选取的不够“中间”，会导致第一次排序后左右不均，从而导致较差的效率表现。刘大牛从缩减可能性这个角度出发，让人耳目一新。受教了。</p>
-<p>2012年9月7日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="simple"></li>
-</ul>
-<p>simple</p>
-<p>鸡排之所以快，我觉得还可以用另一种说法（以13张牌的例子为例）：第i张牌确定位置后，放第i+1张牌时，桌上剩下的位置还有 13-i 个，即放牌的可能性为13-i种，然后，摸牌再看是什么点数就相当于公布答案，而这个答案刚好也是有 13-i 种，即，13-i种答案把13-i种可能性平均分为了13-i/13-i = 1种，最后得到鸡排需要的时间复杂度为O（1）</p>
-<p>2012年9月22日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><img src="" alt="imgen"></li>
-</ul>
-<p>imgen</p>
-<p>关于称球问题，我正是用了信息论的方法为指引，三分而称球，而且我也给出了推广到N的解法，从中获得了很多乐趣和满足。不过那是在大学时代了，久远了</p>
-<p>2012年9月29日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://weibo.com/2177249280" title="icrt_" target="_blank"><img src="" alt="icrt_"></a></li>
-</ul>
-<p><a href="http://weibo.com/2177249280" target="_blank">icrt_</a></p>
-<p>真心佩服了。之前觉得称球问题没有什么，看这文章才知道原来有这么多的东西！</p>
-<p>2012年10月10日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://weibo.com/1238983263" title="_小毛童鞋_" target="_blank"><img src="" alt="_小毛童鞋_"></a></li>
-</ul>
-<p><a href="http://weibo.com/1238983263" target="_blank"><em>小毛童鞋</em></a></p>
-<p>高爷爷是谁？</p>
-<p>2012年10月16日<a href="">回复</a><a href="">顶</a><a href="">转发</a><a href="">举报</a></p>
-<ul>
-<li><a href="http://weibo.com/brightown" title="鸡翅呀鸡翅" target="_blank"><img src="" alt="鸡翅呀鸡翅"></a></li>
-</ul>
-<p><a href="http://weibo.com/brightown" target="_blank">鸡翅呀鸡翅</a></p>
-<p>哇高爷爷果然是神人也，查了一下73年v3的第一版就有神论<figure class="highlight 膜拜orz~~~"><table><tr><td class="gutter"><pre>1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
-13
-14
-15
-16
-17
-18
-19
-20
-21
-22
-23
-24
-25
-26
-27
-28
-29
-30
-31
-32
-33
-34
-35
-36
-37
-38
-39
-40
-41
-42
-43
-44
-45
-46
-47
-48
-49
-50
-51
-52
-53
-54
-55
-56
-57
-58
-59
-60
-61
-62
-63
-64
-65
-66
-67
-68
-69
-70
-71
-72
-73
-74
-75
-76
-77
-78
-79
-80
-81
-82
-83
-84
-85
-86
-87
-88
-89
-90
-91
-92
-93
-94
-95
-96
-97
-98
-99
-100
-101
-102
-103
-104
-105
-106
-107
-108
-109
-110
-111
-112
-113
-114
-115
-116
-117
-118
-119
-120
-121
-122
-123
-124
-125
-126
-127
-128
-129
-130
-131
-132
-133
-134
-135
-136
-137
-138
-139
-140
-141
-142
-143
-144
-145
-146
-147
-148
-149
-150
-151
-152
-</pre></td><td class="code"><pre>
-<span class="number">2012</span>年<span class="number">11</span>月<span class="number">6</span>日[回复]()[顶]()[转发]()[举报]()
-* [![ouqi]()](http://weibo.com/xianqings "ouqi")
+<pre><code>    MessageDigest sha = MessageDigest.getInstance(KEY_SHA);
+    sha.update(data);
 
-[ouqi](http://weibo.com/xianqings)
 
-同不明白这一块：
-然而，快排的第二次比较就不那么高明了：我们不妨令轴元素为pivot，第一次比较结果是a1&lt;pivot，那么可以证明第二次比较a2也小于pivot的可能性是<span class="number">2</span>/<span class="number">3</span>！这容易证明：如果a2&gt;pivot的话，那么a1，a2，pivot这三个元素之间的关系就完全确定了——a1&lt;pivot&lt;a2，剩下来的元素排列的可能性我们不妨记为P（不需要具体算出来）。而如果a2&lt;pivot呢？那么a1和a2的关系就仍然是不确定的，也就是说，这个分支里面含有两种情况：a1&lt;a2&lt;pivot，以及a2&lt;a1&lt;pivot。对于其中任一种情况，剩下的元素排列的可能性都是P，于是这个分支里面剩下的排列可能性就是<span class="number">2</span>P。所以当a2&lt;pivot的时候，还剩下<span class="number">2</span>/<span class="number">3</span>的可能性需要排查。
-我的疑惑在于，第一次的a2是什么，为什么要把第二次的排序和第一次的排序相关联?
-不明白您定义的第二次排序是什么，我以为的第二次排序是对第一次的起始位置到第一次的pivot之间的数字的排序，那么第二次的privot又是重新选定的。也就是说在第一次排序之后，任何一个值跟第一次的privot的大小关系都是确定了的，要么比他大 要么比他小。那您说a2是什么？
+    return sha.digest();
 
-<span class="number">4</span>月<span class="number">10</span>日[回复]()[顶]()[转发]()[举报]()
-* [![ナイキ 通販]()](http://www.abcsnk.com/ "ナイキ 通販")
 
-[ナイキ 通販](http://www.abcsnk.com/)
-
-searching is another thing no doubt you like to accomplish (specially me), when i don't recognize how but searching is one particular activity which offers us eminence delight and relaxation whenever we are generally tired as well as frustrated as well as irritated, but while using ever raising targets along with office update they have became next to impossible <span class="flow">for</span> us to determine some time <span class="flow">for</span> it to hang out with his friends and enjoy that period while rooming around <span class="flow">for</span> the streets involving market.
-But even as we always say there's [http://www.abcsnk.com/adidas-スパイクサッカー-アディピュア-<span class="number">11</span>pro-c-<span class="number">22</span>_23_29.html](http://www.abcsnk.com/adidas-スパイクサッカー-アディピュア-<span class="number">11</span>pro-c-<span class="number">22</span>_23_29.html) アディピュア<span class="number">11</span>pro a option <span class="flow">for</span> just about every problem along with situation on the [http:///www.sportrakuten.com](http:/www.sportrakuten.com) サングラス通販 globe, all you want to <span class="flow">do</span> is seek out that option with [http://www.sportrakuten.com/categories/<span class="number">1369471366</span>-<span class="number">179</span>.html](http://www.sportrakuten.com/categories/<span class="number">1369471366</span>-<span class="number">179</span>.html) レイバン サングラス 'something different' perspective. And which is the very reason we invented a many new method involving shopping which <span class="flow">in</span> turn know while online searching method. But staying this strategy new types of quarries that happen to be there inside mind of folks related on the same and were here to unravel those themselves.
-But today you'll find thousands involving products that is purchased via an web shop starting coming from a bugger to your flat <span class="flow">in</span> fact it is impossible <span class="flow">for</span> individuals to cover hundreds of <span class="flow">in</span> one particular discussion themselves therefore today we'll be only talking over facts pertains to [http://www.abcsnk.com](http://www.abcsnk.com/) ナイキ 通販 online searching of sneakers <span class="flow">for</span> adult men.
-Buying some your favourite Adidas [http://www.abcsnk.com/adidas-スパイクサッカー-プレデター-アディダス-<span class="number">11</span>-c-<span class="number">22</span>_23_25.html](http://www.abcsnk.com/adidas-スパイクサッカー-プレデター-アディダス-<span class="number">11</span>-c-<span class="number">22</span>_23_25.html) adidas プレデター sneakers from these websites is just about the easiest thing on the [http:///www.sportrakuten.com/categories/<span class="number">1369471516</span>-<span class="number">183</span>.html](http:/www.sportrakuten.com/categories/<span class="number">1369471516</span>-<span class="number">183</span>.html) レイバン(RAY BAN) globe, but to generate it truly easy you've got to keep up few <span class="flow">in</span> the things as well as points that happen to be listed down below.
-
-<span class="number">6</span>月<span class="number">19</span>日[回复]()[顶]()[转发]()[举报]()
-[<span class="number">1</span>]()[]()
-
-社交帐号登录:
-* [微博](http://pongba.duoshuo.com/login/weibo/?sso=<span class="number">1</span>&redirect_uri=http<span class="envvar">%3A%</span><span class="number">2</span>F<span class="envvar">%2Fmindhacks.cn%</span><span class="number">2</span>Fwp-login.php<span class="envvar">%3Faction%</span><span class="number">3</span>Dduoshuo_login&redirect_to<span class="envvar">%3Dhttp%</span><span class="number">3</span>A<span class="envvar">%2F%</span><span class="number">2</span>Fmindhacks.cn<span class="envvar">%2F2008%</span><span class="number">2</span>F06<span class="envvar">%2F13%</span><span class="number">2</span>Fwhy-is-quicksort-so-quick%<span class="number">2</span>F)
-* [QQ](http://pongba.duoshuo.com/login/qq/?sso=<span class="number">1</span>&redirect_uri=http<span class="envvar">%3A%</span><span class="number">2</span>F<span class="envvar">%2Fmindhacks.cn%</span><span class="number">2</span>Fwp-login.php<span class="envvar">%3Faction%</span><span class="number">3</span>Dduoshuo_login&redirect_to<span class="envvar">%3Dhttp%</span><span class="number">3</span>A<span class="envvar">%2F%</span><span class="number">2</span>Fmindhacks.cn<span class="envvar">%2F2008%</span><span class="number">2</span>F06<span class="envvar">%2F13%</span><span class="number">2</span>Fwhy-is-quicksort-so-quick%<span class="number">2</span>F)
-* [人人](http://pongba.duoshuo.com/login/renren/?sso=<span class="number">1</span>&redirect_uri=http<span class="envvar">%3A%</span><span class="number">2</span>F<span class="envvar">%2Fmindhacks.cn%</span><span class="number">2</span>Fwp-login.php<span class="envvar">%3Faction%</span><span class="number">3</span>Dduoshuo_login&redirect_to<span class="envvar">%3Dhttp%</span><span class="number">3</span>A<span class="envvar">%2F%</span><span class="number">2</span>Fmindhacks.cn<span class="envvar">%2F2008%</span><span class="number">2</span>F06<span class="envvar">%2F13%</span><span class="number">2</span>Fwhy-is-quicksort-so-quick%<span class="number">2</span>F)
-* [豆瓣](http://pongba.duoshuo.com/login/douban/?sso=<span class="number">1</span>&redirect_uri=http<span class="envvar">%3A%</span><span class="number">2</span>F<span class="envvar">%2Fmindhacks.cn%</span><span class="number">2</span>Fwp-login.php<span class="envvar">%3Faction%</span><span class="number">3</span>Dduoshuo_login&redirect_to<span class="envvar">%3Dhttp%</span><span class="number">3</span>A<span class="envvar">%2F%</span><span class="number">2</span>Fmindhacks.cn<span class="envvar">%2F2008%</span><span class="number">2</span>F06<span class="envvar">%2F13%</span><span class="number">2</span>Fwhy-is-quicksort-so-quick%<span class="number">2</span>F)
-* [更多»]()
-
-* [开心](http://pongba.duoshuo.com/login/kaixin/?sso=<span class="number">1</span>&redirect_uri=http<span class="envvar">%3A%</span><span class="number">2</span>F<span class="envvar">%2Fmindhacks.cn%</span><span class="number">2</span>Fwp-login.php<span class="envvar">%3Faction%</span><span class="number">3</span>Dduoshuo_login&redirect_to<span class="envvar">%3Dhttp%</span><span class="number">3</span>A<span class="envvar">%2F%</span><span class="number">2</span>Fmindhacks.cn<span class="envvar">%2F2008%</span><span class="number">2</span>F06<span class="envvar">%2F13%</span><span class="number">2</span>Fwhy-is-quicksort-so-quick%<span class="number">2</span>F)
-* [网易](http://pongba.duoshuo.com/login/netease/?sso=<span class="number">1</span>&redirect_uri=http<span class="envvar">%3A%</span><span class="number">2</span>F<span class="envvar">%2Fmindhacks.cn%</span><span class="number">2</span>Fwp-login.php<span class="envvar">%3Faction%</span><span class="number">3</span>Dduoshuo_login&redirect_to<span class="envvar">%3Dhttp%</span><span class="number">3</span>A<span class="envvar">%2F%</span><span class="number">2</span>Fmindhacks.cn<span class="envvar">%2F2008%</span><span class="number">2</span>F06<span class="envvar">%2F13%</span><span class="number">2</span>Fwhy-is-quicksort-so-quick%<span class="number">2</span>F)
-* [搜狐](http://pongba.duoshuo.com/login/sohu/?sso=<span class="number">1</span>&redirect_uri=http<span class="envvar">%3A%</span><span class="number">2</span>F<span class="envvar">%2Fmindhacks.cn%</span><span class="number">2</span>Fwp-login.php<span class="envvar">%3Faction%</span><span class="number">3</span>Dduoshuo_login&redirect_to<span class="envvar">%3Dhttp%</span><span class="number">3</span>A<span class="envvar">%2F%</span><span class="number">2</span>Fmindhacks.cn<span class="envvar">%2F2008%</span><span class="number">2</span>F06<span class="envvar">%2F13%</span><span class="number">2</span>Fwhy-is-quicksort-so-quick%<span class="number">2</span>F)
-* [百度](http://pongba.duoshuo.com/login/baidu/?sso=<span class="number">1</span>&redirect_uri=http<span class="envvar">%3A%</span><span class="number">2</span>F<span class="envvar">%2Fmindhacks.cn%</span><span class="number">2</span>Fwp-login.php<span class="envvar">%3Faction%</span><span class="number">3</span>Dduoshuo_login&redirect_to<span class="envvar">%3Dhttp%</span><span class="number">3</span>A<span class="envvar">%2F%</span><span class="number">2</span>Fmindhacks.cn<span class="envvar">%2F2008%</span><span class="number">2</span>F06<span class="envvar">%2F13%</span><span class="number">2</span>Fwhy-is-quicksort-so-quick%<span class="number">2</span>F)
-* [谷歌](http://pongba.duoshuo.com/login/google/?sso=<span class="number">1</span>&redirect_uri=http<span class="envvar">%3A%</span><span class="number">2</span>F<span class="envvar">%2Fmindhacks.cn%</span><span class="number">2</span>Fwp-login.php<span class="envvar">%3Faction%</span><span class="number">3</span>Dduoshuo_login&redirect_to<span class="envvar">%3Dhttp%</span><span class="number">3</span>A<span class="envvar">%2F%</span><span class="number">2</span>Fmindhacks.cn<span class="envvar">%2F2008%</span><span class="number">2</span>F06<span class="envvar">%2F13%</span><span class="number">2</span>Fwhy-is-quicksort-so-quick%<span class="number">2</span>F)
-[![]()]()
-
-发布
-
-[]( "插入表情")
-
-[刘未鹏 | Mind Hacks正在使用多说](http://duoshuo.com/)
-<span class="number">1</span>. chaonin on [February <span class="number">17</span>, <span class="number">2009</span> at <span class="number">10</span>:<span class="number">34</span> am](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">93</span>) said:
-
-@@之前就在你的卢浮宫看到了，写的直白明了！
-
-小弟学的是编码，呵呵。
-Mackay的那本书重点是介绍编码的，具体的说是纠错码的。编码理论的重要基础是信息论。
-他对这些问题的分析不是专门要来分析这写问题的，而只是用信息论的方法来解释这些现象。
-<span class="number">1</span>. [帅得不敢出门](http://stupidpig.cublog.cn/) on [March <span class="number">23</span>, <span class="number">2009</span> at <span class="number">8</span>:<span class="number">46</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">292</span>) said:
-
-受益良多
-每每看到一些精妙的解法(算法),都想拍手称快.
-<span class="number">1</span>. [conan](http://www.cloved.cn/) on [May <span class="number">11</span>, <span class="number">2009</span> at <span class="number">9</span>:<span class="number">43</span> am](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">407</span>) said:
-
-关注toplanguage很久了.只是一直不敢在上面留言,看上面的聊天就感觉自己是沧海一粟.今天看到一篇.可能你是幸运的吧.我大概算了下,你应该是和我同届的.不过我比你小一岁.马上就毕业两年了.研究生们也快毕业了….回忆这些日子,感觉偏离了自己的目标,也感觉工作后并没有自己希望的成长着.一直觉得学校的东西很迂腐,什么都需要自己去学习.曾经也深深相信自己能好好成长起来.只是,到了今天,不知道自己是否还跟着大家的脚步….
-<span class="number">1</span>. metal-fan on [October <span class="number">15</span>, <span class="number">2009</span> at <span class="number">9</span>:<span class="number">13</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">616</span>) said:
-
-写的太棒了～深入本质～受益匪浅！！！
-<span class="number">1</span>. raymond on [December <span class="number">25</span>, <span class="number">2009</span> at <span class="number">10</span>:<span class="number">38</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">709</span>) said:
-
-这是最大熵原则的几个例子，即保留最大的不确定性，因为这样才能保留最大的信息。生活中很多问题都可以归结为一些简单的法则，而在实际处理问题的时候，这些简单的法则会被以各种各样的形式掩盖，从而让我们失去探索的机会。博主是个有心人啊
-<span class="number">1</span>. bigining on [April <span class="number">24</span>, <span class="number">2010</span> at <span class="number">6</span>:<span class="number">10</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">888</span>) said:
-
-在说到<span class="number">12</span>个的例子时，第二次称时：“这是一个完美的三分。然后对每个分支构造第二次称法，这里你只要稍加演算就可以发现，分支<span class="number">1</span>上的第二次称法，即“<span class="number">1</span>、<span class="number">2</span>、<span class="number">6</span>对<span class="number">3</span>、<span class="number">4</span>、<span class="number">5</span>”这种称法，天平输出三种结果的可能性是均等的（严格来说是几乎均等）。”，但是这样好像是找不出那个不同的球的。不知道<span class="number">1</span>、<span class="number">2</span>、<span class="number">6</span>对<span class="number">3</span>、<span class="number">4</span>、<span class="number">5</span>之后要怎么进行判断？（可以假设<span class="number">1</span>、<span class="number">2</span>、<span class="number">6</span>比<span class="number">3</span>、<span class="number">4</span>、<span class="number">5</span>重，然后只能说明<span class="number">1</span>、 <span class="number">2</span>较重或<span class="number">5</span>较轻，然后第三次要怎么进行？）
-
-* Ted on [November <span class="number">28</span>, <span class="number">2011</span> at <span class="number">3</span>:<span class="number">30</span> am](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">18264</span>) said:
-
-晕，你都说了“然后只能说明<span class="number">1</span>、 <span class="number">2</span>较重或<span class="number">5</span>较轻”，这还不明显，再把<span class="number">1</span>，<span class="number">2</span>分别放<span class="number">2</span>边，哪个重，哪个就是，否则就是平衡，那<span class="number">5</span>就是目标。
-* rrison on [May <span class="number">6</span>, <span class="number">2010</span> at <span class="number">11</span>:<span class="number">26</span> am](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">904</span>) said:
-
-离散数学里的博弈树
-* [dell latitude d620 laptop battery](http://www.usbphoneworld.com/lbded6620.html) on [June <span class="number">13</span>, <span class="number">2010</span> at <span class="number">10</span>:<span class="number">56</span> am](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">934</span>) said:
-
-非常感谢。受益良多。
-* 
-Pingback: [数学之美番外篇：快排为什么那样快 | 天道酬勤](http://www.iskycloud.com/blog/algorithm/<span class="number">52</span>.html)
-* kmplayer on [December <span class="number">16</span>, <span class="number">2010</span> at <span class="number">3</span>:<span class="number">25</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">11214</span>) said:
-
-“那么可以证明第二次比较a2也小于pivot的可能性是<span class="number">2</span>/<span class="number">3</span>！”
-”a3&lt;pivot的概率将会是<span class="number">3</span>/<span class="number">4</span>！“
-这两个地方的”叹号“很容易误解为”阶层“
-* hit_alex on [December <span class="number">26</span>, <span class="number">2010</span> at <span class="number">5</span>:<span class="number">15</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">11319</span>) said:
-
-把这西抽象出来确实也挺有意思的。另外，我注意到标题：**鸡排为什么又那么快呢？**中“鸡排”是不是写错了？莫非是作者故意为之？
-* [Miller](http://www.lisher.tk/) on [February <span class="number">14</span>, <span class="number">2011</span> at <span class="number">10</span>:<span class="number">23</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">12358</span>) said:
-
-<span class="number">4</span>、<span class="number">4</span>称了之后不管哪种情况（分支），剩下来的可能性总是》 <span class="number">8</span> 《种吧
-* 
-Pingback: [知其所以然（续） - 东莞律师网](http://www.lawyer888.com/?p=<span class="number">122</span>)
-* 
-Pingback: [知其所以然（续） | w3er](http://w3er.com/<span class="envvar">%e6%</span><span class="number">9</span>c<span class="envvar">%aa%</span>e5<span class="envvar">%88%</span><span class="number">86</span><span class="envvar">%e7%</span>b1<span class="envvar">%bb/%</span>e7<span class="envvar">%9f%</span>a5<span class="envvar">%e5%</span><span class="number">85</span><span class="envvar">%b6%</span>e6<span class="envvar">%89%</span><span class="number">80</span><span class="envvar">%e4%</span>bb<span class="envvar">%a5%</span>e7<span class="envvar">%84%</span>b6<span class="envvar">%ef%</span>bc<span class="envvar">%88%</span>e7<span class="envvar">%bb%</span>ad<span class="envvar">%ef%</span>bc%<span class="number">89</span>/)
-* 
-Pingback: [知其所以然（三）——为什么算法这么难？](http://mindhacks.cn/<span class="number">2011</span>/<span class="number">07</span>/<span class="number">10</span>/the-importance-of-knowing-why-part3/)
-* 
-Pingback: [推荐读书《暗时间》](http://www.whoisnerd.com/<span class="number">2011</span>/<span class="number">07</span>/<span class="number">31</span>/<span class="envvar">%e6%</span><span class="number">8</span>e<span class="envvar">%a8%</span>e8<span class="envvar">%8d%</span><span class="number">90</span><span class="envvar">%e8%</span>af<span class="envvar">%bb%</span>e4<span class="envvar">%b9%</span>a6<span class="envvar">%e3%</span><span class="number">80</span><span class="envvar">%8a%</span>e6<span class="envvar">%9a%</span><span class="number">97</span><span class="envvar">%e6%</span><span class="number">97</span><span class="envvar">%b6%</span>e9<span class="envvar">%97%</span>b4<span class="envvar">%e3%</span><span class="number">80</span>%<span class="number">8</span>b/)
-* 
-Pingback: [转：为什么算法这么难？ | South♂楠个人博客](http://southmagic.sinaapp.com/?p=<span class="number">18</span>)
-* 
-Pingback: [知其所以然（续） | 风的天地](http://blog69.tk/?p=<span class="number">540</span>)
-* 
-Pingback: [知其所以然（三）：为什么算法这么难？ | 风的天地](http://blog69.tk/?p=<span class="number">114</span>)
-* wosunziwuwan on [November <span class="number">27</span>, <span class="number">2011</span> at <span class="number">9</span>:<span class="number">55</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">18259</span>) said:
-
-“那么可以证明第二次比较a2也小于pivot的可能性是<span class="number">2</span>/<span class="number">3</span>″这句话有问题吧，可能性应该还是<span class="number">1</span>/<span class="number">2</span>吧？因为只是a2和pivot相对次序的比较，和a1无关，是一次独立的比较。这和取排问题不同，确定了<span class="number">2</span>张牌后，第<span class="number">3</span>张牌只有从剩下的牌中去取
-* [yeasy](http://yeasy.blogspot.com/) on [December <span class="number">15</span>, <span class="number">2011</span> at <span class="number">4</span>:<span class="number">23</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">18653</span>) said:
-
-更为本质一些，我觉得跟最大熵原理有些关系。
-参考http://yeasy.blogspot.com/<span class="number">2011</span>/<span class="number">11</span>/blog-post.html
-* 
-Pingback: [罗青-技术博客 | [re]趣谈二分法](http://tsingroo.sinaapp.com/?p=<span class="number">302</span>)
-* 
-Pingback: [趣题：天平找假币 - Aikilis' Blog](http://aikilis.tk/<span class="number">1398</span>)
-* 
-Pingback: [快排_quicksort() - C++](http://cblog.lylzone.info/<span class="number">2012</span>/<span class="number">03</span>/<span class="number">6</span>/quicksort.html)
-* LittleJ on [March <span class="number">19</span>, <span class="number">2012</span> at <span class="number">6</span>:<span class="number">12</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">20448</span>) said:
-
-“第一次比较结果是a1&lt;pivot，那么可以证明第二次比较a2也小于pivot的可能性是<span class="number">2</span>/<span class="number">3</span>！"这里我也不是很明白。这里指的第一次第二次都是相对于快排的一次排序来说的吧？那么第一次将a1和pivot比较，大或者小的概率是相等的这里没有问题。为什么第二次比较a2要“也”小于pivot呢？我的意思就是第一次比较和第二次比较之间有什么关联？这里我没有看明白，能不能解释一下呢？谢谢：）
-* 
-Pingback: [知其所以然（三）：为什么算法这么难？ | 吃杂烩](http://blog.chiapp.com/html/<span class="number">2012</span>-<span class="number">08</span>-<span class="number">09</span>/<span class="number">4159</span>.html)
-* 
-Pingback: [所有排序总结（内排序）（续）——基于比较排序下界 | 编程·早晨](http://code.zc4u.com/articles/<span class="number">5362</span>.html)
-* 
-Pingback: [孙吾饭的游乐场 | 暗时间](http://patdelphi.com/wordpress/?p=<span class="number">508</span>)
-* [透明的沙子](http://www.douban.com/people/<span class="number">49902334</span>/) on [September <span class="number">3</span>, <span class="number">2012</span> at <span class="number">8</span>:<span class="number">51</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">31818</span>) said:
-
-“然而，快排的第二次比较就不那么高明了：我们不妨令轴元素为pivot，第一次比较结果是a1pivot的话，那么a1，a2，pivot这三个元素之间的关系就完全确定了——a1
-* [透明的沙子](http://www.douban.com/people/<span class="number">49902334</span>/) on [September <span class="number">3</span>, <span class="number">2012</span> at <span class="number">8</span>:<span class="number">53</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">31819</span>) said:
-
-看起来很多人不理解这个，反复想不明白，坐等解答啊
-* [滔要考研](http://weibo.com/<span class="number">1742521405</span>) on [September <span class="number">7</span>, <span class="number">2012</span> at <span class="number">1</span>:<span class="number">06</span> am](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">31827</span>) said:
-
-关于快排的部分，其实本质是指轴元素如果选取的不够“中间”，会导致第一次排序后左右不均，从而导致较差的效率表现。刘大牛从缩减可能性这个角度出发，让人耳目一新。受教了。
-* simple on [September <span class="number">21</span>, <span class="number">2012</span> at <span class="number">11</span>:<span class="number">34</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">31875</span>) said:
-
-以<span class="number">6</span>个球的例子来说，这个策略的“答案”是随着剩下的可能性（或者说剩下的球）的数量而发生变化的，比如，当球剩下<span class="number">2</span>个时，那么天平的输出结果只可能有两种：左或右倾。因此，这时候应该是以以<span class="number">2</span>去平分剩下的可能性。
-* simple on [September <span class="number">22</span>, <span class="number">2012</span> at <span class="number">1</span>:<span class="number">35</span> am](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">31876</span>) said:
-
-鸡排之所以快，我觉得还可以用另一种说法（以<span class="number">13</span>张牌的例子为例）：第i张牌确定位置后，放第i+<span class="number">1</span>张牌时，桌上剩下的位置还有 <span class="number">13</span>-i 个，即放牌的可能性为<span class="number">13</span>-i种，然后，摸牌再看是什么点数就相当于公布答案，而这个答案刚好也是有 <span class="number">13</span>-i 种，即，<span class="number">13</span>-i种答案把<span class="number">13</span>-i种可能性平均分为了<span class="number">13</span>-i/<span class="number">13</span>-i = <span class="number">1</span>种，最后得到鸡排需要的时间复杂度为O（<span class="number">1</span>）
-* imgen on [September <span class="number">29</span>, <span class="number">2012</span> at <span class="number">5</span>:<span class="number">45</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">31903</span>) said:
-
-关于称球问题，我正是用了信息论的方法为指引，三分而称球，而且我也给出了推广到N的解法，从中获得了很多乐趣和满足。不过那是在大学时代了，久远了
-* [icrt_](http://weibo.com/<span class="number">2177249280</span>) on [October <span class="number">10</span>, <span class="number">2012</span> at <span class="number">9</span>:<span class="number">03</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">31922</span>) said:
-
-真心佩服了。之前觉得称球问题没有什么，看这文章才知道原来有这么多的东西！
-* [_小毛童鞋_](http://weibo.com/<span class="number">1238983263</span>) on [October <span class="number">16</span>, <span class="number">2012</span> at <span class="number">6</span>:<span class="number">25</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">31942</span>) said:
-
-高爷爷是谁？
-* [鸡翅呀鸡翅](http://weibo.com/brightown) on [November <span class="number">6</span>, <span class="number">2012</span> at <span class="number">3</span>:<span class="number">21</span> pm](http://mindhacks.cn/<span class="number">2008</span>/<span class="number">06</span>/<span class="number">13</span>/why-is-quicksort-so-quick/comment-page-<span class="number">1</span>/#comment-<span class="number">32004</span>) said:
-
-哇高爷爷果然是神人也，查了一下<span class="number">73</span>年v3的第一版就有神论~~~膜拜orz
-</pre></td></tr></table></figure></p>
-<ul>
-<li><a href="http://weibo.com/xianqings" target="_blank">ouqi</a> on <a href="http://mindhacks.cn/2008/06/13/why-is-quicksort-so-quick/comment-page-1/#comment-32350" target="_blank">April 10, 2013 at 9:46 pm</a> said:</li>
-</ul>
-<p>同不明白这一块：
-然而，快排的第二次比较就不那么高明了：我们不妨令轴元素为pivot，第一次比较结果是a1<pivot，那么可以证明第二次比较a2也小于pivot的可能性是2/3！这容易证明：如果a2>pivot的话，那么a1，a2，pivot这三个元素之间的关系就完全确定了——a1&lt;pivot&lt;a2，剩下来的元素排列的可能性我们不妨记为P（不需要具体算出来）。而如果a2&lt;pivot呢？那么a1和a2的关系就仍然是不确定的，也就是说，这个分支里面含有两种情况：a1&lt;a2&lt;pivot，以及a2&lt;a1&lt;pivot。对于其中任一种情况，剩下的元素排列的可能性都是P，于是这个分支里面剩下的排列可能性就是2P。所以当a2&lt;pivot的时候，还剩下2/3的可能性需要排查。</p>
-<p>我的疑惑在于，第一次的a2是什么，为什么要把第二次的排序和第一次的排序相关联?
-不明白您定义的第二次排序是什么，我以为的第二次排序是对第一次的起始位置到第一次的pivot之间的数字的排序，那么第二次的privot又是重新选定的。也就是说在第一次排序之后，任何一个值跟第一次的privot的大小关系都是确定了的，要么比他大 要么比他小。那您说a2是什么？</p>
-<ul>
-<li><a href="http://www.abcsnk.com/" target="_blank">ナイキ 通販</a> on <a href="http://mindhacks.cn/2008/06/13/why-is-quicksort-so-quick/comment-page-1/#comment-32490" target="_blank">June 19, 2013 at 10:11 am</a> said:</li>
-</ul>
-<p>searching is another thing no doubt you like to accomplish (specially me), when i don’t recognize how but searching is one particular activity which offers us eminence delight and relaxation whenever we are generally tired as well as frustrated as well as irritated, but while using ever raising targets along with office update they have became next to impossible for us to determine some time for it to hang out with his friends and enjoy that period while rooming around for the streets involving market.</p>
-<p>But even as we always say there’s <a href="http://www.abcsnk.com/adidas-スパイクサッカー-アディピュア-11pro-c-22_23_29.html" target="_blank"><a href="http://www.abcsnk.com/adidas-スパイクサッカー-アディピュア-11pro-c-22_23_29.html">http://www.abcsnk.com/adidas-スパイクサッカー-アディピュア-11pro-c-22_23_29.html</a></a> アディピュア11pro a option for just about every problem along with situation on the <a href="http:/www.sportrakuten.com"><a href="http:///www.sportrakuten.com">http:///www.sportrakuten.com</a></a> サングラス通販 globe, all you want to do is seek out that option with <a href="http://www.sportrakuten.com/categories/1369471366-179.html" target="_blank"><a href="http://www.sportrakuten.com/categories/1369471366-179.html">http://www.sportrakuten.com/categories/1369471366-179.html</a></a> レイバン サングラス ‘something different’ perspective. And which is the very reason we invented a many new method involving shopping which in turn know while online searching method. But staying this strategy new types of quarries that happen to be there inside mind of folks related on the same and were here to unravel those themselves.</p>
-<p>But today you’ll find thousands involving products that is purchased via an web shop starting coming from a bugger to your flat in fact it is impossible for individuals to cover hundreds of in one particular discussion themselves therefore today we’ll be only talking over facts pertains to <a href="http://www.abcsnk.com/" target="_blank"><a href="http://www.abcsnk.com">http://www.abcsnk.com</a></a> ナイキ 通販 online searching of sneakers for adult men.</p>
-<p>Buying some your favourite Adidas <a href="http://www.abcsnk.com/adidas-スパイクサッカー-プレデター-アディダス-11-c-22_23_25.html" target="_blank"><a href="http://www.abcsnk.com/adidas-スパイクサッカー-プレデター-アディダス-11-c-22_23_25.html">http://www.abcsnk.com/adidas-スパイクサッカー-プレデター-アディダス-11-c-22_23_25.html</a></a> adidas プレデター sneakers from these websites is just about the easiest thing on the <a href="http:/www.sportrakuten.com/categories/1369471516-183.html"><a href="http:///www.sportrakuten.com/categories/1369471516-183.html">http:///www.sportrakuten.com/categories/1369471516-183.html</a></a> レイバン(RAY BAN) globe, but to generate it truly easy you’ve got to keep up few in the things as well as points that happen to be listed down below.</p>
-<ul>
-<li>wang on <a href="http://mindhacks.cn/2008/06/13/why-is-quicksort-so-quick/comment-page-1/#comment-32571" target="_blank">July 5, 2013 at 10:12 am</a> said:</li>
-</ul>
-<p><a href="http://www.allsnk.com/nddbc.html" target="_blank"><a href="http://www.allsnk.com/nddbc.html">http://www.allsnk.com/nddbc.html</a></a>
-<a href="http://www.allsnk.com/nddbc.html" target="_blank"><a href="http://www.allsnk.com/nddbc.html">http://www.allsnk.com/nddbc.html</a></a>
-<a href="http://www.allsnk.com/nddbc.html" target="_blank"><a href="http://www.allsnk.com/nddbc.html">http://www.allsnk.com/nddbc.html</a></a></p>
-<ul>
-<li><h3 id="-">关于</h3>
-</li>
-</ul>
-<p>如果你对我的文章感兴趣，那么<strong>很可能你也对我平时的阅读感兴趣</strong>，以下是一些你可以参考或订阅的资源：</p>
+}
+</code></pre><p>}
+<strong>HMAC</strong>
+HMAC(Hash Message Authentication Code，散列消息鉴别码，基于密钥的Hash算法的认证协议。消息鉴别码实现鉴别的原理是，用公开函数和密钥产生一个固定长度的值作为认证标识，用这个标识鉴别消息的完整性。使用一个密钥生成一个固定大小的小数据块，即MAC，并将其加入到消息中，然后传输。接收方利用与发送方共享的密钥进行鉴别认证等。
+<img src="" alt="">
+通过java代码实现如下：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
 <ol>
-<li><p><a href="http://www.douban.com/people/pongba/" target="_blank">我在豆瓣</a>上的豆列列举了一些看过的好书：<a href="http://www.douban.com/doulist/46003/" target="_blank">[只读经典]思维改变生活</a> | <a href="http://www.douban.com/doulist/127649/" target="_blank">[只读经典]思考的技术与艺术</a> | <a href="http://www.douban.com/doulist/197706/" target="_blank">决策与判断</a> | <a href="http://www.douban.com/doulist/176513/" target="_blank">机器学习与人工智能书籍资源导引</a>
-我翻译的书：</p>
-</li>
-<li><p><a href="http://book.douban.com/subject/1470838/" target="_blank">《Imperfect C++ 中文版》</a></p>
-</li>
-<li><a href="http://book.douban.com/subject/1470842/" target="_blank">《Exceptional C++ Style 中文版》</a></li>
-<li><p><a href="http://book.douban.com/subject/2248759/" target="_blank">《修改代码的艺术》</a>
-我写的书：</p>
-</li>
-<li><p><a href="http://book.douban.com/subject/6709809/" target="_blank"><img src="" alt=""></a></p>
-</li>
-<li><h3 id="-">被阅读得最多的</h3>
-</li>
+<li>//<em>/</em> </li>
+<li>/* 初始化HMAC密钥 </li>
+<li>/*  </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static String initMacKey() throws Exception {  </li>
+<li>KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);  </li>
+<li></li>
+<li>SecretKey secretKey = keyGenerator.generateKey();  </li>
+<li>return encryptBASE64(secretKey.getEncoded());  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* HMAC加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptHMAC(byte[] data, String key) throws Exception {  </li>
+<li></li>
+<li>SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);  </li>
+<li>Mac mac = Mac.getInstance(secretKey.getAlgorithm());  </li>
+<li>mac.init(secretKey);  </li>
+<li></li>
+<li>return mac.doFinal(data);  </li>
+<li></li>
+<li><p>}  </p>
+<p> //<em>/</em></p>
+<p>  /<em> 初始化HMAC密钥
+  /</em></p>
+<p>  /<em> @return
+  /</em> @throws Exception</p>
+<p>  /*/
+ public static String initMacKey() throws Exception {</p>
+<pre><code> KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);
+</code></pre></li>
 </ol>
-<ul>
-<li><a href="http://mindhacks.cn/2009/02/15/why-you-should-start-blogging-now/" title="[BetterExplained]为什么你应该（从现在开始就）写博客" target="_blank">[BetterExplained]为什么你应该（从现在开始就）写博客</a> - 210,263 views</li>
-<li><a href="http://mindhacks.cn/2011/11/04/how-to-interview-a-person-for-two-years/" title="怎样花两年时间去面试一个人" target="_blank">怎样花两年时间去面试一个人</a> - 207,509 views</li>
-<li><a href="http://mindhacks.cn/2009/03/15/preconception-explained/" title="逃出你的肖申克（二）：仁者见仁智者见智？从视觉错觉到偏见" target="_blank">逃出你的肖申克（二）：仁者见仁智者见智？从视觉错觉到偏见</a> - 194,733 views</li>
-<li><a href="http://mindhacks.cn/2009/12/20/dark-time/" title="暗时间" target="_blank">暗时间</a> - 193,494 views</li>
-<li><a href="http://mindhacks.cn/2009/05/17/seven-years-in-nju/" title="我在南大的七年" target="_blank">我在南大的七年</a> - 176,349 views</li>
-<li><a href="http://mindhacks.cn/2009/03/28/effective-learning-and-memorization/" title="[BetterExplained]如何有效地记忆与学习" target="_blank">[BetterExplained]如何有效地记忆与学习</a> - 169,039 views</li>
-<li><a href="http://mindhacks.cn/2008/09/21/the-magical-bayesian-method/" title="数学之美番外篇：平凡而又神奇的贝叶斯方法" target="_blank">数学之美番外篇：平凡而又神奇的贝叶斯方法</a> - 166,636 views</li>
-<li><a href="http://mindhacks.cn/2009/01/18/escape-from-your-shawshank-part1/" title="逃出你的肖申克（一）：为什么一定要亲身经历了之后才能明白？" target="_blank">逃出你的肖申克（一）：为什么一定要亲身经历了之后才能明白？</a> - 139,011 views</li>
-<li><a href="http://mindhacks.cn/2010/03/18/escape-from-your-shawshank-part3/" title="逃出你的肖申克（三）：遇见20万年前的自己" target="_blank">逃出你的肖申克（三）：遇见20万年前的自己</a> - 135,486 views</li>
-<li><a href="http://mindhacks.cn/2009/02/09/writing-is-better-thinking/" title="[BetterExplained]书写是为了更好的思考" target="_blank">[BetterExplained]书写是为了更好的思考</a> - 118,613 views</li>
-<li><h3 id="-">我的微博</h3>
-</li>
-<li><h3 id="-">你可能也会喜欢以下文章</h3>
-</li>
-<li><p><a href="http://mindhacks.cn/2008/09/21/the-magical-bayesian-method/" title="数学之美番外篇：平凡而又神奇的贝叶斯方法" target="_blank">数学之美番外篇：平凡而又神奇的贝叶斯方法</a> (113)</p>
-</li>
-<li><a href="http://mindhacks.cn/2007/12/02/probability-theory-in-evolution/" title="数学之美番外篇：进化论中的概率论" target="_blank">数学之美番外篇：进化论中的概率论</a> (16)</li>
-<li><a href="http://mindhacks.cn/2006/10/15/cantor-godel-turing-an-eternal-golden-diagonal/" title="康托尔、哥德尔、图灵——永恒的金色对角线(rev#2)" target="_blank">康托尔、哥德尔、图灵——永恒的金色对角线(rev/#2)</a> (56)</li>
-<li><a href="http://mindhacks.cn/2011/07/10/the-importance-of-knowing-why-part3/" title="知其所以然（三）：为什么算法这么难？" target="_blank">知其所以然（三）：为什么算法这么难？</a> (74)</li>
-<li><a href="http://mindhacks.cn/2010/11/14/the-importance-of-knowing-why-part2/" title="知其所以然（续）" target="_blank">知其所以然（续）</a> (54)</li>
-<li><a href="http://mindhacks.cn/2008/09/11/machine-learning-and-ai-resources/" title="机器学习与人工智能学习资源导引" target="_blank">机器学习与人工智能学习资源导引</a> (18)</li>
-<li><a href="http://mindhacks.cn/2008/07/07/the-importance-of-knowing-why/" title="知其所以然（以算法学习为例）" target="_blank">知其所以然（以算法学习为例）</a> (46)</li>
-<li><a href="http://mindhacks.cn/2008/04/18/learning-from-polya/" title="跟波利亚学解题(rev#3)" target="_blank">跟波利亚学解题(rev/#3)</a> (32)
-*</li>
-</ul>
-<p>*</p>
-<p><a href="http://www.arrastheme.com/" target="_blank"><strong>About Arras WordPress Theme</strong></a></p>
-<p>Copyright 刘未鹏 | Mind Hacks. All Rights Reserved. <a href="http://www.miibeian.gov.cn/" target="_blank">苏ICP备09004067号</a>. Powered by <a href="http://wordpress.org/" target="_blank">Wordpress</a>. Using <a href="http://www.arrastheme.com/" target="_blank">Arras Theme</a>.</p>
+<pre><code>    SecretKey secretKey = keyGenerator.generateKey();
+    return encryptBASE64(secretKey.getEncoded());
+
+}
+
+
+//*/*
+ /* HMAC加密
+
+ /*
+ /* @param data
+
+ /* @param key
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+public static byte[] encryptHMAC(byte[] data, String key) throws Exception {
+
+
+    SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);
+    Mac mac = Mac.getInstance(secretKey.getAlgorithm());
+
+    mac.init(secretKey);
+
+
+    return mac.doFinal(data);
+
+
+}
+</code></pre><p>给出一个完整类，如下：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>import java.security.MessageDigest;  </li>
+<li></li>
+<li>import javax.crypto.KeyGenerator;  </li>
+<li>import javax.crypto.Mac;  </li>
+<li>import javax.crypto.SecretKey;  </li>
+<li></li>
+<li>import sun.misc.BASE64Decoder;  </li>
+<li>import sun.misc.BASE64Encoder;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 基础加密组件 </li>
+<li>/*  </li>
+<li>/* @author 梁栋 </li>
+<li>/* @version 1.0 </li>
+<li>/* @since 1.0 </li>
+<li>/*/  </li>
+<li>public abstract class Coder {  </li>
+<li>public static final String KEY_SHA = &quot;SHA&quot;;  </li>
+<li>public static final String KEY_MD5 = &quot;MD5&quot;;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* MAC算法可选以下多种算法 </li>
+<li>/*  </li>
+<li>/* <pre> </li>
+<li>/* HmacMD5  </li>
+<li>/* HmacSHA1  </li>
+<li>/* HmacSHA256  </li>
+<li>/* HmacSHA384  </li>
+<li>/* HmacSHA512 </li>
+<li>/* </pre> </li>
+<li>/*/  </li>
+<li>public static final String KEY_MAC = &quot;HmacMD5&quot;;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* BASE64解密 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] decryptBASE64(String key) throws Exception {  </li>
+<li>return (new BASE64Decoder()).decodeBuffer(key);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* BASE64加密 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static String encryptBASE64(byte[] key) throws Exception {  </li>
+<li>return (new BASE64Encoder()).encodeBuffer(key);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* MD5加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptMD5(byte[] data) throws Exception {  </li>
+<li></li>
+<li>MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);  </li>
+<li>md5.update(data);  </li>
+<li></li>
+<li>return md5.digest();  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* SHA加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptSHA(byte[] data) throws Exception {  </li>
+<li></li>
+<li>MessageDigest sha = MessageDigest.getInstance(KEY_SHA);  </li>
+<li>sha.update(data);  </li>
+<li></li>
+<li>return sha.digest();  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 初始化HMAC密钥 </li>
+<li>/*  </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static String initMacKey() throws Exception {  </li>
+<li>KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);  </li>
+<li></li>
+<li>SecretKey secretKey = keyGenerator.generateKey();  </li>
+<li>return encryptBASE64(secretKey.getEncoded());  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* HMAC加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptHMAC(byte[] data, String key) throws Exception {  </li>
+<li></li>
+<li>SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);  </li>
+<li>Mac mac = Mac.getInstance(secretKey.getAlgorithm());  </li>
+<li>mac.init(secretKey);  </li>
+<li></li>
+<li>return mac.doFinal(data);  </li>
+<li></li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>import java.security.MessageDigest;</p>
+<p>import javax.crypto.KeyGenerator;</p>
+<p>import javax.crypto.Mac;
+import javax.crypto.SecretKey;</p>
+<p>import sun.misc.BASE64Decoder;</p>
+<p>import sun.misc.BASE64Encoder;</p>
+<p>//<em>/</em>
+/* 基础加密组件</p>
+<p>/<em>
+/</em> @author 梁栋</p>
+<p>/<em> @version 1.0
+/</em> @since 1.0</p>
+<p>/*/
+public abstract class Coder {</p>
+<pre><code>public static final String KEY_SHA = &quot;SHA&quot;;
+public static final String KEY_MD5 = &quot;MD5&quot;;
+
+
+//*/*
+
+ /* MAC算法可选以下多种算法
+ /*
+
+ /* &lt;pre&gt;
+ /* HmacMD5
+
+ /* HmacSHA1
+ /* HmacSHA256
+
+ /* HmacSHA384
+ /* HmacSHA512
+
+ /* &lt;/pre&gt;
+ /*/
+
+public static final String KEY_MAC = &quot;HmacMD5&quot;;
+
+
+//*/*
+ /* BASE64解密
+
+ /*
+ /* @param key
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static byte[] decryptBASE64(String key) throws Exception {
+
+    return (new BASE64Decoder()).decodeBuffer(key);
+}
+
+
+//*/*
+
+ /* BASE64加密
+ /*
+
+ /* @param key
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+public static String encryptBASE64(byte[] key) throws Exception {
+    return (new BASE64Encoder()).encodeBuffer(key);
+
+}
+
+
+//*/*
+ /* MD5加密
+
+ /*
+ /* @param data
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static byte[] encryptMD5(byte[] data) throws Exception {
+
+
+    MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);
+
+    md5.update(data);
+
+
+    return md5.digest();
+
+
+}
+
+
+//*/*
+ /* SHA加密
+
+ /*
+ /* @param data
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static byte[] encryptSHA(byte[] data) throws Exception {
+
+
+    MessageDigest sha = MessageDigest.getInstance(KEY_SHA);
+
+    sha.update(data);
+
+
+    return sha.digest();
+
+
+}
+
+
+//*/*
+ /* 初始化HMAC密钥
+
+ /*
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+public static String initMacKey() throws Exception {
+    KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);
+
+
+    SecretKey secretKey = keyGenerator.generateKey();
+
+    return encryptBASE64(secretKey.getEncoded());
+}
+
+
+//*/*
+
+ /* HMAC加密
+ /*
+
+ /* @param data
+ /* @param key
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static byte[] encryptHMAC(byte[] data, String key) throws Exception {
+
+
+    SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);
+
+    Mac mac = Mac.getInstance(secretKey.getAlgorithm());
+    mac.init(secretKey);
+
+
+    return mac.doFinal(data);
+
+
+}
+</code></pre><p>}
+再给出一个测试类：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>import static org.junit.Assert./*;  </li>
+<li></li>
+<li>import org.junit.Test;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/*  </li>
+<li>/* @author 梁栋 </li>
+<li>/* @version 1.0 </li>
+<li>/* @since 1.0 </li>
+<li>/*/  </li>
+<li>public class CoderTest {  </li>
+<li></li>
+<li>@Test  </li>
+<li>public void test() throws Exception {  </li>
+<li>String inputStr = &quot;简单加密&quot;;  </li>
+<li>System.err.println(&quot;原文:\n&quot; + inputStr);  </li>
+<li></li>
+<li>byte[] inputData = inputStr.getBytes();  </li>
+<li>String code = Coder.encryptBASE64(inputData);  </li>
+<li></li>
+<li>System.err.println(&quot;BASE64加密后:\n&quot; + code);  </li>
+<li></li>
+<li>byte[] output = Coder.decryptBASE64(code);  </li>
+<li></li>
+<li>String outputStr = new String(output);  </li>
+<li></li>
+<li>System.err.println(&quot;BASE64解密后:\n&quot; + outputStr);  </li>
+<li></li>
+<li>// 验证BASE64加密解密一致性  </li>
+<li>assertEquals(inputStr, outputStr);  </li>
+<li></li>
+<li>// 验证MD5对于同一内容加密是否一致  </li>
+<li>assertArrayEquals(Coder.encryptMD5(inputData), Coder  </li>
+<li>.encryptMD5(inputData));  </li>
+<li></li>
+<li>// 验证SHA对于同一内容加密是否一致  </li>
+<li>assertArrayEquals(Coder.encryptSHA(inputData), Coder  </li>
+<li>.encryptSHA(inputData));  </li>
+<li></li>
+<li>String key = Coder.initMacKey();  </li>
+<li>System.err.println(&quot;Mac密钥:\n&quot; + key);  </li>
+<li></li>
+<li>// 验证HMAC对于同一内容，同一密钥加密是否一致  </li>
+<li>assertArrayEquals(Coder.encryptHMAC(inputData, key), Coder.encryptHMAC(  </li>
+<li>inputData, key));  </li>
+<li></li>
+<li>BigInteger md5 = new BigInteger(Coder.encryptMD5(inputData));  </li>
+<li>System.err.println(&quot;MD5:\n&quot; + md5.toString(16));  </li>
+<li></li>
+<li>BigInteger sha = new BigInteger(Coder.encryptSHA(inputData));  </li>
+<li>System.err.println(&quot;SHA:\n&quot; + sha.toString(32));  </li>
+<li></li>
+<li>BigInteger mac = new BigInteger(Coder.encryptHMAC(inputData, inputStr));  </li>
+<li>System.err.println(&quot;HMAC:\n&quot; + mac.toString(16));  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>import static org.junit.Assert./*;</p>
+<p>import org.junit.Test;</p>
+<p>//<em>/</em></p>
+<p>/<em>
+/</em> @author 梁栋</p>
+<p>/<em> @version 1.0
+/</em> @since 1.0</p>
+<p>/*/
+public class CoderTest {</p>
+<pre><code>@Test
+
+public void test() throws Exception {
+    String inputStr = &quot;简单加密&quot;;
+
+    System.err.println(&quot;原文:\n&quot; + inputStr);
+
+
+    byte[] inputData = inputStr.getBytes();
+    String code = Coder.encryptBASE64(inputData);
+
+
+    System.err.println(&quot;BASE64加密后:\n&quot; + code);
+
+
+    byte[] output = Coder.decryptBASE64(code);
+
+
+    String outputStr = new String(output);
+
+
+    System.err.println(&quot;BASE64解密后:\n&quot; + outputStr);
+
+
+    // 验证BASE64加密解密一致性
+
+    assertEquals(inputStr, outputStr);
+
+
+    // 验证MD5对于同一内容加密是否一致
+    assertArrayEquals(Coder.encryptMD5(inputData), Coder
+
+            .encryptMD5(inputData));
+
+
+    // 验证SHA对于同一内容加密是否一致
+    assertArrayEquals(Coder.encryptSHA(inputData), Coder
+
+            .encryptSHA(inputData));
+
+
+    String key = Coder.initMacKey();
+    System.err.println(&quot;Mac密钥:\n&quot; + key);
+
+
+    // 验证HMAC对于同一内容，同一密钥加密是否一致
+
+    assertArrayEquals(Coder.encryptHMAC(inputData, key), Coder.encryptHMAC(
+            inputData, key));
+
+
+    BigInteger md5 = new BigInteger(Coder.encryptMD5(inputData));
+
+    System.err.println(&quot;MD5:\n&quot; + md5.toString(16));
+
+
+    BigInteger sha = new BigInteger(Coder.encryptSHA(inputData));
+    System.err.println(&quot;SHA:\n&quot; + sha.toString(32));
+
+
+    BigInteger mac = new BigInteger(Coder.encryptHMAC(inputData, inputStr));
+
+    System.err.println(&quot;HMAC:\n&quot; + mac.toString(16));
+}
+</code></pre><p>}
+控制台输出：
+Console代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>原文:  </li>
+<li>简单加密  </li>
+<li>BASE64加密后:  </li>
+<li>566A5Y2V5Yqg5a+G  </li>
+<li></li>
+<li>BASE64解密后:  </li>
+<li>简单加密  </li>
+<li>Mac密钥:  </li>
+<li>uGxdHC+6ylRDaik++leFtGwiMbuYUJ6mqHWyhSgF4trVkVBBSQvY/a22xU8XT1RUemdCWW155Bke  </li>
+<li>pBIpkd7QHg==  </li>
+<li></li>
+<li>MD5:  </li>
+<li>-550b4d90349ad4629462113e7934de56  </li>
+<li>SHA:  </li>
+<li>91k9vo7p400cjkgfhjh0ia9qthsjagfn  </li>
+<li>HMAC:  </li>
+<li>2287d192387e95694bdbba2fa941009a  </li>
+</ol>
+<p>原文:</p>
+<p>简单加密
+BASE64加密后:</p>
+<p>566A5Y2V5Yqg5a+G</p>
+<p>BASE64解密后:
+简单加密</p>
+<p>Mac密钥:
+uGxdHC+6ylRDaik++leFtGwiMbuYUJ6mqHWyhSgF4trVkVBBSQvY/a22xU8XT1RUemdCWW155Bke</p>
+<p>pBIpkd7QHg==</p>
+<p>MD5:
+-550b4d90349ad4629462113e7934de56</p>
+<p>SHA:
+91k9vo7p400cjkgfhjh0ia9qthsjagfn</p>
+<p>HMAC:
+2287d192387e95694bdbba2fa941009a</p>
+<p>注意
+编译时，可能会看到如下提示：
+引用</p>
+<p>警告：sun.misc.BASE64Decoder 是 Sun 的专用 API，可能会在未来版本中删除
+import sun.misc.BASE64Decoder;
+               ^
+警告：sun.misc.BASE64Encoder 是 Sun 的专用 API，可能会在未来版本中删除
+import sun.misc.BASE64Encoder;
+               ^
+BASE64Encoder和BASE64Decoder是非官方JDK实现类。虽然可以在JDK里能找到并使用，但是在API里查不到。JRE 中 sun 和 com.sun 开头包的类都是未被文档化的，他们属于 java, javax 类库的基础，其中的实现大多数与底层平台有关，一般来说是不推荐使用的。
+    BASE64的加密解密是双向的，可以求反解。
+    MD5、SHA以及HMAC是单向加密，任何数据加密后只会产生唯一的一个加密串，通常用来校验数据在传输过程中是否被修改。其中HMAC算法有一个密钥，增强了数据传输过程中的安全性，强化了算法外的不可控因素。<img src="" alt="">
+    单向加密的用途主要是为了校验数据在传输过程中是否被修改。
+<strong>相关链接：
+<a href="http://snowolf.iteye.com/blog/379860" target="_blank">Java加密技术（一）——BASE64与单向加密算法MD5&amp;SHA&amp;MAC</a>
+<a href="http://snowolf.iteye.com/blog/380034" target="_blank">Java加密技术（二）——对称加密DES&amp;AES</a>
+<a href="http://snowolf.iteye.com/blog/380761" target="_blank">Java加密技术（三）——PBE算法</a>
+<a href="http://snowolf.iteye.com/blog/381767" target="_blank">Java加密技术（四）——非对称加密算法RSA</a>
+<a href="http://snowolf.iteye.com/blog/382422" target="_blank">Java加密技术（五）——非对称加密算法的由来DH</a>
+<a href="http://snowolf.iteye.com/blog/382749" target="_blank">Java加密技术（六）——数字签名算法DSA</a>
+<a href="http://snowolf.iteye.com/blog/383412" target="_blank">Java加密技术（七）——非对称加密算法最高ECC</a>
+<a href="http://snowolf.iteye.com/blog/391931" target="_blank">Java加密技术（八）——数字证书</a>
+<a href="http://snowolf.iteye.com/blog/397693" target="_blank">Java加密技术（九）——初探SSL</a>
+<a href="http://snowolf.iteye.com/blog/398198" target="_blank">Java加密技术（十）——单向认证</a>
+<a href="http://snowolf.iteye.com/blog/510985" target="_blank">Java加密技术（十一）——双向认证</a>
+<a href="http://snowolf.iteye.com/blog/735294" target="_blank">Java加密技术（十二）——/<em>.PFX(/</em>.p12)&amp;个人信息交换文件</a>
+</strong></p>
 
       
     </div>
@@ -1750,8 +2052,8 @@ Pingback: [孙吾饭的游乐场 | 暗时间](http://patdelphi.com/wordpress/?p=
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/算法/">算法</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/算法/" class="label label-success">算法</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-算法--数学之美番外篇：快排为什么那样快/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-算法--数学之美番外篇：快排为什么那样快" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/加解密/">加解密</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/加解密/" class="label label-success">加解密</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1831,7 +2133,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:05:46</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:25:39</em></span></div>
 </div>
 <div class="clearfix"></div>
 

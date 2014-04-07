@@ -110,1222 +110,194 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--深入理解Hadoop集群和网络/">深入理解Hadoop集群和网络</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-linux--用JAVA通过LDAP修改AD用户密码注意事项-一事无成-ITeye技术网站/">用JAVA通过LDAP修改AD用户密码注意事项 </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--深入理解Hadoop集群和网络/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-linux--用JAVA通过LDAP修改AD用户密码注意事项-一事无成-ITeye技术网站/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-hadoop-">深入理解Hadoop集群和网络</h1>
-<p>原文出处： <a href="http://bradhedlund.com/2011/09/10/understanding-hadoop-clusters-and-the-network/" target="_blank">bradhedlund</a>   译文出处： <a href="http://blog.csdn.net/kickxxx/article/details/8230328" target="_blank">kickxxx</a></p>
-<p>本文侧重于Hadoop集群的体系结构和方法，以及它与网络和服务器基础设施的关系。文章的素材主要来自于研究工作以及同现实生活中运行Hadoop集群客户的讨论。如果你也在你的数据中心运行产品级的Hadoop集群，那么我希望你能写下有价值的评论。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl01.png" title="srljhjqhwl01" target="_blank"><img src="&quot;srljhjqhwl01&quot;" alt=""></a></p>
-<p>Hadoop集群部署时有三个角色：Client machines、 Master nodes和Slave nodes。</p>
-<p>Master nodes负责Hadoop的两个关键功能：数据存储（HDFS）；以及运行在这个数据之上的并行计算，又称为Map-Reduce。Name node负责调度数据存储，而Job Tracker则负责并行数据处理的调度（使用Map-Reduce技术）。Slave nodes由大量的机器组成，完成数据存储以及运行计算这样的脏活。每个slave node都运行Data node和Task Tracker daemon，这些slave daemon和master nodes的相应daemon进行通信。Task tracker daemon由Job Tracker管理，Data node Daemon由Name node管理。</p>
-<p>Client机器包含了Hadoop集群的所有设置，但是它既不是Master也不是Slave。Client的角色是向集群保存数据，提交Map-Reduce jobs（描述如何处理数据），获取查看MR jobs的计算结果。在小型集群中（40节点）你可能会发现一个物理机器扮演多个角色，比如既是Job Tracker又是Name node，在中等或者大规模集群中，一般都是用独立的服务器负责单独的角色。</p>
-<p>在真正的产品集群中，不存在虚拟服务器和虚拟机平台，因为他们仅会导致不必要的性能损耗。Hadoop最好运行在linux机器上，直接工作于底层硬件之上。换句话说，Hadoop可以工作在虚拟机之上，对于学习Hadoop是一个不错的廉价方法，我本身就有一个6-node的Hadoop cluster运行Windows 7 laptop的VMware Workstation之上</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl02.png" title="srljhjqhwl02" target="_blank"><img src="&quot;srljhjqhwl02&quot;" alt=""></a></p>
-<p>上图是Hadoop集群的典型架构。机架服务器（不是刀锋服务器）分布在多个机架中，连接到一个1GB(2GB)带宽的机架交换机，机架交换机连接到上一层的交换机，这样所有的节点通过最上层的交换机连接到一起。大部分的服务器都是Slave nodes配置有大的磁盘存储 中等的CPU和DRAM，少部分是Master nodes配置较少的存储空间 但是有强大的CPU和大DRAM</p>
-<p>本文中，我们不讨论网络设计的各种细节，而是把精力放在其他方面。首先我们看下应用的工作流程。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl03.png" title="srljhjqhwl03" target="_blank"><img src="&quot;srljhjqhwl03&quot;" alt=""></a></p>
-<p>为什么会出现Hadoop？ 它又解决了什么问题？ 简单的说，是由于商业和政府有大量的数据需要快速分析和处理，如果我们把这些巨大的数据切分为小的数据块分散到多台计算机中，并且用这些计算机并行处理分配给他们的小块数据，可以快速的得到结果，这就是Hadoop能做的事情。</p>
-<p>在我们的简单例子中，我们有一个大文件保存着所有发给客户服务部分的邮件，想要快速统计单词”Refund”被输入了多少次，这个结果有助于评估对退换货部门的需求，以指定相应对策。这是一个简单的单词计数练习。Client上传数据到集群(File.txt)，提交一个job来描述如何分析数据，集群存储结果到一个新文件(Result.txt)，然后Client读取结果文件。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl04.png" title="srljhjqhwl04" target="_blank"><img src="&quot;srljhjqhwl04&quot;" alt=""></a></p>
-<p>没有加载数据，Hadoop集群就没有任何用途。所以我们首先从加载大文件File.txt到集群中以便处理。目标是能够快速并行处理许多数据，为了达到这个目的需要尽可能多的机器能够同时操纵文件数据。Client把数据文件切分成许多小blocks，然后把他们分散到集群的不同机器上。块数越多，用来处理这些数据的机器就越多。同时这些机器一定会失效，所以要确保每个数据块保存到多个机器上以防止数据丢失。所以每个数据块在存入集群时会进行复制。Hadoop的标准设定是集群中的每个block有三份copy，这个配置可以由hdfs-site.xml的dfs.replication 参数设置</p>
-<p>Client把文件File.txt分成3块，对于每一块，Client和Name node协商获取可以保存它以及备份块的Data nodes列表。Client然后直接写block数据到Data node，Data node负责写入数据并且复制copy到其他的Data nodes。重复操作，直到所有的块写完。Name node本身不参与数据保存，Name node仅仅提供文件数据位置以及数据可用位置（文件系统元数据）</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl05.png" title="srljhjqhwl05" target="_blank"><img src="&quot;srljhjqhwl05&quot;" alt=""></a></p>
-<p>Hadoop引入了Rack Awareness的概念。作为Hadoop系统管理员，你能够手动定义集群中每一个slave Data node的rack号。为什么要把自己置于这种麻烦呢？有两个关键的原因：数据丢失和网络性能。记住每一个数据块都会被复制到多台Data node上，以防止某台机器失效导致数据丢失。有没有可能一份数据的所有备份恰好都在同一个机架上，而这个机架又出现了故障，比如交换机失效或者电源失效。为了防止这种情况，Name node需要知道Data nodes在网络拓扑中的位置，并且使用这个信息决定数据应该复制到集群的什么位置。</p>
-<p>我们还假定同一机架的两台机器间相比不同机架的两台机器间 有更高的带宽和更低的网络延迟，在大部分情况下是正确的。机架交换机的上行带宽通常小于下行带宽。此外，机架内延迟通常低于机架间延迟。如果上面的假定成立，那么采用Rack Awareness既可以通过优化位置保护数据，同时提升网络性能，岂不是太cool了。是的，的确是这样，非常cool，对不对。</p>
-<p>别急，Not cool的是Rack Awareness是需要手工定义的，并且要持续的更新它，并且保证这个信息精确。如果机架交换机可以自动提供它下面的Data node列表给Name node，那就更cool了。或者如果Data nodes可以自动告知Name node他们属于哪个交换机，一样很cool.</p>
-<p>此外，让人感兴趣的是<a href="http://bradhedlund.com/2011/04/21/data-center-scale-openflow-sdn/" target="_blank">OpenFlow</a> 网络，Name node可以请求OpenFlow控制器关于节点位置的拓扑情况。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl06.png" title="srljhjqhwl06" target="_blank"><img src="&quot;srljhjqhwl06&quot;" alt=""></a></p>
-<p>Client准备写文件File.txt到集群时，把文件划分为块，块A为第一个块。Client向Name node申请写文件File.txt，从Name node获得许可，并且接收到一个Data nodes列表（3个表项），每一个Data nodes用来写入块A的一个copy。Name node使用Rack Awareness来决定这个Data nodes列表。规则是：对于每一个数据块，两个 copy存放在一个机架上，另外一个copy存放在另外一个机架上。</p>
-<p>在Client写Block A之前，它要知道准备接受”Block A“ copy的Data nodes是否以及做好了准备。首先，Client选择list中的第一个节点Data Node1，打开一个TCP50010链接然后请求：“hey，准备接受一个block，这是一个Data nodes列表（2个表项），Data node5和Data node6”，请确保他们两个也准备好了“；于是Data Node1打开一个到Data node5的TCP500100连接然后说：”Hey，准备接受一个block，这是一个Data nodes列表（1个表项），Data node6”，请确保他准备好了“；Data Node5同样会问Data Node6：“Hey, 准备好接收一个block吗“</p>
-<p>”准备就绪“的响应通过已经创建好的TCP pipeline传回来，直到Data Node1发送一个”Ready”给Client。现在Client可以开始写入数据了。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl07.png" title="srljhjqhwl07" target="_blank"><img src="&quot;srljhjqhwl07&quot;" alt=""></a></p>
-<p>写入数据的过程中，在涉及写操作的Data nodes之间创建一个复制pipeline。也就是说一个数据节点接收数据的同时，同时会把这份数据通过pipeline push到下一个Node中。</p>
-<p>从上图可以看到，Rack Awareness起到了改善集群性能的做用。Data node5和Data node6在同一个机架上，因此pipeline的最后一步复制是发生在机架内，这就受益于机架内带宽以及低延迟。在Data node1, Data node5, Data node6完成block A之前，block B的操作不会开始。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl08.png" title="srljhjqhwl08" target="_blank"><img src="&quot;srljhjqhwl08&quot;" alt=""></a></p>
-<p>当三个Nodes成功的接收到Block A后，挥发送”Block received”报告给Name node，同时发送”Success”到pipeline中，然后关闭TCP事务。Client在接收到Success信息后，通知Name node数据块已经成功的写入。Name node更新File.txt中Block A的metadata信息（包含Name locations信息）</p>
-<p>Client现在可以开始Block B的传输了</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl09.png" title="srljhjqhwl09" target="_blank"><img src="&quot;srljhjqhwl09&quot;" alt=""></a></p>
-<p>随着File.txt的块被写入，越来越多的Data nodes涉及到pipeline中，散落到机架内的热点，以及跨机架的复制</p>
-<p>Hadoop占用了很多的网络带宽和存储空间。Hadoop专为处理大文件而生，比如TB级尺寸的文件。每一个文件在网络和存储中都被复制了三次。如果你有一个1TB的文件，那么将消耗3TB的网络带宽，同时要消耗3TB的磁盘空间存贮这个文件。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl10.png" title="srljhjqhwl10" target="_blank"><img src="&quot;srljhjqhwl10&quot;" alt=""></a></p>
-<p>随着每块的复制pipeline的完成，文件被成功的写入集群。文件散落在集群内的机器上，每个机器保存文件的一小部分数据。组成文件的块数目越多，数据散落的机器就越多，将来更多的CPU和磁盘驱动器就能参与到并行处理中来，提供更强大更快的处理能力。这也是建造巨大集群的原动力。当机器的数变多，集群则变得wide，网络也相应的需要扩展。</p>
-<p>扩展集群的另外一种方法是deep扩展。就是维持机器数据不便，而是增加机器的CPU处理能力和磁盘驱动器的数目。在这种情况下，需要提高网络的I/O吞吐量以适应增大的机器处理能力，因此如何让Hadoop集群运行10GB nodes称为一个重要的考虑。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl11.png" title="srljhjqhwl11" target="_blank"><img src="&quot;srljhjqhwl11&quot;" alt=""></a></p>
-<p>Name node保存集群内所有文件的metadata，监督Data nodes的健康以及协调数据的存取。Name node是HDFS的控制中心。它本身并不保存任何cluster data。Name node知道一个文件由哪些块组成以及这些块存放在集群内的什么地方。Name node告诉Client需要和哪些Data node交互，管理集群的存储容量，掌握Data node的健康状况，确保每一个数据块都符合系统备份策略。</p>
-<p>Data node每3秒钟发送一个heartbeats给Name node ，二者使用TCP9000端口的TCP握手来实现heartbeats。每十个heartbeats会有一个block report，Data node告知它所保存的数据块。block report使得Namenode能够重建它的metadata以确保每个数据block有足够的copy，并且分布在不同的机架上。</p>
-<p>Name node是Hadoop Distributed File System(HDFS)的关键部件。没有Name node，clients无法从HDFS读写数据，也无法执行Map Reduce jobs。因此Name node 最好配置为一台高冗余的企业级服务器：双电源，热插拔风扇，冗余NIC连接等。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl12.png" title="srljhjqhwl12" target="_blank"><img src="&quot;srljhjqhwl12&quot;" alt=""></a></p>
-<p>如果Name node收不到某Data node的heartbeats，那么Name node假定这个Data node死机并且Data node上的所有数据也丢失了。通过这台dead Data node的block report，Name node知道哪些block copies需要复制到其他Data nodes。Name node参考Rack Awareness数据来选择接收新copy的Data node，并遵守以下复制规则：一个机架保存两份copies，另一个机架保存第三份copy。</p>
-<p>考虑由于机架交换机或者机架电源失败导致的整个机架Data node都失效的情况。Name node将指导集群内的剩余Data nodes开始复制失效机架上的所有数据。如果失效机架上服务器的存储容量为12TB，那么这将导致数百TB的数据在网络中传输。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl13.png" title="srljhjqhwl13" target="_blank"><img src="&quot;srljhjqhwl13&quot;" alt=""></a></p>
-<p>Secondary Name node是Hadoop的一种服务器角色。一个很普遍的误解是它提供了对Name node的高可用性备份，实际上不是。</p>
-<p>Secondary Name node偶尔会连接到Name node(缺省为每小时)，同步Name node in-memory metadata以及保存metadata的文件。Secondary Name node合并这些信息到一个组新的文件中，保存到本地的同时把这些文件发送回Name Node。</p>
-<p>当Name node宕机，保存在Secondary Name node中的文件可以用来恢复Name node。在一个繁忙的集群中，系统管理员可以配置同步时间为更小的时间间隔，比如每分钟。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl14.png" title="srljhjqhwl14" target="_blank"><img src="&quot;srljhjqhwl14&quot;" alt=""></a></p>
-<p>当一个Client想要从HDFS获取一个文件时，比如job的输出结果。Client首先从Name node查询文件block的位置。Name node返回一个包含所有block位置的链表，每个block位置包含全部copies所在的Data node</p>
-<p>Client选取一个数据块的Data node位置，通过TCP50010端口从这个Data node读取一块，在读取完当前块之前，Client不会处理下一块。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl15.png" title="srljhjqhwl15" target="_blank"><img src="&quot;srljhjqhwl15&quot;" alt=""></a></p>
-<p>在某些情况下Data node daemon本身需要从HDFS读取数据块。比如Data Node被请求处理自身不存在的数据，因而它必须从网络上的其他Data node获得数据然后才能开始处理。</p>
-<p>另外一种情况是Name node的Rack Awareness信息提供的网络优化行为。当Data node向Name node查询数据块位置信息，Name node优先查看请求者所在的机架内的Data nodes包含这个数据块。如果包含，那么Name node把这个Data node提供给请求的Data node。这样可以保证数据仅在in-rack内流动，可以加快数据的处理速度以及job的完成速度</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl16.png" title="srljhjqhwl16" target="_blank"><img src="&quot;srljhjqhwl16&quot;" alt=""></a></p>
-<p>现在File.txt分散到集群的机器中这样就可以提供更快更有效的并行处理速度。Hadoop并行处理框架称为Map Reduce，名称来自于并行处理的两个重要步骤：Map和Reduce</p>
-<p>第一步是Map 过程，这个步骤同时请求所有包含数据的Data node运行计算。在我们的例子中则是请求这些Data node统计存储在他们上的File.txt数据块包含多少此Refund</p>
-<p>要达到这个目的，Client首先提交Map Reduce job给Job tracker，发送请求：“How many times does Refund occur in file.txt”。Job tracker向Name node查询哪些Data nodes包含文件File.txt的数据块。然后Job Tracker在这些Data nodes上运行Java代码 在Data node的本地数据上执行Map计算。Task Tracker启动一个Map task监测这些tasks的执行。Task Tracker通过heartbeats向Job Tracker汇报task的状态。</p>
-<p>当每一个Map task都完成后，计算结果保存在这些节点的临时存储区内，我们称之为”intermediate data”。下一步是把这些中间数据通过网络发送给运行Reduce的节点以便完成最后的计算。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl17.png" title="srljhjqhwl17" target="_blank"><img src="&quot;srljhjqhwl17&quot;" alt=""></a></p>
-<p>Job tracker总是尝试选择包含待处理数据的Data node做Map task，但是有时不会这样。比如，所有包含这块数据的Data node已经有太多的tasks正在运行，不再接收其他的task.</p>
-<p>这种情况下，Job Tracker将询问Name node，Name node会根据Rack Awareness建议一个in-rack Data node。Job tracker把task分配给这个in-rack Data node。这个Data node会在Name node的指导下从包含待处理数据的in-rack Data node获取数据。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl18.png" title="srljhjqhwl18" target="_blank"><img src="&quot;srljhjqhwl18&quot;" alt=""></a></p>
-<p>Map Reduce 框架的第二部分叫做Reduce。Map task已经完成了计算，计算结果保存在intermediate data。现在我们需要把所有的中间数据汇集到一起作进一步处理得到最终结果。</p>
-<p>Job Tracker可以在集群内的任意一个node上执行Reduce，它指导Reduce task从所有完成Map trasks的Data node获取中间数据。这些Map tasks可能同时响应Reducer，这就导致了很多nodes几乎同时向单一节点发起TCP连接。我们称之为incast或者fan-in(微突发流)。如果这种微突发流比较多，那么就要求网络交换机有良好的内部流量管理能力，以及相应的buffers。这种间歇性的buffers使用可能会影响其他的网络行为。这需要另开一篇详细讨论。</p>
-<p>Reducer task已经收集了所有intermediate data，现在可以做最后计算了。在这个例子中，我们只需简单的把数字相加就得到了最终结果，写入result.txt</p>
-<p>我们的这个例子并没有导致很多的intermediate data在网络间传输。然而其他的jobs可能会产生大量的intermediate data：比如，TB级数据的排序，输出的结果是原始数据集的重新排序，结果尺寸和原始文件大小一致。Map Reduce过程会产生多大的网络流量王权依赖于给定的Job类型。</p>
-<p>如果你对网络管理很感兴趣，那么你将了解更多Map Reduce和你运行集群的Jobs类型，以及这些Jobs类型如何影响到网络。如果你是一个Hadoop网络的狂热爱好者，那么你可能会建议写更好的Map Reduce jobs代码来优化网络性能，更快的完成Job</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl19.png" title="srljhjqhwl19" target="_blank"><img src="&quot;srljhjqhwl19&quot;" alt=""></a></p>
-<p>Hadoop通过在现有数据的基础上提供某种商业价值，从而在你的组织内获得成功。当人们意识到它的价值，那么你可能获得更多的资金购买更多的机架和服务器，来扩展现有的Hadoop集群。</p>
-<p>当增加一个装满服务器的新机架到Hadoop集群中时，你可能会面临集群不平衡的局面。在上图的例子中，Rack1和Rack2是已经存在的机器，保存着文件File.txt并且正在运行Map Reduce jogs。当我们增加两个新的机架到集群中时，File.txt 数据并不会神奇的自动散布到新的机架中。</p>
-<p>新的Data node服务器由于没有数据只能空闲着，直到Client开始保存新的数据到集群中。此外当Rack1和Rack2上的服务器都满负荷的工作，那么Job Tracker可能没有别的选择，只能把作用在File.txt上的Map task分配到这些没有数据的新服务器上，新服务器需要通过网络跨机架获取数据。这就导致更多的网络流量，更慢的处理速度。</p>
-<p><a href="http://cdn2.jobbole.com/2013/07/srljhjqhwl20.png" title="srljhjqhwl20" target="_blank"><img src="&quot;srljhjqhwl20&quot;" alt=""></a></p>
-<p>为了处理这种情况，Hadoop包含一个时髦的工具叫做 balancer</p>
-<p>Balancer查看节点可用存储的差异性，在达到特定的阀值后尝试执行balance。有很多空闲空间的新节点将被检测到，然后balancer开始从空闲空间很少的Data node拷贝数据到这个新节点。Balancer通过控制台的命令行启动，通过控制台取消或者关闭balancer</p>
-<p>Balancer可用的网络流量是非常低的，缺省设置为1MB/s。可以通过hdfs-site.xml的df.balance.bandwidthPerSec参数来修改。</p>
-<p>Balancer是你的集群的好管家。在你增加服务器时一定会用到它，定期（每周）运行一次也是一个好主意。Balancer使用缺省带宽可能会导致很长时间才能完成工作，比如几天或者几周。</p>
-<p>本文是基于<a href="http://www.cloudera.com/hadoop-training/" target="_blank">Training from Cloudera</a> 的学习 以及对我的Hadoop实验环境的观测。这里讨论的内容都是基于<a href="https://ccp.cloudera.com/display/SUPPORT/Downloads" target="_blank">latest stable release of Cloudera’s CDH3 distribution of Hadoop</a> 。本文并没有讨论Hadoop的新技术，比如：<a href="http://hadoop.apache.org/common/docs/r0.21.0/hod_scheduler.html#Introduction" target="_blank">Hadoop on Demand(HOD)</a>和<a href="http://www.hortonworks.com/an-introduction-to-hdfs-federation/" target="_blank">HDFS Federation</a> ，但是这些的确值得花时间去研究。
-<img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"><img src="&quot;1 vote, average: 5.00 out of 5&quot;" alt="1 vote, average: 5.00 out of 5"> (<strong>*1</strong> 个评分，平均: <strong>5.00*</strong>)</p>
-<p><img src="&quot;Loading ...&quot;" alt="Loading ..."> Loading ...</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--深入理解Hadoop集群和网络/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--深入理解Hadoop集群和网络" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--HDFS写入和读取流程/">HDFS写入和读取流程</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--HDFS写入和读取流程/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="hdfs-">HDFS写入和读取流程</h1>
-<p>您还未登录！|<a href="https://passport.csdn.net/account/login" target="_blank">登录</a>|<a href="https://passport.csdn.net/account/register" target="_blank">注册</a>|<a href="https://passport.csdn.net/help/faq" target="_blank">帮助</a></p>
+        <h1 id="-java-ldap-ad-iteye-">用JAVA通过LDAP修改AD用户密码注意事项 - 一事无成 - ITeye技术网站</h1>
+<p><a href="http://www.iteye.com/" target="_blank">首页</a> <a href="http://www.iteye.com/news" target="_blank">资讯</a> <a href="http://www.iteye.com/magazines" target="_blank">精华</a> <a href="http://www.iteye.com/forums" target="_blank">论坛</a> <a href="http://www.iteye.com/ask" target="_blank">问答</a> <a href="http://www.iteye.com/blogs" target="_blank">博客</a> <a href="http://www.iteye.com/blogs/subjects" target="_blank">专栏</a> <a href="http://www.iteye.com/groups" target="_blank">群组</a> <a href="http://lxs647.iteye.com/blog/1245948#" target="_blank">更多 ▼</a></p>
+<p><a href="http://job.iteye.com/iteye" target="_blank">招聘</a> <a href="http://www.iteye.com/search" target="_blank">搜索</a></p>
+<p><a href="http://lxs647.iteye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://lxs647.iteye.com/login" target="_blank">登录</a> <a href="http://lxs647.iteye.com/signup" target="_blank">注册</a></p>
+<h1 id="-lxs647-http-lxs647-iteye-com-"><a href="http://lxs647.iteye.com/" target="_blank">lxs647</a></h1>
 <ul>
-<li><a href="http://www.csdn.net/" target="_blank">首页</a></li>
-<li><a href="http://news.csdn.net/" target="_blank">业界</a></li>
-<li><a href="http://mobile.csdn.net/" target="_blank">移动</a></li>
-<li><a href="http://cloud.csdn.net/" target="_blank">云计算</a></li>
-<li><a href="http://sd.csdn.net/" target="_blank">研发</a></li>
-<li><a href="http://bbs.csdn.net/" target="_blank">论坛</a></li>
-<li><a href="http://blog.csdn.net/" target="_blank">博客</a></li>
-<li><a href="http://download.csdn.net/" target="_blank">下载</a></li>
-<li><h2 id="-"><a href="">更多</a></h2>
-</li>
+<li><a href="http://lxs647.iteye.com/" target="_blank"><strong>博客</strong></a></li>
+<li><a href="http://lxs647.iteye.com/weibo" target="_blank">微博</a></li>
+<li><a href="http://lxs647.iteye.com/album" target="_blank">相册</a></li>
+<li><a href="http://lxs647.iteye.com/link" target="_blank">收藏</a></li>
+<li><a href="http://lxs647.iteye.com/blog/guest_book" target="_blank">留言</a></li>
+<li><a href="http://lxs647.iteye.com/blog/profile" target="_blank">关于我</a></li>
 </ul>
-<h1 id="-guisu-http-blog-csdn-net-hguisu-"><a href="http://blog.csdn.net/hguisu" target="_blank">guisu，程序人生。</a></h1>
-<h2 id="-a-clever-person-solves-a-problem-a-wise-person-avoids-it-">能干的人解决问题。智慧的人绕开问题(A clever person solves a problem. A wise person avoids it)</h2>
+<h3 id="-vi-vim-"><a href="">vi / vim 删除以及其它命令</a> **</h3>
+<p>删除一行：dd</p>
+<p>删除一个单词/光标之后的单词剩余部分：dw</p>
+<p>删除当前字符：x</p>
+<p>光标之后的该行部分：d$</p>
+<p>文本删除</p>
+<p>dd 删除一行</p>
+<p>d$ 删除以当前字符开始的一行字符</p>
+<p>ndd 删除以当前行开始的n行</p>
+<p>dw 删除以当前字符开始的一个字</p>
+<p>ndw 删除以当前字符开始的n个字</p>
+<p>D 与d$同义</p>
+<p>d) 删除到下一句的开始</p>
+<p>d} 删除到下一段的开始</p>
+<p>d回车 删除2行</p>
+<p>ndw 或 ndW 删除光标处开始及其后的 n-1 个字符。
+d0 删至行首。
+d$ 删至行尾。
+ndd 删除当前行及其后 n-1 行。
+x 或 X 删除一个字符。
+Ctrl+u 删除输入方式下所输入的文本。
+^R 恢复u的操作
+J 把下一行合并到当前行尾
+V 选择一行
+^V 按下^V后即可进行矩形的选择了
+aw 选择单词
+iw 内部单词(无空格)
+as 选择句子
+is 选择句子(无空格)
+ap 选择段落
+ip 选择段落(无空格)
+D 删除到行尾
+x,y 删除与复制包含高亮区
+dl 删除当前字符（与x命令功能相同）
+d0 删除到某一行的开始位置
+d^ 删除到某一行的第一个字符位置（不包括空格或TAB字符）
+dw 删除到某个单词的结尾位置
+d3w 删除到第三个单词的结尾位置
+db 删除到某个单词的开始位置
+dW 删除到某个以空格作为分隔符的单词的结尾位置
+dB 删除到某个以空格作为分隔符的单词的开始位置
+d7B 删除到前面7个以空格作为分隔符的单词的开始位置
+d） 删除到某个语句的结尾位置
+d4） 删除到第四个语句的结尾位置
+d（ 删除到某个语句的开始位置
+d） 删除到某个段落的结尾位置
+d{ 删除到某个段落的开始位置
+d7{ 删除到当前段落起始位置之前的第7个段落位置
+dd 删除当前行
+d/text 删除从文本中出现“text”中所指定字样的位置，
+一直向前直到下一个该字样所出现的位置（但不包括该字样）之间的内容
+dfc 删除从文本中出现字符“c”的位置，一直向前直到下一个该字符所出现的位置（包括该字符）之间的内容
+dtc 删除当前行直到下一个字符“c”所出现位置之间的内容
+D 删除到某一行的结尾
+d$ 删除到某一行的结尾
+5dd 删除从当前行所开始的5行内容
+dL 删除直到屏幕上最后一行的内容
+dH 删除直到屏幕上第一行的内容
+dG 删除直到工作缓存区结尾的内容
+d1G 删除直到工作缓存区开始的内容</p>
+<h2 id="-vi-">在Vi 中移动光标</h2>
+<p>k 上 h l 左 右 j 下 ^ 移动到该行第一个非空格的字符处 w 向前移动一个单词，将符号或标点当作单词处理 W 向前移动一个单词，不把符号或标点当作单词处理 b 向后移动一个单词，把符号或标点当作单词处理 B 向后移动一个单词，不把符号或标点当作单词处理 ( 光标移至句首 ) 光标移至句尾 { 光标移至段落开头 } 光标移至段落结尾 H 光标移至屏幕顶行 M 光标移至屏幕中间行 L 光标移至屏幕最后行 0 到行首 $ 到行尾 gg 到页首 G 到页末 行号+G 跳转到指定行 n+ 光标下移n行 n- 光标上移n行 Ctrl+g 查询当前行信息和当前文件信息 fx 向右跳到本行字符x处（x可以是任何字符） Fx 向左跳到本行字符x处（x可以是任何字符） tx 和fx相同，区别是跳到字符x前 Tx 和Fx相同，区别是跳到字符x后 C-b 向上滚动一屏 C-f 向下滚动一屏 C-u 向上滚动半屏 C-d 向下滚动半屏 C-y 向上滚动一行 C-e 向下滚动一行 nz 将第n行滚至屏幕顶部，不指定n时将当前行滚至屏幕顶部。</p>
+<h2 id="-vi-">进入和退出Vi命令</h2>
+<p>vi filename 打开或新建文件，并将光标置于第一行首 vi +n filename 打开文件，并将光标置于第n行首 vi + filename 打开文件，并将光标置于最后一行首 vi +/pattern filename 打开文件，并将光标置于第一个与pattern匹配的串处 vi -r filename 在上次正用vi编辑时发生系统崩溃，恢复filename vi filename ... filename 打开多个文件，依次进行编辑 ZZ 退出vi并保存 :q! 退出vi，不保存 :wq 退出vi并保存</p>
+<h2 id="-">重复操作</h2>
+<p>. 重复上一次操作</p>
+<h2 id="-">自动补齐</h2>
+<p>C-n 匹配下一个关键字 C-p 匹配上一个关键字</p>
+<h2 id="-">插入</h2>
+<p>o 在光标下方新开一行并将光标置于新行行首，进入插入模式。 O 同上，在光标上方。 a 在光标之后进入插入模式。 A 同上，在光标之前。 R 进入替换模式，直到按下Esc set xxx 设置XXX选项。</p>
+<h2 id="-">行合并</h2>
+<p>J 把下面一行合并到本行后面</p>
+<h2 id="vi-">Vi中查找及替换命令</h2>
+<p>/pattern 从光标开始处向文件尾搜索pattern ?pattern 从光标开始处向文件首搜索pattern n 在同一方向重复上一次搜索命令 N 在反方向上重复上一次搜索命令 % 查找配对的括号 :s/p1/p2/g 将当前行中所有p1均用p2替代，若要每个替换都向用户询问则应该用gc选项 :n1,n2s/p1/p2/g 将第n1至n2行中所有p1均用p2替代 :g/p1/s//p2/g 将文件中所有p1均用p2替换 ./*[]^%~$ 在Vi中具有特殊含义，若需要查找则应该加上转义字符&quot;\&quot;</p>
+<h3 id="-">查找的一些选项</h3>
+<h3 id="-">设置高亮</h3>
+<p>:set hlsearch 设置高亮 :set nohlsearch 关闭高亮 :nohlsearch 关闭当前已经设置的高亮</p>
+<h3 id="-">增量查找</h3>
+<p>:set incsearch 设置增量查找 :set noincsearch 关闭增量查找</p>
+<h2 id="-vi-">在Vi中删除</h2>
+<p>x 删除当前光标下的字符 dw 删除光标之后的单词剩余部分。 d$ 删除光标之后的该行剩余部分。 dd 删除当前行。 c 功能和d相同，区别在于完成删除操作后进入INSERT MODE cc 也是删除当前行，然后进入INSERT MODE</p>
+<h2 id="-">更改字符</h2>
+<p>rx 将当前光标下的字符更改为x（x为任意字符） ~ 更改当前光标下的字符的大小写</p>
+<h2 id="-">键盘宏操作</h2>
+<p>qcharacter 开始录制宏，character为a到z的任意字符 q 终止录制宏 @character 调用先前录制的宏</p>
+<h2 id="-">恢复误操作</h2>
+<p>u 撤销最后执行的命令 U 修正之前对该行的操作 Ctrl+R Redo</p>
+<h2 id="-vi-frame">在Vi中操作Frame</h2>
+<p>c-w c-n 增加frame c-w c-c 减少frame c-w c-w 切换frame c-w c-r 交换两个frame</p>
+<h2 id="vim-">VIM中的块操作</h2>
+<p>Vim支持多达26个剪贴板
+选块 先用v，C-v，V选择一块，然后用y复制，再用p粘贴。 yy 复制当前整行 nyy 复制当前行开始的n行内容 ?nyy 将光标当前行及其下n行的内容保存到寄存器?中，其中?为一个字母，n为一个数字 ?nyw 将光标当前行及其下n个词保存到寄存器?中，其中?为一个字母，n为一个数字 ?nyl 将光标当前行及其下n个字符保存到寄存器?中，其中?为一个字母，n为一个数字 ?p 将寄存器?中的内容粘贴到光标位置之后。如果?是用yy复制的完整行， 则粘贴在光标所在行下面。这里?可以是一个字母，也可以是一个数字 ?P 将寄存器a中的内容粘贴到光标位置之前。如果?是用yy复制的完整行， 则粘贴在光标所在行上面。这里?可以是一个字母，也可以是一个数字 ay[motion] ay$ 复制光标位置到行末并保存在寄存器a中 ayft 复制光标位置到当前行第一个字母t并保存在寄存器a中</p>
+<p>以上指令皆可去掉a工作，则y,p对未命名寄存器工作（所有d,c,x,y的对象都被保存在这里）。</p>
+<h3 id="-">剪切/复制/粘贴</h3>
+<p>所有删除的内容自动被保存，可以用p键粘贴</p>
+<h2 id="vi-">Vi的选项设置</h2>
+<p>all 列出所有选项设置情况 term 设置终端类型 ignorance 在搜索中忽略大小写 list 显示制表位(Ctrl+I)和行尾标志($) number 显示行号 report 显示由面向行的命令修改过的数目 terse 显示简短的警告信息 warn 在转到别的文件时若没保存当前文件则显示NO write信息 nomagic 允许在搜索模式中，使用前面不带“\”的特殊字符 nowrapscan 禁止vi在搜索到达文件两端时，又从另一端开始 mesg 允许vi显示其他用户用write写到自己终端上的信息</p>
+<h2 id="tips">tips</h2>
+<p>对代码自动格式化 gg=G</p>
+<p>在vi/vim中，跳到文件首尾快捷键:</p>
+<p>文件开始:shift + g</p>
+<p>文件结束:g g</p>
+<p>from:<a href="http://dsec.pku.edu.cn/~jinlong/vi/Vi.html" target="_blank"><a href="http://dsec.pku.edu.cn/~jinlong/vi/Vi.html">http://dsec.pku.edu.cn/~jinlong/vi/Vi.html</a></a></p>
+<p>from:<a href="http://www.caole.net/diary/vim.html#sec-1" target="_blank"><a href="http://www.caole.net/diary/vim.html/#sec-1">http://www.caole.net/diary/vim.html/#sec-1</a></a>
+分享到： <a href="&quot;分享到新浪微博&quot;"><img src="" alt=""></a> <a href="&quot;分享到腾讯微博&quot;"><img src="" alt=""></a></p>
+<p><a href="http://lxs647.iteye.com/blog/1246871" title="linux 中的ln命令" target="_blank">linux 中的ln命令</a> | <a href="http://lxs647.iteye.com/blog/1244965" title="Flex 中很幽灵的一个bug(2)" target="_blank">Flex 中很幽灵的一个bug(2)</a></p>
 <ul>
-<li><a href="http://blog.csdn.net/hguisu?viewmode=contents" target="_blank"><img src="" alt="">目录视图</a></li>
-<li><a href="http://blog.csdn.net/hguisu?viewmode=list" target="_blank"><img src="" alt="">摘要视图</a></li>
-<li><a href="http://blog.csdn.net/hguisu/rss/list" target="_blank"><img src="" alt="">订阅</a>
-<a href="http://blog.csdn.net/blogdevteam/article/details/11889881" target="_blank">2014年1月微软MVP申请开始啦！</a>      <a href="http://bbs.csdn.net/topics/390594487" target="_blank">CSDN社区中秋晒福利活动正式开始啦！</a>        <a href="http://www.csdn.net/article/2013-09-17/2816962" target="_blank">专访钟声：Java程序员，上班那点事儿</a>      <a href="http://blog.csdn.net/adali/article/details/9813651" target="_blank">独一无二的职位：开源社区经理</a>      <a href="http://blog.csdn.net/blogdevteam/article/details/11975399" target="_blank">“说说家乡的互联网”主题有奖征文</a></li>
+<li>2011-11-09 12:11</li>
+<li>浏览 8572</li>
+<li><a href="http://lxs647.iteye.com/blog/1245948#comments" target="_blank">评论(0)</a></li>
+<li>分类:<a href="http://www.iteye.com/blogs/category/os" target="_blank">操作系统</a></li>
+<li><a href="http://www.iteye.com/wiki/blog/1245948" target="_blank">相关推荐</a></li>
 </ul>
-<h3 id="-hdfs-"><a href="">HDFS写入和读取流程</a></h3>
-<p>分类： <a href="http://blog.csdn.net/hguisu/article/category/1072794" target="_blank">云计算hadoop</a>  2012-02-14 23:50 8282人阅读 <a href="">评论</a>(17) <a href="&quot;收藏&quot;">收藏</a> <a href="&quot;举报&quot;">举报</a>
-<a href="http://blog.csdn.net/tag/details.html?tag=%e5%ad%98%e5%82%a8" target="_blank">存储</a><a href="http://blog.csdn.net/tag/details.html?tag=hadoop" target="_blank">hadoop</a><a href="http://blog.csdn.net/tag/details.html?tag=image" target="_blank">image</a><a href="http://blog.csdn.net/tag/details.html?tag=system" target="_blank">system</a><a href="http://blog.csdn.net/tag/details.html?tag=mysql" target="_blank">mysql</a></p>
-<p>目录<a href="&quot;系统根据文章中H1到H6标签自动生成文章目录&quot;">(?)</a><a href="&quot;展开&quot;">[+]</a></p>
-<ol>
-<li><a href="">一HDFS</a></li>
-<li><a href="">二HDFS的体系结构</a></li>
-<li><p><a href="">三读写流程</a></p>
-</li>
-<li><p><a href="">GFS论文提到的文件读取简单流程</a></p>
-</li>
-<li><a href=""></a></li>
-<li><a href=""></a></li>
-<li><a href=""></a></li>
-<li><a href="">详细流程</a></li>
-<li><a href=""></a></li>
-<li><p><a href="">GFS论文提到的写入文件简单流程</a></p>
-</li>
-<li><p><a href="">详细流程</a></p>
-</li>
-<li><a href=""></a><h2 id="-hdfs"><a href=""></a>一、HDFS</h2>
-</li>
-</ol>
-<p>HDFS全称是Hadoop Distributed System。HDFS是为以流的方式存取大文件而设计的。适用于几百MB，GB以及TB，并写一次读多次的场合。而对于低延时数据访问、大量小文件、同时写和任意的文件修改，则并不是十分适合。</p>
-<p>目前HDFS支持的使用接口除了Java的还有，Thrift、C、FUSE、WebDAV、HTTP等。HDFS是以block-sized chunk组织其文件内容的，默认的block大小为64MB，对于不足64MB的文件，其会占用一个block，但实际上不用占用实际硬盘上的64MB，这可以说是HDFS是在文件系统之上架设的一个中间层。之所以将默认的block大小设置为64MB这么大，是因为block-sized对于文件定位很有帮助，同时大文件更使传输的时间远大于文件寻找的时间，这样可以最大化地减少文件定位的时间在整个文件获取总时间中的比例 。</p>
-<h2 id="-hdfs-"><a href=""></a>二、HDFS的体系结构</h2>
-<p>构成HDFS主要是Namenode（master）和一系列的Datanode（workers）。Namenode是管理HDFS的目录树和相关的文件元数据，这些信息是以&quot;namespace image&quot;和&quot;edit log&quot;两个文件形式存放在本地磁盘，但是这些文件是在HDFS每次重启的时候重新构造出来的。Datanode则是存取文件实际内容的节点，Datanodes会定时地将block的列表汇报给Namenode。</p>
-<p>由于Namenode是元数据存放的节点，如果Namenode挂了那么HDFS就没法正常运行，因此一般使用将元数据持久存储在本地或远程的机器上，或者使用secondary namenode来定期同步Namenode的元数据信息，secondary namenode有点类似于MySQL的Master/Salves中的Slave，&quot;edit log&quot;就类似&quot;bin log&quot;。如果Namenode出现了故障，一般会将原Namenode中持久化的元数据拷贝到secondary namenode中，使secondary namenode作为新的Namenode运行起来。</p>
-<pre><code>                        ![]()
-</code></pre><h2 id="-"><a href=""></a>三、读写流程</h2>
-<h3 id="-gfs-"><a href=""></a>GFS论文提到的文件读取简单流程：</h3>
-<h3 id="-"><a href=""></a></h3>
-<h3 id="-"><a href=""></a>                <img src="" alt=""></h3>
-<h3 id="-"><a href=""></a><em>**</em></h3>
-<h3 id="-reading-data-from-hdfs-http-blog-endlesscode-com-wp-content-uploads-2010-06-reading-data-from-hdfs-png-reading-data-from-hdfs-"><a href=""></a><strong>详细流程：</strong><img src="http://blog.endlesscode.com/wp-content/uploads/2010/06/reading-data-from-hdfs.png" alt="reading data from hdfs" title="reading data from hdfs"></h3>
-<p>文件读取的过程如下：</p>
-<ol>
-<li>使用HDFS提供的客户端开发库Client，向远程的Namenode发起RPC请求；</li>
-<li>Namenode会视情况返回文件的部分或者全部block列表，对于每个block，Namenode都会返回有该block拷贝的DataNode地址；</li>
-<li>客户端开发库Client会选取离客户端最接近的DataNode来读取block；如果客户端本身就是DataNode,那么将从本地直接获取数据.</li>
-<li>读取完当前block的数据后，关闭与当前的DataNode连接，并为读取下一个block寻找最佳的DataNode；</li>
-<li>当读完列表的block后，且文件读取还没有结束，客户端开发库会继续向Namenode获取下一批的block列表。</li>
-<li>读取完一个block都会进行checksum验证，如果读取datanode时出现错误，客户端会通知Namenode，然后再从下一个拥有该block拷贝的datanode继续读。</li>
-</ol>
-<h3 id="-"><a href=""></a></h3>
-<h3 id="-gfs-"><a href=""></a>GFS论文提到的写入文件简单流程：</h3>
-<pre><code>                                 ![]()             
-</code></pre><h2 id="-writing-data-to-hdfs-http-blog-endlesscode-com-wp-content-uploads-2010-06-writing-data-to-hdfs-png-writing-data-to-hdfs-"><a href=""></a>详细流程：<img src="http://blog.endlesscode.com/wp-content/uploads/2010/06/writing-data-to-hdfs.png" alt="writing data to hdfs" title="writing data to hdfs"></h2>
-<p>写入文件的过程比读取较为复杂：</p>
-<ol>
-<li>使用HDFS提供的客户端开发库Client，向远程的Namenode发起RPC请求；</li>
-<li>Namenode会检查要创建的文件是否已经存在，创建者是否有权限进行操作，成功则会为文件<strong>创建一个记录</strong>，否则会让客户端抛出异常；</li>
-<li>当客户端开始写入文件的时候，开发库会将文件切分成多个packets，并在内部以数据队列&quot;data queue&quot;的形式管理这些packets，并向Namenode申请新的blocks，获取用来存储replicas的合适的datanodes列表，列表的大小根据在Namenode中对replication的设置而定。</li>
-<li>开始以pipeline（管道）的形式将packet写入所有的replicas中。开发库把packet以流的方式写入第一个datanode，该datanode把该packet存储之后，再将其传递给在此pipeline中的下一个datanode，直到最后一个datanode，这种写数据的方式呈流水线的形式。</li>
-<li>最后一个datanode成功存储之后会返回一个ack packet，在pipeline里传递至客户端，在客户端的开发库内部维护着&quot;ack queue&quot;，成功收到datanode返回的ack packet后会从&quot;ack queue&quot;移除相应的packet。</li>
-<li>如果传输过程中，有某个datanode出现了故障，那么当前的pipeline会被关闭，出现故障的datanode会从当前的pipeline中移除，剩余的block会继续剩下的datanode中继续以pipeline的形式传输，同时Namenode会分配一个新的datanode，保持replicas设定的数量。</li>
-</ol>
-<h2 id="-"><a href=""></a></h2>
-<p>分享到： <a href="&quot;分享到新浪微博&quot;"></a><a href="&quot;分享到腾讯微博&quot;"></a></p>
-<ol>
-<li>上一篇：<a href="http://blog.csdn.net/hguisu/article/details/7256833" target="_blank">Hadoop Hive sql语法详解</a></li>
-<li>下一篇：<a href="http://blog.csdn.net/hguisu/article/details/7261145" target="_blank">Hadoop HDFS分布式文件系统设计要点与架构</a></li>
-</ol>
-<p>顶 3 踩 1
-查看评论<a href=""></a></p>
-<p>3楼 <a href="http://blog.csdn.net/huangbo1988911" target="_blank">huangbo1988911</a> 2012-04-09 11:25发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/huangbo1988911" target="_blank"><img src="" alt=""></a>在写数据的过程中，一个文件被分割成很多blocks，这些block是按顺序一个个操作的，还是并发的进行传输的？Re: <a href="http://blog.csdn.net/hguisu" target="_blank">真实的归宿</a> 2012-04-09 12:45发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/hguisu" target="_blank"><img src="" alt=""></a>回复huangbo1988911：写数据的是以流的方式传输，即管道的方式，一个一个block顺序传输。而不是像树形拓扑结构那样分散传输。Re: <a href="http://blog.csdn.net/huangbo1988911" target="_blank">huangbo1988911</a> 2012-04-17 18:03发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/huangbo1988911" target="_blank"><img src="" alt=""></a>回复hguisu：您好，很感谢您回答我，但是我仍有点疑惑，hdfs中的文件大小区分为：chunk&lt;packet&lt;block,在每个packet的传输到多个DN（datanode）的过程中是以pipeline方式，但是当其中一个block在以这种方式传输时，其他的block是要等待还是并发的进行呢？谢谢！Re: <a href="http://blog.csdn.net/hguisu" target="_blank">真实的归宿</a> 2012-04-20 16:23发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/hguisu" target="_blank"><img src="" alt=""></a>回复huangbo1988911：管道方式，即是队列方式传输。只能一个block传完了，接着传下个block。Re: <a href="http://blog.csdn.net/huangbo1988911" target="_blank">huangbo1988911</a> 2012-04-30 18:18发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/huangbo1988911" target="_blank"><img src="" alt=""></a>回复hguisu：你好！如果这样，那hdfs的并发写实如何体现的呢？Re: <a href="http://blog.csdn.net/hguisu" target="_blank">真实的归宿</a> 2012-05-02 09:29发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/hguisu" target="_blank"><img src="" alt=""></a>回复huangbo1988911：hdfs没有并发写入。Re: <a href="http://blog.csdn.net/huangbo1988911" target="_blank">huangbo1988911</a> 2012-05-03 23:39发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/huangbo1988911" target="_blank"><img src="" alt=""></a>回复hguisu：这样的话，那hadoop是比较适合大数据的处理了，对于文件的写的速度并没有多大的提高了?Re: <a href="http://blog.csdn.net/hguisu" target="_blank">真实的归宿</a> 2012-05-04 09:40发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/hguisu" target="_blank"><img src="" alt=""></a>回复huangbo1988911：hadoop本来就是通往云服务的捷径，为处理超大数据集而准备。Re: <a href="http://blog.csdn.net/huangbo1988911" target="_blank">huangbo1988911</a> 2012-05-07 10:57发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/huangbo1988911" target="_blank"><img src="" alt=""></a>回复hguisu：这样hadoop的主要优势是在map/reduce那一块，而其文件系统有什么样的优势呢（在文件的读写方面，和其他的文件系统）？Re: <a href="http://blog.csdn.net/hguisu" target="_blank">真实的归宿</a> 2012-05-07 11:50发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/hguisu" target="_blank"><img src="" alt=""></a>回复huangbo1988911：hdfs可以存储超大数据，而map/reduce要处理的数据存储在hdfs上，即MR分布式运算。Re: <a href="http://blog.csdn.net/huangbo1988911" target="_blank">huangbo1988911</a> 2012-05-09 22:35发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/huangbo1988911" target="_blank"><img src="" alt=""></a>回复hguisu： 那多个文件同时向hdfs写入是如何进行的呢？Re: <a href="http://blog.csdn.net/huangbo1988911" target="_blank">huangbo1988911</a> 2012-05-09 00:39发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/huangbo1988911" target="_blank"><img src="" alt=""></a>回复hguisu：恩，hdfs相对于其他的文件系统，除了更适合存储大数据以外，而且有很强的容错能力，但是对数据的读写等，没有并发性，只是采用了管道的方式，这可能是它的一个小缺点吧。2楼 <a href="http://blog.csdn.net/CD_xiaoxin" target="_blank">CD_xiaoxin</a> 2012-03-19 09:44发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/CD_xiaoxin" target="_blank"><img src="" alt=""></a>很详细 很有帮助 谢谢1楼 <a href="http://blog.csdn.net/lin_FS" target="_blank">lin_FS</a> 2012-03-16 10:01发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/lin_FS" target="_blank"><img src="" alt=""></a>client端的那个queue是在内存中，还是写在临时文件里了？Re: <a href="http://blog.csdn.net/hguisu" target="_blank">真实的归宿</a> 2012-03-19 09:43发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/hguisu" target="_blank"><img src="" alt=""></a>回复lin_FS：client分割数据成一个个block（packet）这些数据都不在内存中，你可以想象，如果一个数据是100G，它你那个放进内存吗？Re: <a href="http://blog.csdn.net/lin_FS" target="_blank">lin_FS</a> 2012-03-21 17:26发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/lin_FS" target="_blank"><img src="" alt=""></a>在client端， 多个block（packet）组成一个队列，然后可以想象把文件（100G）分成若干个packet，如果队列满了就根本写不进去数据了，根本不会出现你想象的那种情况。我想了解的是，这个队列在内存中还是以文件的形式，呵呵Re: <a href="http://blog.csdn.net/hguisu" target="_blank">真实的归宿</a> 2012-03-31 18:47发表 <a href="&quot;回复&quot;">[回复]</a>  <a href="&quot;引用&quot;">[引用]</a> <a href="&quot;举报&quot;">[举报]</a><a href="http://blog.csdn.net/hguisu" target="_blank"><img src="" alt=""></a>回复lin_FS：这个队列肯定是文件的形式存在的。
-您还没有登录,请<a href="">[登录]</a>或<a href="http://passport.csdn.net/account/register?from=http%3A%2F%2Fblog.csdn.net%2Fhguisu%2Farticle%2Fdetails%2F7259716" target="_blank">[注册]</a></p>
-<p>/* 以上用户言论只代表其个人观点，不代表CSDN网站的观点或立场<a href=""></a><a href=""></a></p>
-<p><a href="">hguisu</a>
-<a href="&quot;回到顶部&quot;"><img src="" alt="TOP"></a></p>
-<p>个人资料</p>
-<p><a href="http://my.csdn.net/hguisu" target="_blank"><img src="&quot;访问我的空间&quot;" alt=""></a>
-<a href="http://my.csdn.net/hguisu" target="_blank">真实的归宿</a></p>
-<p><a href="&quot;[加关注]&quot;"></a> <a href="&quot;[发私信]&quot;"></a>
-<a href="http://medal.blog.csdn.net/allmedal.aspx" target="_blank"><img src="" alt=""></a></p>
-<ul>
-<li>访问：481035次</li>
-<li>积分：6666分</li>
-<li><p>排名：第614名</p>
-</li>
-<li><p>原创：190篇</p>
-</li>
-<li>转载：1篇</li>
-<li>译文：0篇</li>
-<li>评论：313条</li>
-</ul>
-<p>文章分类</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1253451" target="_blank">操作系统</a>(5)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/796967" target="_blank">Linux</a>(17)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/796963" target="_blank">MySQL</a>(12)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/796962" target="_blank">PHP</a>(41)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1104862" target="_blank">PHP内核</a>(11)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/796968" target="_blank">技术人生</a>(7)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1054628" target="_blank">数据结构与算法</a>(27)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1072794" target="_blank">云计算hadoop</a>(20)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1075597" target="_blank">网络知识</a>(7)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1080443" target="_blank">c/c++</a>(22)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1099674" target="_blank">memcache</a>(5)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1111071" target="_blank">HipHop</a>(2)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1112019" target="_blank">计算机原理</a>(4)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1114530" target="_blank">Java</a>(7)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1122753" target="_blank">socket网络编程</a>(5)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1133340" target="_blank">设计模式</a>(26)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1151353" target="_blank">AOP</a>(2)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1152364" target="_blank">重构</a>(11)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1173389" target="_blank">重构与模式</a>(1)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1209788" target="_blank">大数据处理</a>(11)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1230933" target="_blank">搜索引擎Search Engine</a>(15)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1302430" target="_blank">HTML5</a>(1)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1309674" target="_blank">Android</a>(1)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/category/1422000" target="_blank">webserver</a>(3)</li>
-<li><p><a href="http://blog.csdn.net/hguisu/article/category/1429288" target="_blank">NOSQL</a>(6)
-文章存档</p>
-</li>
-<li><p><a href="http://blog.csdn.net/hguisu/article/month/2013/09" target="_blank">2013年09月</a>(2)</p>
-</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2013/08" target="_blank">2013年08月</a>(1)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2013/07" target="_blank">2013年07月</a>(2)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2013/06" target="_blank">2013年06月</a>(3)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2013/05" target="_blank">2013年05月</a>(3)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2013/03" target="_blank">2013年03月</a>(3)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2013/02" target="_blank">2013年02月</a>(2)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2013/01" target="_blank">2013年01月</a>(2)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2012/12" target="_blank">2012年12月</a>(4)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2012/11" target="_blank">2012年11月</a>(3)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2012/10" target="_blank">2012年10月</a>(2)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2012/09" target="_blank">2012年09月</a>(15)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2012/08" target="_blank">2012年08月</a>(6)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2012/07" target="_blank">2012年07月</a>(8)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2012/06" target="_blank">2012年06月</a>(14)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2012/05" target="_blank">2012年05月</a>(29)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2012/04" target="_blank">2012年04月</a>(26)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2012/03" target="_blank">2012年03月</a>(27)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2012/02" target="_blank">2012年02月</a>(18)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2011/12" target="_blank">2011年12月</a>(7)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2011/01" target="_blank">2011年01月</a>(8)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2010/07" target="_blank">2010年07月</a>(6)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/month/2007/12" target="_blank">2007年12月</a>(2)</li>
-</ul>
-<p>展开</p>
-<p>阅读排行</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7237395" title="Hadoop集群配置（最全面总结）" target="_blank">Hadoop集群配置（最全面总结）</a>(23024)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7527842" title="设计模式（五）适配器模式Adapter（结构型）" target="_blank">设计模式（五）适配器模式Adapter（结构型）</a>(21421)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7244413" title="hbase安装配置（整合到hadoop）" target="_blank">hbase安装配置（整合到hadoop）</a>(20780)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7453390" title="socket阻塞与非阻塞，同步与异步、I/O模型" target="_blank">socket阻塞与非阻塞，同步与异步、I/O模型</a>(12788)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7282050" title="Hadoop Hive与Hbase整合" target="_blank">Hadoop Hive与Hbase整合</a>(11869)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7558249" title="设计模式 ( 十八 ) 策略模式Strategy（对象行为型）" target="_blank">设计模式 ( 十八 ) 策略模式Strategy（对象行为型）</a>(11737)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7786014" title="B-树和B+树的应用：数据搜索和数据库索引" target="_blank">B-树和B+树的应用：数据搜索和数据库索引</a>(11507)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/5731880" title="Mysql 多表联合查询效率分析及优化" target="_blank">Mysql 多表联合查询效率分析及优化</a>(10454)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7244991" title="谷歌三大核心技术（三）Google BigTable中文版" target="_blank">谷歌三大核心技术（三）Google BigTable中文版</a>(9958)</li>
-<li><p><a href="&quot;HDFS写入和读取流程&quot;">HDFS写入和读取流程</a>(8282)
-评论排行</p>
-</li>
-<li><p><a href="http://blog.csdn.net/hguisu/article/details/7558249" title="设计模式 ( 十八 ) 策略模式Strategy（对象行为型）" target="_blank">设计模式 ( 十八 ) 策略模式Strategy（对象行为型）</a>(33)</p>
-</li>
-<li><a href="&quot;HDFS写入和读取流程&quot;">HDFS写入和读取流程</a>(17)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7529194" title="设计模式（六）桥连模式Bridge（结构型）" target="_blank">设计模式（六）桥连模式Bridge（结构型）</a>(14)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7505909" title="设计模式（一）工厂模式Factory（创建型）" target="_blank">设计模式（一）工厂模式Factory（创建型）</a>(13)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7880288" title="海量数据处理算法—Bit-Map" target="_blank">海量数据处理算法—Bit-Map</a>(13)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7237395" title="Hadoop集群配置（最全面总结）" target="_blank">Hadoop集群配置（最全面总结）</a>(13)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7448528" title="PHP SOCKET编程" target="_blank">PHP SOCKET编程</a>(11)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7453390" title="socket阻塞与非阻塞，同步与异步、I/O模型" target="_blank">socket阻塞与非阻塞，同步与异步、I/O模型</a>(11)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7282050" title="Hadoop Hive与Hbase整合" target="_blank">Hadoop Hive与Hbase整合</a>(10)</li>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7244413" title="hbase安装配置（整合到hadoop）" target="_blank">hbase安装配置（整合到hadoop）</a>(10)</li>
-</ul>
-<p>推荐文章
-最新评论</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7453390#comments" target="_blank">socket阻塞与非阻塞，同步与异步、I/O模型</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/ctqctq99" target="_blank">ctqctq99</a>: 他的意思可能是阻塞IO和非阻塞IO的区别就在于：应用程序的调用是否立即返回！这句话说反了。应该是非阻...</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7408047#comments" target="_blank">硬盘的读写原理</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/m1013923728" target="_blank">m1013923728</a>: 写的通俗易懂！</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7470695#comments" target="_blank">C语言中的宏定义</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/ouwen3536" target="_blank">ouwen3536</a>: 很半，转起！</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7470695#comments" target="_blank">C语言中的宏定义</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/zhangyongbluesky" target="_blank">zhangyongbluesky</a>: good</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7244413#comments" target="_blank">hbase安装配置（整合到hadoop）</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/hguisu" target="_blank">真实的归宿</a>: @u012171806:conf/hbase-site.xml你应该看官方文档的快速入门。安装的东西...</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7244413#comments" target="_blank">hbase安装配置（整合到hadoop）</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/u012171806" target="_blank">JAVA_小陈</a>: 我把hbase下载了，你上面说的需要配置一个xml文件，请问配置在什么地方呢？然后启动的时候是在什么...</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7408047#comments" target="_blank">硬盘的读写原理</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/mxhlee" target="_blank">mxhlee</a>: 好东西啊！！！（实际是斜切向运动）这句话让我纠结了很长时间、我自己就感觉是这运动 但是没有一个介绍...</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7453390#comments" target="_blank">socket阻塞与非阻塞，同步与异步、I/O模型</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/hguisu" target="_blank">真实的归宿</a>: @liaokailin:并没有反。实际就是这样的。</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7453390#comments" target="_blank">socket阻塞与非阻塞，同步与异步、I/O模型</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/hguisu" target="_blank">真实的归宿</a>: @liaokailin:实际就是这样的。</p>
-<ul>
-<li><a href="http://blog.csdn.net/hguisu/article/details/7453390#comments" target="_blank">socket阻塞与非阻塞，同步与异步、I/O模型</a></li>
-</ul>
-<p><a href="http://blog.csdn.net/liaokailin" target="_blank">廖凯林</a>: 同步IO和异步IO的区别就在于：数据拷贝的时候进程是否阻塞！阻塞IO和非阻塞IO的区别就在于：应用程...</p>
-<p><a href="http://www.csdn.net/company/about.html" target="_blank">公司简介</a>|<a href="http://www.csdn.net/company/recruit.html" target="_blank">招贤纳士</a>|<a href="http://www.csdn.net/company/marketing.html" target="_blank">广告服务</a>|<a href="http://www.csdn.net/company/account.html" target="_blank">银行汇款帐号</a>|<a href="http://www.csdn.net/company/contact.html" target="_blank">联系方式</a>|<a href="http://www.csdn.net/company/statement.html" target="_blank">版权声明</a>|<a href="http://www.csdn.net/company/layer.html" target="_blank">法律顾问</a>|<a href="mailto:webmaster@csdn.net">问题报告</a><a href="http://wpa.qq.com/msgrd?v=3&amp;uin=2355263776&amp;site=qq&amp;menu=yes" target="_blank">QQ客服</a> <a href="http://e.weibo.com/csdnsupport/profile" target="_blank">微博客服</a> <a href="http://bbs.csdn.net/forums/Service" target="_blank">论坛反馈</a> <a href="mailto:webmaster@csdn.net">联系邮箱：webmaster@csdn.net</a> 服务热线：400-600-2320京 ICP 证 070598 号北京创新乐知信息技术有限公司 版权所有世纪乐知(北京)网络技术有限公司 提供技术支持江苏乐知网络技术有限公司 提供商务支持Copyright © 1999-2012, CSDN.NET, All Rights Reserved <a href="http://www.hd315.gov.cn/beian/view.asp?bianhao=010202001032100010" target="_blank"><img src="" alt="GongshangLogo"></a>
-<img src="http://counter.csdn.net/pv.aspx?id=24" alt=""></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--HDFS写入和读取流程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--HDFS写入和读取流程" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--CentOS的Hadoop集群配置/">CentOS的Hadoop集群配置</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--CentOS的Hadoop集群配置/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="centos-hadoop-">CentOS的Hadoop集群配置</h1>
-<h3 id="-centos-hadoop-http-blog-csdn-net-inte_sleeper-article-details-6569985-"><a href="http://blog.csdn.net/inte_sleeper/article/details/6569985" target="_blank">CentOS的Hadoop集群配置（一）</a></h3>
-<h3 id="-"> </h3>
-<p>参考资料：</p>
-<p><a href="http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-single-node-cluster/" target="_blank"><a href="http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-single-node-cluster/">http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-single-node-cluster/</a></a></p>
-<p><a href="http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-multi-node-cluster/" target="_blank"><a href="http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-multi-node-cluster/">http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-multi-node-cluster/</a></a></p>
-<p><a href="http://www.michael-noll.com/tutorials/writing-an-hadoop-mapreduce-program-in-python/" target="_blank"><a href="http://www.michael-noll.com/tutorials/writing-an-hadoop-mapreduce-program-in-python/">http://www.michael-noll.com/tutorials/writing-an-hadoop-mapreduce-program-in-python/</a></a></p>
-<p><a href="http://hadoop.apache.org/common/docs/current/cluster_setup.html" target="_blank"><a href="http://hadoop.apache.org/common/docs/current/cluster_setup.html">http://hadoop.apache.org/common/docs/current/cluster_setup.html</a></a></p>
-<p>以下集群配置内容，以两台机器为例。其中一台是 master ，另一台是 slave1 。</p>
-<p>master 上运行 name node, data node, task tracker, job tracker ， secondary name node ；</p>
-<p>slave1 上运行 data node, task tracker 。</p>
-<p>前面加 /* 表示对两台机器采取相同的操作</p>
-<ol>
-<li>安装 JDK /*</li>
-</ol>
-<p>yum install java-1.6.0-openjdk-devel</p>
-<ol>
-<li>设置环境变量 /*</li>
-</ol>
-<p>编辑 /etc/profile 文件，设置 JAVA_HOME 环境变量以及类路径：</p>
-<p>export JAVA_HOME=&quot;/usr/lib/jvm/java-1.6.0-openjdk-1.6.0.0.x86_64&quot;</p>
-<p>export PATH=$PATH:$JAVA_HOME/bin</p>
-<p>export CLASSPATH=.:$JAVA_HOME/lib/tools.jar:$JAVA_HOME/lib/dt.jar</p>
-<ol>
-<li>添加 hosts 的映射 /*</li>
-</ol>
-<p>编辑 /etc/hosts 文件，<strong>注意</strong> <strong>host name **</strong>不要有下划线，见下步骤 9**</p>
-<p>192.168.225.16 master</p>
-<p>192.168.225.66 slave1</p>
-<ol>
-<li>配置 SSH /*</li>
-</ol>
-<p>cd /root &amp; mkdir .ssh</p>
-<p>chmod 700 .ssh &amp; cd .ssh</p>
-<p>创建密码为空的 RSA 密钥对：</p>
-<p>ssh-keygen -t rsa -P &quot;&quot;</p>
-<p>在提示的对称密钥名称中输入 id_rsa</p>
-<p>将公钥添加至 authorized_keys 中：</p>
-<p>cat id_rsa.pub &gt;&gt; authorized_keys</p>
-<p>chmod 644 authorized_keys <strong>/#</strong> <strong>重要</strong></p>
-<p>编辑 sshd 配置文件 /etc/ssh/sshd_config ，把 /#AuthorizedKeysFile  .ssh/authorized_keys 前面的注释取消掉。</p>
-<p>重启 sshd 服务：</p>
-<p>service sshd restart</p>
-<p>测试 SSH 连接。连接时会提示是否连接，按回车后会将此公钥加入至 knows_hosts 中：</p>
-<p>ssh localhost</p>
-<ol>
-<li>配置 master 和 slave1 的 ssh 互通</li>
-</ol>
-<p>在 slave1 中重复步骤 4 ，然后把 slave1 中的 .ssh/authorized_keys 复制至 master 的 .ssh/authorized_keys中。注意复制过去之后，要看最后的类似 root@localhost 的字符串，修改成 root@slave1 。同样将 master的 key 也复制至 slave1 ，并将最后的串修改成 root@master 。</p>
-<p>或者使用如下命令：</p>
-<p>ssh-copy-id -i ~/.ssh/id_rsa.pub root@slave1</p>
-<p>测试 SSH 连接：</p>
-<p>在 master 上运行：</p>
-<p>ssh slave1</p>
-<p>在 slave1 上运行：</p>
-<p>ssh master</p>
-<ol>
-<li>安装 Hadoop</li>
-</ol>
-<p>下载 hadoop 安装包：</p>
-<p>wget <a href="http://mirror.bjtu.edu.cn/apache/hadoop/common/hadoop-0.20.203.0/hadoop-0.20.203.0rc1.tar.gz" target="_blank"><a href="http://mirror.bjtu.edu.cn/apache/hadoop/common/hadoop-0.20.203.0/hadoop-0.20.203.0rc1.tar.gz">http://mirror.bjtu.edu.cn/apache/hadoop/common/hadoop-0.20.203.0/hadoop-0.20.203.0rc1.tar.gz</a></a></p>
-<p>复制安装包至 slave1 ：</p>
-<p>scp hadoop-0.20.203.0rc1.tar.gz root@slave1:/root/</p>
-<p>解压：</p>
-<p>tar xzvf hadoop-0.20.203.0rc1.tar.gz</p>
-<p>mkdir /usr/local/hadoop</p>
-<p>mv hadoop-0.20.203.0//* /usr/local/hadoop</p>
-<pre><code>     修改 .bashrc 文件（位于用户目录下，即 ~/.bashrc ，对于 root ，即为 /root/.bashrc ）
-
-     添加环境变量：
-
-     export HADOOP_HOME=/usr/local/hadoop
-
-export PATH=$PATH:$HADOOP_HOME/bin
-</code></pre><ol>
-<li>配置 Hadoop 环境变量 /*</li>
-</ol>
-<p><strong>以下所有 hadoop **</strong>目录下的文件，均以相对路径 hadoop <strong>**开始</strong></p>
-<p>修改 hadoop/conf/hadoop-env.sh 文件，将里面的 JAVA_HOME 改成步骤 2 中设置的值。</p>
-<ol>
-<li>创建 Hadoop 本地临时文件夹 /*</li>
-</ol>
-<p>mkdir /root/hadoop_tmp （<strong>注意这一步，千万不要放在</strong> <strong>/tmp **</strong>目录下面！！因为 <strong><strong>/tmp </strong></strong>默认分配的空间是很小的，往 <strong><strong>hdfs </strong></strong>里放几个大文件就会导致空间满了，就会报错）**</p>
-<p>修改权限：</p>
-<p>chown -R hadoop:hadoop /root/hadoop_tmp</p>
-<p>更松地，也可以这样：</p>
-<p>chmod –R 777 /root/hadoop_tmp</p>
-<ol>
-<li>配置 Hadoop</li>
-</ol>
-<p>修改 master 的 hadoop/conf/core-site.xml ，在 <configuration> 节中添加如下内容：</p>
-<p>注意： <strong>fs.default.name **</strong>的值不能带下划线**</p>
-<property>
-
-    <name>hadoop.tmp.dir</name>
-
-    <value>/root/hadoop<em>tmp/hadoop</em>${user.name}</value>
-
-</property>
-
-<property>
-
-    <name>fs.default.name</name>
-
-    <value>hdfs://localhost:54310</value> 
-
-</property>
-
-<property>
-
-    <name>io.sort.mb</name>
-
-    <value>1024</value> 
-
-</property>
-
-<pre><code>     其中 io.sort.mb 值，指定了排序使用的内存，大的内存可以加快 job 的处理速度。
-
-
-
-     修改 hadoop/conf/mapred-site.xml ，在 &lt;configuration&gt; 节中添加如下内容：
-</code></pre><property>
-
-    <name>mapred.job.tracker</name>
-
-    <value>localhost:54311</value>
-
-</property>
-
-<property>
-
-    <name>mapred.map.child.java.opts</name>
-
-    <value>-Xmx4096m</value>
-
-</property>
-
-<property>
-
-    <name>mapred.reduce.child.java.opts</name>
-
-    <value>-Xmx4096m</value>
-
-</property>
-
-<pre><code>     其中 mapred.map.child.java.opts, mapred.reduce.child.java.opts 分别指定 map/reduce 任务使用的最大堆内存。较小的内存可能导致程序抛出 OutOfMemoryException 。
-</code></pre><p>修改 conf/hdfs -site.xml ，在 <configuration> 节中添加如下内容：</p>
-<property>
-
-    <name>dfs.replication</name>
-
-    <value>2</value>
-
-</property>
-
-
-
-<p>同样，修改 slave1 的 /usr/local/hadoop/conf/core-site.xml ，在 <configuration> 节中添加如下内容：</p>
-<property>
-
-    <name>hadoop.tmp.dir</name>
-
-    <value>/root/hadoop<em>tmp/hadoop</em>${user.name}</value>
-
-</property>
-
-<property>
-
-    <name>fs.default.name</name>
-
-    <value>hdfs://localhost:54310</value> 
-
-</property>
-
-<property>
-
-    <name>io.sort.mb</name>
-
-    <value>1024</value> 
-
-</property>
-
-
-
-<pre><code>     修改 conf/mapred-site.xml ，在 &lt;configuration&gt; 节中添加如下内容：
-</code></pre><property>
-
-    <name>mapred.job.tracker</name>
-
-    <value>localhost:54311</value>
-
-</property>
-
-<property>
-
-    <name>mapred.map.child.java.opts</name>
-
-    <value>-Xmx4096m</value>
-
-</property>
-
-<property>
-
-    <name>mapred.reduce.child.java.opts</name>
-
-    <value>-Xmx4096m</value>
-
-</property>
-
-
-
-<pre><code>     修改 conf/hdfs -site.xml ，在 &lt;configuration&gt; 节中添加如下内容：
-</code></pre><property>
-
-    <name>dfs.replication</name>
-
-    <value>2</value>
-
-    </property>
-
-
-
-<ol>
-<li>修改 hadoop/bin/hadoop 文件</li>
-</ol>
-<p>把 221 行修改成如下。因为对于 root 用户， -jvm 参数是有问题的，所以需要加一个判断 ( 或者以非 root 用户运行这个脚本也没问题 )</p>
-<p>HADOOP_OPTS=&quot;$HADOOP_OPTS -jvm server $HADOOP_DATANODE_OPTS&quot;  à</p>
-<pre><code>/#for root, -jvm option is invalid.
-
-CUR_USER=`whoami`
-
-if [ &quot;$CUR_USER&quot; = &quot;root&quot; ]; then
-
-    HADOOP_OPTS=&quot;$HADOOP_OPTS -server $HADOOP_DATANODE_OPTS&quot;
-
-else
-
-    HADOOP_OPTS=&quot;$HADOOP_OPTS -jvm server $HADOOP_DATANODE_OPTS&quot;
-
-fi 
-</code></pre><p>unset $CUR_USER</p>
-<p>至此， master 和 slave1 都已经完成了 single_node 的搭建，可以分别在两台机器上测试单节点。</p>
-<p>启动节点：</p>
-<p>hadoop/bin/start-all.sh</p>
-<p>运行 jps 命令，应能看到类似如下的输出：</p>
-<p>937 DataNode</p>
-<p>9232 Jps</p>
-<p>8811 NameNode</p>
-<p>12033 JobTracker</p>
-<p>12041 TaskTracker
-来源： <a href="[http://blog.csdn.net/inte_sleeper/article/details/6569985](http://blog.csdn.net/inte_sleeper/article/details/6569985)">[http://blog.csdn.net/inte_sleeper/article/details/6569985](http://blog.csdn.net/inte_sleeper/article/details/6569985)</a> </p>
-<p><a href="http://blog.csdn.net/inte_sleeper/article/details/6569990" target="_blank">CentOS的Hadoop集群配置（二）</a>
-下面的教程把它们合并至 multi-node cluster 。</p>
-<ol>
-<li>合并 single-node 至 multi-node cluster</li>
-</ol>
-<p>修改 master 的 hadoop/conf/core-site.xml ：</p>
-<property>
-
-    <name>hadoop.tmp.dir</name>
-
-    <value>/root/hadoop<em>tmp/hadoop</em>${user.name}</value>
-
-</property>
-
-<property>
-
-    <name>fs.default.name</name>
-
-    <value>hdfs://<strong>master</strong> :54310</value>
-
-</property>
-
-<property>
-
-    <name>io.sort.mb</name>
-
-    <value>1024</value> 
-
-</property>
-
-
-
-<pre><code>     修改 conf/mapred-site.xml ，在 &lt;configuration&gt; 节中添加如下内容：
-</code></pre><property>
-
-    <name>mapred.job.tracker</name>
-
-    <value><strong>master</strong> :54311</value>
-
-</property>
-
-<property>
-
-    <name>mapred.map.child.java.opts</name>
-
-    <value>-Xmx4096m</value>
-
-</property>
-
-<property>
-
-    <name>mapred.reduce.child.java.opts</name>
-
-    <value>-Xmx4096m</value>
-
-</property>
-
-<pre><code>     修改 conf/hdfs -site.xml ，在 &lt;configuration&gt; 节中添加如下内容：
-</code></pre><property>
-
-    <name>dfs.replication</name>
-
-    <value>2</value>
-
-</property>
-
-<p>把这三个文件复制至 slave1 相应的目录 hadoop/conf 中 <strong>( **</strong>即 master <strong><strong>和 slave1 </strong></strong>的内容完全一致 )**</p>
-<pre><code>     修改所有节点的 hadoop/conf/masters ，把文件内容改成： master
-
-     修改所有节点的 hadoop/conf/slaves ，把文件内容改成：
-</code></pre><p>master</p>
-<pre><code>slave1
-
-
-
-     分别删除 master 和 slave1 的 dfs/data 文件：
-
-     rm –rf /root/hadoop_tmp/hadoop_root/dfs/data
-</code></pre><p>重新格式化 namenode ：</p>
-<pre><code>     hadoop/bin/hadoop namenode -format
-
-
-
-     测试，在 master 上运行：
-
-     hadoop/bin/start-all.sh
-
-     在 master 上运行 jps 命令
-</code></pre><p>此时输出应类似于：</p>
-<pre><code>     11648 TaskTracker
-</code></pre><p>11166 NameNode</p>
-<p>11433 SecondaryNameNode</p>
-<p>12552 Jps</p>
-<p>11282 DataNode</p>
-<p>11525 JobTracker</p>
-<p>在 slave1 上运行 jps</p>
-<p>此时输出应包含 ( 即至少有 DataNode, 否则即为出错 ) ：</p>
-<p>3950 Jps</p>
-<p>3121 TaskTracker</p>
-<p>3044 DataNode</p>
-<ol>
-<li>测试一个 JOB</li>
-</ol>
-<p>首先升级 python( 可选，如果 JOB 是 python 写的 ) ：</p>
-<p>cd /etc/yum.repos.d/</p>
-<p>wget <a href="http://mirrors.geekymedia.com/centos/geekymedia.repo" target="_blank">http://mirrors.geekymedia.com/centos/geekymedia.repo</a></p>
-<p>yum makecache</p>
-<p>yum -y install python26</p>
-<p><strong>升级 python **</strong>的教程，见另外一篇文档。如果已经通过以上方法安装了 python2.6 <strong>**，那需要先卸载：</strong></p>
-<p>yum remove python26 python26-devel</p>
-<pre><code>     CentOS 的 yum 依赖于 python2.4 ，而 /usr/bin 中 python 程序即为 python2.4 。我们需要把它修改成python2.6 。
-
-
-
-     cd /usr/bin/
-
-     编辑 yum 文件，把第一行的
-</code></pre><p>/#!/usr/bin/python   à   /#!/usr/bin/python2.4  </p>
-<p>保存文件。</p>
-<pre><code>     删除旧版本的 python 可执行文件（这个文件跟该目录下 python2.4 其实是一样的，所以可以直接删除）
-
-     rm -f python
-
-     让 python 指向 python2.6 的可执行程序。
-
-     ln -s python26 python  
-</code></pre><ol>
-<li>Word count python 版本</li>
-</ol>
-<p><strong>Map.py</strong></p>
-<p>/#! /usr/bin/python</p>
-<p>import sys;</p>
-<p>for line in sys.stdin:</p>
-<p>  line =  line.strip();</p>
-<p>  words = line.split();</p>
-<p>  for word in words:</p>
-<pre><code>  print &#39;%s/t%s&#39; % (word,1);
-</code></pre><p><strong>Reduce.py</strong></p>
-<p>/#!/usr/bin/python</p>
-<p>import sys;</p>
-<p>wc = {};</p>
-<p>for line in sys.stdin:</p>
-<p>  line = line.strip();</p>
-<p>  word,count = line.split(&#39;/t&#39;,1);</p>
-<p>  try:</p>
-<pre><code>  count = int(count);
-</code></pre><p>  except Error:</p>
-<pre><code>  pass;
-</code></pre><p>  if wc.has_key(word):</p>
-<pre><code>  wc[word] += count;
-</code></pre><p>  else: wc[word] = count;</p>
-<p>for key in wc.keys():</p>
-<p>  print &#39;%s/t%s&#39; % (key, wc[key]);</p>
-<p>本机测试：</p>
-<p>echo &quot;foo foo bar bar foo abc&quot; | map.py</p>
-<p>echo &quot;foo foo bar bar foo abc&quot; | map.py | sort | reduce.py</p>
-<p>在 hadoop 中测试：</p>
-<p>hadoop jar /usr/local/hadoop/contrib/streaming/hadoop-streaming-0.20.203.0.jar -file mapper.py -mapper mapper.py -file reducer.py -reducer reducer.py -input wc//* -output wc-out</p>
-<p>Job 成功后，会在 HDFS 中生成 wc-out 目录。</p>
-<p>查看结果：</p>
-<p>hadoop fs –ls wc-out</p>
-<p>hadoop fs –cat wc-out/part-00000</p>
-<ol>
-<li>集群增加新节点</li>
-</ol>
-<p>a.       执行步骤 1 ， 2.</p>
-<p>b.       修改 hosts 文件，将集群中的 hosts 加入本身 /etc/hosts 中。并修改集群中其他节点的 hosts ，将新节点加入。</p>
-<p>c.       master 的 conf/slaves 文件中，添加新节点。</p>
-<p>d.       启动 datanode 和 task tracker 。</p>
-<p>hadoop-daemon.sh start datanode</p>
-<p>hadoop-daemon.sh start tasktracker</p>
-<ol>
-<li>Trouble-shooting</li>
-</ol>
-<p>hadoop 的日志在 hadoop/logs 中。</p>
-<p>其中， logs 根目录包含的是 namenode, datanode, jobtracker, tasktracker 等的日志。分别以 hadoop-{username}-namenode/datanode/jobtracker/tasktracker-hostname.log 命名。</p>
-<p>userlogs 目录里包含了具体的 job 日志，每个 job 有一个单独的目录，以 job<em>YYYYmmddHHmm_xxxx 命名。里面包含数个 attempt</em>{jobname}<em>m_xxxxx 或 attempt</em>{jobname}_r_xxxx 等数个目录。其中目录名中的m 表示 map 任务的日志， r 表示 reduce 任务的日志。因此，出错时，可以有针对性地查看特定的日志。</p>
-<p>常见错误：</p>
-<ol>
-<li>出现类似：</li>
-</ol>
-<p><em>ERROR org.apache.hadoop.hdfs.server.datanode.DataNode: java.io.IOException: Incompatible namespaceIDs …</em></p>
-<p>的异常，是因为先格式化了 namenode ，后来又修改了配置导致。将 dfs/data 文件夹内容删除，再重新格式化 namenode 即可。</p>
-<ol>
-<li>出现类似：</li>
-</ol>
-<p><em>INFO org.apache.hadoop.ipc.Client: Retrying connect to server:…</em></p>
-<p>的异常，首先确认 name node 是否启动。如果已经启动，有可能是 master 或 slave1 中的配置出错，集群配置参考步骤 11 。也有可能是防火墙问题，需添加以下例外：</p>
-<p>50010 端口用于数据传输， 50020 用于 RPC 调用， 50030 是 WEB 版的 JOB 状态监控， 54311 是job tracker ， 54310 是与 master 通信的端口。</p>
-<p>完整的端口列表见：</p>
-<p><a href="http://www.cloudera.com/blog/2009/08/hadoop-default-ports-quick-reference/" target="_blank"><a href="http://www.cloudera.com/blog/2009/08/hadoop-default-ports-quick-reference/">http://www.cloudera.com/blog/2009/08/hadoop-default-ports-quick-reference/</a></a></p>
-<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 50010 -j ACCEPT</p>
-<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 50020 -j ACCEPT</p>
-<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 50030 -j ACCEPT</p>
-<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 50060 -j ACCEPT</p>
-<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 54310 -j ACCEPT</p>
-<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 54311 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --dport 50010 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --dport 50020 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --sport 50010 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --sport 50020 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --dport 50030 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --sport 50030 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --dport 50060 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --sport 50060 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --dport 54310 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --sport 54310 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --dport 54311 -j ACCEPT</p>
-<p>iptables -A OUTPUT -p tcp -m tcp --sport 54311 -j ACCEPT</p>
-<p>保存规则：</p>
-<p>/etc/init.d/iptables save</p>
-<p>重启 iptables 服务：</p>
-<p>service iptables restart</p>
-<p>如果还是出现问题 2 的错误，那可能需要手工修改 /etc/sysconfig/iptables 的规则。手动添加这些规则。若有 ”reject-with icmp-host-prohibited” 的规则，需将规则加到它的前面。注意修改配置文件的时候，不需要带 iptables 命令。直接为类似于：</p>
-<p>-A OUTPUT -p tcp -m tcp --sport 54311 -j ACCEPT</p>
-<p>或关闭防火墙 <strong>( **</strong>建议，因为端口太多，要加的例外很多 )**</p>
-<p>service iptables stop</p>
-<ol>
-<li><p>在 /etc/hosts 文件中，确保一个 host 只对应一个 IP ，否则会出错（如同时将 slave1 指向 127.0.0.1 和192.168.225.66 ），<strong>可能导致数据无法从一个节点复制至另一节点。</strong></p>
-</li>
-<li><p>出现类似：</p>
-</li>
-</ol>
-<p><em>FATAL org.apache.hadoop.mapred.TaskTracker: Error running child : java.lang.OutOfMemoryError: Java heap space…</em></p>
-<p>的异常，是因为堆内存不够。有以下几个地方可以考虑配置：</p>
-<p>a.       conf/hadoop-env.sh 中， export HADOOP_HEAPSIZE=1000 这一行，默认为注释掉，堆大小为1000M ，可以取消注释，将这个值调大一些（对于 16G 的内存，可以调至 8G ）。</p>
-<p>b.       conf/mapred-site.xml 中，添加 mapred.map.child.java.opts 属性，手动指定 JAVA 堆的参数值为 -Xmx2048m 或更大。这个值调整 map 任务的堆大小。即：</p>
-<property>
-
-    <name>mapred.map.child.java.opts </name>
-
-    <value>-Xmx2048m</value>
-
-</property>
-
-<p>c.       conf/mapred-site.xml 中，添加 mapred.reduce.child.java.opts 属性，手动指定 JAVA 堆的参数值为 -Xmx2048m 或更大。这个值调整 reduce 任务的堆大小。即：</p>
-<property>
-
-    <name>mapred.reduce.child.java.opts </name>
-
-    <value>-Xmx2048m</value>
-
-</property>
-
-<pre><code>               注意调整这些值之后，要重启 name node 。
-</code></pre><p><em>5.       </em>出现类似： <em>java.io.IOException: File /user/root/pv_product_110124 could only be replicated to 0 nodes, instead of 1…</em></p>
-<p>的异常，首先确保 hadoop 临时文件夹中有足够的空间，空间不够会导致这个错误。</p>
-<p>如果空间没问题，那就尝试把临时文件夹中 dfs/data 目录删除，然后重新格式化 name node ：</p>
-<p>hadoop namenode -format</p>
-<p>注意：此命令会删除 hdfs 上的文件</p>
-<p><em>6.       </em>出现类似： <em>java.io.IOException: Broken pipe…</em></p>
-<p>的异常，检查你的程序吧，没准输出了不该输出的信息，如调试信息等。
-来源： <a href="[http://blog.csdn.net/inte_sleeper/article/details/6569990](http://blog.csdn.net/inte_sleeper/article/details/6569990)">[http://blog.csdn.net/inte_sleeper/article/details/6569990](http://blog.csdn.net/inte_sleeper/article/details/6569990)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--CentOS的Hadoop集群配置/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--CentOS的Hadoop集群配置" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事3：奇怪的面试/">IT外企那点儿事(3)：奇怪的面试</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事3：奇怪的面试/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="it-3-">IT外企那点儿事(3)：奇怪的面试</h1>
-<p><a href=""></a></p>
-<h1 id="-http-www-cnblogs-com-forfuture1978-"><a href="http://www.cnblogs.com/forfuture1978/" target="_blank">觉先</a></h1>
-<p>  <a href="http://www.cnblogs.com/" target="_blank">博客园</a> :: <a href="http://www.cnblogs.com/forfuture1978/" target="_blank">首页</a> :: <a href="http://q.cnblogs.com/" target="_blank">博问</a> :: <a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a> :: <a href="http://www.cnblogs.com/forfuture1978/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a> :: <a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" target="_blank">联系</a> :: <a href="http://www.cnblogs.com/forfuture1978/rss" target="_blank">订阅</a> <a href="http://www.cnblogs.com/forfuture1978/rss" target="_blank"><img src="" alt="订阅"></a> :: <a href="http://www.cnblogs.com/forfuture1978/admin/EditPosts.aspx" target="_blank">管理</a> :: <img src="" alt="">   130 随笔 :: 0 文章 :: 544 评论 :: 0 引用
-<a href="">&lt;</a>2010年5月<a href="">&gt;</a>日一二三四五六252627282930<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/01.html" target="_blank">1</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/02.html" target="_blank">2</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/03.html" target="_blank">3</a>4<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/05.html" target="_blank">5</a>67<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/08.html" target="_blank">8</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/09.html" target="_blank">9</a>101112<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/13.html" target="_blank">13</a>1415<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/16.html" target="_blank">16</a>1718<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/19.html" target="_blank">19</a>2021<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/22.html" target="_blank">22</a>23<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/24.html" target="_blank">24</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/25.html" target="_blank">25</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/26.html" target="_blank">26</a><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/27.html" target="_blank">27</a>2829303112345</p>
-<h3 id="-">公告</h3>
-<p>昵称：<a href="http://home.cnblogs.com/u/forfuture1978/" target="_blank">觉先</a>
-园龄：<a href="http://home.cnblogs.com/u/forfuture1978/" title="入园时间：2009-12-10" target="_blank">3年7个月</a>
-荣誉：<a href="http://www.cnblogs.com/expert/" target="_blank">推荐博客</a>
-粉丝：<a href="http://home.cnblogs.com/u/forfuture1978/followers/" target="_blank">560</a>
-关注：<a href="http://home.cnblogs.com/u/forfuture1978/followees/" target="_blank">3</a></p>
-<p><a href="">+加关注</a></p>
-<h3 id="-">搜索</h3>
-<h3 id="-">常用链接</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/forfuture1978/MyPosts.html" target="_blank">我的随笔</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/MyComments.html" target="_blank">我的评论</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/OtherPosts.html" title="我发表过评论的随笔" target="_blank">我的参与</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/RecentComments.html" target="_blank">最新评论</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/tag/" target="_blank">我的标签</a></li>
-</ul>
-<h3 id="-">随笔分类</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/300670.html" target="_blank">Hadoop原理与代码分析(7)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/300669.html" target="_blank">IT外企那点儿事(12)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/345798.html" target="_blank">Java(2)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/345797.html" target="_blank">Linux(14)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/300665.html" target="_blank">Lucene原理与代码分析(38)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/300666.html" target="_blank">长尾理论(16)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/345794.html" target="_blank">管理学(10)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/345800.html" target="_blank">经济学(4)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/345796.html" target="_blank">算法(1)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/345795.html" target="_blank">闲话IT业(3)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/300667.html" target="_blank">心理学与管理学效应(9)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/category/300668.html" target="_blank">组织行为学(15)</a></li>
-</ul>
-<h3 id="-">随笔档案</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11.html" target="_blank">2012年11月 (3)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/01.html" target="_blank">2012年1月 (5)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2011/12.html" target="_blank">2011年12月 (6)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2011/10.html" target="_blank">2011年10月 (3)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2011/09.html" target="_blank">2011年9月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/11.html" target="_blank">2010年11月 (8)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/10.html" target="_blank">2010年10月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/09.html" target="_blank">2010年9月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08.html" target="_blank">2010年8月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/07.html" target="_blank">2010年7月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06.html" target="_blank">2010年6月 (6)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05.html" target="_blank">2010年5月 (22)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/04.html" target="_blank">2010年4月 (18)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/03.html" target="_blank">2010年3月 (8)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/02.html" target="_blank">2010年2月 (39)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/01.html" target="_blank">2010年1月 (1)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2009/12.html" target="_blank">2009年12月 (6)</a></li>
-</ul>
-<h3 id="-">相册</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/forfuture1978/gallery/247104.html" target="_blank">IT外企那点儿事</a></li>
-</ul>
-<h3 id="-">最新评论</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html#2727561" target="_blank">1. Re:IT外企那点儿事(12)：也说跳槽</a></li>
-<li>楼主怎么之后没有更新hadoop的相关信息了呢？是没有再研究了吗？</li>
-<li>--lyeoswu</li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html#2713121" target="_blank">2. Re:Lucene 原理与代码分析完整版</a></li>
-<li>提个建议，你生成的pdf中没有目录，影响阅读，用office转制的过程中其实设置一下即可，方便大众嘛~，还望能发我一份，谢谢！
-sendreams@hotmail.com</li>
-<li>--sendreams</li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html#2712415" target="_blank">3. Re:IT外企那点儿事(12)：也说跳槽</a></li>
-<li><a href="&quot;查看所回复的评论&quot;">@</a>mojunbin
-现在这公司，本来做的Siverlight，我进去后没多久就转JAVA了，最近在公司折腾JAVA的一些东西，业余时间玩玩游戏，看看CLR、并折腾linux。现在观点有所转变，觉得学技术更多的是为了扩宽思维、提高眼界</li>
-<li>--峰顶飞龙</li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html#2711923" target="_blank">4. Re:IT外企那点儿事(12)：也说跳槽</a></li>
-<li><a href="&quot;查看所回复的评论&quot;">@</a>峰顶飞龙
-您的经历和我差不多，呵呵。不晓得现在兄弟在搞C/C++呢？</li>
-<li>--mojunbin</li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/11/23/1884967.html#2708814" target="_blank">5. Re:Hadoop学习总结之五：Hadoop的运行痕迹</a></li>
-<li>楼主你好，在远程调试MapReduce时，本地代码进入不了自定义的job类，而是进入到Credentials class中，此类在hadoop-core-1.0.4.jar中，请问楼主在调试过程可否遇到此问题？</li>
-<li>--彭莉珊</li>
-</ul>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08/04/1791660.html" target="_blank">1. IT外企那点儿事(8)：又是一年加薪时(26798)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html" target="_blank">2. Lucene 原理与代码分析完整版(25615)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/02/23/1671909.html" target="_blank">3. 从技术生命周期看IT历史(20877)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2009/12/21/1628546.html" target="_blank">4. 101个著名的管理学及心理学效应(20827)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/11/14/1877086.html" target="_blank">5. Hadoop学习总结之三：Map-Reduce入门(18674)</a></li>
-</ul>
-<h3 id="-">评论排行榜</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html" target="_blank">1. Lucene 原理与代码分析完整版(68)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/05/1727644.html" target="_blank">2. IT外企那点儿事(4)：激动人心的入职演讲(39)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/13/1734162.html" target="_blank">3. IT外企那点儿事(6)：管理路线和技术路线(37)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08/04/1791660.html" target="_blank">4. IT外企那点儿事(8)：又是一年加薪时(35)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html" target="_blank">5. IT外企那点儿事(12)：也说跳槽(33)</a></li>
-</ul>
-<h3 id="-">推荐排行榜</h3>
-<ul>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/06/13/1757479.html" target="_blank">1. Lucene 原理与代码分析完整版(55)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/03/1726200.html" target="_blank">2. IT外企那点儿事(3)：奇怪的面试(39)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/08/04/1791660.html" target="_blank">3. IT外企那点儿事(8)：又是一年加薪时(36)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2012/11/26/2788610.html" target="_blank">4. IT外企那点儿事(12)：也说跳槽(34)</a></li>
-<li><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/13/1734162.html" target="_blank">5. IT外企那点儿事(6)：管理路线和技术路线(27)</a></li>
-</ul>
-<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/03/1726200.html" target="_blank">IT外企那点儿事(3)：奇怪的面试</a></p>
-<p>外企的面试都面写啥？不同的企业也是不一样的，总的来说可以归结为以下几句话：</p>
-<h2 id="-">三类企业面实战，二类企业面基础，一类企业面算法。</h2>
-<p>在此声明，此处所谓的一二三类，绝没有轻视其他企业的意思，这里的一二三类基本上是按照本科毕业的时候起薪来划分的，一类企业指的是年薪15万以上的企业，二类企业指的是年薪10万左右的企业，三类企业指的是年薪5万左右的企业。当然按照上两次的描述大家可以知道，并不是起薪高的企业的程序员一定最好发展的最好，而进入创业企业的人最后可能后来居上，成为IT达人。当然此规律也不仅仅适用于外企。</p>
-<h2 id="-">三类企业</h2>
-<p>三类企业起薪不高，招聘的目的也相对的明确，是要找那种来了就能真枪实弹的把东西作出来的人。</p>
-<p>他们多不太关心员工的培训和成长，不太关心员工是否对技术有浓厚的兴趣和深入的钻研，他们就是一个想法，他们要做一个东西，做这个东西需要某方面的技术，所以要找这会方面的人。</p>
-<p>他们不知道，大多数的程序员其实喜欢做一些在自己能力以上20%的东西，也即研究研究可以做出来，但不是太熟练，而不喜欢做一些自己已经非常熟，毫无挑战的东西。</p>
-<p>但是他们需要这样的人，所以在面试中，面试的问题比较具体，甚至具体到一个个的配置项，也有当场给你环境，让你搭一个框架，做一个东西的。</p>
-<p>他们希望，最好你以前做过的项目和他们现在的项目十分相似，来了就能够上手。</p>
-<p>其实很多程序员跳槽，就是因为原来的工作已经没有了挑战，想找一个更有挑战的，有更多大牛的地方，如果原来的项目我干的不亦乐乎，还来你这里干什么？</p>
-<p>但是现在工作难找啊，所以他们总是能够找到需要的人，毕竟出来混，大家都是混口饭吃，不容易啊。</p>
-<p>要想进入此类企业，一个最好的办法就是上手做，在学校里就可以找个实习的公司，哪怕不给钱也去(强烈谴责这种企业，剥夺劳动者的基本权利，也就在中国他们能干的出来，放到欧美罚不死他们)，先混些实践经验，做些边角料的活，然后跟着lead一步一步进入核心模块，相信只要认认真真的做过，面过这类企业应该不成问题。</p>
-<p>此类企业的流动性相对较大，往往被用作程序员的跳板，跳到二类甚至一类的企业中去。所以不幸进入此类企业的兄弟们，在实战的过程中，别忘了多看看源码，多想想背后的原理，多补充一下计算机科学的基本知识，早日脱离苦海。</p>
-<h2 id="-">二类企业</h2>
-<p>二类企业其实薪水已经非常不错了，毕业就能进入此类企业的程序员也多是学校中的优秀分子。</p>
-<p>此类企业注重程序员的基础，认为只要基础好，他们愿意培训并培养程序员，给你机会进行学习。</p>
-<p>此类企业招聘的时候，职位有可能是不太确定的，可能是Java，可能是C++，可能是windows，可能是Linux，他们认为只要你基础好，语言不是问题，平台不是问题，培训一下上手会很快。</p>
-<p>记得面试一家与通信有关的欧企，面试官开始问了很多C/C++的基础知识，后来问了很多操作系统和计算机网络的基础知识，最后说，他们是需要有通信背景的，然后连问我三个有关通信方面的问题，我都说不知道，最后只有坦然承认，通信我确实一点都不懂。后来我认为我是彻底没希望了，没想到后来竟收到了他们的offer，并在入职后进行了长达两个月的通信方面的培训，后来我问我的面试官怎么回事，他说，你的C/C++，操作系统，计算机网络的面试题几乎都对了，我觉得你的基础不错。</p>
-<p>所以要进入此类的企业，有关基础方面的书还是要认认真真，仔仔细细的看，下面推荐一部分：</p>
-<ul>
-<li>C： 《The c programming langage》</li>
-<li>C++：《Thinking in C++》，《The c++ programming language》，《effective c++》，《more effective c++》，《exceptional c++》，《more exceptional c++》，《inside the c++ object model》</li>
-<li>Java：《Thinking in java》，《Core Java》，《effective java》，《Java Puzzlers》，《Java Network Programming》，《java concurrency in practice》，《深入Java虚拟机》</li>
-<li>windows：《Windows核心编程》，《Windows Internals》</li>
-<li>linux：《Advanced Programming in the UNIX.Environment》，《Understanding Linux Network Internals》，《UNIX Network Programming》</li>
-<li>network：《TCPIP Illustrated Volume I》，《The Linux Networking Architecture》</li>
-</ul>
-<p>我没有在装B，也不是看过以上所有的书，不过上述书籍的确是程序员必藏书，我也只不过是在用到的时候翻开相关章节看看。</p>
-<p>然而给大家的建议是，在做项目的时候，千万不能够做什么就只知道什么，与此相关基础知识也应该多看一些。面试的时候也经常遇到这种情况，就是面试者号称做过socket，问到tcp/ip拥塞控制却一无所知，会简单使用socket client端和server端几个简单函数人太多了，如何保证你能够脱颖而出呢？</p>
-<p>其实很多事情我们觉得不可能，但是这个世界上就是有牛人确实做到了，比如英语六级能够考99分(满分100)，就是把答案全给我，就让我写作文，我也做不到啊，再如高考满分750分，山东的状元730+分，也就意味着数理化全对，语文140+，英语140+，我的天，也是把答案给我，就让我写语文和英语的作文，我也做不到啊。</p>
-<p>然而读以上书籍却没有上面两个例子难的不可想象，我所知道的身边的人就有C, C++, linux, network这几个分支全读过的，而且不止一个。</p>
-<p>能进入二类的企业，混个中层，也能过上满不错的生活了。</p>
-<h2 id="-">一类企业</h2>
-<p>一类企业薪水非常高，毕业就能进入的可以说是学校中的佼佼者了，一般会名校背景，名企实习，甚至有过获奖的才能够进入。</p>
-<p>此类企业除了注重程序员的基础之外，更加重视程序员的思想，算法及聪明程度。</p>
-<p>所以很多奇奇怪怪的面试题在网上都流传出来了，这些题目真可谓费尽心机。面试过程长达n轮，每轮都可能因为疏漏和状态不佳被刷掉，最后剩下的几近完美。</p>
-<p>在面试中，程序是要当场在黑板上写出来的，很短的时间，要求很强的健壮性，面试官还会在旁边施加心理压力，你确定吗？要注意XXX。</p>
-<p>虽然问题是经常外流的，然而新的问题却是不断的会出，可能是因为工作中有些需要解决的问题，自己想了一天多才想出的解决方案，却抽象出来考别人，让别人在很短的时间作出来，这种心理开始很爽，后来觉得很罪恶，多少有些原来自己穷，受富人欺负，后来富了又欺负穷人的味道。</p>
-<p>有些人会质疑，这些精巧的算法在工作中真的能够用到很多吗？答案当然不是。</p>
-<p>这其实是一个供需的问题。马克思告诉我们，商品的价格是由价值量决定的，商品应该以价值量为基础，实行等价交换。西方经济学告诉我们商品的价格会随着供需关系的变化而变化。当供需矛盾相当大的时候，商品的价格就会远离价值量。</p>
-<p>《经济学的思维方式》一书中写到，所有的稀缺品都需要以某种方式分配，必须建立某种规则和制度，对那些要求得到稀缺品的人加以甄别，决定谁该得到多少。价格只是最常用的一种方式。</p>
-<p>想想我们的高考吧，那些千辛万苦考上清华的学子毕业后又有多少高中的知识留在脑子里呢？学到的东西又有多少是能够在实际中用到的呢？其实很少，高考分数不过是进入清华的一个价格而已，已经由于清华只有一所，考生却有千百万这样的供需差别远远的偏离了使用价值，毕竟能够轻松看懂教科书的人太多了，他们只能够不但要全会，还要全对。</p>
-<p>进入一类企业也是同样的，能把我上述书籍都看完的人是大有人在的，仅仅基础知识已经不能够甄别想进入一类企业的人们，所以需要奇奇怪怪的算法题。</p>
-<p>要进入一类企业，《算法导论》这本书必不可少，要前前后后仔细的看，而且应该不止一遍。《编程珠玑》也是一本不错的书，其中的例子可以常常的回味。《编程之美》也不错，更贴近面试，更实用一些。其实更重要的是Top coder，就是多看多练。</p>
-<p>其实考入名校基本就是一种方法，多做题，以便在考场中看到题目就能够有思路，考场的时间仅仅用于保证正确率就可以了。</p>
-<p>进入一类企业也是一样，要想很短的时间，在很大的压力下写出健壮的程序，其实只有一种方法，就是类似的题目遇到过，思路是马上就有的，在会议室的时间仅仅用于保证健壮性就可以了。</p>
-<p>曾经一段时间，对精巧的算法十分的崇尚，甚至引以为豪，然而后来慢慢发现，天天沉浸在算法之中，沉浸在计算机的小天地里面，又对社会做了什么贡献呢？难道自己的才能，抱负就仅仅放在这些数字的技巧当中吗？</p>
-<p>我们不应该像孔乙己一样研究茴香豆有几种写法，而是应该如阿朱《走出软件作坊》中描述的一样，虽然方案不是完美和精巧，然而逢山开路，遇水搭桥，真正的解决一个个的问题，作出一些可以影响人们生活的软件。</p>
-<p>先写到这里，下一章要开始写入职了。</p>
-<p>分类: <a href="http://www.cnblogs.com/forfuture1978/category/300669.html" target="_blank">IT外企那点儿事</a></p>
-<p>绿色通道： <a href="">好文要顶</a> <a href="">关注我</a> <a href="">收藏该文</a><a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" target="_blank">与我联系</a> <a href="&quot;分享至新浪微博&quot;"><img src="" alt=""></a>
-<a href="http://home.cnblogs.com/u/forfuture1978/" target="_blank"><img src="" alt=""></a></p>
-<p><a href="http://home.cnblogs.com/u/forfuture1978/" target="_blank">觉先</a>
-<a href="http://home.cnblogs.com/u/forfuture1978/followees" target="_blank">关注 - 3</a>
-<a href="http://home.cnblogs.com/u/forfuture1978/followers" target="_blank">粉丝 - 560</a></p>
-<p>荣誉：<a href="http://www.cnblogs.com/expert/" target="_blank">推荐博客</a>
-<a href="">+加关注</a></p>
-<p>39</p>
-<p>0
-(请您对文章做出评价)</p>
-<p><a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/02/1725948.html" target="_blank">«</a> 上一篇：<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/02/1725948.html" title="发布于2010-05-02 12:42" target="_blank">IT外企那点儿事(2)：多种多样的外企</a>
-<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/05/1727644.html" target="_blank">»</a> 下一篇：<a href="http://www.cnblogs.com/forfuture1978/archive/2010/05/05/1727644.html" title="发布于2010-05-05 02:35" target="_blank">IT外企那点儿事(4)：激动人心的入职演讲</a>
-posted on 2010-05-03 01:05 <a href="http://www.cnblogs.com/forfuture1978/" target="_blank">觉先</a> 阅读(14392) 评论(24) <a href="http://www.cnblogs.com/forfuture1978/admin/EditPosts.aspx?postid=1726200" target="_blank">编辑</a> <a href="">收藏</a></p>
-<p><a href=""></a></p>
 <h3 id="-">评论</h3>
-<p><a href="">/#1楼</a><a href=""></a>  2010-05-03 09:12  <a href="http://www.cnblogs.com/rupeng/">杨中科</a> <a href="http://space.cnblogs.com/msg/send/%e6%9d%a8%e4%b8%ad%e7%a7%91" title="发送站内短消息" target="_blank"> </a></p>
-<p>这么好的文章怎么上不了主页？</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u130406.jpg" target="_blank">http://pic.cnitblog.com/face/u130406.jpg</a></p>
-<p><a href="">/#2楼</a><a href=""></a>  2010-05-03 09:34  <a href="http://www.cnblogs.com/s021368/">阿龍</a> <a href="http://space.cnblogs.com/msg/send/%e9%98%bf%e9%be%8d" title="发送站内短消息" target="_blank"> </a></p>
-<p>很多单位都把程序员当成了挣钱的工具，培训，门都没有。就连基本的系统里面的很多设计文档都不给你看，作为公司机密。</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u23974.jpg" target="_blank">http://pic.cnitblog.com/face/u23974.jpg</a></p>
-<p><a href="">/#3楼</a><a href=""></a>[楼主]  2010-05-03 10:50  <a href="http://www.cnblogs.com/forfuture1978/">觉先</a> <a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" title="发送站内短消息" target="_blank"> </a></p>
-<p><a href="&quot;查看所回复的评论&quot;">@</a>杨中科
-你好，不知道为什么，我是在windows live writer里面写的，提交上来后，原来再编辑的话可以选择发布在精华区，现在只能选择发布在候选区了。
-另一点，此类的文章在博客园容易被拍啊，不是技术类文章，现在都不敢发在首页了。</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u103165.jpg" target="_blank">http://pic.cnitblog.com/face/u103165.jpg</a></p>
-<p><a href="">/#4楼</a><a href=""></a>  2010-05-03 13:05  <a href="http://www.cnblogs.com/ilovedotnet/">ilovedotnet</a> <a href="http://space.cnblogs.com/msg/send/ilovedotnet" title="发送站内短消息" target="_blank"> </a></p>
-<p>不错，排版大有进步啊！</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u26921.jpg" target="_blank">http://pic.cnitblog.com/face/u26921.jpg</a></p>
-<p><a href="">/#5楼</a><a href=""></a>  2010-05-03 23:16  <a href="http://www.cnblogs.com/isyd/">依落の守候</a> <a href="http://space.cnblogs.com/msg/send/%e4%be%9d%e8%90%bd%e3%81%ae%e5%ae%88%e5%80%99" title="发送站内短消息" target="_blank"> </a></p>
-<p><a href="&quot;查看所回复的评论&quot;">@</a>杨中科
-居然在这看到如鹏的老大，幸会幸会。</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u102636.jpg" target="_blank">http://pic.cnitblog.com/face/u102636.jpg</a></p>
-<p><a href="">/#6楼</a><a href=""></a>  2010-05-03 23:17  <a href="http://www.cnblogs.com/isyd/">依落の守候</a> <a href="http://space.cnblogs.com/msg/send/%e4%be%9d%e8%90%bd%e3%81%ae%e5%ae%88%e5%80%99" title="发送站内短消息" target="_blank"> </a></p>
-<p>好文章。至少是能改变人观念的文章。谢谢lz了。</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u102636.jpg" target="_blank">http://pic.cnitblog.com/face/u102636.jpg</a></p>
-<p><a href="">/#7楼</a><a href=""></a>  2010-05-04 00:32  <a href="http://home.cnblogs.com/u/122265/">琛</a> <a href="http://space.cnblogs.com/msg/send/%e7%90%9b" title="发送站内短消息" target="_blank"> </a></p>
-<p>对我的目标信念更加的坚定
-谢谢</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
-<p><a href="">/#8楼</a><a href=""></a>  2010-05-04 09:06  <a href="http://www.cnblogs.com/Eson/">ESON</a> <a href="http://space.cnblogs.com/msg/send/ESON" title="发送站内短消息" target="_blank"> </a></p>
-<p>挺好，不过我这人不太喜欢看书，应该找个时间挑战一下自己。</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u109470.jpg?id=02124325" target="_blank">http://pic.cnitblog.com/face/u109470.jpg?id=02124325</a></p>
-<p><a href="">/#9楼</a><a href=""></a>  2010-05-04 13:36  <a href="http://www.cnblogs.com/yanshaoli/">JacksonChina</a> <a href="http://space.cnblogs.com/msg/send/JacksonChina" title="发送站内短消息" target="_blank"> </a></p>
-<p>呵呵。LZ可以直接发到首页啊。
-说得很实在，不是通篇大道理，大部分人还是认可的。
-非技术类没关系啊。毕竟园子很多人排斥的不是这类型
-的文章，而是某个人的风格。</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
-<p><a href="">/#10楼</a><a href=""></a>  2010-05-05 13:09  <a href="http://www.cnblogs.com/dooom/">clound</a> <a href="http://space.cnblogs.com/msg/send/clound" title="发送站内短消息" target="_blank"> </a></p>
-<p>这个系列不错 ，好文章。
-LZ也很谦虚，刚看了评论，都没发到首页。</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
-<p><a href="">/#11楼</a><a href=""></a>  2010-05-05 13:49  <a href="http://home.cnblogs.com/u/72808/">hechaner</a> <a href="http://space.cnblogs.com/msg/send/hechaner" title="发送站内短消息" target="_blank"> </a></p>
-<p><a href="&quot;查看引用原文&quot;">引用</a>觉先：
-@杨中科
-你好，不知道为什么，我是在windows live writer里面写的，提交上来后，原来再编辑的话可以选择发布在精华区，现在只能选择发布在候选区了。
-另一点，此类的文章在博客园容易被拍啊，不是技术类文章，现在都不敢发在首页了。
-不是非技术的文章就会被拍砖，我觉得写的很中肯，对大家也有用，帮楼主推荐了</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
-<p><a href="">/#12楼</a><a href=""></a>[楼主]  2010-05-05 14:39  <a href="http://www.cnblogs.com/forfuture1978/">觉先</a> <a href="http://space.cnblogs.com/msg/send/%e8%a7%89%e5%85%88" title="发送站内短消息" target="_blank"> </a></p>
-<p><a href="&quot;查看所回复的评论&quot;">@</a>hechaner
-非常感谢啊</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u103165.jpg" target="_blank">http://pic.cnitblog.com/face/u103165.jpg</a></p>
-<p><a href="">/#13楼</a><a href=""></a>  2010-05-05 15:21  <a href="http://www.cnblogs.com/lonely_rain/">lonely_rain</a> <a href="http://space.cnblogs.com/msg/send/lonely_rain" title="发送站内短消息" target="_blank"> </a></p>
-<p>顶一下。</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u105358.jpg?id=24155351" target="_blank">http://pic.cnitblog.com/face/u105358.jpg?id=24155351</a></p>
-<p><a href="">/#14楼</a><a href=""></a>  2010-05-05 16:03  <a href="http://www.cnblogs.com/aqhistory/">blackcat</a> <a href="http://space.cnblogs.com/msg/send/blackcat" title="发送站内短消息" target="_blank"> </a></p>
-<p>还好。呵呵。不错。
-非常生动。
-有助于职业规划。</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u106668.jpg" target="_blank">http://pic.cnitblog.com/face/u106668.jpg</a></p>
-<p><a href="">/#15楼</a><a href=""></a>  2010-05-05 21:55  <a href="http://www.cnblogs.com/Jong/">Caspar Jiong</a> <a href="http://space.cnblogs.com/msg/send/Caspar+Jiong" title="发送站内短消息" target="_blank"> </a></p>
-<p>好文！</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
-<p><a href="">/#16楼</a><a href=""></a>  2010-05-06 08:59  <a href="http://www.cnblogs.com/elwin/">elwin.wang</a> <a href="http://space.cnblogs.com/msg/send/elwin.wang" title="发送站内短消息" target="_blank"> </a></p>
-<p>LZ,我对你的佩服如滔滔江水，连绵不绝啊</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
-<p><a href="">/#17楼</a><a href=""></a>  2010-05-12 00:48  <a href="http://home.cnblogs.com/u/132441/">学飞的菜鸟</a> <a href="http://space.cnblogs.com/msg/send/%e5%ad%a6%e9%a3%9e%e7%9a%84%e8%8f%9c%e9%b8%9f" title="发送站内短消息" target="_blank"> </a></p>
-<p>嗯，说得很有道理啊。博客园里真是高手如云啊，以后得多来拜会才是。</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
-<p><a href="">/#18楼</a><a href=""></a>  2010-05-13 09:55  <a href="http://www.cnblogs.com/TomToDo/">Yes!加菲猫</a> <a href="http://space.cnblogs.com/msg/send/Yes!%e5%8a%a0%e8%8f%b2%e7%8c%ab" title="发送站内短消息" target="_blank"> </a></p>
-<p>这篇标记下，虽然不进外企，但是文章提到的东西还是要多留意</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u33631.jpg" target="_blank">http://pic.cnitblog.com/face/u33631.jpg</a></p>
-<p><a href="">/#19楼</a><a href=""></a>  2010-05-13 16:11  <a href="http://www.cnblogs.com/shanjsh/">坐井观天</a> <a href="http://space.cnblogs.com/msg/send/%e5%9d%90%e4%ba%95%e8%a7%82%e5%a4%a9" title="发送站内短消息" target="_blank"> </a></p>
-<p>这文章要顶</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
-<p><a href="">/#20楼</a><a href=""></a>  2010-05-13 22:51  <a href="http://www.cnblogs.com/likwo/">Likwo</a> <a href="http://space.cnblogs.com/msg/send/Likwo" title="发送站内短消息" target="_blank"> </a></p>
-<p>文章非常好，辛苦啦</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
-<p><a href="">/#21楼</a><a href=""></a>  2010-05-14 10:30  <a href="http://www.cnblogs.com/jianjialin/">MyCoolDog</a> <a href="http://space.cnblogs.com/msg/send/MyCoolDog" title="发送站内短消息" target="_blank"> </a></p>
-<p>ding!!</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u32601.jpg" target="_blank">http://pic.cnitblog.com/face/u32601.jpg</a></p>
-<p><a href="">/#22楼</a><a href=""></a>  2012-11-27 23:40  <a href="http://www.cnblogs.com/pinopino/">我不是AI</a> <a href="http://space.cnblogs.com/msg/send/%e6%88%91%e4%b8%8d%e6%98%afAI" title="发送站内短消息" target="_blank"> </a></p>
-<p>请问, 你说的Top coder是这个么: <a href="http://www.topcoder.com/?" target="_blank"><a href="http://www.topcoder.com?">http://www.topcoder.com?</a></a></p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a>
-<a href="http://pic.cnitblog.com/face/u271595.jpg?id=24154145" target="_blank">http://pic.cnitblog.com/face/u271595.jpg?id=24154145</a></p>
-<p><a href="">/#23楼</a><a href=""></a>  2012-12-05 11:10  <a href="http://www.cnblogs.com/huzi007/">全力以赴001</a> <a href="http://space.cnblogs.com/msg/send/%e5%85%a8%e5%8a%9b%e4%bb%a5%e8%b5%b4001" title="发送站内短消息" target="_blank"> </a></p>
-<p>给人感悟的....真给力!</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
-<p><a href="">/#24楼</a><a href=""></a>25739772012/12/10 10:17:29  2012-12-10 10:17  <a href="http://home.cnblogs.com/u/476653/">Mamamiya</a> <a href="http://space.cnblogs.com/msg/send/Mamamiya" title="发送站内短消息" target="_blank"> </a></p>
-<p>博主的文章很能发人深省。收益良多。</p>
-<p><a href="">支持(0)</a><a href="">反对(0)</a></p>
-<p><a href="">刷新评论</a><a href="">刷新页面</a><a href="">返回顶部</a></p>
-<p>注册用户登录后才能发表评论，请 <a href="">登录</a> 或 <a href="">注册</a>，<a href="http://www.cnblogs.com/" target="_blank">访问</a>网站首页。
-<a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园首页</a><a href="http://q.cnblogs.com/" title="程序员问答社区" target="_blank">博问</a><a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">新闻</a><a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a><a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a><a href="http://kb.cnblogs.com/" target="_blank">知识库</a></p>
-<p><strong>最新IT新闻</strong>:
-· <a href="http://news.cnblogs.com/n/182456/" target="_blank">Facebook推出一体化数据中心管理软件</a>
-· <a href="http://news.cnblogs.com/n/182455/" target="_blank">顺丰掌门人王卫：马云最佩服的人</a>
-· <a href="http://news.cnblogs.com/n/182454/" target="_blank">2013年美国十大最佳科技雇主</a>
-· <a href="http://news.cnblogs.com/n/182453/" target="_blank">这四年 Google中国落寂了 刘允尽力了</a>
-· <a href="http://news.cnblogs.com/n/182452/" target="_blank">在线课程“慕课”来袭 专家称大学应主动参与</a>
-» <a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">更多新闻...</a></p>
-<p><strong>最新知识库文章</strong>:
-· <a href="http://kb.cnblogs.com/page/141892/" target="_blank">阿里巴巴集团去IOE运动的思考与总结</a>
-· <a href="http://kb.cnblogs.com/page/182265/" target="_blank">硅谷归来7点分享：创业者，做你自己</a>
-· <a href="http://kb.cnblogs.com/page/182200/" target="_blank">我为什么不能坚持？</a>
-· <a href="http://kb.cnblogs.com/page/168725/" target="_blank">成为高效程序员的7个重要习惯</a>
-· <a href="http://kb.cnblogs.com/page/182047/" target="_blank">谈谈对BPM的理解</a>
-» <a href="http://kb.cnblogs.com/" target="_blank">更多知识库文章...</a>
-Powered by:
-<a href="http://www.cnblogs.com/" target="_blank">博客园</a>
-Copyright © 觉先</p>
+<p><a href=""></a></p>
+<h3 id="-">发表评论</h3>
+<p><a href="http://lxs647.iteye.com/login" target="_blank"><img src="" alt=""></a><a href="http://lxs647.iteye.com/login" target="_blank">您还没有登录,请您登录后再发表评论</a></p>
+<p><a href="http://lxs647.iteye.com/" target="_blank"><img src="&quot;lxs647的博客: &quot;" alt="lxs647的博客"></a></p>
+<p>lxs647</p>
+<ul>
+<li>浏览: 70685 次</li>
+<li>性别: <img src="&quot;男&quot;" alt="Icon_minigender_1"></li>
+<li>来自: 北京</li>
+<li><img src="" alt=""><h3 id="-http-lxs647-iteye-com-blog-user_visits-">最近访客 <a href="http://lxs647.iteye.com/blog/user_visits" target="_blank">更多访客&gt;&gt;</a></h3>
+</li>
+</ul>
+<p><a href="http://michael-roshen.iteye.com/" target="_blank"><img src="&quot;michael_roshen的博客: Mr.C&quot;" alt="michael_roshen的博客"></a></p>
+<p><a href="http://michael-roshen.iteye.com/" title="michael_roshen" target="_blank">michael_roshen</a></p>
+<p><a href="http://yaoyao19851023.iteye.com/" target="_blank"><img src="&quot;yaoyao19851023的博客: &quot;" alt="yaoyao19851023的博客"></a></p>
+<p><a href="http://yaoyao19851023.iteye.com/" title="yaoyao19851023" target="_blank">yaoyao19851023</a>
+<a href="http://oneis1-gma.iteye.com/" target="_blank"><img src="&quot;oneis1_gma的博客: &quot;" alt="oneis1_gma的博客"></a></p>
+<p><a href="http://oneis1-gma.iteye.com/" title="oneis1_gma" target="_blank">oneis1_gma</a></p>
+<p><a href="http://liuhongyansn.iteye.com/" target="_blank"><img src="&quot;liuhongyansn的博客: &quot;" alt="liuhongyansn的博客"></a></p>
+<p><a href="http://liuhongyansn.iteye.com/" title="liuhongyansn" target="_blank">liuhongyansn</a></p>
+<h3 id="-">文章分类</h3>
+<ul>
+<li><p><a href="http://lxs647.iteye.com/" target="_blank">全部博客 (126)</a></p>
+<h3 id="-">社区版块</h3>
+</li>
+<li><p><a href="http://lxs647.iteye.com/blog/news" target="_blank">我的资讯</a> (0)</p>
+</li>
+<li><a href="http://lxs647.iteye.com/blog/post" target="_blank">我的论坛</a> (246)</li>
+<li><a href="http://lxs647.iteye.com/blog/answered_problems" target="_blank">我的问答</a> (2)</li>
+</ul>
+<h3 id="-">存档分类</h3>
+<ul>
+<li><a href="http://lxs647.iteye.com/blog/monthblog/2012-10" target="_blank">2012-10</a> (3)</li>
+<li><a href="http://lxs647.iteye.com/blog/monthblog/2012-01" target="_blank">2012-01</a> (2)</li>
+<li><a href="http://lxs647.iteye.com/blog/monthblog/2011-12" target="_blank">2011-12</a> (1)</li>
+<li><p><a href="http://lxs647.iteye.com/blog/monthblog_more" target="_blank">更多存档...</a></p>
+<h3 id="-">最新评论</h3>
+</li>
+<li><p><a href="http://douknow.iteye.com/" title="douknow" target="_blank">douknow</a>： 多谢lz,搞定
+<a href="http://lxs647.iteye.com/blog/1274975#bc2285287" target="_blank">Project configuration is not up-to-date with pom.xml</a></p>
+</li>
+<li><a href="http://shuimuqinghua77.iteye.com/" title="水木清华77" target="_blank">水木清华77</a>： 多谢楼主
+<a href="http://lxs647.iteye.com/blog/1274975#bc2268270" target="_blank">Project configuration is not up-to-date with pom.xml</a></li>
+<li><a href="http://elan1986.iteye.com/" title="elan1986" target="_blank">elan1986</a>： ...
+<a href="http://lxs647.iteye.com/blog/1274975#bc2266806" target="_blank">Project configuration is not up-to-date with pom.xml</a></li>
+<li><a href="http://easense2009.iteye.com/" title="easense2009" target="_blank">easense2009</a>： 多谢楼主，今天也遇到同样的问题，用楼主的方法问题解决，than ...
+<a href="http://lxs647.iteye.com/blog/1274975#bc2248132" target="_blank">Project configuration is not up-to-date with pom.xml</a></li>
+<li><a href="http://hailinhe1986-163-com.iteye.com/" title="hehailin1986_163.com" target="_blank">hehailin1986_163.com</a>： 你好，我试了一下，貌似不支持中文目录的，有好方法么？
+<a href="http://lxs647.iteye.com/blog/1179043#bc2224452" target="_blank">Adobe AIR:压缩Zip/创建zip文件</a>
+声明：ITeye文章版权属于作者，受法律保护。没有作者书面许可不得转载。若作者同意转载，必须以超链接形式标明文章原始出处和作者。
+© 2003-2012 ITeye.com. All rights reserved. [ 京ICP证110151号 京公网安备110105010620 ]
+<img src="" alt=""></li>
+</ul>
 
       
     </div>
@@ -1335,8 +307,8 @@ Copyright © 觉先</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/zhiya/">zhiya</a></li></span><span class="breadcrumb"><li><a href="/categories/职涯/">职涯</a></li><li><a href="/categories/职涯/IT外企/">IT外企</a></li></span></span> | <span class="tags">Tagged <a href="/tags/IT外企/" class="label label-primary">IT外企</a><a href="/tags/zhiya/" class="label label-success">zhiya</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-zhiya-IT外企--IT外企那点儿事3：奇怪的面试/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-zhiya-IT外企--IT外企那点儿事3：奇怪的面试" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/linux/">linux</a></li></span></span> | <span class="tags">Tagged <a href="/tags/linux/" class="label label-primary">linux</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-linux--用JAVA通过LDAP修改AD用户密码注意事项-一事无成-ITeye技术网站/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-linux--用JAVA通过LDAP修改AD用户密码注意事项-一事无成-ITeye技术网站" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1351,67 +323,126 @@ Copyright © 觉先</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-linux-redhat--centoslibxml2/">centos libxml2</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-linux-android--adb命令详解/">adb命令详解</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-linux-redhat--centoslibxml2/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-linux-android--adb命令详解/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="centos-libxml2">centos libxml2</h1>
-<h2 id="introduction-to-libx-ml2">Introduction to libx‍ml2</h2>
-<p>The libxml2 package contains          libraries and utilities used for parsing XML files.</p>
-<p>This package is known to build and work properly using an LFS-7.4          platform.</p>
-<h3 id="package-information">Package Information</h3>
+        <h1 id="adb-">adb命令详解</h1>
+<p>ADB全称Android Debug Bridge, 是android sdk里的一个工具, 用这个工具可以直接操作管理android模拟器或者真实的andriod设备(如G1手机).
+它的主要功能有:
+    /<em> 运行设备的shell(命令行)
+    /</em> 管理模拟器或设备的端口映射
+    /<em> 计算机和设备之间上传/下载文件
+    /</em> 将本地apk软件安装至模拟器或android设备
+ADB是一个 客户端-服务器端 程序, 其中客户端是你用来操作的电脑, 服务器端是android设备..
+先说安装方法, 电脑上需要安装客户端. 客户端包含在sdk里. 设备上不需要安装, 只需要在手机上打开选项settings-applications-development-USB debugging.
+对于Mac和Linux用户, 下载好的sdk解压后, 可以放~或者任意目录. 然后修改~/.bash_profile文件, 设置运行环境指向sdk的tools目录.
+具体是打开~/.bash_profile文件(如果没有此文件也可以自行添加), 在里面加入一行:
+export PATH=${PATH}:&lt;你的sdk目录&gt;/tools
+然后就可以使用adb命令了.
+嫌安装麻烦的同学其实也可以省去上面安装步骤, 直接输入完整路径来使用命令。
+对于windows xp用户, 需要先安装usb驱动 android_usb_windows.zip, 然后如果你只打算使用adb而不想下载整个sdk的话, 可以下载这个单独的adb工具包 adb_win.zip 下载后解压, 把里面 adb.exe 和 AdbWinApi.dll 两个文件放到系统盘的 windows/system32 文件夹里就可以了
+现在说下ADB常用的几个命令
+查看设备
+    /<em> adb devices
+这个命令是查看当前连接的设备, 连接到计算机的android设备或者模拟器将会列出显示
+安装软件
+    /</em> adb install <apk文件路径>
+这个命令将指定的apk文件安装到设备上.
+卸载软件
+    /<em> adb uninstall &lt;软件名&gt;
+    /</em> adb uninstall -k &lt;软件名&gt;
+如果加 -k 参数,为卸载软件但是保留配置和缓存文件.
+登录设备shell
+    /<em> adb shell
+    /</em> adb shell <command命令>
+这个命令将登录设备的shell.
+后面加<command命令>将是直接运行设备命令, 相当于执行远程命令
+从电脑上发送文件到设备
+    /<em> adb push &lt;本地路径&gt; &lt;远程路径&gt;
+用push命令可以把本机电脑上的文件或者文件夹复制到设备(手机)
+从设备上下载文件到电脑
+    /</em> adb pull &lt;远程路径&gt; &lt;本地路径&gt;
+用pull命令可以把设备(手机)上的文件或者文件夹复制到本机电脑
+显示帮助信息
+    /* adb help
+这个命令将显示帮助信息
+这里还有一个英文版的：
+在DOS下输入以下命令基本可以完成刷机任务,一些常用命令解释如下:
+    adb devices - 列出连接到电脑的ADB设备(也就是手机),一般显示出手机P/N码.如果没有显示出来则手机与电脑没有连接上.
+    adb install <packagename.apk> – 安装手机软件到手机中,如:adb install qq2009.apk.
+    adb remount – 重新打开手机写模式(刷机模式).
+    adb push <localfile> <location on your phone> - 传送文件到手机中,如:adb push recovery.img /sdcard/recovery.img,将本地目录中的recovery.img文件传送手机的SD卡中并取同样的文件名.
+    adb pull <location on your phone> <localfile> - 传送手机的文件到本地目录(和上命令相反).
+    adb shell <command> - 让手机执行命令,<command>就是手机执行的命令.如: adb shell flash_image recovery /sd-card/recovery-RAv1.0G.img,执行将recovery-RAv1.0G.img写入到recovery 区中.
+我们刷recovery时一般按下顺序执行:
+    adb shell mount -a
+    adb push recovery-RAv1.0G.img /system/recovery.img
+    adb push recovery-RAv1.0G.img /sdcard/recovery-RAv1.0G.img
+    adb shell flash_image recovery /sdcard/recovery-RAv1.0G.img reboot
+其它的自己灵活运用了.
+ADB命令详解:
+Android Debug Bridge version 1.0.20
+-d 　- directs command to the only connected USB device　returns an error if more than one USB device is　present.
+-e  　- directs command to the only running emulator.returns an error if more than one emulator is running.
+-s <serial number>            – directs command to the USB device or emulator withthe given serial number
+-p <product name or path>     – simple product name like ‘sooner’, or　a relative/absolute path to a product　out directory like ‘out/target/product/sooner’.
+If -p is not specified, the ANDROID_PRODUCT_OUT　environment variable is used, which must　be an absolute path.
+devices 　 – list all connected devices
+device commands:
+adb push <local> <remote>    – copy file/dir to device
+adb pull <remote> <local>    – copy file/dir from device
+adb sync [ <directory> ]     – copy host-&gt;device only if changed　(see ‘adb help all’)
+adb shell                    – run remote shell interactively
+adb shell <command>          – run remote shell command
+adb emu <command>            – run emulator console command
+adb logcat [ <filter-spec> ] – View device log
+adb forward <local> <remote> – forward socket connections
+forward specs are one of:
+    tcp:<port>
+    localabstract:<unix domain socket name>
+    localreserved:<unix domain socket name>
+    localfilesystem:<unix domain socket name>
+    dev:<character device name>
+    jdwp:<process pid> (remote only)
+adb jdwp　 – list PIDs of processes hosting a JDWP transport
+adb install [-l] [-r] <file> – push this package file to the device and install it
+(‘-l’ means forward-lock the app)
+(‘-r’ means reinstall the app, keeping its data)
+adb uninstall [-k] <package> – remove this app package from the device
+(‘-k’ means keep the data and cache directories)
+adb bugreport                – return all information from the device　that should be included in a bug report.
+adb help                     – show this help message
+adb version                  – show version num
+DATAOPTS:
+(no option)                   – don’t touch the data partition
+-w                           – wipe the data partition
+-d                           – flash the data partition
+scripting:
+adb wait-for-device          – block until device is online
+adb start-server             – ensure that there is a server running
+adb kill-server              – kill the server if it is running
+adb get-state                – prints: offline | bootloader | device
+adb get-serialno             – prints: <serial-number>
+adb status-window            – continuously print device status for a specified device
+adb remount                  – remounts the /system partition on the device re
+ad-write
+adb root                     – restarts adb with root permissions
+networking:
+adb ppp <tty> [parameters]   – Run PPP over USB.
+Note: you should not automatically start a PDP connection.</p>
+<p><tty> refers to the tty for PPP stream. Eg. dev:/dev/omap_csmi_tty1
+[parameters] – Eg. defaultroute debug dump local notty usepeerdns
+adb sync notes: adb sync [ <directory> ]</p>
+<p><localdir> can be interpreted in several ways:</p>
 <ul>
-<li>Download (HTTP): <a href="http://xmlsoft.org/sources/libxml2-2.9.1.tar.gz" target="_blank"><a href="http://xmlsoft.org/sources/libxml2-2.9.1.tar.gz">http://xmlsoft.org/sources/libxml2-2.9.1.tar.gz</a></a></li>
-<li>Download (FTP): <a href="ftp://xmlsoft.org/libxml2/libxml2-2.9.1.tar.gz">ftp://xmlsoft.org/libxml2/libxml2-2.9.1.tar.gz</a></li>
-<li>Download MD5 sum: 9c0cfef285d5c4a5c80d00904ddab380</li>
-<li>Download size: 5.0 MB</li>
-<li>Estimated disk space required: 100 MB</li>
-<li>Estimated build time: 0.6 SBU</li>
+<li>If <directory> is not specified, both /system and /data partitions will be updated.</li>
+<li>If it is “system” or “data”, only the corresponding partition　is updated.</li>
 </ul>
-<h3 id="additional-downloads">Additional Downloads</h3>
-<ul>
-<li>Optional Testsuite: <a href="http://www.w3.org/XML/Test/xmlts20130923.tar.gz" target="_blank"><a href="http://www.w3.org/XML/Test/xmlts20130923.tar.gz">http://www.w3.org/XML/Test/xmlts20130923.tar.gz</a></a>                - This enables <strong>make                check</strong> to do complete testing.</li>
-</ul>
-<h3 id="libxml2-dependencies">libxml2 Dependencies</h3>
-<h3 id="recommended">Recommended</h3>
-<p><a href="http://www.linuxfromscratch.org/blfs/view/svn/general/python2.html" title="Python-2.7.6" target="_blank">Python-2.7.6</a> (to build and install a          Python library module,          additionally it is required to run the full suite of tests)</p>
-<p><img src="http://www.linuxfromscratch.org/blfs/view/svn/images/note.png" alt="[Note]">          </p>
-<h3 id="note">Note</h3>
-<p>Some packages which utilize libxml2 (such as GNOME Doc Utils) need the Python module installed to function properly            and some packages (such as MesaLib) will not build properly if            the Python module is not            available.</p>
-<p>User Notes: <a href="http://wiki.linuxfromscratch.org/blfs/wiki/libxml2" target="_blank"><a href="http://wiki.linuxfromscratch.org/blfs/wiki/libxml2">http://wiki.linuxfromscratch.org/blfs/wiki/libxml2</a></a>        </p>
-<h2 id="installation-of-libxml2">Installation of libxml2</h2>
-<p>If you downloaded the testsuite, issue the following command:
-tar xf ../xmlts20130923.tar.gz</p>
-<p>Install libxml2 by running the          following commands:
-./configure --prefix=/usr --disable-static --with-history &amp;&amp; make</p>
-<p>To test the results, issue: <strong>make          check</strong>.</p>
-<p>Now, as the</p>
-<p>root
-user:
-make install</p>
-<h2 id="command-explanations">Command Explanations</h2>
-<p><em>
---disable-static
-</em>: This          switch prevents installation of static versions of the libraries.</p>
-<p>--with-history
-: This switch enables          Readline support when running          <strong>xmlcatalog</strong> or          <strong>xmllint</strong> in shell          mode.</p>
-<h2 id="contents">Contents</h2>
-<p><strong>Installed Programs:</strong>              xml2-config, xmlcatalog and              xmllint            </p>
-<p><strong>Installed Libraries:</strong>              libxml2.so and optionally, the              libxml2mod.so Python              module            </p>
-<p><strong>Installed Directories:</strong>              /usr/include/libxml2,              /usr/share/doc/libxml2-2.9.1,              /usr/share/doc/libxml2-python-2.9.1 and              /usr/share/gtk-doc/html/libxml2            </p>
-<h3 id="short-descriptions">Short Descriptions</h3>
-<p><a href=""></a><strong>xml2-config</strong>                  </p>
-<p>determines the compile and linker flags that should be                    used to compile and link programs that use</p>
-<p>libxml2
-.<a href=""></a><strong>xmlcatalog</strong>                  </p>
-<p>is used to monitor and manipulate XML and SGML catalogs.<a href=""></a><strong>xmllint</strong>                  </p>
-<p>parses XML files and outputs reports (based upon options)                    to detect errors in XML coding.<a href=""></a></p>
-<p>libxml2.so</p>
-<p>provides functions for programs to parse files that use                    the XML format.                   </p>
 
       
     </div>
@@ -1421,8 +452,348 @@ make install</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/linux/">linux</a></li></span><span class="breadcrumb"><li><a href="/categories/linux/">linux</a></li><li><a href="/categories/linux/redhat/">redhat</a></li></span></span> | <span class="tags">Tagged <a href="/tags/linux/" class="label label-primary">linux</a><a href="/tags/redhat/" class="label label-success">redhat</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-linux-redhat--centoslibxml2/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-linux-redhat--centoslibxml2" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/linux/">linux</a></li></span><span class="breadcrumb"><li><a href="/categories/linux/">linux</a></li><li><a href="/categories/linux/android/">android</a></li></span></span> | <span class="tags">Tagged <a href="/tags/android/" class="label label-primary">android</a><a href="/tags/linux/" class="label label-success">linux</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-linux-android--adb命令详解/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-linux-android--adb命令详解" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-linux-android--通过网络使用adb/">通过网络使用adb</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-linux-android--通过网络使用adb/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-adb">通过网络使用adb</h1>
+<p>在adb的说明文档中提到：</p>
+<pre><code>“An ADB transport models a connection between the ADB server and one device
+or emulator. There are currently two kinds of transports:
+   - USB transports, for physical devices through USB
+   - Local transports, for emulators running on the host, connected to
+     the server through TCP”
+
+大意是说，在物理设备上，adb是通过USB连接到设备上的，而在模拟器上，adb是通过TCP协议连接到设备上的。实际上在物理设备上，也可以让adb 通过TCP协议来连接设备（当然前提条件是你的设备要有网口）。首先看一下下面这段源代码，出自system/core/adb/adb.c，第921 行：
+</code></pre><p>   //<em> for the device, start the usb transport if the
+        /</em>/<em> android usb device exists and &quot;service.adb.tcp&quot;
+        /</em>/<em> is not set, otherwise start the network transport.
+        /</em>/
+    property_get(&quot;service.adb.tcp.port&quot;, value, &quot;0&quot;);
+    if (sscanf(value, &quot;%d&quot;, &amp;port) == 1 &amp;&amp; port &gt; 0) {
+        // listen on TCP port specified by service.adb.tcp.port property
+        local_init(port);
+    } else if (access(&quot;/dev/android_adb&quot;, F_OK) == 0) {
+        // listen on USB
+        usb_init();
+    } else {
+        // listen on default port
+        local_init(ADB_LOCAL_TRANSPORT_PORT);
+    }</p>
+<pre><code>分析上述代码可以发现，在adbd启动时首先检查是否设置了service.adb.tcp.port，如果设置了，就是使用TCP作为连接方式；如果没 设置，就去检查是否有adb的USB设备（dev/android_adb)，如果有就用USB作为连接方式；如果没有USB设备，则还是用TCP作为连 接方式。
+
+因此只需要在启动adbd之前设置service.adb.tcp.port，就可以让adbd选则TCP模式，也就可以通过网络来连接adb了。这需要修改init.rc文件。如果不想修改，也可以在系统启动之后，在控制台上执行下列命令：
+
+/#stop adbd
+
+/#set service.adb.tcp.port 5555
+
+/#start adbd
+
+这样就可以在主机上通过下列命令来连接设备了：
+
+adb connetc &lt;ip-of-device&gt;:5555
+</code></pre>
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/linux/">linux</a></li></span><span class="breadcrumb"><li><a href="/categories/linux/">linux</a></li><li><a href="/categories/linux/android/">android</a></li></span></span> | <span class="tags">Tagged <a href="/tags/android/" class="label label-primary">android</a><a href="/tags/linux/" class="label label-success">linux</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-linux-android--通过网络使用adb/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-linux-android--通过网络使用adb" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-linux-android--linux下adb工具的安装/">linux下adb工具的安装</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-linux-android--linux下adb工具的安装/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="linux-adb-">linux下adb工具的安装</h1>
+<p>第一步：启动开发板，进入android系统后，在linux终端输入lsusb命令查询USB总线上的设备，比如我这里查询结果如下：</p>
+<p>我这里是:
+Bus 007 Device 009: ID 18d1:4e12</p>
+<p>第二步：下载最新的android SDK并解压到某目录，下载地址：
+<a href="http://developer.android.com/sdk/index.html" target="_blank"><a href="http://developer.android.com/sdk/index.html">http://developer.android.com/sdk/index.html</a></a>
+截至目前最新的SDK为android-sdk_r12-linux_x86.tgz
+解压出来的名称为android-sdk-linux_x86
+进入下面目录：
+cd android-sdk-linux_x86/tools/
+./android update adb</p>
+<p>第三步：创建一个新的udev规则的文件，在/etc/udev/rules.d路径下，新建名为imx-android.rules的文件，编辑内容如下：
+vim /etc/udev/rules.d/50-android.rules</p>
+<p>文件里添加如下配置参数:</p>
+<p>/#Acer      0502</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;0502&quot;, MODE=&quot;0666&quot;</p>
+<p>/#Dell     413c</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;413c&quot;, MODE=&quot;0666&quot;</p>
+<p>/#Foxconn     0489</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;0489&quot;, MODE=&quot;0666&quot;</p>
+<p>/#Garmin-Asus     091E</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;091e&quot;, MODE=&quot;0666&quot;</p>
+<p>/#HTC     0bb4</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;0bb4&quot;, MODE=&quot;0666&quot;</p>
+<p>/#Huawei     12d1</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;12d1&quot;, MODE=&quot;0666&quot;</p>
+<p>/#Kyocera     0482</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;0482&quot;, MODE=&quot;0666&quot;</p>
+<p>/#LG     1004</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;1004&quot;, MODE=&quot;0666&quot;</p>
+<p>/#Motorola     22b8</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;22b8&quot;, MODE=&quot;0666&quot;</p>
+<p>/#Nvidia     0955</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;0955&quot;, MODE=&quot;0666&quot;</p>
+<p>/#Pantech     10A9</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;10A9&quot;, MODE=&quot;0666&quot;</p>
+<p>/#Samsung     04e8</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;04e8&quot;, MODE=&quot;0666&quot;</p>
+<p>/#Sharp     04dd</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;04dd&quot;, MODE=&quot;0666&quot;</p>
+<p>/#Sony Ericsson     0fce</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;0fce&quot;, MODE=&quot;0666&quot;</p>
+<p>/#ZTE     19D2</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;19D2&quot;, MODE=&quot;0666</p>
+<p>/#MEIZU     18d1</p>
+<p>SUBSYSTEM==&quot;usb&quot;, SYSFS{idVendor}==&quot;18d1&quot;, MODE=&quot;0666</p>
+<p>但是这上面的ID，并不能包括所有。
+解决办法是你可以使用lsusb命令查看你的USB ID</p>
+<p>第四步：在/etc/profile中声明adb的路径:</p>
+<p>export PATH=/usr/local/android-sdk-linux/platform-tools:$PATH</p>
+<p>第五步：重启ADB
+adb kill-server
+adb start-server</p>
+<p>第六步：使用adb devices命令查找设备：</p>
+<p>[root@redhat6 platform-tools]/# adb devices</p>
+<p>List of devices attached</p>
+<p>353BCHHRB44F    device</p>
+<p>至此，安装成功。</p>
+<p>你可以进去设备了，用adb shell，可以操作你到android了。</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/linux/">linux</a></li></span><span class="breadcrumb"><li><a href="/categories/linux/">linux</a></li><li><a href="/categories/linux/android/">android</a></li></span></span> | <span class="tags">Tagged <a href="/tags/android/" class="label label-primary">android</a><a href="/tags/linux/" class="label label-success">linux</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-linux-android--linux下adb工具的安装/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-linux-android--linux下adb工具的安装" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--hdfs_design/">hdfs_design</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--hdfs_design/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="hdfs_design">hdfs_design</h1>
+<p>HDFS Architecture
+by Dhruba Borthakur
+Table of contents
+1 2
+Introduction .......................................................................................................................3 Assumptions and Goals .....................................................................................................3
+2.1 2.2 2.3 2.4 2.5 2.6
+Hardware Failure .......................................................................................................... 3 Streaming Data Access .................................................................................................3 Large Data Sets .............................................................................................................3 Simple Coherency Model ............................................................................................. 4 “Moving Computation is Cheaper than Moving Data” ................................................4 Portability Across Heterogeneous Hardware and Software Platforms .........................4
+3 4 5
+NameNode and DataNodes ...............................................................................................4 The File System Namespace ............................................................................................. 5 Data Replication ................................................................................................................6
+5.1 5.2 5.3
+Replica Placement: The First Baby Steps .................................................................... 7 Replica Selection .......................................................................................................... 8 Safemode ...................................................................................................................... 8
+6 7 8
+The Persistence of File System Metadata ......................................................................... 8 The Communication Protocols ......................................................................................... 9 Robustness ........................................................................................................................ 9
+8.1 8.2 8.3 8.4 8.5
+Data Disk Failure, Heartbeats and Re-Replication .....................................................10 Cluster Rebalancing ....................................................................................................10 Data Integrity ..............................................................................................................10 Metadata Disk Failure ................................................................................................ 10 Snapshots ....................................................................................................................11
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+9
+Data Organization ........................................................................................................... 11
+9.1 9.2 9.3
+Data Blocks ................................................................................................................ 11 Staging ........................................................................................................................11 Replication Pipelining ................................................................................................ 12 FS Shell .....................................................................................................................12 DFSAdmin ................................................................................................................ 13 Browser Interface ......................................................................................................13 File Deletes and Undeletes ....................................................................................... 13 Decrease Replication Factor ..................................................................................... 14
+10
+Accessibility .................................................................................................................. 12
+10.1 10.2 10.3 11
+Space Reclamation ........................................................................................................ 13
+11.1 11.2 12
+References ..................................................................................................................... 14
+Page 2
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture</p>
+<ol>
+<li>Introduction
+The Hadoop Distributed File System (HDFS) is a distributed file system designed to run on commodity hardware. It has many similarities with existing distributed file systems. However, the differences from other distributed file systems are significant. HDFS is highly fault-tolerant and is designed to be deployed on low-cost hardware. HDFS provides high throughput access to application data and is suitable for applications that have large data sets. HDFS relaxes a few POSIX requirements to enable streaming access to file system data. HDFS was originally built as infrastructure for the Apache Nutch web search engine project. HDFS is part of the Apache Hadoop Core project. The project URL is <a href="http://hadoop.apache.org/core/" target="_blank">http://hadoop.apache.org/core/</a>.</li>
+<li>Assumptions and Goals
+2.1. Hardware Failure
+Hardware failure is the norm rather than the exception. An HDFS instance may consist of hundreds or thousands of server machines, each storing part of the file system’s data. The fact that there are a huge number of components and that each component has a non-trivial probability of failure means that some component of HDFS is always non-functional. Therefore, detection of faults and quick, automatic recovery from them is a core architectural goal of HDFS.
+2.2. Streaming Data Access
+Applications that run on HDFS need streaming access to their data sets. They are not general purpose applications that typically run on general purpose file systems. HDFS is designed more for batch processing rather than interactive use by users. The emphasis is on high throughput of data access rather than low latency of data access. POSIX imposes many hard requirements that are not needed for applications that are targeted for HDFS. POSIX semantics in a few key areas has been traded to increase data throughput rates.
+2.3. Large Data Sets
+Applications that run on HDFS have large data sets. A typical file in HDFS is gigabytes to terabytes in size. Thus, HDFS is tuned to support large files. It should provide high aggregate data bandwidth and scale to hundreds of nodes in a single cluster. It should support tens of millions of files in a single instance.
+Page 3
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+2.4. Simple Coherency Model
+HDFS applications need a write-once-read-many access model for files. A file once created, written, and closed need not be changed. This assumption simplifies data coherency issues and enables high throughput data access. A Map/Reduce application or a web crawler application fits perfectly with this model. There is a plan to support appending-writes to files in the future.
+2.5. “Moving Computation is Cheaper than Moving Data”
+A computation requested by an application is much more efficient if it is executed near the data it operates on. This is especially true when the size of the data set is huge. This minimizes network congestion and increases the overall throughput of the system. The assumption is that it is often better to migrate the computation closer to where the data is located rather than moving the data to where the application is running. HDFS provides interfaces for applications to move themselves closer to where the data is located.
+2.6. Portability Across Heterogeneous Hardware and Software Platforms
+HDFS has been designed to be easily portable from one platform to another. This facilitates widespread adoption of HDFS as a platform of choice for a large set of applications.</li>
+<li>NameNode and DataNodes
+HDFS has a master/slave architecture. An HDFS cluster consists of a single NameNode, a master server that manages the file system namespace and regulates access to files by clients. In addition, there are a number of DataNodes, usually one per node in the cluster, which manage storage attached to the nodes that they run on. HDFS exposes a file system namespace and allows user data to be stored in files. Internally, a file is split into one or more blocks and these blocks are stored in a set of DataNodes. The NameNode executes file system namespace operations like opening, closing, and renaming files and directories. It also determines the mapping of blocks to DataNodes. The DataNodes are responsible for serving read and write requests from the file system’s clients. The DataNodes also perform block creation, deletion, and replication upon instruction from the NameNode.
+Page 4
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+<img src="" alt=""> HDFS Architecture
+The NameNode and DataNode are pieces of software designed to run on commodity machines. These machines typically run a GNU/Linux operating system (OS). HDFS is built using the Java language; any machine that supports Java can run the NameNode or the DataNode software. Usage of the highly portable Java language means that HDFS can be deployed on a wide range of machines. A typical deployment has a dedicated machine that runs only the NameNode software. Each of the other machines in the cluster runs one instance of the DataNode software. The architecture does not preclude running multiple DataNodes on the same machine but in a real deployment that is rarely the case. The existence of a single NameNode in a cluster greatly simplifies the architecture of the system. The NameNode is the arbitrator and repository for all HDFS metadata. The system is designed in such a way that user data never flows through the NameNode.</li>
+<li>The File System Namespace
+HDFS supports a traditional hierarchical file organization. A user or an application can create directories and store files inside these directories. The file system namespace hierarchy is
+Page 5
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+similar to most other existing file systems; one can create and remove files, move a file from one directory to another, or rename a file. HDFS does not yet implement user quotas or access permissions. HDFS does not support hard links or soft links. However, the HDFS architecture does not preclude implementing these features. The NameNode maintains the file system namespace. Any change to the file system namespace or its properties is recorded by the NameNode. An application can specify the number of replicas of a file that should be maintained by HDFS. The number of copies of a file is called the replication factor of that file. This information is stored by the NameNode.</li>
+<li>Data Replication
+HDFS is designed to reliably store very large files across machines in a large cluster. It stores each file as a sequence of blocks; all blocks in a file except the last block are the same size. The blocks of a file are replicated for fault tolerance. The block size and replication factor are configurable per file. An application can specify the number of replicas of a file. The replication factor can be specified at file creation time and can be changed later. Files in HDFS are write-once and have strictly one writer at any time. The NameNode makes all decisions regarding replication of blocks. It periodically receives a Heartbeat and a Blockreport from each of the DataNodes in the cluster. Receipt of a Heartbeat implies that the DataNode is functioning properly. A Blockreport contains a list of all blocks on a DataNode.
+Page 6
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+<img src="" alt=""> HDFS Architecture
+5.1. Replica Placement: The First Baby Steps
+The placement of replicas is critical to HDFS reliability and performance. Optimizing replica placement distinguishes HDFS from most other distributed file systems. This is a feature that needs lots of tuning and experience. The purpose of a rack-aware replica placement policy is to improve data reliability, availability, and network bandwidth utilization. The current implementation for the replica placement policy is a first effort in this direction. The short-term goals of implementing this policy are to validate it on production systems, learn more about its behavior, and build a foundation to test and research more sophisticated policies. Large HDFS instances run on a cluster of computers that commonly spread across many racks. Communication between two nodes in different racks has to go through switches. In most cases, network bandwidth between machines in the same rack is greater than network bandwidth between machines in different racks. The NameNode determines the rack id each DataNode belongs to via the process outlined in Rack Awareness. A simple but non-optimal policy is to place replicas on unique racks. This prevents losing data when an entire rack fails and allows use of bandwidth from multiple
+Page 7
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+racks when reading data. This policy evenly distributes replicas in the cluster which makes it easy to balance load on component failure. However, this policy increases the cost of writes because a write needs to transfer blocks to multiple racks. For the common case, when the replication factor is three, HDFS’s placement policy is to put one replica on one node in the local rack, another on a different node in the local rack, and the last on a different node in a different rack. This policy cuts the inter-rack write traffic which generally improves write performance. The chance of rack failure is far less than that of node failure; this policy does not impact data reliability and availability guarantees. However, it does reduce the aggregate network bandwidth used when reading data since a block is placed in only two unique racks rather than three. With this policy, the replicas of a file do not evenly distribute across the racks. One third of replicas are on one node, two thirds of replicas are on one rack, and the other third are evenly distributed across the remaining racks. This policy improves write performance without compromising data reliability or read performance. The current, default replica placement policy described here is a work in progress.
+5.2. Replica Selection
+To minimize global bandwidth consumption and read latency, HDFS tries to satisfy a read request from a replica that is closest to the reader. If there exists a replica on the same rack as the reader node, then that replica is preferred to satisfy the read request. If angg/ HDFS cluster spans multiple data centers, then a replica that is resident in the local data center is preferred over any remote replica.
+5.3. Safemode
+On startup, the NameNode enters a special state called Safemode. Replication of data blocks does not occur when the NameNode is in the Safemode state. The NameNode receives Heartbeat and Blockreport messages from the DataNodes. A Blockreport contains the list of data blocks that a DataNode is hosting. Each block has a specified minimum number of replicas. A block is considered safely replicated when the minimum number of replicas of that data block has checked in with the NameNode. After a configurable percentage of safely replicated data blocks checks in with the NameNode (plus an additional 30 seconds), the NameNode exits the Safemode state. It then determines the list of data blocks (if any) that still have fewer than the specified number of replicas. The NameNode then replicates these blocks to other DataNodes.</li>
+<li>The Persistence of File System Metadata
+Page 8
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+The HDFS namespace is stored by the NameNode. The NameNode uses a transaction log called the EditLog to persistently record every change that occurs to file system metadata. For example, creating a new file in HDFS causes the NameNode to insert a record into the EditLog indicating this. Similarly, changing the replication factor of a file causes a new record to be inserted into the EditLog. The NameNode uses a file in its local host OS file system to store the EditLog. The entire file system namespace, including the mapping of blocks to files and file system properties, is stored in a file called the FsImage. The FsImage is stored as a file in the NameNode’s local file system too. The NameNode keeps an image of the entire file system namespace and file Blockmap in memory. This key metadata item is designed to be compact, such that a NameNode with 4 GB of RAM is plenty to support a huge number of files and directories. When the NameNode starts up, it reads the FsImage and EditLog from disk, applies all the transactions from the EditLog to the in-memory representation of the FsImage, and flushes out this new version into a new FsImage on disk. It can then truncate the old EditLog because its transactions have been applied to the persistent FsImage. This process is called a checkpoint. In the current implementation, a checkpoint only occurs when the NameNode starts up. Work is in progress to support periodic checkpointing in the near future. The DataNode stores HDFS data in files in its local file system. The DataNode has no knowledge about HDFS files. It stores each block of HDFS data in a separate file in its local file system. The DataNode does not create all files in the same directory. Instead, it uses a heuristic to determine the optimal number of files per directory and creates subdirectories appropriately. It is not optimal to create all local files in the same directory because the local file system might not be able to efficiently support a huge number of files in a single directory. When a DataNode starts up, it scans through its local file system, generates a list of all HDFS data blocks that correspond to each of these local files and sends this report to the NameNode: this is the Blockreport.</li>
+<li>The Communication Protocols
+All HDFS communication protocols are layered on top of the TCP/IP protocol. A client establishes a connection to a configurable TCP port on the NameNode machine. It talks the ClientProtocol with the NameNode. The DataNodes talk to the NameNode using the DataNode Protocol. A Remote Procedure Call (RPC) abstraction wraps both the Client Protocol and the DataNode Protocol. By design, the NameNode never initiates any RPCs. Instead, it only responds to RPC requests issued by DataNodes or clients.</li>
+<li>Robustness
+The primary objective of HDFS is to store data reliably even in the presence of failures. The
+Page 9
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+three common types of failures are NameNode failures, DataNode failures and network partitions.
+8.1. Data Disk Failure, Heartbeats and Re-Replication
+Each DataNode sends a Heartbeat message to the NameNode periodically. A network partition can cause a subset of DataNodes to lose connectivity with the NameNode. The NameNode detects this condition by the absence of a Heartbeat message. The NameNode marks DataNodes without recent Heartbeats as dead and does not forward any new IO requests to them. Any data that was registered to a dead DataNode is not available to HDFS any more. DataNode death may cause the replication factor of some blocks to fall below their specified value. The NameNode constantly tracks which blocks need to be replicated and initiates replication whenever necessary. The necessity for re-replication may arise due to many reasons: a DataNode may become unavailable, a replica may become corrupted, a hard disk on a DataNode may fail, or the replication factor of a file may be increased.
+8.2. Cluster Rebalancing
+The HDFS architecture is compatible with data rebalancing schemes. A scheme might automatically move data from one DataNode to another if the free space on a DataNode falls below a certain threshold. In the event of a sudden high demand for a particular file, a scheme might dynamically create additional replicas and rebalance other data in the cluster. These types of data rebalancing schemes are not yet implemented.
+8.3. Data Integrity
+It is possible that a block of data fetched from a DataNode arrives corrupted. This corruption can occur because of faults in a storage device, network faults, or buggy software. The HDFS client software implements checksum checking on the contents of HDFS files. When a client creates an HDFS file, it computes a checksum of each block of the file and stores these checksums in a separate hidden file in the same HDFS namespace. When a client retrieves file contents it verifies that the data it received from each DataNode matches the checksum stored in the associated checksum file. If not, then the client can opt to retrieve that block from another DataNode that has a replica of that block.
+8.4. Metadata Disk Failure
+The FsImage and the EditLog are central data structures of HDFS. A corruption of these files can cause the HDFS instance to be non-functional. For this reason, the NameNode can be configured to support maintaining multiple copies of the FsImage and EditLog. Any update
+Page 10
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+to either the FsImage or EditLog causes each of the FsImages and EditLogs to get updated synchronously. This synchronous updating of multiple copies of the FsImage and EditLog may degrade the rate of namespace transactions per second that a NameNode can support. However, this degradation is acceptable because even though HDFS applications are very data intensive in nature, they are not metadata intensive. When a NameNode restarts, it selects the latest consistent FsImage and EditLog to use. The NameNode machine is a single point of failure for an HDFS cluster. If the NameNode machine fails, manual intervention is necessary. Currently, automatic restart and failover of the NameNode software to another machine is not supported.
+8.5. Snapshots
+Snapshots support storing a copy of data at a particular instant of time. One usage of the snapshot feature may be to roll back a corrupted HDFS instance to a previously known good point in time. HDFS does not currently support snapshots but will in a future release.</li>
+<li>Data Organization
+9.1. Data Blocks
+HDFS is designed to support very large files. Applications that are compatible with HDFS are those that deal with large data sets. These applications write their data only once but they read it one or more times and require these reads to be satisfied at streaming speeds. HDFS supports write-once-read-many semantics on files. A typical block size used by HDFS is 64 MB. Thus, an HDFS file is chopped up into 64 MB chunks, and if possible, each chunk will reside on a different DataNode.
+9.2. Staging
+A client request to create a file does not reach the NameNode immediately. In fact, initially the HDFS client caches the file data into a temporary local file. Application writes are transparently redirected to this temporary local file. When the local file accumulates data worth over one HDFS block size, the client contacts the NameNode. The NameNode inserts the file name into the file system hierarchy and allocates a data block for it. The NameNode responds to the client request with the identity of the DataNode and the destination data block. Then the client flushes the block of data from the local temporary file to the specified DataNode. When a file is closed, the remaining un-flushed data in the temporary local file is transferred to the DataNode. The client then tells the NameNode that the file is closed. At this point, the NameNode commits the file creation operation into a persistent store. If the
+Page 11
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+NameNode dies before the file is closed, the file is lost. The above approach has been adopted after careful consideration of target applications that run on HDFS. These applications need streaming writes to files. If a client writes to a remote file directly without any client side buffering, the network speed and the congestion in the network impacts throughput considerably. This approach is not without precedent. Earlier distributed file systems, e.g. AFS, have used client side caching to improve performance. A POSIX requirement has been relaxed to achieve higher performance of data uploads.
+9.3. Replication Pipelining
+When a client is writing data to an HDFS file, its data is first written to a local file as explained in the previous section. Suppose the HDFS file has a replication factor of three. When the local file accumulates a full block of user data, the client retrieves a list of DataNodes from the NameNode. This list contains the DataNodes that will host a replica of that block. The client then flushes the data block to the first DataNode. The first DataNode starts receiving the data in small portions (4 KB), writes each portion to its local repository and transfers that portion to the second DataNode in the list. The second DataNode, in turn starts receiving each portion of the data block, writes that portion to its repository and then flushes that portion to the third DataNode. Finally, the third DataNode writes the data to its local repository. Thus, a DataNode can be receiving data from the previous one in the pipeline and at the same time forwarding data to the next one in the pipeline. Thus, the data is pipelined from one DataNode to the next.</li>
+<li>Accessibility
+HDFS can be accessed from applications in many different ways. Natively, HDFS provides a FileSystem Java API for applications to use. A C language wrapper for this Java API is also available. In addition, an HTTP browser can also be used to browse the files of an HDFS instance. Work is in progress to expose HDFS through the WebDAV protocol.
+10.1. FS Shell
+HDFS allows user data to be organized in the form of files and directories. It provides a commandline interface called FS shell that lets a user interact with the data in HDFS. The syntax of this command set is similar to other shells (e.g. bash, csh) that users are already familiar with. Here are some sample action/command pairs:
+Action Create a directory named /foodir Command bin/hadoop dfs -mkdir /foodir
+Page 12
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+Remove a directory named /foodir View the contents of a file named /foodir/myfile.txt
+bin/hadoop dfs -rmr /foodir bin/hadoop dfs -cat /foodir/myfile.txt
+FS shell is targeted for applications that need a scripting language to interact with the stored data.
+10.2. DFSAdmin
+The DFSAdmin command set is used for administering an HDFS cluster. These are commands that are used only by an HDFS administrator. Here are some sample action/command pairs:
+Action Put the cluster in Safemode Generate a list of DataNodes Recommission or decommission DataNode(s) Command bin/hadoop dfsadmin -safemode enter bin/hadoop dfsadmin -report bin/hadoop dfsadmin -refreshNodes
+10.3. Browser Interface
+A typical HDFS install configures a web server to expose the HDFS namespace through a configurable TCP port. This allows a user to navigate the HDFS namespace and view the contents of its files using a web browser.</li>
+<li>Space Reclamation
+11.1. File Deletes and Undeletes
+When a file is deleted by a user or an application, it is not immediately removed from HDFS. Instead, HDFS first renames it to a file in the /trash directory. The file can be restored quickly as long as it remains in /trash. A file remains in /trash for a configurable amount of time. After the expiry of its life in /trash, the NameNode deletes the file from the HDFS namespace. The deletion of a file causes the blocks associated with the file to be freed. Note that there could be an appreciable time delay between the time a file is deleted by a user and the time of the corresponding increase in free space in HDFS. A user can Undelete a file after deleting it as long as it remains in the /trash directory. If a user wants to undelete a file that he/she has deleted, he/she can navigate the /trash directory and retrieve the file. The /trash directory contains only the latest copy of the file
+Page 13
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+that was deleted. The /trash directory is just like any other directory with one special feature: HDFS applies specified policies to automatically delete files from this directory. The current default policy is to delete files from /trash that are more than 6 hours old. In the future, this policy will be configurable through a well defined interface.
+11.2. Decrease Replication Factor
+When the replication factor of a file is reduced, the NameNode selects excess replicas that can be deleted. The next Heartbeat transfers this information to the DataNode. The DataNode then removes the corresponding blocks and the corresponding free space appears in the cluster. Once again, there might be a time delay between the completion of the setReplication API call and the appearance of free space in the cluster.</li>
+<li>References
+Hadoop JavaDoc API. HDFS source code: <a href="http://hadoop.apache.org/core/version_control.html" target="_blank">http://hadoop.apache.org/core/version_control.html</a>
+Page 14
+Copyright © 2008 The Apache Software Foundation. All rights reserved.</li>
+</ol>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--hdfs_design/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--hdfs_design" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1502,7 +873,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:05:47</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:25:39</em></span></div>
 </div>
 <div class="clearfix"></div>
 

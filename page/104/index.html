@@ -110,6 +110,1139 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-scala--ScalaTour/">Scala Tour</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:37.000Z"> <a href="/2014/02/02/2014-02-02-scala--ScalaTour/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="scala-tour">Scala Tour</h1>
+<p>5月1日是劳动的日子，笔者做了一个学习Scala精彩特性的网站<a href="http://zh.scala-tour.com/" title="scala-tour" target="_blank">Scala-Tour</a>。在学习Scala是时候，遇到很多令人激动的特性，主要函数式编程和并发。相比下Java已经老态龙钟，步履躇跚。或许Scala不会成为替代Java语言，但的确给后来者设立了标杆。所以做了这个网站，顺着一个一个例子，由浅入深，由表及里。逐渐学会Scala,尽管不会因此成为一个熟练Scala的开发者，但是对函数式编程的也会相当了然。这篇文章精选了Scala-Tour上了一些章节，想快速了解的朋友可以看看这篇文章，当然想详细看就上上<a href="http://zh.scala-tour.com/" title="scala-tour" target="_blank">Scala-Tour</a>吧。
+<img src="&quot;Scala&quot;" alt=""></p>
+<h3 id="-close">不再需要Close</h3>
+<p>在Java里面，使用完资源(文件句柄，数据库连接)等之后，必须手动Close。否则发生泄漏后，程序只有被迫重启。Scala可以通过函数式实现自动close。
+import scala.reflect.io.File</p>
+<p>import java.util.Scanner</p>
+<p>def withScanner(f: File, op: Scanner =&gt; Unit) = {
+    val scanner = new Scanner(f.bufferedReader)</p>
+<pre><code>try {
+    op(scanner)
+
+} finally {
+    scanner.close()
+
+}
+</code></pre><p>}</p>
+<p>withScanner(File(&quot;/proc/self/stat&quot;),</p>
+<pre><code>scanner =&gt; println(&quot;pid is &quot; + scanner.next()))
+</code></pre><p>这个例子是从/proc/self/stat文件中读取当前进程的pid。withScanner封装了try-finally块，所以调用者不用再close。</p>
+<h3 id="-">按名称传递参数</h3>
+<p>我们熟悉的参数传递方式是按值传递。按名称传递的方式，可以理解为直接传递参数名字，等到实际调用的时候，再去取值。在Java代码中，往往充斥着if(log.isDebug()){log.debug(...)}这样语句。之前的if调用是很有必要的，因为在之后的debug语句中往往有字符串拼接的操作。在不需要打Log的时候，字符串拼接也有可能发生异常抛出。而Scala可以通过按名称传递解决这个问题，这样就不再需要if(log.isDebug())这样的语句了。
+val logEnable = false</p>
+<p>def log(msg: =&gt; String) =</p>
+<pre><code>if (logEnable) println(msg)
+</code></pre><p>val MSG = &quot;programing is running&quot;</p>
+<p>log(MSG + 1 / 0)</p>
+<h3 id="-">鸭子类型</h3>
+<p>“走起来像鸭子，叫起来像鸭子，就是鸭子。”这个例子中使用{ def close(): Unit }作为参数类型。因此任何含有close()的函数的类都可以作为参数。这样的做法比使用接口要好很多，因为可以不引入任何依赖。这个withClose方法单独编译，随处使用。
+def withClose(closeAble: { def close(): Unit }, op: { def close(): Unit } =&gt; Unit) {</p>
+<pre><code>try {
+    op(closeAble)
+
+} finally {
+    closeAble.close()
+
+}
+</code></pre><p>}</p>
+<p>class Connection {</p>
+<pre><code>def close() = println(&quot;close Connection&quot;)
+</code></pre><p>}</p>
+<p>val conn: Connection = new Connection()</p>
+<p>withClose(conn, conn =&gt;
+    println(&quot;do something with Connection&quot;))</p>
+<h3 id="trait">Trait</h3>
+<p>Traits就像是有函数体的Interface，使用with关键字来混入。单个Traits就像是一块乐高积木，一个插件。就像下面的JsonAble，当使用一个对象的时候，可以随时随地把它插在他上面。这个对接就具备了toJson的能力。不用创建一个类，或者写组合的代码，非常干脆。这样也可以使代码有很高的正交性。不再会为了一个很小的需求，去修改一个被广泛使用的类。
+trait ForEachAble[A] {</p>
+<p>  def iterator: java.util.Iterator[A]
+  def foreach(f: A =&gt; Unit) = {</p>
+<pre><code>val iter = iterator
+while (iter.hasNext)
+
+  f(iter.next)
+</code></pre><p>  }</p>
+<p>}</p>
+<p>trait JsonAble {
+  def toJson() =</p>
+<pre><code>scala.util.parsing.json.JSONFormat.defaultFormatter(this)
+</code></pre><p>}</p>
+<p>val list = new java.util.ArrayList<a href="">Int</a> with ForEachAble[Int]</p>
+<p>list.add(1); list.add(2)</p>
+<p>println(&quot;For each: &quot;); list.foreach(x =&gt; println(x))
+//println(&quot;Json: &quot; + list.toJson())</p>
+<h3 id="-">函数式真正的威力</h3>
+<p>通过将函数作为参数，可以使程序极为简洁。 函数式除了能简化代码外，更重要的是他关注的是Input和Output，函数本身没有副作用。 就是Unix pipeline一样，简单的命令可以组合在一起。 List的filter方法接受一个过滤函数，返回一个新的List 如果你喜欢Unix pipeline的方式，你一定也会喜欢函数式编程。 这个例子是用函数式的代码模拟“cat file | grep &#39;warn&#39; | grep &#39;2013&#39; | wc”的行为。相比于Ruby等动态语言,这威力来自于科学而不是魔法
+val file = List(&quot;warn 2013 msg&quot;, &quot;warn 2012 msg&quot;, &quot;error 2013 msg&quot;, &quot;warn 2013 msg&quot;)</p>
+<p>println(&quot;cat file | grep &#39;warn&#39; | grep &#39;2013&#39; | wc : &quot;</p>
+<pre><code>+ file.filter(_.contains(&quot;warn&quot;)).filter(_.contains(&quot;2013&quot;)).size)
+</code></pre><h3 id="-nullexception">再见 NullException</h3>
+<p>每个Java程序员都被NullException折磨过。因为Java中每个对象都可能为Null,所以要么到处检查null的问题，要么到处try/cache。
+Scala提供了Option机制来解决，代码中不断检查null的问题。这个例子包装了getProperty方法，使其返回一个Option。 这样就可以不再漫无目的地null检查。只要Option类型的值即可。使用pattern match来检查是常见做法。也可以使用getOrElse来提供当为None时的默认值。给力的是Option还可以看作是最大长度为1的List，List的强大功能都可以使用。
+不是每个对象都可以为Null了，只有Option可以为None。这样的做法显示区分了可能为Null的情况，可以和NullException说再见了。
+def getProperty(name: String): Option[String] = {</p>
+<p>  val value = System.getProperty(name)
+  if (value != null) Some(value) else None</p>
+<p>}</p>
+<p>val osName = getProperty(&quot;os.name&quot;)</p>
+<p>osName match {
+  case Some(value) =&gt; println(value)</p>
+<p>  case _ =&gt; println(&quot;none&quot;)
+}</p>
+<p>println(osName.getOrElse(&quot;none&quot;))</p>
+<p>osName.foreach(print _)</p>
+<h3 id="-">并行集合</h3>
+<p>这个例子是访问若干URL。但确可以并行访问，比非并行的做法可以快一倍。要想让访问并行，只要调用List.par就可以了。
+val urls = List(&quot;<a href="http://scala-lang.org" target="_blank">http://scala-lang.org</a>&quot;,</p>
+<p>  &quot;<a href="https://github.com/yankay/scala-tour" target="_blank">https://github.com/yankay/scala-tour</a>&quot;)</p>
+<p>def fromURL(url: String) = scala.io.Source.fromURL(url)
+  .getLines().mkString(&quot;\n&quot;)</p>
+<p>val t = System.currentTimeMillis()</p>
+<p>urls.par.map(fromURL(_))
+println(&quot;time: &quot; + (System.currentTimeMillis - t) + &quot;ms&quot;)</p>
+<p>是不是非常的简单？并行集合支持大部分集合的功能。不增加程序复杂性，却能大幅提高并发的能力。</p>
+<h3 id="-actor">远程Actor</h3>
+<p>Actor是并发模型，也使用于分布式。这个例子创建一个时间服务器，通过alive来监听TCP端口，register来注册自己。调用时通过select创建client。其余使用方式和普通Actor一样。
+将单机并发和分布式抽象成一种模型。简化了程序复杂性。虽然多核编程并不广泛，但调用外部接口的情况越来越多。Actor模型非常适用于这样的异步环境。
+import scala.actors.remote.RemoteActor._</p>
+<p>import scala.actors.Actor._
+import scala.actors.remote.Node</p>
+<p>val port = 31241</p>
+<p>val echoServer = actor {</p>
+<p>  alive(port)
+  register(&#39;echoServer, self)</p>
+<p>  loop {
+    react {</p>
+<pre><code>  case msg =&gt; {
+    reply(&quot;replay &quot; + msg)
+
+  }
+}
+</code></pre><p>  }
+}</p>
+<p>val timeServerClient = select(Node(&quot;127.0.0.1&quot;, port), &#39;echoServer)</p>
+<p>timeServerClient !? &quot;hi&quot; match {</p>
+<p>  case replay: String =&gt; println(replay)
+}</p>
+<h3 id="-">抽取器</h3>
+<p>抽取器可以进行解构。这个例子是构建一个Email抽取器，只要实现unapply函数就可以了。
+Scala的正则表达式会自带抽取器，可以抽取出一个List。List里的元素是匹配()里的表达式。
+抽取器很有用，短短的例子里就有两处使用抽取器：</p>
+<ul>
+<li>通过 case user :: do main :: Nil 来解构List</li>
+<li>通过 case Email(user, domain) 来解构Email。
+import scala.util.matching.Regex</li>
+</ul>
+<p>object Email {</p>
+<p>  def unapply(str: String) = new Regex(&quot;&quot;&quot;(./<em>)@(./</em>)&quot;&quot;&quot;)
+    .unapplySeq(str).get match {</p>
+<pre><code>case user :: domain :: Nil =&gt; Some(user, domain)
+case _ =&gt; None
+</code></pre><p>  }
+}</p>
+<p>&quot;user@domain.com&quot; match {</p>
+<p>  case Email(user, domain) =&gt; println(user + &quot;@&quot; + domain)
+}</p>
+<h3 id="dsl">DSL</h3>
+<p>DSL是Scala最强大武器，可以使一些描述性代码变得极为简单。这个例子是使用DSL生成JSON。Scala很多看似是语言级的特性也是用DSL做到的。
+自己编写DSL有点复杂，但使用起来非常方便。这样可以使Scala可以嵌入XML，嵌入Json，嵌入SQL。而其他语言中这些都只是字符串而已。
+import org.json4s._</p>
+<p>import org.json4s.JsonDSL.<em>
+import org.json4s.jackson.JsonMethods.</em></p>
+<p>import java.util.Date</p>
+<p>case class Twitter(id: Long, text: String, publishedAt: Option[java.util.Date])</p>
+<p>var twitters = Twitter(1, &quot;hello scala&quot;, Some(new Date())) ::
+  Twitter(2, &quot;I like scala tour&quot;, None) :: Nil</p>
+<p>var json = (&quot;twitters&quot;</p>
+<p>  -&gt; twitters.map(
+    t =&gt; (&quot;id&quot; -&gt; t.id)</p>
+<pre><code>  ~ (&quot;text&quot; -&gt; t.text)
+  ~ (&quot;published_at&quot; -&gt; t.publishedAt.toString())))
+</code></pre><p>println(pretty(render(json)))</p>
+<h3 id="simple-build-tool">Simple Build Tool</h3>
+<p>SBT是Scala的最佳编译工具，在他的帮助下，你甚至不需要安装除JRE外的任何东西，来开发Scala。
+例如你想在自己的机器上执行<a href="http://zh.scala-tour.com/" title="scala-tour" target="_blank">Scala-Tour</a>,可以执行下面的命令
+/#Linux/Mac(compile &amp; run):</p>
+<p>git clone <a href="https://github.com/yankay/scala-tour-zh.git" target="_blank">https://github.com/yankay/scala-tour-zh.git</a>
+cd scala-tour-zh</p>
+<p>./sbt/sbt stage
+./target/start</p>
+<p>/#Windows(can only compile):</p>
+<p>git clone <a href="https://github.com/yankay/scala-tour-zh.git" target="_blank">https://github.com/yankay/scala-tour-zh.git</a>
+cd scala-tour-zh</p>
+<p>sbt\sbt stage</p>
+<h3 id="-">结语</h3>
+<p>这几个例子精选自<a href="http://zh.scala-tour.com/" title="scala-tour" target="_blank">Scala-Tour</a>，这个网站中还有介绍了很多其他好的特性，比如模式匹配和隐式转换，就不逐一介绍了。这个项目Host在<a href="https://github.com/yankay/scala-tour/" title="GitHub" target="_blank">GitHub</a>上，如果你也有精彩的用法的话，大家交流交流吧。
+Share the post &quot;Scala Tour - 精选&quot;</p>
+<ul>
+<li><a href="http://service.weibo.com/share/share.php?url=http%3A%2F%2Fwww.yankay.com%2Fscala-tour-choiceness%2F" title="Share this article on Weibo" target="_blank">Weibo</a></li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/scala/">scala</a></li></span></span> | <span class="tags">Tagged <a href="/tags/scala/" class="label label-primary">scala</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:37"datetime="2014-03-07 09:54:37"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-scala--ScalaTour/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-scala--ScalaTour" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-zhiya-杂谈--InfoQ福斯特（Forrester）发布免费报告《精益：新兴商业技术的必经之路》/">InfoQ 福斯特（Forrester）发布免费报告《精益：新兴商业技术的必经之路》</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:37.000Z"> <a href="/2014/02/02/2014-02-02-zhiya-杂谈--InfoQ福斯特（Forrester）发布免费报告《精益：新兴商业技术的必经之路》/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="infoq-forrester-">InfoQ 福斯特（Forrester）发布免费报告《精益：新兴商业技术的必经之路》</h1>
+<p><a href="">关闭</a></p>
+<h2 id="-">现有用户：</h2>
+<p>Email:</p>
+<p>密码：</p>
+<h2 id="-">新用户：</h2>
+<h1 id="-infoq-http-www-infoq-com-cn-news-2009-10-forrester-lean-business-"><a href="http://www.infoq.com/cn/news/2009/10/forrester-lean-business#" target="_blank">InfoQ</a></h1>
+<p><a href="http://www.infoq.com/cn/news/2009/10/forrester-lean-business#content" target="_blank">直接转至内容</a>
+时刻关注企业软件开发领域的变化与创新</p>
+<p><a href="http://www.infoq.com/" target="_blank">En</a> | 中文 | <a href="http://www.infoq.com/jp/" target="_blank">日本語</a> | <a href="http://www.infoq.com/br/" target="_blank">Br</a></p>
+<p><a href="http://www.infoq.com/cn/" target="_blank"><img src="" alt="InfoQ"></a>
+9月90,875名独立访问用户</p>
+<ul>
+<li><a href="http://www.infoq.com/cn/reginit.action" target="_blank">注册</a></li>
+<li><a href="">登录</a></li>
+<li><a href="http://www.infoq.com/cn/about" target="_blank">关于我们</a></li>
+<li><a href="http://www.infoq.com/cn/partners.jsp" target="_blank">合作伙伴</a></li>
+<li><a href="http://www.infoq.com/cn/rss/rss.action?token=ZGeQFQgLR0TWlydfGOriiIsCBQNALuXV" target="_blank">个性化RSS<img src="" alt="RSS Feed"></a></li>
+<li><p><a href="http://www.infoq.com/cn/" target="_blank">首页</a></p>
+<h2 id="-">您的社区</h2>
+</li>
+<li><p><a href="http://www.infoq.com/cn/java/" target="_blank">Java</a></p>
+</li>
+<li><a href="http://www.infoq.com/cn/dotnet/" target="_blank">.NET</a></li>
+<li><a href="http://www.infoq.com/cn/ruby/" target="_blank">Ruby</a></li>
+<li><a href="http://www.infoq.com/cn/soa/" target="_blank">SOA</a></li>
+<li><a href="http://www.infoq.com/cn/agile/" target="_blank">Agile</a></li>
+<li><a href="http://www.infoq.com/cn/architecture/" target="_blank">Architecture</a></li>
+</ul>
+<p><a href="http://www.infoq.com/cn/news/2009/10/forrester-lean-business#" target="_blank"><img src="" alt="Search"></a></p>
+<h2 id="-">特别专题</h2>
+<ul>
+<li><a href="http://www.infoq.com/cn/ria/" target="_blank">富互联网应用-RIA</a>
+*</li>
+<li><a href="http://www.infoq.com/cn/scrum/" target="_blank">Scrum开发</a>
+*</li>
+<li><a href="http://www.infoq.com/cn/platforms/" target="_blank">开放平台</a>
+*</li>
+<li><a href="http://www.infoq.com/cn/architect/" target="_blank">月刊：《架构师》</a>
+*</li>
+<li><a href="http://www.infoq.com/cn/qclub/" target="_blank">活动：QClub</a>
+*</li>
+<li><a href="http://www.agilechina.net/" target="_blank">敏捷中国大会2009</a></li>
+</ul>
+<h3 id="-">赞助商链接</h3>
+<p><a href="http://www.infoq.com/ads/textLinkUrlAction.action?i=138&amp;url=http%3A%2F%2Fwww.infoq.com%2Fcn%2Fvendorcontent%2Fshow.action%3Fvcr%3D570" target="_blank">十月敏捷认证课程</a>
+Scrum敏捷项目管
+理核心应用-成都
+ScrumMaster认
+证课程 Scrum
+Product Owner
+认证课程 上海</p>
+<p><a href="http://www.infoq.com/ads/textLinkUrlAction.action?i=140&amp;url=http%3A%2F%2Fwww.softcon.cn%2F" target="_blank">SoftCon2009</a>
+因势而变,蓄势待
+发,中国软件行业
+的年度技术盛会
+10月30日前购票
+者可享受8折门票</p>
+<p><a href="http://www.infoq.com/ads/textLinkUrlAction.action?i=137&amp;url=http%3A%2F%2Fwww.infoq.com%2Fcn%2Fria%2F" target="_blank">Adobe Flash平台</a>
+最新RIA相关资源
+Flash平台工具
+FX、FB、FC……
+独家高速下载
+<a href="http://www.infoq.com/ads/redirectBannerAction.action?i=126&amp;url=http%3A%2F%2Fwww.infoq.com%2Fcn%2FRIA%2F" target="_blank"><img src="" alt=""></a></p>
+<p><a href="http://www.qconbeijing.com/sponsors.shtml" target="_blank"><img src="" alt=""></a></p>
+<ul>
+<li><a href="mailto:news-cn@infoq.com?Subject=[NEWS]&amp;Body=Thanks for your interest in submitting news to InfoQ.com. Please provide as much detail about your news suggestion in this email as possible.  Your suggestion will be considered and if selected an InfoQ editor will write an editted version and publish it. An automated version of this form will be coming sometime in the next few weeks. :">提供新闻</a> Thanks - InfoQ team.)</li>
+<li><a href="">打印</a></li>
+</ul>
+<h2 id="-">新闻</h2>
+<h1 id="-forrester-">福斯特（Forrester）发布免费报告《精益：新兴商业技术的必经之路》</h1>
+<p>作者 <strong><a href="http://www.infoq.com/cn/bycategory.action?authorName=Deborah-Hartmann-Preuss" target="_blank">Deborah Hartmann Preuss</a></strong>译者 <strong><a href="http://www.infoq.com/cn/bycategory.action?authorName=%E9%87%91%E6%AF%85" target="_blank">金毅</a></strong>发布于 2009年10月19日 上午11时41分
+社区<a href="http://www.infoq.com/cn/agile" target="_blank">Agile</a>主题<a href="http://www.infoq.com/cn/bpm" target="_blank">业务流程建模</a>,<a href="http://www.infoq.com/cn/businessprocessmgmt" target="_blank">业务流程管理</a>,<a href="http://www.infoq.com/cn/delivering_value" target="_blank">交付价值</a>,<a href="http://www.infoq.com/cn/Business" target="_blank">商业</a>,<a href="http://www.infoq.com/cn/cust_requirements" target="_blank">客户及需求</a>标签<a href="http://www.infoq.com/cn/lean" target="_blank">精益</a></p>
+<p>福斯特（Forrester），一家总部设在美国、办事处遍布全球的研究公司，由它主办的<a href="http://www.forrester.com/events/eventdetail?eventID=2383&amp;cm_re_o=i9jivji9CjC_bkk_BzypCjCPadjkbELv" title="2009商业技术论坛" target="_blank">2009商业技术论坛</a>下周将在芝加哥举行。此次论坛的主题是：“<strong>精益：新兴商业技术的必经之路。</strong>”在此次盛事的筹备过程中，他们围绕相同主题发布了<a href="http://www.forrester.com/Research/Document/0,7211,55390,00.html?" title="分析报告" target="_blank">分析报告</a>，现已提供免费下载（需要在网站免费注册）。福斯特（Forrester）的战略观点认为，精益是一种适用<strong>范围非常广的管理方法</strong>，尤其善于下面三个方面：减少浪费、为客户创造价值，以及使公司更灵活以便于能够快速响应客户的新需要。在这份不仅仅面向IT行业读者、而且面向商业读者的报告中，六个福斯特（Forrester）的分析师认为：精益是所有行业的必经之路，IT行业当然也不例外。报告以一个重要的告诫收尾：“不要沉溺于消除浪费，而把创造价值、提高灵活性这二者抛在脑后。它们三个必须齐头并进。”</p>
+<p>作为InfoQ敏捷新闻的读者，大家今年已经读到了许多关于<a href="http://www.infoq.com/lean" title="精益软件开发" target="_blank">精益软件开发</a>和蓬勃发展的<a href="http://www.infoq.com/kanban" title="看板" target="_blank">看板</a>实践应用的文章。然而精益理论的发展绝不只是这一朝一夕；它在IT以外的行业已享誉盛名二十多年了；精益理论脱胎于制造业，前不久才被其它行业逐渐采用以支持运营。报告中指出：迷茫中的行业可以尝试使用精益面向全行业的那部分方法论，还提供了关于精益、六西格玛和全面质量管理（即TQM）的“名著导读”，这些方法都是经过多年锤炼的。</p>
+<p>精益关注的是一个产品的<strong>整个价值流</strong>，从消费者到“生产车间”都需要对价值流有不断扩展的认识，从而努力避免局部子优化（也就是仅仅减少某个特殊部门或局部的浪费，而不影响生产过程的其他环节）。在某些情况下，始于IT方面的精益抑或敏捷软件过程改进，也会掀起其他业务方面的过程改进浪潮：精益是全业务范畴的方法论，在IT方面与敏捷理论相辅相成。反过来讲，企业家们将精益方法论引入到IT方面，就是要在组织内使价值流视图得到更深层次的拓展。
+大多精益倡议始于运营层面，伴随着一套<strong>战术</strong>设定，并从减少<strong>浪费</strong>做起……但如果你只关注浪费，就会无法收到精益的全部成效。从战略层面上讲，精益致力于长远的眼光运作公司，以交付价值为中心，而非仅仅达成短期目标。这就意味着要关注持续的学习和改进，着眼于度量哪些过程能够真正增加价值，致力于对改进质量永无止境的探索以求完美，从而基于这些度量项奖励员工。精益思想代表的是团队协同合作的理念，而不是命令—控制思维模式。
+——Connie Moore，福斯特（Forrester）调研部副总裁</p>
+<p>福斯特（Forrester）报告提到：“……有很多组织考虑全面地再次评估他们如何完成IT工作，也就是如何让其适合该组织，他们该如何度量，如何交付，如何管理员工，以及如何运用技术等方面。”福斯特（Forrester）认为这个反思是：</p>
+<p>……这是一次全新机会，让IT部门可以改变度量模式、驾驭新技术和方法（云计算、虚拟化技术、开源、敏捷方法、改进的构建管理和测试流程等），从而为开发周期带来业务价值。同时也让IT人员有机会不仅把软件<strong>做好、做快、做省</strong>，而且要<strong>做正确</strong>。这才是采纳精益的关键所在。</p>
+<p>报告指出：当IT纳入精益价值流后，应用软件的开发和交付就发生了转化。对于敏捷方法论的使用者而言，他们评估精益对IT行业的影响时，会这样说：</p>
+<p>我们看到了基础性的转变，与商业伙伴之间从契约性的、对立的关系转到更为协作的关系。仅凭大规模媒体轰炸或是采取协作策略，还不足以做到这一点，更频繁地交付软件才是关键。及早交付可运行的软件缩短了业务和IT间的反馈周期，这使得他们能够更有效地协同合作。</p>
+<p>说到企业家们将精益理论应用于IT，报告中也为IT方面推荐了一些面向内部的实践，作为精益战略的准备策略：对全体员工进行市场调研以发掘他们需要什么（例如：使用人物代表）；使用工作人员场景，以建立业务支持、解决问题；进一步参与持续改进管理。这里也要告诫：在实施这样的面向内部过程时，企业家们必须谨记，精益关注的是“<strong>真正的客户</strong>……最终的、外部的、业务所服务的付费客户”。</p>
+<p>想浏览更多关于<strong>精益软件开发</strong>的新闻、文章和视频请访问： <strong><a href="http://www.infoq.com/lean" title="InfoQ.com/Lean" target="_blank">InfoQ.com/Lean</a></strong></p>
+<p><strong>查看英文原文：</strong><a href="http://www.infoq.com/news/2009/10/forrester-lean-business" title="Forrester Releases Free Research Report on Lean for Business" target="_blank">Forrester Releases Free Research Report on Lean for Business</a>
+加入书签<a href="http://www.infoq.com/cn/news/2009/10/" target="_blank">鲜果+</a>,<a href="http://www.infoq.com/cn/news/2009/10/" target="_blank">digg+</a>,<a href="http://www.infoq.com/cn/news/2009/10/" target="_blank">reddit+</a>,<a href="http://www.infoq.com/cn/news/2009/10/" target="_blank">del.icio.us+</a>,<a href="http://www.infoq.com/cn/news/2009/10/" target="_blank">dzone+</a><a href="http://www.infoq.com/cn/news/2009/10/" target="_blank">slashdot+</a></p>
+<h3 id="-">相关厂商内容</h3>
+<p><a href="http://www.infoq.com/cn/vendorcontent/show.action?vcr=570" target="_blank">UPerform（优普丰）Scrum Master认证课程</a></p>
+<h3 id="-">没有回复</h3>
+<p><a href="">关注此讨论</a><a href="">回复</a></p>
+<p><a href="">按日期倒序排列</a></p>
+<h2 id="-">深度内容</h2>
+<ul>
+<li><a href="http://www.infoq.com/cn/news/2009/10/forrester-lean-business#" target="_blank">全部</a></li>
+<li><a href="http://www.infoq.com/cn/news/2009/10/forrester-lean-business#" target="_blank">文章</a></li>
+<li><a href="http://www.infoq.com/cn/news/2009/10/forrester-lean-business#" target="_blank">技术演讲</a></li>
+<li><a href="http://www.infoq.com/cn/news/2009/10/forrester-lean-business#" target="_blank">技术访谈</a></li>
+<li><a href="http://www.infoq.com/cn/news/2009/10/forrester-lean-business#" target="_blank">迷你书</a><h1 id="-stu-charlton-http-www-infoq-com-cn-interviews-charlton-semantic-web-cn-"><a href="http://www.infoq.com/cn/interviews/charlton-semantic-web-cn" target="_blank">Stu Charlton谈语义网</a></h1>
+</li>
+</ul>
+<p><a href="http://www.infoq.com/cn/interviews/charlton-semantic-web-cn" target="_blank"><img src="" alt=""></a></p>
+<p>Stu Charlton谈了什么是语义网（Semantic Web），并讲述了RDFa、语义网的广泛采纳、SPARQL、语义网功能的实现、三元组存储以及语义网查询等话题。</p>
+<p>*</p>
+<ul>
+<li>2009年10月23日,</li>
+<li><a href="http://www.infoq.com/cn/interviews/charlton-semantic-web-cn" target="_blank"> </a></li>
+</ul>
+<h1 id="-dave-thomas-http-www-infoq-com-cn-articles-agilechina2009-davethomas-"><a href="http://www.infoq.com/cn/articles/agilechina2009-davethomas" target="_blank">和Dave Thomas谈开始实施敏捷时的困难</a></h1>
+<p><a href="http://www.infoq.com/cn/articles/agilechina2009-davethomas" target="_blank"><img src="" alt=""></a></p>
+<p>今年敏捷中国大会举办成功，看到各界对敏捷开发的支持，同时相信还有很多公司和团队对开始实施敏捷开发感兴趣。不过亦如很多大师提到，实施敏捷开发是不容易的事情，在敏捷中国大会上有幸跟Dave Thomas讨论这个问题。</p>
+<p>*</p>
+<ul>
+<li>2009年10月22日,</li>
+<li><a href="http://www.infoq.com/cn/articles/agilechina2009-davethomas" target="_blank">  2</a><h1 id="-thoughtworks-http-www-infoq-com-cn-minibooks-thoughtworks-anthology-"><a href="http://www.infoq.com/cn/minibooks/thoughtworks-anthology" target="_blank">ThoughtWorks文集（精选版）</a></h1>
+</li>
+</ul>
+<p><a href="http://www.infoq.com/cn/minibooks/thoughtworks-anthology" target="_blank"><img src="" alt=""></a></p>
+<p>本迷你书从《ThoughtWorks 文集》的13篇文章精选5篇编撰成集。这几篇文章有一个共同点：它们介绍的是一些最根本、最易施行、又最能立竿见影的敏捷实践。</p>
+<p>*</p>
+<ul>
+<li>2009年10月21日,</li>
+</ul>
+<h1 id="-php-http-www-infoq-com-cn-articles-enterprise-php-"><a href="http://www.infoq.com/cn/articles/enterprise-php" target="_blank">企业级开发，PHP准备好了吗？</a></h1>
+<p><a href="http://www.infoq.com/cn/articles/enterprise-php" target="_blank"><img src="" alt=""></a></p>
+<p>虽然PHP是Web应用开发中最广泛使用的环境，但它还是一度被认为无缘企业级开发。InfoQ组织了一个虚拟座谈小组讨论语言/平台的演变及PHP在企业环境下的适用性。</p>
+<p>*</p>
+<ul>
+<li>2009年10月20日,</li>
+<li><a href="http://www.infoq.com/cn/articles/enterprise-php" target="_blank">  3</a><h1 id="-osgi-http-www-infoq-com-cn-minibooks-osgi-best-practice-"><a href="http://www.infoq.com/cn/minibooks/osgi-best-practice" target="_blank">OSGi原理与最佳实践（精选版）</a></h1>
+</li>
+</ul>
+<p><a href="http://www.infoq.com/cn/minibooks/osgi-best-practice" target="_blank"><img src="" alt=""></a></p>
+<p>这不是一本传授OSGi高级技巧的书，但绝对是一本让人读完之后能对OSGi获得全面认识的书。作者在这本书里面试图给读者一个全方位的OSGi介绍。本精选版节选了其中的两章。</p>
+<p>*</p>
+<ul>
+<li>2009年10月16日,</li>
+</ul>
+<h1 id="-scrum-http-www-infoq-com-cn-interviews-agilechina2009-guquan-"><a href="http://www.infoq.com/cn/interviews/agilechina2009-guquan" target="_blank">顾全谈研发团队Scrum实施经验</a></h1>
+<p><a href="http://www.infoq.com/cn/interviews/agilechina2009-guquan" target="_blank"><img src="" alt=""></a></p>
+<p>在敏捷中国大会2009上InfoQ中文站对eBay的顾全进行了采访，探讨了Scrum与XP的结合、衡量团队的指标、组员绩效的考核、敏捷在中国的实施程度等话题。</p>
+<p>*</p>
+<ul>
+<li>2009年10月15日,</li>
+<li><a href="http://www.infoq.com/cn/interviews/agilechina2009-guquan" target="_blank">  1</a><h1 id="-azure-2-http-www-infoq-com-cn-articles-grid-azure-2-david-pallmann-"><a href="http://www.infoq.com/cn/articles/Grid-Azure-2-David-Pallmann" target="_blank">基于Azure云计算平台的网格计算，第2部分：开发网格应用</a></h1>
+</li>
+</ul>
+<p><a href="http://www.infoq.com/cn/articles/Grid-Azure-2-David-Pallmann" target="_blank"><img src="" alt=""></a></p>
+<p>David Pallmann演示了如何在Azure云计算平台上执行网格计算。在第1部分，他讲述了相应的设计模式，而在第2、第3部分，他将讲解如何开发和运行网格应用程序。</p>
+<p>*</p>
+<ul>
+<li>2009年10月14日,</li>
+<li><a href="http://www.infoq.com/cn/articles/Grid-Azure-2-David-Pallmann" target="_blank"> </a></li>
+</ul>
+<h1 id="-10-http-www-infoq-com-cn-minibooks-architect-oct-09-"><a href="http://www.infoq.com/cn/minibooks/architect-oct-09" target="_blank">架构师（10月刊）</a></h1>
+<p><a href="http://www.infoq.com/cn/minibooks/architect-oct-09" target="_blank"><img src="" alt=""></a></p>
+<p>新的一期InfoQ中文站的电子杂志《架构师》（10月刊）出炉了，本期的主编由Java社区的首席编辑宋玮担任。架构师需要保持一颗好学之心，我们也希望能够不断的进步，永远保持这种初学者的心态。</p>
+<p>*</p>
+<ul>
+<li><p>2009年10月13日,</p>
+</li>
+<li><p><a href="http://www.infoq.com/cn/news/2009/10/forrester-lean-business#" target="_blank">更早的 &gt;</a>
+InfoQ.com 及其所有内容，版权所有© 2006-2009 C4Media Inc. InfoQ.com 服务器由 <a href="http://www.contegix.com/" target="_blank">Contegix</a> 提供，我们最信赖的 ISP 合作伙伴。 <a href="http://www.infoq.com/cn/PrivacyPolicy.jsp" target="_blank">隐私政策</a></p>
+</li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/zhiya/">zhiya</a></li></span><span class="breadcrumb"><li><a href="/categories/职涯/">职涯</a></li><li><a href="/categories/职涯/杂谈/">杂谈</a></li></span></span> | <span class="tags">Tagged <a href="/tags/zhiya/" class="label label-primary">zhiya</a><a href="/tags/杂谈/" class="label label-success">杂谈</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:37"datetime="2014-03-07 09:54:37"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-zhiya-杂谈--InfoQ福斯特（Forrester）发布免费报告《精益：新兴商业技术的必经之路》/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-zhiya-杂谈--InfoQ福斯特（Forrester）发布免费报告《精益：新兴商业技术的必经之路》" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-正则--正则匹配模式/">正则匹配模式</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:37.000Z"> <a href="/2014/02/02/2014-02-02-正则--正则匹配模式/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-">正则匹配模式</h1>
+<p>正则匹配模式
+匹配模式指得是正则表达式引擎将以何种模式匹配字符串。
+模式名称
+启用，禁用
+缺省启用
+说明UNIX_LINES
+(?d)启用，(?-d)禁用
+是
+启用Unix行模式。
+在此模式下，只有 &#39;\n&#39;被认为是行结束符。它会影响., ^, 和 $ 的行为。CASE_INSENSITIVE
+(?i)启用，(?-i)禁用
+否
+启用忽略大小写模式。
+缺省时，忽略大小写模式只会影响 ASCII字符的匹配。 而Unicode范围的忽略大小写匹配需要通过 UNICODE_CASE 标志与本标志联合使用。
+启用此模式会影响匹配性能。COMMENTS
+(?x)启用，(?-x)禁用
+否
+允许空格和注释出现在正则表达式中。
+在此模式下，空格被忽略，以/#开始的单行注释被忽略。MULTILINE
+(?m)启用，(?-m)禁用
+是
+启用多行模式。
+In multiline mode the expressions ^ and $ match just after or just before, respectively, a line terminator or the end of the input sequence. By default these expressions only match at the beginning and the end of the entire input sequence.DOTALL
+(?s)启用，(?-s)禁用
+否
+让.可以匹配行结束符。
+在此模式下，元字符.可以匹配行结束符。缺省不允许如此匹配。UNICODE_CASE
+(?u)启用，(?-u)禁用
+否
+Enables Unicode-aware case folding.
+When this flag is specified then case-insensitive matching, when enabled by theCASE_INSENSITIVE flag, is done in a manner consistent with the Unicode Standard. By default, case-insensitive matching assumes that only characters in the US-ASCII charset are being matched. 启用此模式会影响性能。CANON_EQ
+(?c)启用，(?-c)禁用
+否
+Enables canonical equivalence.
+When this flag is specified then two characters will be considered to match if, and only if, their full canonical decompositions match. The expression &quot;a\u030A&quot;, for example, will match the string&quot;?&quot; when this flag is specified. By default, matching does not take canonical equivalence into account.
+启用此模式会影响性能。</p>
+<p>字符子集　　字符子集可以含有别的字符子集，并且可以通过联合操作符（缺省）和交集操作符（&amp;&amp;）实现组合。联合操作符表示某个子集匹配它的子子集所匹配的任意字符。交集操作符表明某个字符子集只匹配它的子子集都匹配的字符。
+字符子集所能够有的操作符的优先级如下，从高到低：
+转义符\x
+成组符 [...]
+区间符 a-z
+联合符 [a-e][i-u]
+交集符 [a-z&amp;&amp;[aeiou]]</p>
+<p>注意：在字符子集[]内部的语法根本不同于正则表达式其它部分中的语法。例如，在字符子集内部，正则表达式 . 失去了它原有的含义，而是成了一个匹配.的元字符。
+行结束符　　行结束符是一个或两个字符序列，用以表明输入字符序列中一行的结束。下面的字符被认为是行结束符：
+一个换行符(&#39;\n&#39;)。
+一个回车符加上一个换行符(&quot;\r\n&quot;)。
+一个单独的回车符(&#39;\r&#39;)。
+代表下一行的字符(&#39;\u0085&#39;)。
+行分隔符(&#39;\u2028&#39;)，Unicode中被定义。
+一个分段符(&#39;\u2029)，Unicode中被定义。</p>
+<p>如果 UNIX_LINES 模式被启用，则只有换行符被认为是行结束符。
+如果 MULTILINE 模式被启用，。
+分组和引用　　字符分组以它们的左括号的出现顺序来排序。例如在表达式((A)(B(C)))，有四个分组：
+((A)(B(C)))
+(A)
+(B(C))
+(C)</p>
+<p>第0组永远表示表达式本身。
+分组采用这样的命名方式，是因为，在一次匹配过程中，正则表达式会被匹配多次。以前的匹配子序列有可能在将来被使用；或者在匹配结束时，程序有可能需要重新获得所有匹配的子字符序列。
+对于正则表达式中的某个分组而言，永远只保留最后匹配的字符序列。如果对某个分组匹配尝试失败，则会保留上次匹配成功的字符序列。例如，对于正则表达式(a(b)?)+而言，字符序列&quot;aba&quot;，将会让分组2匹配的字符序列为&quot;b&quot;。
+以(?开始的分组，将不会计入分组数目，也不会被后续匹配所引用。
+Unicode支持　　本正则表达式匹配引擎的实现遵循了《Unicode技术报告：Unicode正则表达式指南》，实现了该指南的第二层所需的功能，但是在细微处有一些简单语法修改。
+Unicode块(Block)和分类(Category)通过\p和\P通配苻表示。\p{prop}匹配含有prop的输入序列，而\P{prop}匹配不含有prop的输入序列。Unicode块通过前缀In表示，如\p{InMongolian}。Unicode分类通过可选的前缀Is表示，因此\p{L}和\p{IsL}都代表Unicode分类 letters。Unicode块和分类都可以在正则表达式子集外部和内部使用。
+目前支持的Unicode块和分类是《Unicode标准，第三版》中所指定的块和分类。 Unicode块名称在《Unicode 字符数据库》的第14章被定义，文件名称叫Blocks-3.txt，但是名称中的空格被去掉了。例如&quot;Basic Latin&quot;成了&quot;BasicLatin&quot;。无论是标准化的还是非标准化的分类，都在该标准的第88页的第4-5表中被全部定义。
+与Perl 5正则表达式语法对比 [TBD]
+正则表达式参考
+字符
+正则表达式字符串
+匹配的字符串X
+字符X，包括 CJK ExtB 区汉字\
+反斜杠\0n八进制0n代表的字符(0&lt;=n&lt;=7)\0nn
+八进制0nn代表的字符(0&lt;=n&lt;=7)\0mnn
+八进制0mnn代表的字符(0&lt;=m&lt;=3,0&lt;=n&lt;=7)\xhh
+十六进制 0xhh所代表的字符\uhhhh
+十六进制 0xhhhh所代表的字符。注意，目前尚不支持CJK ExtB区汉字。\t
+制表符(&#39;\u0009&#39;)\n
+换行(&#39;\u000A&#39;)\r
+回车(&#39;\u000D&#39;)\a
+响铃符(&#39;\u0007&#39;)\e
+取消符Escape(&#39;\001B&#39;)\cx
+x所代表的控制字符</p>
+<p>逻辑操作符
+正则表达式字符串
+匹配的字符串XY
+X后面跟随YX|Y
+X或者Y(X)
+X作为分组表达式</p>
+<p>向后引用
+正则表达式字符串
+匹配的字符串\n
+第n个匹配的分组</p>
+<p>边界元字符
+边界字符
+匹配的字符串^
+行首$
+行末\b字符边界\B
+非字符边界\A
+输入流的开始\G
+上次匹配的结束处\Z
+输入流的结束，或者是最后一个行结束符，参见[url=file:///D:/source/jtextpro/src/dist/jtextpro/docs/regexp.html/#man_line_terminator]行结束符[/url]。\z
+输入流的结束</p>
+<p>重复指示符
+正则表达式字符串
+匹配的字符串X?
+X重复一次，或者不重复X/*
+X重复0次或多次X+
+X重复1次或多次X{n}
+X重复n次，不多也不少。X{n,}
+X至少重复n次X{n,m}
+X至少重复n次，至多重复m次。</p>
+<p>注：X{n,m}、?、/*、+方式可以联合使用。
+字符子集
+正则表达式字符串子集
+匹配的字符串
+组合方式[abc]
+字符a,b或c，包括 CJK ExtB 区汉字
+简单子集[^abc]
+任意非a,b或c的字符。
+排除[a-zA-Z]从a到z，或者A到Z，包含a,z,A,Z。
+区间[a-d[m-p]]
+从a到d，或者m到p，等于[a-dm-p]。
+联合[a-z&amp;&amp;[def]]
+d,e或者f。
+交集[a-z&amp;&amp;[^bc]]
+从a到z，除了b和c，等于[ad-z]
+扣除[a-z&amp;&amp;[^m-p]]
+从a到z，并且不包括从m到p，等于[a-lq-z]
+扣除</p>
+<p>预定义子集（元字符）
+边界字符
+匹配的字符串.
+任意字符，可能匹配行结束符。\d
+数字[0-9]\D非数字[^0-9]\s
+空白符[ \t\n\x0B\f\r]\S
+非空白符[^\s]\w
+单词符，包含有字母和数字[a-zA-Z_0-9]\W
+非单词符，不包含有字母和数字。</p>
+<p>扩展子集（元字符）
+正则表达式字符串
+匹配的字符串</p>
+<p>扩展中文子集（元字符）
+名称
+块名称（\p{InXXX}）
+简化通配符
+标准Unicode块，或者汉字列表任意双字节字符（汉字或全角符号）
+\p{InQuqnJiao}
+\E
+任意由GBK表示的汉字，不包括GB18030扩展部分，
+以及CJK ExtB区的汉字。任意单字节字符
+\p{InFQuanJiao}
+~E
+任意单字节字符。任意全角ASCII字符
+\p{InQJAscii}
+\H
+标准HalfwidthandFullwidthForms块任意收录在BIG5码集中的双字节字符
+\p{InBig5}
+\I
+Big5可编码双字节字符匹配未收录在BIG5码集中的双字节字符\p{InFBig5}
+~I
+非Big5可编码双字节字符匹配任意汉字(不包括符号)
+\p{InHanziOrCJKExtB}
+\X
+任意汉字，包括GB18030扩展部分。匹配任意汉字(不包括符号)
+\p{InHanzi}
+\M
+任意汉字，不包括GB18030扩展部分。匹配非汉字的双字节字符
+\p{InFHanzi}
+~M
+任意非汉字的双字节字符，
+包括GB18030扩展部分。地支字符
+\p{InDiZhi}
+\U
+子丑寅卯辰巳午未申酉戌亥匹配收录在GB码集中的双字节字符
+\p{InGB}
+\g
+收录在GB码集中的双字节字符，
+不包括GB18030扩展部分。匹配非收录在GB码集中的双字节字符
+\p{InFGB}
+~g
+未收录在GB码集中的双字节字符，
+不包括GB18030扩展部分。匹配收录在GBK码集中的双字节字符
+\p{InGBK}
+\h
+收录在GBK码集中的双字节字符，
+不包括GB18030扩展部分。匹配非收录在GBK码集中的双字节字符
+\p{InFGBK}
+~h
+未收录在GBK码集中的双字节字符，
+不包括GB18030扩展部分。大写希腊字母
+\p{InDaXila}
+\K
+ΑΒΓΔΕΖΗΘΙΚΛΜΝ
+ΞΟΠΡΣΤΥΦΧΨΩ日文片假名
+\p{InPianJia}
+\j
+标准Katakana块日文平假名
+\p{InPingJia}
+\J
+标准Hiragana块小写希腊字母
+\p{InXiaoXila}
+\k
+αβγδεζηθικλμν
+ξοπρστυφχψω数学符号
+\p{InMathe}
+\m
+±×÷∶∧∨∑∏∪∩∈∷√⊥∥∠⌒⊙
+∫∮≡≌≈∽∝≠≮≯≤≥∞∵∴中文数字
+\p{InCnDigit}
+\i
+〇一二三四五六七八九十百千万亿兆吉京大写中文数字
+\p{InDaCnDigit}
+\N
+零壹贰叁肆伍陆柒捌玖拾佰仟萬亿兆吉京全角标点符号
+\p{InQJBiaoDian}
+\o
+、。·ˉˇ¨〃々—～‖…‘’“”〔〕
+〈〉《》「」『』〖〗【】！＂＇（），
+－．：；＜＝＞？［］｛｜｝｀﹉﹊﹋﹌﹍﹎﹏﹐﹑﹒﹔﹕﹖﹗﹙﹚
+﹛﹜﹝﹞︵︶︹︺︿﹀︽︾﹁﹂﹃﹄
+︻︼︷︸︱︳︴小写俄文字母
+\p{InXiaoEWen}
+\l
+абвгдеёжзийклмн
+опрстуфхцчшщъыьэюя大写俄文字母
+\p{InDaEWen}
+\R
+АБВГДЕЁЖЗИЙКЛМНО
+ПРСТУФХЦЧШЩЪЫЬЭЮЯ中文序号
+\p{InCnSN}
+\q
+ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫ
+ⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹ
+再加上Unicode标准EnclosedAlphanumerics块天干字符
+\p{InTianGan}
+\T
+甲乙丙丁戊己庚辛壬癸竖排标点符号
+\p{InSPBiaoDian}
+\V
+︵︶︹︺︿﹀︽︾﹁﹂﹃﹄︻︼︷︸︱︳︴拼音字符
+\p{InPinyin}
+\y
+āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜüêɑńňɡ
+GBK -&gt; 0xA8A1- 0xA8C0
+只是Unicode标准LatinExtended-A块的一部分。注音字符
+\p{InZhuyin}
+\Y
+标准Bopomofo块制表字符
+\p{InZhiBiao}
+\C
+标准BoxDrawing块。
+经检查发现 textpro 的算法含有部分非标
+准Unicode制表符：“∟∣≒≦≧⊿═”。</p>
+<p>POSIX字符子集（只适用于ASCII）
+正则表达式字符串
+匹配的字符串\p{Lower}
+小写字母[a-z]\p{Upper}
+大写字母[A-Z]\p{ASCII}
+所有的ASCII字符[\x00-\x7F]\p{Alpha}
+大小写字母[\p{Lower}\p{Upper}]\p{Digit}
+数字[0-9]\p{Alnum}
+字母数字符，包含大小写字母和数字[\p{Alpha}\p{Digit}]\p{Punct}
+标点符号，!&quot;/#$%&amp;&#39;()/*+,-./:;&lt;=&gt;?@[]^_`{|}~之一。\p{Graph}
+可显示字符[\p{Alnum}\p{Punct}]\p{Print}
+可打印字符[\p{Graph}]\p{Blank}
+空格或者制表符[ \t]\p{Cntrl}
+控制字符[\x00-\x1F\x7F\p{XDigit}
+十六进制数字[0-9a-fA-F]\p{Space}
+空白符[ \t\n\x0B\f\r]</p>
+<p>Unicode块和分类
+块
+中文名称（摘自Word XP）
+代码区域BasicLatin
+基本拉丁语
+\u0000-\u007FLatin-1Supplement
+拉丁语-1
+\u0080-\u00FFLatinExtended-A
+拉丁语扩充-A
+\u0100-\u017FLatinExtended-Bound
+拉丁语扩充-B
+\u0180-\u024FIPAExtensions
+国际音标扩充
+\u0250-\u02AFSpacingModifierLetters
+进格的修饰字符
+\u02B0-\u02FFCombiningDiacriticalMarks
+组合用发音符
+\u0300-\u036FGreek
+基本希腊语
+\u0370-\u03FFCyrillic
+西里尔语
+\u0400-\u04FFArmenian
+\u0530-\u058FHebrew
+\u0590-\u05FFArabic
+\u0600-\u06FFSyriac
+\u0700-\u074FThaana
+\u0780-\u07BFDevanagari
+\u0900-\u097FBengali
+\u0980-\u09FFGurmukhi
+\u0A00-\u0A7FGujarati
+\u0A80-\u0AFFOriya
+\u0B00-\u0B7FTamil
+\u0B80-\u0BFFTelugu
+\u0C00-\u0C7FKannada
+\u0C80-\u0CFFMalayalam
+\u0D00-\u0D7FSinhala
+\u0D800-\uDFFThai
+\u0E00-\u0E7FLao
+\u0E80-\u0EFFTibetan
+藏语
+\u0F00-\u0FFFMyanmar
+\u1000-\u109FGeorgian
+\u10A0-\u10FFHangulJamo
+\u1100-\u11FFEthiopic
+\u1200-\u137FCherokee
+\u13A0-\u13FFUnifiedCanadianAboriginalSyllabics
+\u1400-\u167FOgham
+\u1680-\u169FRunic
+\u16A0-\u16FFKhmer
+\u1780-\u17FFMongolian
+蒙古语
+\u1800-\u18AFLatinExtendedAdditional
+\u1E00-\u1EFFGreekExtended
+\u1F00-\u1FFFGeneralPunctuation
+广义标点
+\u2000-\u206FSuperscriptsandSubscripts
+\u2070-\u209FCurrencySymbols
+货币符号
+\u20A0-\u20CFCombiningMarksforSymbols
+\u20D0-\u20FFLetterlikeSymbols
+类似字母的符号
+\u2100-\u214FNumberForms
+数字形式
+\u2150-\u218FArrows
+箭头
+\u2190-\u21FFMathematicalOperators
+数学运算符
+\u2200-\u22FFMiscellaneousTechnical
+零杂技术用符号
+\u2300-\u23FFControlPictures
+\u2400-\u243FOpticalCharacterRecognition
+\u2440-\u245FEnclosedAlphanumerics
+带括号的字母数字
+\u2460-\u24FFBoxDrawing
+制表符
+\u2500-\u257FBlockElements
+方块图形
+\u2580-\u259FGeometricShapes
+几何图形
+\u25A0-\u25FFMiscellaneousSymbols
+零杂丁贝符（示意符等）
+\u2600-\u26FFDingbats
+\u2700-\u27BFBraillePatterns
+\u2800-\u28FFCJKRadicalsSupplement
+\u2E80-\u2EFFKangxiRadicals
+\u2F00-\u2FDFIdeographicDescriptionCharacters
+\u2FF0-\u2FFFCJKSymbolsandPunctuation
+CJK符号和标点
+\u3000-\u303FHiragana
+平假名
+\u3040-\u309FKatakana
+片假名
+\u30A0-\u30FFBopomofo
+注音
+\u3100-\u312FHangulCompatibilityJamo
+\u3130-\u318FKanbun
+\u3190-\u319FBopomofoExtended
+扩展注音
+\u31A0-\u31BFEnclosedCJKLettersandMonths
+带括号的CJK字母及月份
+\u3200-\u32FFCJKCompatibility
+CJK兼容字符
+\u3300-\u33FFCJKUnifiedIdeographsExtensionA
+CJK统一汉字扩展-A
+\u3400-\u4dBFCJKUnifiedIdeographs
+CJK统一汉字
+\u4E00-\u9fAFYiSyllables
+\uA000-\uA48FYiRadicals
+\uA490-\uA4CFHangulSyllables
+\uAC00-\uD7A3HighSurrogates
+\uD800-\uDB7FHighPrivateUseSurrogates
+\uDB80-\uDBFFLowSurrogates
+\uDC00-\uDFFFPrivateUse
+专用区
+\uE000-\uF8FFCJKCompatibilityIdeographs
+CJK兼容汉字
+\uF900-\uFAFFAlphabeticPresentationForms
+\uFB00-\uFB4FArabicPresentationForms-A
+\uFB50-\uFDFFCombiningHalfMarks
+\uFE20-\uFE2FCJKCompatibilityForms
+CJK兼容形式
+\uFE30-\uFE4FSmallFormVariants
+小写变体
+\uFE50-\uFE6FArabicPresentationForms-Bound
+\uFE70-\ufeFFSpecials
+\uFFF0-\uFFFFHalfwidthandFullwidthForms
+半形及全形字符
+\uFF00-\uFFEF分类
+全称
+说明Cn
+UNASSIGNEDLu
+UPPERCASE_LETTERLl
+LOWERCASE_LETTERLt
+TITLECASE_LETTERLm
+MODIFIER_LETTERLo
+OTHER_LETTERMn
+NON_SPACING_MARKMe
+ENCLOSING_MARKMc
+COMBINING_SPACING_MARKNd
+DECIMAL_DIGIT_NUMBERNl
+LETTER_NUMBERNo
+OTHER_NUMBERZs
+SPACE_SEPARATORZl
+LINE_SEPARATORZp
+PARAGRAPH_SEPARATORCc
+CNTRLCf
+FORMATCo
+PRIVATE_USECs
+SURROGATEPd
+DASH_PUNCTUATIONPs
+START_PUNCTUATIONPe
+END_PUNCTUATIONPc
+CONNECTOR_PUNCTUATIONPo
+OTHER_PUNCTUATIONSm
+MATH_SYMBOLSc
+CURRENCY_SYMBOLSk
+MODIFIER_SYMBOLSo
+OTHER_SYMBOLL
+LETTERM
+MARKN
+NUMBERZ
+SEPARATORC
+CONTROLP
+PUNCTUATIONS
+SYMBOLLD
+LETTER_OR_DIGITL1
+Latin-1all
+ALLASCII
+ASCIIAlnum
+字母数字(0-9,a-z,A-Z)Alpha
+字母(a-z,A-Z)Blank
+空格和制表符(&#39; &#39;|\t)Cntrl
+控制字符，不可打印Digit
+数字(0-9)Graph
+可打印且可视字母（例如空格&#39; &#39;是可打印的但不是可视字母，而 `a&#39; 两者都是。）Lower
+小写字母Print
+可打印字母（非控制字符）Punct
+标符号（字母、数字、控制、空白符以外的字母），如：!@/#$%}{&lt;&gt;,./?[]等等。Space
+空白符(&#39; &#39;,\t,0x09,0x0A,0x0B,0x0C,0x0D,0x20)Upper
+大写字母XDigit
+十六进制数字(0-9，a-f, A-F)</p>
+<p>替换表达式特殊字符
+特殊字符介绍
+描述\n
+换行\b
+向前删除一个字符。当这个字符位于替换串之首时，将删除匹配串之前的一个字符。若匹配串位于行首，将使匹配串所在行与前一行相合并。\d
+向后删除一个字符。当这个字符位于替换串之末时，将删除匹配串之后的一个字符。若匹配串位于行末，将使匹配串所在行与下一行相合并。\e
+插入一个ESC字符\t
+插入一个TAB字符\n
+n代表查找正则表达式中的子表达式（组）。\1代表第一个子表达式，\2代表第二个子表达式，依次类推。\0代表整个匹配到的字符串。\v
+大写下一个字母\U
+全部大写以后的字母，直到碰到其它指示符为止。\l
+小写下一个字母\L
+全部小写以后的字母，直到碰到其它指示符为止。\E
+取消所有的字母大小写指示符。</p>
+<p>自定义替换表
+在查找／替换中使用自定义替换表
+有的时候，上述简单的自定义替换功能是不够的。例如，用户可能希望只把出现在括号内的源串替换为目标串。这种文本处理可以通过在查找/替换中使用自定义替换表来解决。
+在查找/替换功能中使用自定义替换表的替换函数是\Tn，其中n是0-9的数字， 注意n为0表示第10张替换表。如果略去n，其效果相当于\T1，即使用第一张替换表。例如要把所有放在方括号中的汉字替换为拼音，可以查找“[(\E)]”，替换为“\T{\1}”。即把第一个子表达式的匹配内容按自定义替换表转换。注意，如果\T函数的参数不在替换表的源串中，\T函数的结果与源串相同，即不做任何变换。
+有些情况下，用户可能希望只使用替换表的一部分内容。还是以拼音为例，前面给出的替换表中包含了拼音的音调，如果在替换时不希望加上这些音调数字，可以使用“过滤”功能。所谓过滤，其实是用一个正则表达式去分析替换表的目标串，并把其中的某个子表达式取出来。
+使用“过滤”时，在“设置自定义替换表”对话框中，点“过滤”按钮，在弹出的对话框中填入一个正则表达式。再以拼音为例，表达式可以写为“(\p{Alpha}+)(\d)”，其中第一对括号中的是不含音调的拼音，第二对括号是音调。在调用\T函数时，JTextPro会在目标串中查找这个正则表达式。但是如何把其中的子表达式取出来呢？\T函数还有一个可选的下标，取第n个子表达式的值就写作\T{...}[n]。所以，把放在方括号中的汉字替换为不带调的拼音，可以查找“[(\E)]”，替换为“\T{\1}[1]”
+匹配汉字：
+Regex r= new Regex(@&quot;[\u4e00-\u9fa5]+&quot;);
+MatchCollection m=r.Match(yourstring);
+－－－－－－－－－－－－－－－－－－－－－－－－－
+如果需要使用正则表达式匹配Unicode字符的话...
+这里是几个主要非英文语系字符范围(google上找到的):
+2E80～33FFh：中日韩符号区。收容康熙字典部首、中日韩辅助部首、注音符号、日本假名、韩文音符，中日韩的符号、标点、带圈或带括符文数字、月份，以及日本的假名组合、单位、年号、月份、日期、时间等。
+3400～4DFFh：中日韩认同表意文字扩充A区，总计收容6,582个中日韩汉字。
+4E00～9FFFh：中日韩认同表意文字区，总计收容20,902个中日韩汉字。
+A000～A4FFh：彝族文字区，收容中国南方彝族文字和字根。
+AC00～D7FFh：韩文拼音组合字区，收容以韩文音符拼成的文字。
+F900～FAFFh：中日韩兼容表意文字区，总计收容302个中日韩汉字。
+FB00～FFFDh：文字表现形式区，收容组合拉丁文字、希伯来文、阿拉伯文、中日韩直式标点、小符号、半角符号、全角符号等。
+比如需要匹配所有中日韩非符号字符,那么正则表达式应该是^[\u3400-\u9FFF]+$
+理论上没错, 可是我到msn.co.ko随便复制了个韩文下来, 发现根本不对, 诡异
+来源： &lt;<a href="http://m.blog.csdn.net/blog/MyGameZone/9786825" target="_blank">正则匹配 - CSDN博客</a>&gt;</p>
+<p>字符类别
+[:alnum:] 字母和数字 
+[:alpha:] 字母 
+[:ascii:] 字符代码 0 - 127 
+[:blank:] 空格或制表符 
+[:cntrl:] 控制字符 
+[:digit:] 十进制数字 (相同于 \d) 
+[:graph:] 可打印字符, 排除空格 
+[:lower:] 小写字母 
+[:print:] 可打印字符,包括空格 
+[:punct:] 可打印字符, 排除文字和数字 
+[:space:] 空白空间 (不完全和 \s 相同, 还包括 VT: chr(11) ) 
+[:upper:] 大写字母 
+[:word:] &quot;字&quot; 字符 (相同于 \w) 
+[:xdigit:] 十六进制数
+来源： &lt;<a href="http://hi.baidu.com/haijie4975/item/ac94d70a3164d50beafe38bc" target="_blank"> 正则表达式：匹配符号<em>阿杰</em>百度空间</a>&gt;</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/正则/">正则</a></li></span></span> | <span class="tags">Tagged <a href="/tags/正则/" class="label label-primary">正则</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:37"datetime="2014-03-07 09:54:37"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-正则--正则匹配模式/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-正则--正则匹配模式" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-正则--匹配中文字符的正则表达式：u4e00-u9fa5/">匹配中文字符的正则表达式： [u4e00</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:37.000Z"> <a href="/2014/02/02/2014-02-02-正则--匹配中文字符的正则表达式：u4e00-u9fa5/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-u4e00-u9fa5-">匹配中文字符的正则表达式： [u4e00-u9fa5]</h1>
+<h1 id="-php-http-home-phpchina-com-index-php-"><a href="http://home.phpchina.com/index.php" target="_blank"><img src="" alt="PHP圈子"></a></h1>
+<ul>
+<li><a href="http://home.phpchina.com/index.php" target="_blank">首页</a></li>
+<li><a href="http://bbs.phpchina.com/" title="论坛" target="_blank">论坛</a></li>
+<li><a href="http://home.phpchina.com/help.php" target="_blank">帮助</a>
+<a href="http://home.phpchina.com/do.php?ac=5664fcbb86177e5fea2c3b698509e46c" target="_blank"><img src="" alt=""></a> 欢迎您
+<a href="http://home.phpchina.com/do.php?ac=5d7edb63ab3e822d5bfe565a83287bf7" target="_blank">登录</a> | <a href="http://home.phpchina.com/do.php?ac=5664fcbb86177e5fea2c3b698509e46c" target="_blank">注册</a></li>
+</ul>
+<p>登录站点</p>
+<p>用户名</p>
+<p>密码</p>
+<p>记住我</p>
+<p><a href="http://home.phpchina.com/space.php?uid=46362" target="_blank"><img src="" alt=""></a><a href="http://www.google.com.hk/search?hl=zh-CN&amp;source=hp&amp;q=%5Cu4e00-%5Cu9fa5&amp;btnG=Google+%E6%90%9C%E7%B4%A2&amp;meta=&amp;aq=f&amp;aqi=&amp;aql=&amp;oq=&amp;gs_rfai=" target="_blank">« 返回上一页</a></p>
+<p>阿米的日志</p>
+<p><a href="http://home.phpchina.com/space.php?uid=46362" target="_blank">阿米的主页</a> » <a href="http://home.phpchina.com/space.php?uid=46362&amp;do=blog&amp;view=me" target="_blank">TA的所有日志</a> » <a href="http://home.phpchina.com/space.php?uid=46362&amp;do=blog&amp;id=43420" target="_blank">查看日志</a></p>
+<h1 id="-u4e00-u9fa5-">匹配中文字符的正则表达式： [u4e00-u9fa5]</h1>
+<p>已有 2075 次阅读  2008-12-19 15:28   <a href="http://home.phpchina.com/space.php?uid=46362&amp;do=tag" target="_blank">标签</a>:  <a href="http://home.phpchina.com/space.php?uid=46362&amp;do=tag&amp;id=307" target="_blank">正则表达式</a>  <a href="http://home.phpchina.com/space.php?uid=46362&amp;do=tag&amp;id=80" target="_blank">字符</a>  <a href="http://home.phpchina.com/space.php?uid=46362&amp;do=tag&amp;id=306" target="_blank">中文</a> </p>
+<p>评注：匹配中文还真是个头疼的事，有了这个表达式就好办了
+匹配双字节字符(包括汉字在内)：[^x00-xff]
+评注：可以用来计算字符串的长度（一个双字节字符长度计2，ASCII字符计1）
+匹配空白行的正则表达式：ns/<em>r
+评注：可以用来删除空白行
+匹配HTML标记的正则表达式：&lt;(S/</em>?)[^&gt;]/<em>&gt;./</em>?|&lt;./<em>? /&gt;
+评注：网上流传的版本太糟糕，上面这个也仅仅能匹配部分，对于复杂的嵌套标记依旧无能为力
+匹配首尾空白字符的正则表达式：^s/</em>|s/<em>$
+评注：可以用来删除行首行尾的空白字符(包括空格、制表符、换页符等等)，非常有用的表达式
+匹配Email地址的正则表达式：w+([-+.]w+)/</em>@w+([-.]w+)/<em>.w+([-.]w+)/</em>
+评注：表单验证时很实用
+匹配网址URL的正则表达式：[a-zA-z]+://[^s]/<em>
+评注：网上流传的版本功能很有限，上面这个基本可以满足需求
+匹配帐号是否合法(字母开头，允许5-16字节，允许字母数字下划线)：^[a-zA-Z][a-zA-Z0-9_]{4,15}$
+评注：表单验证时很实用
+匹配国内电话号码：d{3}-d{8}|d{4}-d{7}
+评注：匹配形式如 0511-4405222 或 021-87888822
+匹配腾讯QQ号：[1-9][0-9]{4,}
+评注：腾讯QQ号从10000开始
+匹配中国邮政编码：[1-9]d{5}(?!d)
+评注：中国邮政编码为6位数字
+匹配身份证：d{15}|d{18}
+评注：中国的身份证为15位或18位
+匹配ip地址：d+.d+.d+.d+
+评注：提取ip地址时有用
+匹配特定数字：
+^[1-9]d/</em>$　 　 //匹配正整数
+^-[1-9]d/<em>$ 　 //匹配负整数
+^-?[1-9]d/</em>$　　 //匹配整数
+^[1-9]d/<em>|0$　 //匹配非负整数（正整数 + 0）
+^-[1-9]d/</em>|0$　　 //匹配非正整数（负整数 + 0）
+^[1-9]d/<em>.d/</em>|0.d/<em>[1-9]d/</em>$　　 //匹配正浮点数
+^-([1-9]d/<em>.d/</em>|0.d/<em>[1-9]d/</em>)$　 //匹配负浮点数
+^-?([1-9]d/<em>.d/</em>|0.d/<em>[1-9]d/</em>|0?.0+|0)$　 //匹配浮点数
+^[1-9]d/<em>.d/</em>|0.d/<em>[1-9]d/</em>|0?.0+|0$　　 //匹配非负浮点数（正浮点数 + 0）
+^(-([1-9]d/<em>.d/</em>|0.d/<em>[1-9]d/</em>))|0?.0+|0$　　//匹配非正浮点数（负浮点数 + 0）
+评注：处理大量数据时有用，具体应用时注意修正
+匹配特定字符串：
+^[A-Za-z]+$　　//匹配由26个英文字母组成的字符串
+^[A-Z]+$　　//匹配由26个英文字母的大写组成的字符串
+^[a-z]+$　　//匹配由26个英文字母的小写组成的字符串
+^[A-Za-z0-9]+$　　//匹配由数字和26个英文字母组成的字符串
+^w+$　　//匹配由数字、26个英文字母或者下划线组成的字符串
+在使用RegularExpressionValidator验证控件时的验证功能及其验证表达式介绍如下:
+只能输入数字：“^[0-9]/<em>$”
+只能输入n位的数字：“^d{n}$”
+只能输入至少n位数字：“^d{n,}$”
+只能输入m-n位的数字：“^d{m,n}$”
+只能输入零和非零开头的数字：“^(0|[1-9][0-9]/</em>)$”
+只能输入有两位小数的正实数：“^[0-9]+(.[0-9]{2})?$”
+只能输入有1-3位小数的正实数：“^[0-9]+(.[0-9]{1,3})?$”
+只能输入非零的正整数：“^+?[1-9][0-9]/<em>$”
+只能输入非零的负整数：“^-[1-9][0-9]/</em>$”
+只能输入长度为3的字符：“^.{3}$”
+只能输入由26个英文字母组成的字符串：“^[A-Za-z]+$”
+只能输入由26个大写英文字母组成的字符串：“^[A-Z]+$”
+只能输入由26个小写英文字母组成的字符串：“^[a-z]+$”
+只能输入由数字和26个英文字母组成的字符串：“^[A-Za-z0-9]+$”
+只能输入由数字、26个英文字母或者下划线组成的字符串：“^w+$”
+验证用户密码:“^[a-zA-Z]w{5,17}$”正确格式为：以字母开头，长度在6-18之间，
+只能包含字符、数字和下划线。
+验证是否含有^%&amp;&#39;,;=?$&quot;等字符：“[^%&amp;&#39;,;=?$x22]+”
+只能输入汉字：“^[u4e00-u9fa5],{0,}$”
+验证Email地址：“^w+[-+.]w+)/<em>@w+([-.]w+)/</em>.w+([-.]w+)/<em>$”
+验证InternetURL：“^<a href="http://([w-]+.)+[w-]+(/[w-./?%&amp;=]/" target="_blank">http://([w-]+.)+[w-]+(/[w-./?%&amp;=]/</a></em>)?$”
+验证电话号码：“^((d{3,4})|d{3,4}-)?d{7,8}$”
+正确格式为：“XXXX-XXXXXXX”，“XXXX-XXXXXXXX”，“XXX-XXXXXXX”，
+“XXX-XXXXXXXX”，“XXXXXXX”，“XXXXXXXX”。
+验证身份证号（15位或18位数字）：“^d{15}|d{}18$”
+验证一年的12个月：“^(0?[1-9]|1[0-2])$”正确格式为：“01”-“09”和“1”“12”
+验证一个月的31天：“^((0?[1-9])|((1|2)[0-9])|30|31)$”
+正确格式为：“01”“09”和“1”“31”。
+匹配中文字符的正则表达式： [u4e00-u9fa5]
+匹配双字节字符(包括汉字在内)：[^x00-xff]
+匹配空行的正则表达式：n[s| ]/<em>r
+匹配HTML标记的正则表达式：/&lt;(./</em>)&gt;./<em>|&lt;(./</em>) /&gt;/
+匹配首尾空格的正则表达式：(^s/<em>)|(s/</em>$)
+匹配Email地址的正则表达式：w+([-+.]w+)/<em>@w+([-.]w+)/</em>.w+([-.]w+)/<em>
+匹配网址URL的正则表达式：<a href="http://([w-]+.)+[w-]+(/[w-" target="_blank">http://([w-]+.)+[w-]+(/[w-</a> ./?%&amp;=]/</em>)?
+(1)应用：计算字符串的长度（一个双字节字符长度计2，ASCII字符计1）
+String.prototype.len=function(){return this.replace([^x00-xff]/g,&quot;aa&quot;).length;}
+(2)应用：javascript中没有像vbscript那样的trim函数，我们就可以利用这个表达式来实现
+String.prototype.trim = function()
+{
+return this.replace(/(^s/<em>)|(s/</em>$)/g, &quot;&quot;);
+}
+(3)应用：利用正则表达式分解和转换IP地址
+function IP2V(ip) //IP地址转换成对应数值
+{
+re=/(d+).(d+).(d+).(d+)/g //匹配IP地址的正则表达式
+if(re.test(ip))
+{
+return RegExp.$1/<em>Math.pow(255,3))+RegExp.$2/</em>Math.pow(255,2))+RegExp.$3/<em>255+RegExp.$4/</em>1
+}
+else
+{
+throw new Error(&quot;Not a valid IP address!&quot;)
+}
+}
+(4)应用：从URL地址中提取文件名的javascript程序
+s=&quot;<a href="http://www.9499.net/page1.htm" target="_blank">http://www.9499.net/page1.htm</a>&quot;;
+s=s.replace(/(./<em>/){0,}([^.]+)./</em>/ig,&quot;$2&quot;) ;//Page1.htm
+(5)应用：利用正则表达式限制网页表单里的文本框输入内容
+用正则表达式限制只能输入中文：onkeyup=&quot;value=value.replace(/[^u4E00-u9FA5]/g,&#39;) &quot;onbeforepaste=&quot;clipboardData.setData(&#39;text&#39;,clipboardData.getData(&#39;text&#39;).replace(/[^u4E00-u9FA5]/g,&#39;))&quot;
+用正则表达式限制只能输入全角字符： onkeyup=&quot;value=value.replace(/[^uFF00-uFFFF]/g,&#39;) &quot;onbeforepaste=&quot;clipboardData.setData(&#39;text&#39;,clipboardData.getData(&#39;text&#39;).replace(/[^uFF00-uFFFF]/g,&#39;))&quot;
+用正则表达式限制只能输入数字：onkeyup=&quot;value=value.replace(/[^d]/g,&#39;) &quot;onbeforepaste= &quot;clipboardData.setData(&#39;text&#39;,clipboardData.getData(&#39;text&#39;).replace(/[^d]/g,&#39;))&quot;
+用正则表达式限制只能输入数字和英文：onkeyup=&quot;value=value.replace(/[W]/g,&#39;) &quot;onbeforepaste=&quot;clipboardData.setData(&#39;text&#39;,clipboardData.getData(&#39;text&#39;).replace(/[^d]/g,&#39;
+<a href="http://home.phpchina.com/cp.php?ac=share&amp;type=blog&amp;id=43420" target="_blank">分享</a> <a href="http://home.phpchina.com/cp.php?ac=common&amp;op=report&amp;idtype=blogid&amp;id=43420" target="_blank">举报</a></p>
+<p>[<em>1</em></p>
+<p><img src="http://home.phpchina.com/cp.php?ac=click&amp;op=add&amp;clickid=1&amp;idtype=blogid&amp;id=43420&amp;hash=8bba8c204a9a2fd90bf83d9292534874" alt="]()
+路过
+"> <a href="http://home.phpchina.com/cp.php?ac=click&amp;op=add&amp;clickid=5&amp;idtype=blogid&amp;id=43420&amp;hash=8bba8c204a9a2fd90bf83d9292534874"><img src="" alt="">
+鸡蛋</a> <a href="http://home.phpchina.com/cp.php?ac=click&amp;op=add&amp;clickid=4&amp;idtype=blogid&amp;id=43420&amp;hash=8bba8c204a9a2fd90bf83d9292534874"><img src="" alt="">
+鲜花</a> <a href="http://home.phpchina.com/cp.php?ac=click&amp;op=add&amp;clickid=3&amp;idtype=blogid&amp;id=43420&amp;hash=8bba8c204a9a2fd90bf83d9292534874"><img src="" alt="">
+握手</a> <a href="http://home.phpchina.com/cp.php?ac=click&amp;op=add&amp;clickid=2&amp;idtype=blogid&amp;id=43420&amp;hash=8bba8c204a9a2fd90bf83d9292534874"><img src="" alt="">
+雷人</a></p>
+<h2 id="-http-home-phpchina-com-space-php-uid-46362-do-blog-id-43420-quickcommentform_43420-1-"><a href="http://home.phpchina.com/space.php?uid=46362&amp;do=blog&amp;id=43420#quickcommentform_43420" target="_blank">发表评论</a> 评论 (1 个评论)</h2>
+<ul>
+<li><a href="http://home.phpchina.com/space.php?uid=92279" target="_blank"><img src="" alt=""></a></li>
+</ul>
+<p><a href="http://home.phpchina.com/cp.php?ac=comment&amp;op=reply&amp;cid=25821&amp;feedid=" target="_blank">回复</a> <a href="http://home.phpchina.com/cp.php?ac=common&amp;op=report&amp;idtype=comment&amp;id=25821" target="_blank">举报</a><a href="http://home.phpchina.com/space.php?uid=92279" target="_blank">wenzhao823</a> 2008-12-22 12:14
+我如何才能分享你的日志？<img src="" alt="">
+   <a href="http://home.phpchina.com/space.php?uid=46362&amp;do=blog&amp;id=43420###" title="插入表情" target="_blank"><img src="" alt=""></a> <a href="http://home.phpchina.com/magic.php?mid=doodle&amp;showid=comment_doodle&amp;target=comment_message" target="_blank"><img src="" alt="">涂鸦板</a></p>
+<h2 id="-http-home-phpchina-com-space-php-uid-46362-do-blog-view-me-"><a href="http://home.phpchina.com/space.php?uid=46362&amp;do=blog&amp;view=me" target="_blank">全部</a> 作者的其他最新日志</h2>
+<ul>
+<li><a href="http://home.phpchina.com/space.php?uid=46362&amp;do=blog&amp;id=183026" target="_blank">Request.ServerVariables应用（转 php终结者）</a></li>
+<li><a href="http://home.phpchina.com/space.php?uid=46362&amp;do=blog&amp;id=128789" target="_blank">Zend Studio For Eclipse 6.0 发布（含注册码）</a></li>
+<li><a href="http://home.phpchina.com/space.php?uid=46362&amp;do=blog&amp;id=128788" target="_blank">zend studio 6.0.1安装中文语言包的方法</a></li>
+<li><a href="http://home.phpchina.com/space.php?uid=46362&amp;do=blog&amp;id=125715" target="_blank">PHP 截取字符串专题</a></li>
+<li><a href="http://home.phpchina.com/space.php?uid=46362&amp;do=blog&amp;id=105143" target="_blank">linux As4中Mysql的安装与管理</a></li>
+<li><a href="http://home.phpchina.com/space.php?uid=46362&amp;do=blog&amp;id=102863" target="_blank">linux安装postgresql 8.3步骤</a></li>
+</ul>
+<h2 id="-">热门日志导读</h2>
+<ul>
+<li><a href="http://home.phpchina.com/space.php?uid=860585" target="_blank">jus358</a>: <a href="http://home.phpchina.com/space.php?uid=860585&amp;do=blog&amp;id=185374" target="_blank">12个宅男宅女常去的生活实用网站（值得收藏）</a></li>
+<li><a href="http://home.phpchina.com/space.php?uid=185793" target="_blank">hand-LAMP</a>: <a href="http://home.phpchina.com/space.php?uid=185793&amp;do=blog&amp;id=185336" target="_blank">如何在三个月内获得三年的工作经验------实际的很</a></li>
+<li><a href="http://home.phpchina.com/space.php?uid=185793" target="_blank">hand-LAMP</a>: <a href="http://home.phpchina.com/space.php?uid=185793&amp;do=blog&amp;id=184967" target="_blank">sql注入</a></li>
+<li><a href="http://home.phpchina.com/space.php?uid=14112" target="_blank">tiantang_88</a>: <a href="http://home.phpchina.com/space.php?uid=14112&amp;do=blog&amp;id=184588" target="_blank">打工与创业的45个经典区别</a></li>
+<li><a href="http://home.phpchina.com/space.php?uid=52440" target="_blank">phpwriter</a>: <a href="http://home.phpchina.com/space.php?uid=52440&amp;do=blog&amp;id=184506" target="_blank">如何实现像博客中的二级域名</a></li>
+<li><a href="http://home.phpchina.com/space.php?uid=52440" target="_blank">phpwriter</a>: <a href="http://home.phpchina.com/space.php?uid=52440&amp;do=blog&amp;id=184505" target="_blank">php计算两个数组交集和差集</a></li>
+</ul>
+<p><a href="&quot;TOP&quot;"><img src="" alt=""></a></p>
+<p>PHP圈子 - <a href="mailto:phpchina@phpchina.com">联系我们</a> - <a href="http://www.miibeian.gov.cn/" target="_blank">京ICP备07504665号</a></p>
+<p>Powered by <a href="http://u.discuz.net/" target="_blank"><strong>UCenter Home</strong></a> 2.0 © 2001-2010 <a href="http://www.comsenz.com/" target="_blank">Comsenz Inc.</a></p>
+<ul>
+<li><a href="http://bbs.phpchina.com/" title="论坛" target="_blank">论坛</a></li>
+</ul>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/正则/">正则</a></li></span></span> | <span class="tags">Tagged <a href="/tags/正则/" class="label label-primary">正则</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:37"datetime="2014-03-07 09:54:37"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-正则--匹配中文字符的正则表达式：u4e00-u9fa5/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-正则--匹配中文字符的正则表达式：u4e00-u9fa5" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-log4j--怎样用log4j读取日志文件然后把日志信息放到数据库要源代码。谢谢，急用。第一次这东西-IT/">怎样用log4j读取日志文件然后把日志信息放到数据库(要源代码)。谢谢，急用。第一次这东西 </a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:37.000Z"> <a href="/2014/02/02/2014-02-02-log4j--怎样用log4j读取日志文件然后把日志信息放到数据库要源代码。谢谢，急用。第一次这东西-IT/">feb. 2 2014</a></time></span>      
@@ -286,788 +1419,6 @@ log4j.appender.A1.DatePattern=yyyyMMdd-HH&#39;.log4j&#39;</p>
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--Resource_Manager_Updates/">Resource_Manager_Updates</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:37.000Z"> <a href="/2014/02/02/2014-02-02-虚拟化_Citrix--Resource_Manager_Updates/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="resource_manager_updates">Resource_Manager_Updates</h1>
-<p><img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> <img src="" alt=""> Understanding Resource Manager Summary Database Updates
-1) Resource Manager Summary logs are parsed line by line during the update process and inserted in the summary database during the configured update time.
-XP Server
-IMA RM Log
-XP Server
-IMA RM Log
-DCS Data Connection Server
-XP Server
-IMA RM Log
-RM Farm Summary DB
-Before a file is recorded into the summary database, Resource Manager verifies the version of the log file is compatible version of the summary database. Resource Manager compares the value next to the HEADER descriptor against the schemaversion table version field. It must be equal to or greater than the log file’s value Log File Header Example
-HEADER27,&quot;TSFTL1&quot;,&quot;WORKGROUP&quot;,&quot;MR Farm&quot;
-2) The Resource Manager Data Connection server executes ADD/* procedures on each line of the summary log located under %SystemRoot%\Program Files\Citrix\Citrix Resource Manager\Summary Files to record the Resource Manager farm data.
-<img src="" alt=""> 3) Error and status of summary updates are located under %SystemRoot%:\Program Files\Citrix\Citrix Resource Manager\ServerLogs. 4) Further information is available in the Feature Release 3 Resource Manager Administrator’s Guide including the document schema (pg 93)
-Procedure Information
-AddSession procedure updates SDBSESSION table and its related Look up tables (LU<em>) on sessions connected to the Citrix Farm. Parameters @sUserName - User Name @sNetDomain - Domain @sServerName - Server Name @sFarmName - Farm Name @sClientName – Citrix ICA Client Name @iClientAddressFamily - protocol type @sClientAddress – Client Network Address (IP) @sAppName - Application Name @iAppType - Application type: 0 = MetaFrame published application, 1 Resource Manager application @sWinStation – Winstation Name (Example @iProtocol - Protocol ID @dSessionStart - Session Start time @dSessionEND - Session End time @fDuration f - Duration of connection @iServerUTCBias - Used to calculate Server’s UTC time @iSessionUTCBias - Used to calculate Session Bias @iSessionID - Numeric ID of winstation @sUserDomain - User Logon Domain
-<img src="" alt=""> Example
-AddSession N&#39;rene&#39;, N&#39;MyDomain&#39;, N&#39;Myserver&#39;, N&#39;MR Farm&#39;, N&#39;FTLNRENEAIBMPAD&#39;, 2, N&#39;10.3.4.102&#39;, N&#39; &#39;, &lt;- Initial App connected or “” if desktop 0, N&#39;ICA-tcp/#4&#39;, 1, &#39;Mar 10 2005 2:42:47:000PM&#39;, NULL, Session has not ended when Resource Manager recorded information in summary database NULL, Session has not ended when Resource Manager recorded information in summary database 300, 300, 4, N&#39;MyServer&#39;
-AddProcess procedure updates SDB_PROCESS table and its related Look up tables (LU</em>) on processes executed on the Citrix MetaFrame Server. Parameters @sUserName User Name @sNetDomain Domain @sServerName Server @sFarmName Server Name @sClientName Client Name @iClientAddressFamily Protocol type @sClientAddress Client Network Address @sAppName Initial Application @iAppType - Application type: 0 = MetaFrame published application, 1 Resource Manager application @sPathName Path of executable @sProcessName Process Name @sVersion Version @dProductDate Build Date of executable @iType Process Type @iPID Process ID @iExitCode Exit code when application terminated @iAffinity A mask indicating which processor(s) the process can use to execute itself @dStartTime Process creation time @dEndTime Process termination time @fTotalTime Total excitation time @fActiveTime A summation of all monitored periods of a process where the CPU time was greater than 1% @fKernelUse The percentage of kernel CPU time the process has used during its lifetime @fUserUseThe percentage of user CPU time the process has used during its lifetime @fUserActive The percentage of user CPU that was being used during the ACTIVETIME @fKernelActive The percentage of kernel CPU that was being used during the ACTIVETIME @fMemory Sum of the average number of megabytes per minute used by the process during its lifetime @fMemoryActive The number of megabytes per minute used by the process during the ACTIVETIME @iWorkSet The peak recorded working set of the processes at any point during its lifetime @iPageFile The peak page file allocated to process in bytes at any point in its lifetime @iPageFaults The number of page faults that occurred @iPagedPool The peak paged pool usage in bytes at any point in its
-lifetime @iNonPagedPool The peak non-paged pool usage in bytes at any point in its Lifetime @iSessID Numeric ID of winstation @iServerUTCBias - Used to calculate Server’s UTC time @sUserDomain – Login domain @dSessionStart - Session Start time
-Example
-&#39;rene&#39;, &#39;WORKGROUP&#39;, &#39;TSFTL1&#39;, &#39;Citrix Farm&#39;, &#39;FTL-WIN2K3&#39;, 2, &#39;65.2.223.75&#39;, &#39; &#39;, 0, &#39;c:\program files\intuit\quickbooks pro\components\qbagent\&#39;, &#39;qbmsgmgr.exe&#39;, &#39;10.0.0.1&#39;, &#39;Dec 2 2004 5:30:56:000PM&#39;, 0, 4536, 0, 1, &#39;Mar 19 2005 3:16:57:000AM&#39;, &#39;Mar 19 2005 3:17:03:000AM&#39;, 6.172000000000000e+003, 6.155000000000000e+003, 1.263000011444092e+000, 7.450000047683716e-001, 5.030000209808350e-001, 1.023000001907349e+000, 1.602994743734598e-003, 1.602994743734598e-003, 2785280, 753664, 892, 19092, 4188, 12, 300, &#39;TSFTL1&#39;, &#39;Mar 18 2005 9:50:26:000PM&#39;
-<img src="" alt=""> AddMetric procedure updates SDB<em>METRICS table and its related Look up tables (LU</em>) on configured Resource Manager server metrics. Parameters @sServerName – Server Name @sNetDomain - Domain Name @sFarmName - Farm Name @sObject - Object Name @sMetricCounter – Counter Name @sInstance – Instance name @dMetricUpdateTime @iServerUTCBias - Used to calculate Server’s UTC time @iMetricSamplePeriod - Sample period of summary record in seconds @iMetricDataCount - Number of data points used to summarize this row @fMinMetricValue - Minimum metric value @fMaxMetricValue - Maximum metric value @fMeanMetricValue - Mean metric value @fStdDevMetricValue - Standard deviation of metric values @sFolder – Folder location of server @sZone – Zone location of server
-Example
-&#39;CitrixServer&#39;, &#39;WORKGROUP&#39;, &#39;MR Farm&#39;, &#39;Citrix MetaFrame XP&#39;,
-<img src="" alt=""> <img src="" alt=""> &#39;Data Store Connection Failure&#39;, &#39; &#39;, &#39;Mar 19 2005 6:23:49:000AM&#39;, 300, 3633, 80, 0.000000000000000e+000, 0.000000000000000e+000, 0.000000000000000e+000, 0.000000000000000e+000, &#39;Servers/&#39;, &#39;192.168.1.0
-Purging Procedures
-The following procedures execute based upon the retention period of data configured in the summary database. PurgeEvents Purges the SDB_EVENTLOG table of old records. This table stores generic IMA Service up and IMA Service down events that occur on a server farm. Parameters @farmName - Farm Name @sCutoffDate - All data prior to this date will be removed PurgeMetrics Purges the SDB_Metrics table and related tables. This table stores all metrics imported from each Resource Manager server in the server farm. Parameters @farmName - Farm Name @sCutoffDate - All data prior to this date will be removed PurgeBilledSessProc Purges the SDB_Session table and its related tables once the session has been billed. This table stores session data per user. Parameters @farmName - Farm Name @sCutoffDate - All data prior to this date will be removed except for NULL Session End entries. PurgeUnbilledSessProc Purges the SDB_Session table and its related tables. This table stores session data per user. Parameters @farmName - Farm Name @sCutoffDate - All session data prior to this date will be removed except for NULL Session end entries.</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/虚拟化_Citrix/">虚拟化_Citrix</a></li></span></span> | <span class="tags">Tagged <a href="/tags/虚拟化_Citrix/" class="label label-primary">虚拟化_Citrix</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:37"datetime="2014-03-07 09:54:37"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-虚拟化_Citrix--Resource_Manager_Updates/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-虚拟化_Citrix--Resource_Manager_Updates" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--ConnectingThroughWindowsFirewallWindows/">Connecting Through Windows Firewall (Windows)</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:37.000Z"> <a href="/2014/02/02/2014-02-02-虚拟化_Citrix--ConnectingThroughWindowsFirewallWindows/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="connecting-through-windows-firewall-windows-">Connecting Through Windows Firewall (Windows)</h1>
-<p><a href="http://msdn.microsoft.com/en-us/" title="Home" target="_blank">Home</a> <a href="http://msdn.microsoft.com/en-us/library" title="Library" target="_blank">Library</a> <a href="http://msdn.microsoft.com/en-us/bb188199.aspx" title="Learn" target="_blank">Learn</a> <a href="http://msdn.microsoft.com/en-us/aa570309.aspx" title="Downloads" target="_blank">Downloads</a> <a href="http://msdn.microsoft.com/en-us/aa570318.aspx" title="Support" target="_blank">Support</a> <a href="http://msdn.microsoft.com/en-us/aa497440.aspx" title="Community" target="_blank">Community</a> <a href="https://login.live.com/login.srf?wa=wsignin1.0&amp;rpsnv=11&amp;ct=1295403418&amp;rver=6.0.5276.0&amp;wp=MCLBI&amp;wlcxt=msdn%24msdn%24msdn&amp;wreply=http:%2F%2Fmsdn.microsoft.com%2Fen-us%2Flibrary%2Faa389286.aspx&amp;lc=1033&amp;cb=&amp;id=254354" title="Sign in" target="_blank">Sign in</a>| <a href="http://msdn.microsoft.com/en-us/library/preferences/locale/?returnurl=%252fen-us%252flibrary%252faa389286.aspx" title="中国（简体中文）" target="_blank">中国（简体中文）</a>| <a href="http://msdn.microsoft.com/en-us/library/preferences/experience/?returnurl=%252fen-us%252flibrary%252faa389286.aspx" title="Preferences" target="_blank">Preferences</a></p>
-<p><a href="http://msdn.microsoft.com/en-us/library/aa389286.aspx#" target="_blank"><img src="&quot;Search&quot;" alt="Search"></a></p>
-<p><img src="" alt=""></p>
-<p><a href="http://msdn.microsoft.com/en-us/library/ms123401.aspx" title="MSDN Library" target="_blank">MSDN Library</a>
-<img src="" alt=""></p>
-<p><a href="http://msdn.microsoft.com/en-us/library/ee663300(v=VS.85" target="_blank">Windows Development</a>.aspx &quot;Windows Development&quot;)
-<img src="" alt=""></p>
-<p><a href="http://msdn.microsoft.com/en-us/library/ee663258(v=VS.85" target="_blank">Administration and Management</a>.aspx &quot;Administration and Management&quot;)
-<img src="" alt=""></p>
-<p><a href="http://msdn.microsoft.com/en-us/library/aa394582(v=VS.85" target="_blank">Windows Management Instrumentation</a>.aspx &quot;Windows Management Instrumentation&quot;)
-<img src="" alt=""></p>
-<p><a href="http://msdn.microsoft.com/en-us/library/aa393964(v=VS.85" target="_blank">Using WMI</a>.aspx &quot;Using WMI&quot;)
-<img src="" alt=""></p>
-<p><a href="http://msdn.microsoft.com/en-us/library/cc512236(v=VS.85" target="_blank">Creating WMI Clients</a>.aspx &quot;Creating WMI Clients&quot;)
-<img src="" alt=""></p>
-<p><a href="http://msdn.microsoft.com/en-us/library/aa389290(v=VS.85" target="_blank">Connecting to WMI on a Remote Computer</a>.aspx &quot;Connecting to WMI on a Remote Computer&quot;)</p>
-<p><img src="" alt="">
-<a href="http://msdn.microsoft.com/en-us/library/aa389286(v=VS.85" target="_blank">Connecting Through Windows Firewall</a>.aspx &quot;Connecting Through Windows Firewall&quot;) <img src="" alt="Separator"></p>
-<p>Community Content</p>
-<p><a href="http://msdn.microsoft.com/en-us/library/aa389286.aspx#CommunityContent" title="User" target="_blank"><img src="" alt="Avatar"></a></p>
-<ul>
-<li>Add code samples and tips to enhance this topic.
-<a href="http://msdn.microsoft.com/en-us/library/aa389286.aspx#CommunityContent" title="More..." target="_blank">More...</a>
-<a href="http://msdn.microsoft.com/en-us/library/aa389286.aspx#" target="_blank"><img src="&quot;Expand&quot;" alt="Expand"> <img src="&quot;Minimize&quot;" alt="Minimize"></a></li>
-</ul>
-<p><a href="http://msdn.microsoft.com/en-us/library/default.aspx" target="_blank"><img src="&quot;MSDN&quot;" alt="MSDN"></a><img src="" alt=""></p>
-<h1 id="connecting-through-windows-firewall">Connecting Through Windows Firewall</h1>
-<p>The <a href="http://msdn.microsoft.com/en-us/library/aa364727.aspx" target="_blank">Windows Firewall</a> (formerly known as Internet Connection Firewall) service and Distributed Component Object Model (DCOM) can cause access denied errors (such as an &quot;RPC Server Unavailable&quot; error - 0x800706ba) when your remote computers and accounts, used for remote connections, are not properly configured.</p>
-<p><strong>Note</strong>  Content in this topic applies to Windows XP with Service Pack 2 (SP2) and Windows Server 2003 with Service Pack 1 (SP1). For information that applies to Windows Vista, see <a href="http://msdn.microsoft.com/en-us/library/aa822854.aspx" target="_blank">Connecting to WMI Remotely Starting with Vista</a>.
-<strong>Windows Server 2003 with SP1:  </strong>The Windows Firewall is not enabled by default. <strong>Windows XP with SP2:  </strong>The Windows Firewall is enabled by default.</p>
-<p>Resetting the firewall settings will enable the firewall—regardless of the platform.</p>
-<p><strong>Windows Server 2003 and Windows XP:  </strong>Windows Firewall is not available. Use Internet Connection Firewall.</p>
-<p>When obtaining data from a remote computer, WMI must establish a DCOM connection from Computer A (the local computer) to Computer B (the remote computer)—this is shown in the diagram as Connection 1. To establish this connection, both Windows Firewall and DCOM on Computer B must be configured appropriately. The configuration must be done locally on Computer B either by changing the Group Policy settings, by executing NETSH commands, or by executing a script locally. Windows Firewall does not support any remote configuration. The following sections describe how to configure Connection 1 and Connection 2 using NETSH commands and the Group Policy editor. For more information about configuring the connections with a script, see <a href="http://go.microsoft.com/FWLink/?LinkId=84425" target="_blank"><strong><a href="http://www.microsoft.com/technet/community/columns/scripts/sg1104.mspx/#EJAA">http://www.microsoft.com/technet/community/columns/scripts/sg1104.mspx/#EJAA</a></strong></a>.</p>
-<p>The following diagram shows the relationship of WMI, the Windows Firewall, and DCOM when a script or another WMI client makes an asynchronous call to obtain data from WMI. Synchronous and semisynchronous calls only make Connection 1. Connection 2 occurs only with asynchronous calls. If the script or application made an <a href="http://msdn.microsoft.com/en-us/library/aa390790.aspx#wmi.gloss_asynchronous_method" target="_blank"><em>asynchronous</em></a> call, Connection 2 from Computer B to Computer A delivers the results. This delivery is the callback to the <a href="http://msdn.microsoft.com/en-us/library/aa390836.aspx#wmi.gloss_sink" target="_blank"><em>sink</em></a>. When possible, semisynchronous calls should be made instead of asynchronous calls. The performance of semisynchronous calls is almost as good as asynchronous calls and semisynchronous calls are more secure.</p>
-<p><img src="&quot;WMI client making an asynchronous call to obtain data from WMI&quot;" alt="WMI client making an asynchronous call to obtain data from WMI"></p>
-<p><strong>WMI client making an asynchronous call to obtain data from WMI</strong></p>
-<p>To successfully connect from Computer A to Computer B when the Windows Firewall is enabled on Computer B, some configuration of firewall settings is necessary. The following procedure helps you configure Connection 1.</p>
-<p><img src="&quot;Aa389286.wedge(en-us,VS.85" alt="Aa389286.wedge(en-us,VS.85).gif">.gif&quot;)<strong>To configure Connection 1</strong></p>
-<ol>
-<li>Ensure that the user account that is on Computer A is a local administrator on Computer B.</li>
-</ol>
-<p>If the user account that is on Computer A is not an administrator on Computer B, but the user account has Remote Enable permission on Computer B, then the user must also be given DCOM Remote Launch and Remote Activation privileges on Computer B by running <strong>Dcomcnfg.exe</strong> at the command prompt. For more information, see the remote launch and activation permissions procedure in <a href="http://msdn.microsoft.com/en-us/library/aa393266.aspx" target="_blank">Securing a Remote WMI Connection</a>. The 0x80070005 error occurs when this privilege is not set. For more information, see <a href="http://msdn.microsoft.com/en-us/library/aa822575.aspx" target="_blank">Access to WMI Namespaces</a>.</p>
-<ol>
-<li>Allow for remote administration on Computer B.</li>
-</ol>
-<p>You can use either the Group Policy editor (Gpedit.msc) or a script to enable the Windows Firewall: Allow remote administration exception, or use a netsh firewall command at the command prompt to allow for remote administration on Computer B. The following command enables this feature.</p>
-<p><strong>netsh firewall set service**</strong>RemoteAdmin<strong>**enable</strong></p>
-<p>If you would rather use the Group Policy editor than the NETSH commands above, use the following steps in the Group Policy editor (Gpedit.msc) to enable &quot;Allow Remote Administration&quot; on Computer B.</p>
-<ol>
-<li>Under the <strong>Local Computer Policy</strong> heading, double-click <strong>Computer Configuration</strong>.</li>
-<li>Double-click <strong>Administrative Templates</strong>, <strong>Network</strong>, <strong>Network Connections</strong>, and then <strong>Windows Firewall</strong>.</li>
-<li>If the computer is in the domain, then double-click <strong>Domain Profile</strong>; otherwise, double-click <strong>Standard Profile</strong>.</li>
-<li>Click <strong>Windows Firewall: Allow remote administration exception</strong>.</li>
-<li>On the <strong>Action</strong> menu, select <strong>Properties</strong>.</li>
-<li>Click <strong>Enable</strong>, and then click <strong>OK</strong>.</li>
-</ol>
-<p>The connection from Computer B to Computer A (Connection 2 in the diagram above) is only required when the client script or application makes an asynchronous call to the remote computer. When possible, semisynchronous calls should be made instead of asynchronous calls. The call performance of semisynchronous calls is almost as good as asynchronous calls and semisynchronous calls are more secure. For more information, see <a href="http://msdn.microsoft.com/en-us/library/aa384832.aspx" target="_blank">Calling a Method</a> or <a href="http://msdn.microsoft.com/en-us/library/aa392903.aspx" target="_blank">Querying WMI</a>. The following procedure helps you configure Connection 2.</p>
-<p><img src="&quot;Aa389286.wedge(en-us,VS.85" alt="Aa389286.wedge(en-us,VS.85).gif">.gif&quot;)<strong>To configure Connection 2</strong></p>
-<ol>
-<li>If the Windows Firewall is enabled on Computer A, enable the &quot;Allow Remote Administration&quot; exception (step 2 in the procedure above) and open the DCOM port TCP 135 on Computer A. If this port is not open, the error 0x800706ba will occur. You can open port 135 using the following command.</li>
-</ol>
-<p><strong>netsh firewall add portopening**</strong>protocol=<strong><strong>tcp</strong></strong>port=<strong><strong>135</strong></strong>name=<em>**DCOM_TCP135</em></p>
-<ol>
-<li>Add the client application or script, which contains the sink for callback to the Windows Firewall Exceptions List on Computer A. If the client is a script or a MMC snap-in, the sink is often Unsecapp.exe. For these connections, add %windir%\system32\wbem\unsecapp.exe to the Windows Firewall application exceptions list. You can add Unsecapp.exe with the following command.</li>
-</ol>
-<p><strong>netsh firewall add allowedprogram**</strong>program=<strong><strong>%windir%\system32\wbem\unsecapp.exe</strong></strong>name=<strong>**UNSECAPP</strong></p>
-<p>Generally a C++ application has a sink written for the application. In that case, the application sink should be added to the firewall exceptions.</p>
-<ol>
-<li>If Computer B is either a member of WORKGROUP or is in a different domain that is untrusted by Computer A, then Connection 2 is created as an Anonymous connection. An anonymous connection fails with either the 0x80070005 error or the 0x8007000e error unless Anonymous connections are given the DCOM Remote Access permission on Computer A. The steps to grant DCOM remote access permissions are listed in <a href="http://msdn.microsoft.com/en-us/library/aa393266.aspx" target="_blank">Securing a Remote WMI Connection</a>.</li>
-</ol>
-<h3 id="-related-topics"><a href=""></a>Related Topics</h3>
-<p><a href="http://msdn.microsoft.com/en-us/library/aa389290.aspx" target="_blank">Connecting to WMI on a Remote Computer</a><a href="http://msdn.microsoft.com/en-us/library/aa389284.aspx" target="_blank">Connecting Between Different Operating Systems</a><a href="http://msdn.microsoft.com/en-us/library/aa393266.aspx" target="_blank">Securing a Remote WMI Connection</a><a href="http://msdn.microsoft.com/en-us/library/aa389769.aspx" target="_blank">Creating Processes Remotely</a><a href="http://msdn.microsoft.com/en-us/library/aa393614.aspx" target="_blank">Setting Security on an Asynchronous Call</a><a href="http://msdn.microsoft.com/en-us/library/aa393615.aspx" target="_blank">Setting Security on an Asynchronous Call in VBScript</a></p>
-<p><a href="mailto:wsddocfb@microsoft.com?subject=Documentation feedback [wmisdk\wmi]:  Connecting Through Windows Firewall  RELEASE: (1/6/2011">Send comments about this topic to Microsoft</a>&amp;body=PRIVACY STATEMENTThe SDK team uses the feedback submitted to improve the SDK documentation. We do not use your email address for any other purpose. We will remove your email address from our system after the issue you are reporting has been resolved. While we are working to resolve this issue, we may send you an email message to request more information about your feedback. After the issues have been addressed, we may send you an email message to let you know that your feedback has been addressed.For more information about Microsoft&#39;s privacy policy, see <a href="http://privacy.microsoft.com/en-us/default.aspx" target="_blank">http://privacy.microsoft.com/en-us/default.aspx</a>. &quot;Send comments about this topic to Microsoft&quot;)</p>
-<p>Build date: 1/6/2011
-Community Content <a href="http://msdn.microsoft.com/en-us/library/community/add/aa389286.aspx" title="Add" target="_blank">Add</a></p>
-<p><a href="http://msdn.microsoft.com/en-us/library/community-edits.rss?topic=aa389286|en-us|VS.85" title="Annotations" target="_blank"><img src="" alt="Annotations"></a> <a href="http://msdn.microsoft.com/en-us/library/community-msdnwikifaq.aspx" title="FAQ" target="_blank">FAQ</a>
-© 2011 Microsoft Corporation. All rights reserved. <a href="http://msdn.microsoft.com/cc300389.aspx" target="_blank">Terms of Use</a> | <a href="http://www.microsoft.com/library/toolbar/3.0/trademarks/en-us.mspx" target="_blank">Trademarks</a> | <a href="http://www.microsoft.com/info/privacy.mspx" target="_blank">Privacy Statement</a> | <a href="http://msdn.microsoft.com/en-us/library/aa389286.aspx#footerLink" title="Feedback" target="_blank">Feedback <img src="" alt="Feedback"></a></p>
-<p>Feedback</p>
-<p><a href="">x</a></p>
-<p>Tell us about your experience...</p>
-<p>Did the page load quickly?
-Yes  No</p>
-<p>Do you like the page design?
-Yes  No</p>
-<p>How useful is this topic?
-<img src="" alt=""></p>
-<p>Tell us more
-Enter description here.</p>
-<p><img src="" alt="DCSIMG"></p>
-<p><a href="http://www.omniture.com/" title="Web Analytics" target="_blank"><img src="" alt=""></a>
-<img src="" alt="Page view tracker"></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/虚拟化_Citrix/">虚拟化_Citrix</a></li></span></span> | <span class="tags">Tagged <a href="/tags/虚拟化_Citrix/" class="label label-primary">虚拟化_Citrix</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:37"datetime="2014-03-07 09:54:37"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-虚拟化_Citrix--ConnectingThroughWindowsFirewallWindows/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-虚拟化_Citrix--ConnectingThroughWindowsFirewallWindows" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--CitrixMfcomProgrammingForAdministrators/">Citrix Mfcom Programming For Administrators</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:37.000Z"> <a href="/2014/02/02/2014-02-02-虚拟化_Citrix--CitrixMfcomProgrammingForAdministrators/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="citrix-mfcom-programming-for-administrators">Citrix Mfcom Programming For Administrators</h1>
-<p><a href="http://www.slideshare.net/" title="SlideShare" target="_blank">SlideShare</a></p>
-<ul>
-<li><a href="http://www.slideshare.net/" title="SlideShare" target="_blank">Home</a></li>
-<li><a href="http://www.slideshare.net/browse" title="Browse Presentations" target="_blank">Browse</a></li>
-<li><a href="http://www.slideshare.net/my-slidespace" title="Your SlideShare Profile" target="_blank">My Slidespace</a></li>
-<li><strong><a href="http://www.slideshare.net/upload" title="Upload PowerPoint, OpenOffice, Keynote or PDF files" target="_blank">Upload</a></strong></li>
-<li><a href="http://www.slideshare.net/community" title="Groups, Events, Contests, Karaoke" target="_blank">Community</a></li>
-<li><a href="http://www.slideshare.net/widgets" title="Widgets for blogs, websites, MySpace, Facebook, and other social media" target="_blank">Widgets</a></li>
-</ul>
-<p><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" title="Search for, view and download presentations" target="_blank">Search</a></p>
-<h1 id="citrix-mfcom-programming-for-administrators">Citrix Mfcom Programming For Administrators</h1>
-<p>*</p>
-<ul>
-<li><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" title="Email this presentation to your contacts" target="_blank">Share</a></li>
-<li><a href="http://www.slideshare.net/signup?from=favorite&amp;from_source=http%3A%2F%2Fwww.slideshare.net%2Fvishalganeriwala%2Fcitrix-mfcom-programming-for-administrators-presentation" title="Save to favorites" target="_blank">Favorite</a></li>
-<li><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" title="Saved to your favorites" target="_blank">Favorited</a> <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" title="Remove from favorites" target="_blank">X</a></li>
-<li><a href="http://www.slideshare.net/signup?from=download&amp;from_source=http%3A%2F%2Fwww.slideshare.net%2Fvishalganeriwala%2Fcitrix-mfcom-programming-for-administrators-presentation&amp;download_id=595751-c483155244bb2ba5aa43df14ef31f17cf90e08f6-slideshow" title="Download this presentation" target="_blank">Get File</a></li>
-<li><a href="http://www.slideshare.net/signup?from=AddToCommunity&amp;from_source=http%3A%2F%2Fwww.slideshare.net%2Fvishalganeriwala%2Fcitrix-mfcom-programming-for-administrators-presentation" title="Add this presentation to a Group or Event" target="_blank">More...</a>
-*
-Loading...</li>
-</ul>
-<p>Flash Player 9 (or above) is needed to view presentations.
-We have detected that you do not have it on your computer. To install it, go <a href="http://www.adobe.com/shockwave/download/download.cgi?P1_Prod_Version=ShockwaveFlash" title="Install Adobe Flash Player" target="_blank">here</a>.</p>
-<ul>
-<li>Post to</li>
-<li><a href="http://www.slideshare.net/share/blogspot/595751" title="Post to Blogger" target="_blank">Blogger</a></li>
-<li><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" title="Post to WordPress" target="_blank">WordPress</a></li>
-<li><a href="http://www.slideshare.net/share/tweet/595751/Check%20out%20this%20SlideShare%20Presentation%20:%20Citrix%20Mfcom%20Programming%20For%20Administrators" title="Post to Twitter" target="_blank">Twitter</a></li>
-<li><a href="http://www.slideshare.net/share/facebook/595751/Citrix%20Mfcom%20Programming%20For%20Administrators" title="Post to Facebook" target="_blank">Facebook</a></li>
-<li><p><a href="http://delicious.com/save?url=http%3A%2F%2Fwww.slideshare.net%2Fvishalganeriwala%2Fcitrix-mfcom-programming-for-administrators-presentation&amp;title=Citrix+Mfcom+Programming+For+Administrators&amp;jump=yes&amp;noui&amp;share=yes&amp;partner=slideshare" title="Bookmark on Delicious" target="_blank">Delicious</a>
-*</p>
-</li>
-<li><p><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" title="Post to More Networks" target="_blank">more share options</a></p>
-</li>
-<li>Embed  For WordPress.com
-Without related presentations<h2 id="-0-comments-http-www-slideshare-net-vishalganeriwala-citrix-mfcom-programming-for-administrators-presentation-commentslist-"><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#commentsList" target="_blank">0 comments</a></h2>
-</li>
-</ul>
-<p><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#postComment" target="_blank">Post a comment</a></p>
-<p>Post a comment</p>
-<p><a href="http://www.slideshare.net/signup?from=comments&amp;from_source=http%3A%2F%2Fwww.slideshare.net%2Fvishalganeriwala%2Fcitrix-mfcom-programming-for-administrators-presentation" target="_blank"><img src="" alt=""></a></p>
-<p><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank"><img src="" alt=""></a>
-<a href="&quot;Just include the embed code in the comment. We support embeds from Youtube, Google Videos, BlipTV, Metacafe, Viddler, Yahoo Videos and several other approved sites only.&quot;">Embed Video</a> Email:
-Subscribe to follow-up comments <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">Unsubscribe from followup comments</a>     Edit your comment  <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">Cancel</a></p>
-<h2 id="-notes-on-slide-1-http-www-slideshare-net-vishalganeriwala-citrix-mfcom-programming-for-administrators-presentation-noteslist-"><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#notesList" target="_blank">Notes on slide 1</a></h2>
-<h2 id="2-favorites">2 Favorites</h2>
-<ul>
-<li><a href="http://www.slideshare.net/signup?from=addcontact&amp;from_source=http%3A%2F%2Fwww.slideshare.net%2Fvishalganeriwala%2Fcitrix-mfcom-programming-for-administrators-presentation" title="Add as my contact" target="_blank"> </a> <a href="http://www.slideshare.net/fpschultze" title="fpschultze" target="_blank"><img src="" alt="fpschultze"> Frank-Peter Schultze</a>, Consultant favorited this 3 months ago</li>
-</ul>
-<p><strong>Tags</strong> <strong><a href="http://www.slideshare.net/tag/citrix" target="_blank">citrix</a></strong> <strong><a href="http://www.slideshare.net/tag/mfcom" target="_blank">mfcom</a></strong></p>
-<ul>
-<li><a href="http://www.slideshare.net/signup?from=addcontact&amp;from_source=http%3A%2F%2Fwww.slideshare.net%2Fvishalganeriwala%2Fcitrix-mfcom-programming-for-administrators-presentation" title="Add as my contact" target="_blank"> </a> [<img src="" alt="AmitRanjan"> Amit Ranjan](<a href="http://www.slideshare.net/AmitRanjan" target="_blank">http://www.slideshare.net/AmitRanjan</a> &quot;AmitRanjan | I head SlideShare&#39;s New Delhi office.  </li>
-</ul>
-<p>&quot;), CoFounder &amp; COO at SlideShare, favorited this 11 months ago
-<a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">more</a> <a href=""></a></p>
-<h2 id="citrix-mfcom-programming-for-administrators-presentation-transcript">Citrix Mfcom Programming For Administrators - Presentation Transcript</h2>
-<ol>
-<li>Citrix MFCOM Programming for Administrators October 2007</li>
-<li>100 Applications 1000 Users 100,000 Clicks</li>
-<li>Introductions</li>
-</ol>
-<ul>
-<li><p>Instructors</p>
-</li>
-<li><p>Nitin Desai</p>
-</li>
-<li><p>Vishal Ganeriwala</p>
-</li>
-<li><p>Facilitators</p>
-</li>
-<li><p>Fred Liu</p>
-</li>
-<li><p>Tom Kludy</p>
-</li>
-<li><p>Jeff Reed</p>
-</li>
-<li>Agenda MFCOM Basics Start Using MFCOM Labs In Action Future And Takeaways</li>
-<li>Agenda Agenda item number 1 Start Using MFCOM Labs In Action Future And Takeaways MFCOM Basics</li>
-<li><p>What is MFCOM?</p>
-</li>
-<li><p>COM-based management interface</p>
-</li>
-<li><p>Runs on every Citrix Presentation Server™ box</p>
-</li>
-<li><p>Scriptable and COM programming language support</p>
-</li>
-<li><p>Remote execution</p>
-</li>
-<li>Work Smarter and Faster Using MFCOM Integration with third-party software applications 3 Information reporting 2 Automate administration tasks 1</li>
-<li>How Does MFCOM Work ? MFCOM IMA LHC DCOM RPC SAL SAL SAL Data Store Data Collector Citrix Presentation Server Windows Machine SAL : Subsystem Access Layer</li>
-<li>Common MFCOM Objects Zones Farm Apps Servers Sessions Policies Servers Users Sessions Apps Processes VCs</li>
-<li>Agenda Agenda item number 1 MFCOM Basics Labs In Action Future and Takeaways Start Using MFCOM</li>
-<li>Today’s Setup For Class Demos DCOM Port 2512 Client Machine MPS SDK Lab1CPS CPS 4.5 VM Lab2CPS CPS 4.5 VM DCOM IMA Farm Name: SDKDemo Data Store: Lab1CPS Zone Data Collector: Lab1CPS Servers : Lab1CPS &amp; Lab2CPS</li>
-<li><p>How Can I Get Started?</p>
-</li>
-<li><p>Download SDK from: <a href="http://support.citrix.com/page.jspa?pageID=devCenter" target="_blank">http://support.citrix.com/page.jspa?pageID=devCenter</a></p>
-</li>
-<li><p>Browse Script Repository http:// support.citrix.com/kb/category.jspa?categoryID =645&amp;subCategoryID=645</p>
-</li>
-<li><p>Setting Up Client and Server Machines</p>
-</li>
-<li><p>Register the remote Citrix Presentation Server using: mfreg <servername></p>
-</li>
-<li><p>Use dcomcnfg to change the Impersonation level from identity to impersonate on Windows XP</p>
-</li>
-<li><p>W2K3+SP1 CPS Server - Add remote MFCOM user to the DCOM Users Group</p>
-</li>
-<li><p>Make sure you have administrative privileges for the Citrix Farm</p>
-</li>
-<li>Sample Examples</li>
-<li><p>MPSSDK Documentation</p>
-</li>
-<li><p>MPSSDK Help System</p>
-</li>
-<li><p>MFCOM browser</p>
-</li>
-<li><p>http:// www.jasonconger.com/ShowPost.aspx?strID =9686d808-19c0-4bad-a577-02d85f597a8d</p>
-</li>
-<li><p>Displaying Farm Name</p>
-</li>
-<li><p>Use of VBScriptTemplate.wsf to add code</p>
-</li>
-<li><p>Use of MetaFrameFarm Object and its methods</p>
-</li>
-<li><p>Navigating MFCOM …</p>
-</li>
-<li><p>New version of interfaces with different releases</p>
-</li>
-<li><p>MetaFrameFarm object : IMetaFrameFarm6 (CPS4.0) inherits from IMetaFrameFarm5 (CPS3.0)</p>
-</li>
-<li><p>Scripts connect to the latest interfaces</p>
-</li>
-<li><p>C++ - Use QueryInterface</p>
-</li>
-<li><p>Drill down to appropriate level of object.</p>
-</li>
-<li><p>MetaFrameServer Object:</p>
-</li>
-<li><p>IMetaFrameServer</p>
-</li>
-<li><p>IMetaFrameWinServer
-Finding the relevant interface</p>
-</li>
-<li>Agenda Agenda item number 1 MFCOM Basics Start Using MFCOM Future And Takeaways Labs In Action</li>
-<li><p>What Will You Learn?</p>
-</li>
-<li><p>When and how to use MFCOM</p>
-</li>
-<li><p>Navigating the documentation</p>
-</li>
-<li><p>Using major MFCOM objects</p>
-</li>
-<li><p>Auditing the farm</p>
-</li>
-<li><p>Automating Citrix Presentation Server™ management tasks</p>
-</li>
-<li><p>Labs: Commonly Done Presentation Server Administration Tasks</p>
-</li>
-<li><p>Lab 1: Servers and Applications</p>
-</li>
-<li><p>Lab 2: Create a Load Evaluator</p>
-</li>
-<li><p>Lab 3: Take the Server Offline</p>
-</li>
-<li><p>Extra Credit:</p>
-</li>
-<li><p>Printing</p>
-</li>
-<li><p>Auditing Using Enumerations</p>
-</li>
-<li><p>Object associations as a powerful tool for auditing
-Zones Farm Apps Servers Sessions Sessions</p>
-</li>
-<li><p>Lab 1 : Servers and Applications</p>
-</li>
-<li><p>List servers and applications in the Farm.</p>
-</li>
-<li><p>List Applications on each server.</p>
-</li>
-<li><p>List Servers for each application</p>
-</li>
-<li><p>Use of MetaFrameServer and MetaFrameApplication methods/properties.</p>
-</li>
-<li><p>Simple Administration Tasks</p>
-</li>
-<li><p>Creating new entities in the farm</p>
-</li>
-<li><p>Create an Object in MFCOM</p>
-</li>
-<li><p>Initialize the necessary data</p>
-</li>
-<li><p>SaveData – Saving data to IMA Datastore</p>
-</li>
-<li><p>Changing the configuration settings for the existing entities</p>
-</li>
-<li><p>Create an Object (CreateObject method)</p>
-</li>
-<li><p>Initialization – Initialize or set methods</p>
-</li>
-<li><p>LoadData – Loading data from IMA Datastore</p>
-</li>
-<li><p>Change the settings</p>
-</li>
-<li><p>SaveData – Save data back to IMA Datastore</p>
-</li>
-<li><p>Lab2 : Create a Load Evaluator</p>
-</li>
-<li><p>Create a Load Evaluator</p>
-</li>
-<li><p>Set the name and description</p>
-</li>
-<li><p>Create a LMRule for CPU utilization</p>
-</li>
-<li><p>Create a LMRules collection and add a rule</p>
-</li>
-<li><p>Set Load Evaluator Rules and save the data</p>
-</li>
-<li><p>Use of MetaFrameLoadEvaluator, MetaFrameLMRule and MetaFrameLMRules methods/properties.</p>
-</li>
-<li><p>Inside MFCOM</p>
-</li>
-<li><p>COM Free threading model</p>
-</li>
-<li><p>Error reporting</p>
-</li>
-<li><p>Limited error codes as HRESULT</p>
-</li>
-<li><p>Exceptions in. NET</p>
-</li>
-<li><p>MFCOM user</p>
-</li>
-<li><p>Current user vs. other user (runas)</p>
-</li>
-<li><p>MFCOM impersonates before calling IMA</p>
-</li>
-<li><p>Complex Management Tasks</p>
-</li>
-<li><p>Connecting more than one entity in the farm</p>
-</li>
-<li><p>Series of tasks with proper ordering</p>
-</li>
-<li><p>Repetitive pattern</p>
-</li>
-<li><p>Examples</p>
-</li>
-<li><p>Take the server offline</p>
-</li>
-<li><p>Migrate applications from one farm to another</p>
-</li>
-<li><p>Remove the server from N applications</p>
-</li>
-<li><p>Lab3 : Taking The Server Offline</p>
-</li>
-<li><p>How to take the server offline for maintenance purpose gracefully?</p>
-</li>
-<li><p>Steps -</p>
-</li>
-<li><p>Prevent the new connections</p>
-</li>
-<li><p>Communicate to the users</p>
-</li>
-<li><p>Let the connections drain</p>
-</li>
-<li><p>Logoff the sessions after timeout period</p>
-</li>
-<li><p>Use of MetaFrameLoadEvaluator, MetaFrameSession and MetaFrameServer methods/properties.</p>
-</li>
-<li><p>Advanced MFCOM Usage</p>
-</li>
-<li><p>Multi farm management</p>
-</li>
-<li><p>Create objects on the multiple remote servers</p>
-</li>
-<li><p>C/# - Activator method</p>
-</li>
-<li><p>VBScript - CreateObject((&quot;MetaFrameCOM.MetaFrameFarm&quot;, ServerName1)</p>
-</li>
-<li><p>Event handling</p>
-</li>
-<li><p>Server, Application and Folder Events</p>
-</li>
-<li><p>Create, update (rename), move and delete</p>
-</li>
-<li><p>MetaFrameFarmEvent enum, IMetaFrameEventQueue , CreateEventQueue2 method in MetaFrameFarm</p>
-</li>
-<li><p>Extra Credit : Printing</p>
-</li>
-<li><p>List printer drivers on every server</p>
-</li>
-<li><p>Use of MetaFrameServer and MetaFramePrinterDriver Methods</p>
-</li>
-<li>Agenda Agenda item number 1 MFCOM Basics Start Using MFCOM Labs In Action Future and Takeaways</li>
-<li><p>CPSSDK</p>
-</li>
-<li><p>Scalability</p>
-</li>
-<li><p>Highly scalable in large farm environment</p>
-</li>
-<li><p>Usability</p>
-</li>
-<li><p>Consolidation of interfaces and methods</p>
-</li>
-<li><p>Enhanced consistency in object behavior</p>
-</li>
-<li><p>Easy multi-farm management</p>
-</li>
-<li><p>Better .Net Support</p>
-</li>
-<li><p>.NET assembly</p>
-</li>
-<li><p>.NET versioning and generics
-Next-generation Presentation Server Management SDK</p>
-</li>
-<li>How Does CPSSDK Work ? IMACOM IMA LHC DCOM RPC SAL SAL SAL Data Store Data Collector Citrix Presentation Server Windows Machine CPSSDK Client Cached Data Chunky Calls SAL : Subsystem Access Layer</li>
-<li>Work Smarter and Faster Start Using MFCOM Today !</li>
-<li><p>Before you leave…</p>
-</li>
-<li><p>Overall conference survey is available online at www.citrixiforum.com starting Wednesday, October 24 (please provide feedback)</p>
-</li>
-<li><p>Download workshop materials from www.citrixiforum.com starting Monday, October 29</p>
-</li>
-<li><p>Leftover workshops handouts can be found at the HOT Assistance Center Desk
-*</p>
-</li>
-<li>Data Type: LMRuleSchedule Start time End time Bit 15-0 Bit 31-16 Half hour Bit 4 Not used Bit 7-5 Day of week Hour (in military time format) Bit 3-0 Bit 15-8</li>
-</ul>
-<p><a href="http://www.slideshare.net/signup?from=addcontact&amp;from_source=http%3A%2F%2Fwww.slideshare.net%2Fvishalganeriwala%2Fcitrix-mfcom-programming-for-administrators-presentation" title="Add as my contact" target="_blank">+</a> <a href="http://www.slideshare.net/vishalganeriwala" title="vishalganeriwala" target="_blank"><img src="" alt="vishalganeriwala">vishalganeriwala</a>, 12 months ago</p>
-<p>Embed  <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">custom</a> Without related presentations
-For WordPress.com</p>
-<p>1343 views, 2 favs, 2 embeds <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#stats-bottom" target="_blank">more stats</a>
-This is a basic presentation done at Citrix IForum <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">more</a></p>
-<p>This is a basic presentation done at Citrix IForum 2007 event. It is a good overview for anyone getting started with Citrix MFCOM <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">less</a></p>
-<h2 id="-related-presentations-http-www-slideshare-net-vishalganeriwala-citrix-mfcom-programming-for-administrators-presentation-relatedlist-"><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#relatedList" target="_blank">Related Presentations</a></h2>
-<ul>
-<li><a href="http://www.slideshare.net/michaelharriescitrix/cloud-computing-and-citrix-c3" title="Cloud Computing And Citrix C3" target="_blank"><img src="" alt="Cloud Computing And Citrix C3"> Cloud Computing And Citrix C3</a></li>
-<li><a href="http://www.slideshare.net/wimleers/drupal-cdn-integration-easier-more-flexible-and-faster" title="Drupal CDN integration: easier, more flexible and faster!" target="_blank"><img src="" alt="Drupal CDN integration: easier, more flexible and faster!"> Drupal CDN integration: easier, mo…</a></li>
-<li><a href="http://www.slideshare.net/crmachado/Top-10-Items-Found-by-Citrix-Consulting-on-Assessments" title="Top 10 Items Found By Citrix Consulting On Assessments" target="_blank"><img src="" alt=""> <img src="" alt="Top 10 Items Found By Citrix Consulting On Assessments"> Top 10 Items Found By Citrix Consu…</a></li>
-<li><a href="http://www.slideshare.net/pbird/eg-citrix-monitor-1197250" title="eG Citrix Monitor" target="_blank"><img src="" alt="eG Citrix Monitor"> eG Citrix Monitor</a></li>
-<li><a href="http://www.slideshare.net/mikebrittain/how-to-get-to-second-base-with-your-cdn" title="How to Get to Second Base with Your CDN" target="_blank"><img src="" alt="How to Get to Second Base with Your CDN"> How to Get to Second Base with You…</a></li>
-<li><a href="http://www.slideshare.net/wimleers/faster-more-flexible-cdn-integration" title="Faster &amp; more flexible CDN integration" target="_blank"><img src="" alt="Faster &amp; more flexible CDN integration"> Faster &amp; more flexible CDN integra…</a></li>
-<li><a href="http://www.slideshare.net/ar_maniacs/lets-make-your-cdn-with-ruby" title="Let&#39;s make your CDN with RUBY" target="_blank"><img src="" alt="Let&#39;s make your CDN with RUBY"> Let&#39;s make your CDN with RUBY</a></li>
-<li><a href="http://www.slideshare.net/xen_com_mgr/xs-japan-2008-citrix-japanese" title="XS Japan 2008 Citrix Japanese" target="_blank"><img src="" alt="XS Japan 2008 Citrix Japanese"> XS Japan 2008 Citrix Japanese</a></li>
-<li><a href="http://www.slideshare.net/areconster/citrix-xenserver" title="Бесплатная виртуализация Citrix XenServer для компаний" target="_blank"><img src="" alt="Бесплатная виртуализация Citrix XenServer для компаний"> Бесплатная виртуа�…</a></li>
-</ul>
-<h2 id="-more-by-user-http-www-slideshare-net-vishalganeriwala-citrix-mfcom-programming-for-administrators-presentation-morelist-"><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#moreList" target="_blank">More by user</a></h2>
-<p><a href="http://www.slideshare.net/vishalganeriwala/slideshows" title="View all presentations from this user" target="_blank">View all presentations from this user</a></p>
-<h2 id="more-info">More Info</h2>
-<p>© All Rights Reserved
-Go to <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#text-version" target="_blank">text version</a></p>
-<ul>
-<li><p><strong>Total Views</strong> 1343</p>
-</li>
-<li><p>1328 on SlideShare</p>
-</li>
-<li>15 from embeds</li>
-<li><strong>Comments</strong> 0</li>
-<li><strong>Favorites</strong> 2</li>
-<li><p><strong>Downloads</strong> 34
-<strong>Most viewed embeds</strong></p>
-</li>
-<li><p>9 views on <a href="http://localhost.citrix.com" target="_blank">http://localhost.citrix.com</a></p>
-</li>
-<li>6 views on <a href="http://ftlwvishalg02:8080" target="_blank">http://ftlwvishalg02:8080</a></li>
-</ul>
-<p><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">more</a></p>
-<p><strong>All embeds</strong></p>
-<ul>
-<li>9 views on <a href="http://localhost.citrix.com" target="_blank">http://localhost.citrix.com</a></li>
-<li>6 views on <a href="http://ftlwvishalg02:8080" target="_blank">http://ftlwvishalg02:8080</a></li>
-</ul>
-<p><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">less</a></p>
-<ul>
-<li>Also on <a href="http://www.linkedin.com/opensocialInstallation/preview?_ch_panel_id=1&amp;_applicationId=1200&amp;trk=p_slideshare" target="_blank">LinkedIn</a></li>
-<li>Uploaded via <a href="http://www.slideshare.net/" target="_blank">SlideShare</a></li>
-<li>Uploaded as <a href="http://www.slideshare.net/" target="_blank">Microsoft PowerPoint</a></li>
-</ul>
-<p><a href="http://www.slideshare.net/signup?from=flagss&amp;from_source=http%3A%2F%2Fwww.slideshare.net%2Fvishalganeriwala%2Fcitrix-mfcom-programming-for-administrators-presentation" target="_blank">Flagged as inappropriate Flag as inappropriate</a>  Flag as innappropriate</p>
-<p>Select your reason for flagging this presentation as inappropriate. If needed, use the <a href="http://www.slideshare.net/feedback" title="FeedBack" target="_blank">feedback</a> form to let us know more details.</p>
-<p>None Pornographic Copyright Violation Defamatory Illegal/Unlawful Other Terms Of Service Violation  <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">Cancel</a></p>
-<h2 id="categories">Categories</h2>
-<ul>
-<li><strong><a href="http://www.slideshare.net/category/"></a></strong></li>
-<li><strong><a href="http://www.slideshare.net/category/technology" target="_blank">Technology</a></strong>
-Automotive Books Business &amp; Mgmt Career Design Education Entertainment Fashion &amp; Beauty Finance Gadgets &amp; Reviews Health &amp; Medicine How-to &amp; DIY Humor Investor Relations News &amp; Politics Pets Photos Real Estate Spiritual Sports Technology Templates &amp; Forms Travel  <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">Cancel</a></li>
-</ul>
-<h2 id="tags">Tags</h2>
-<ul>
-<li><strong><a href="http://www.slideshare.net/tag/cdn" target="_blank">cdn</a></strong></li>
-<li><strong><a href="http://www.slideshare.net/tag/mfcom" target="_blank">mfcom</a></strong></li>
-<li><strong><a href="http://www.slideshare.net/tag/citrix" target="_blank">citrix</a></strong></li>
-<li><strong><a href="http://www.slideshare.net/tag/xenapp" target="_blank">xenapp</a></strong>
---&gt;</li>
-</ul>
-<p><a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" title="Search for, view and download presentations" target="_blank">Search</a></p>
-<p><a href="http://www.slideshare.net/rss/latest" target="_blank">RSS Feed</a></p>
-<p><strong>What&#39;s new?</strong></p>
-<p><a href=""></a><a href="http://blog.slideshare.net/2009/08/03/worlds-best-presentation-contest-is-back-and-more-social-than-ever/">Participate in the SlideShare World&#39;s Best Presentation Contest 2009...</a></p>
-<ul>
-<li><strong>Info</strong></li>
-<li><a href="http://www.slideshare.net/about" target="_blank">About</a></li>
-<li><a href="http://blog.slideshare.net/" target="_blank">Blog</a></li>
-<li><a href="http://www.slideshare.net/about/press" target="_blank">Press</a></li>
-<li><a href="http://www.slideshare.net/about/advertise" target="_blank">Advertise</a></li>
-<li><p><a href="http://www.slideshare.net/about/workatslideshare" target="_blank">Jobs</a></p>
-</li>
-<li><p><strong>Using SlideShare</strong></p>
-</li>
-<li><a href="http://www.slideshare.net/tour" target="_blank">Quick Tour</a></li>
-<li><a href="http://www.slideshare.net/terms" target="_blank">Terms of Use</a></li>
-<li><a href="http://www.slideshare.net/privacy" target="_blank">Privacy Policy</a> &amp; <a href="http://www.slideshare.net/terms#dmca" target="_blank">DMCA</a></li>
-<li><p><a href="http://www.slideshare.net/community_guidelines" target="_blank">Community Guidelines</a></p>
-</li>
-<li><p><strong>Help</strong></p>
-</li>
-<li><a href="http://www.slideshare.net/feedback" target="_blank">Feedback / Contact</a></li>
-<li><a href="http://www.slideshare.net/faqs" target="_blank">FAQ</a></li>
-<li><p><a href="http://getsatisfaction.com/slideshare" target="_blank">Forum</a></p>
-</li>
-<li><p><strong>Explore</strong></p>
-</li>
-<li><a href="http://www.slideshare.net/invite?from=footer" target="_blank">Find your Friends</a></li>
-<li><a href="http://www.slideshare.net/events-add" target="_blank">Events</a></li>
-<li><a href="http://www.slideshare.net/developers" target="_blank">Developers &amp; API</a></li>
-<li><a href="http://www.slidesharetoys.com/" target="_blank">Karaoke</a></li>
-<li><a href="http://www.slideshare.net/faqs/slidecast" target="_blank">Make a Webinar</a></li>
-<li><p><a href="http://www.slideshare.net/youtube-in-slideshare" title="Add YouTube videos to your slides" target="_blank">SlideShare+YouTube</a></p>
-</li>
-<li><p><strong>Slideshare Outside</strong></p>
-</li>
-<li><a href="http://www.linkedin.com/opensocialInstallation/preview?_ch_panel_id=1&amp;_applicationId=1200" title="SlideShare for LinkedIn" target="_blank">Linkedin App</a></li>
-<li><a href="http://apps.facebook.com/slideshare" title="SlideShare for Facebook" target="_blank">Facebook App</a></li>
-<li><a href="http://www.slideshare.net/developers/apps/pptribbon" title="SlideShare Plugin for PowerPoint 2007" target="_blank">SlideShare in PowerPoint</a></li>
-<li><a href="http://www.slideshare.net/mobile" title="SlideShare Mobile" target="_blank">SlideShare Mobile</a></li>
-</ul>
-<p>© 2009 SlideShare Inc. All Rights Reserved</p>
-<ul>
-<li>Favorited! Add tags?  <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">Cancel</a></li>
-<li>Edit your favorites  <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">Cancel</a></li>
-<li>Send to your Group / Event Select Group / Event
-Add your message  <a href="http://www.slideshare.net/vishalganeriwala/citrix-mfcom-programming-for-administrators-presentation#" target="_blank">Cancel</a></li>
-</ul>
-<p><a href="http://www.quantcast.com/p-abU44ONrAuwk2" target="_blank"><img src="" alt="Quantcast"></a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/虚拟化_Citrix/">虚拟化_Citrix</a></li></span></span> | <span class="tags">Tagged <a href="/tags/虚拟化_Citrix/" class="label label-primary">虚拟化_Citrix</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:37"datetime="2014-03-07 09:54:37"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-虚拟化_Citrix--CitrixMfcomProgrammingForAdministrators/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-虚拟化_Citrix--CitrixMfcomProgrammingForAdministrators" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-虚拟化_Citrix--Citrix系统的安全分析--欢迎访问417的博客/">Citrix 系统的安全分析</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:37.000Z"> <a href="/2014/02/02/2014-02-02-虚拟化_Citrix--Citrix系统的安全分析--欢迎访问417的博客/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="citrix-417-">Citrix 系统的安全分析--欢迎访问417的博客</h1>
-<p><a href="http://www.bokee.com/" target="_blank">首页</a> | <a href="http://group.bokee.com/" target="_blank">博客群</a> | <a href="http://blogs.bokee.com/" target="_blank">公社</a> | <a href="http://column.bokee.com/" target="_blank">专栏</a> | <a href="http://bbs.bokee.com/" target="_blank">论坛</a> | <a href="http://photo.bokee.com/" target="_blank">图片</a> | <a href="http://news.bokee.com/" target="_blank">资讯</a> | <a href="http://reg.bokee.com/account/web/register.jsp" target="_blank">注册</a> | <a href="http://help.bokee.com:8086/help/index.html" target="_blank">帮助</a> | <a href="http://lianbo.booso.com/" target="_blank">博客联播</a> | <a href="http://ping.bokee.com:81/memcm/random.b" target="_blank">随机访问</a></p>
-<h1 id="-417-http-www417-bokee-com-index-html-"><a href="http://www417.bokee.com/index.html" target="_blank">欢迎访问417的博客</a></h1>
-<p><a href="http://www417.bokee.com/5962997.html" title="上一篇" target="_blank">特别的一晚</a>- -| <a href="http://www417.bokee.com/index.html" target="_blank">回首页</a> | <a href="http://www417.bokee.com/catalog_2007.html" target="_blank">2007年索引</a> | - -<a href="http://www417.bokee.com/6103623.html" title="下一篇" target="_blank">Pic-2</a></p>
-<h2 id="citrix-">Citrix 系统的安全分析</h2>
-<p><strong>关键词</strong>： <a href="http://tag.bokee.com/tag/Citrix" target="_blank">Citrix</a>                                          </p>
-<p>// 很久以前翻译的一篇文章，2004年发给黑防了。</p>
-<p>编者按：虚拟工作平台已开始的从单纯的透过网页传播信息，变化到利用Internet、Interanet、Extranet的基础建设来达到合作、交易及知识管理的目的。这项新的网页环境最基本需求之一是安全的配置、重要的营业应用软件。不相容的整合导致无法即时分享重要的信息，造成时间、金钱及附加价值的损失。这是为什么成千上万个大型企业团体选择在全球具有领导地位的Citrix的主要原因。下文介绍的是Citrix中不可忽略的一个因素——安全！</p>
-<p>Citrix 系统的安全分析
-原作者/Brian Madden
-翻译/417
-一、介绍
-Citrix系统是一款广泛流行的远程桌面控制程序，类似于 Microsoft 的 Terminal Services，但是原理不同，Microsoft Terminal Services 使用的是 RDP(Remote Desktop Protocol) 协议，而 Citrix 使用的是 ICA (Independent Computing Architecture)协议。(实际上 Microsoft 买断了 Citrix 的另一项技术 Citrix MultiWin，并使它可以与 Windows 同内核工作，以支持多用户并行会话，在 Windows 2000 操作系统中才被正式命名为RDP。Citrix 的产品和技术已被全球超过2000万的用户所采纳，其中包括世界财富100强的所有企业和公司，世界财富500强的企业中亦有85%选用 Citrix 的产品。Citrix 的客户包括 MCI Worldcom、Qantas、朗讯、北方电信、摩托罗拉、诺基亚、香港电信、JPMorgan、雀巢公司、壳牌集团、UCLA（加利福尼亚大学洛杉矶分校）、香港大学等等——译者注)
-在本文中，我将简要介绍Citrix是怎样工作的，和如何更好的配置Citrix使用者权限。
-要声明的是，作者是Citrix MetaFrame XP的高级技术顾问之一，但并不是Citrix的管理员，以下有些想法并不完美，不过本文的重点并不是这些，请根据具体情况。如果有错误可以联系 <a href="mailto:wirepair@roguemail.net">wirepair@roguemail.net</a>。
-二、Citrix 的工作方式
-我列在这里的是几种Citrix可能被用到的解决方式：
-1、Citrix MetaFrame
-Citrix MetaFrame 有三个不同的版本：XPs，XPa及 XPe。分别适合不同的环境使用。其中 XPe 是完全安全版，包括一些不同于其他版本的管理选项。XPa 和 XPe 则稍微少一点。在此篇文章中，我们只讨论 XPe，但是其中的大部分功能都能在其他版本上应用。Citrix 默认使用 1494 端口并且只和使用了 Citrix ICA 加密协议的客户端通信。
-2、Citrix NFuse/Citrix 安全网关
-Citrix NFuse 允许管理员锁定程序而只能通过 Web 浏览器通信。Citrix NFuse 默认是安装的 IIS 5.0 上的，但是在这篇文章中，我们将试着把它安装在 Apache 上。当然也许读者对在 IIS 5.0 上的安装/配置/管理 Citrix NFuse 更感性趣，我们稍后会涉及到这个问题。下面谈到的应用若没有特别指出则全部使用 SSL 128 位加密。
-Citrix NFuse 默认安装情况下的远程权限规则允许管理员执行 Citrix 安全网关。如果管理员适当的配置了 NFuse，远程用户将则不能直接通过 Citrix Server。所有通过 Citrix NFuse 服务器和安全网关的连接将被过滤。如图1所示：</p>
-<p><img src="" alt=" "></p>
-<p>图1
-三、以攻击者的角度思考问题
-根据简图，我们发现使用者不能获得一个和 Citrix Server 直接的连接，但是可以通过 DMZ 到 Internal network。
-在默认安装的 NFuse 并且没有安全网关配合的情况下，使用者接触到 NFuse Web Server,之后一旦发出了请求并确认，使用者将获得一个直接连接 Citrix Server 的通道，你可以看出这个有个问题，恶意使用者可以在和 Citrix Server 连接好的情况下，再进行先前的请求扫描，通过搜集请求列表之后建立自己的 .ICA 文件，里面包含了他们指定的信息。这就意味着，如果当前的情况是在网络边界，就有两个漏洞可以通过防火墙。一个是 IIS，一个是 Citrix。
-.ICA 文件是一种基于文本结构的文档，包含所有的配置信息。这个文件一般是给最终用户使用，在安装完 Citrix 客户端以后，双击这个文件就可以自动连接 .ICA 文件中指定的服务器。
-如果 NFuse 被使用的情况下通常就不需要 .ICA 文件了。假设 A 用户打开 Web 浏览器来到 NFuse Web 服务器，将使用他在 NT 域中的账号。如果成功登陆，A 用户将得到一张他 Citrix Farm 上有权使用的程序列表。
-有多种方法可以得到运行在 Citrix 主机上的远程桌面，最近 Ian Vitek 发布了一些很有用的 PERL 脚本工具。我最常用的扫描 Citrix 请求的工具在这个可以下载：
-<a href="http://www.cqure.net/itools01.html" target="_blank"><a href="http://www.cqure.net/itools01.html">http://www.cqure.net/itools01.html</a></a>
-这个工具列出了远程机器上允许的请求，得到这些列表之后我们就可以通过修改 .ICA 文件中的请求信息。再这之后，你就可以尝试针对一些容易猜到的账号进行攻击，我的经验是尝试攻击一些专门用来做备份工作的账号。
-（如果上面的程序在你的机器上不能很好的工作，你可以试试这个:<a href="http://sh0dan.org/files/pubappbrute.tar.gz）" target="_blank">http://sh0dan.org/files/pubappbrute.tar.gz）</a>
-假设你已经做好一切准备，只是没有好运气的话，你可以尝试 GUEST 账号，虽然通常情况下GUEST没有足够的登陆权限。
-从 .ICA 文件入手来看：
-[WFClient]
-Version=2
-TcpBrowserAddress=ip.ip.ip.ip</p>
-<p>[ApplicationServers]
-word=</p>
-<p>[word]
-Address=word
-InitialProgram=/#word
-ClientAudio=Off
-Compress=On
-TWIMode=On
-DesiredHRES=800
-DesiredVRES=600
-DesiredColor=4
-TransportDriver=TCP/IP
-WinStationDriver=ICA 3.0</p>
-<p>通过分析看来Citrix在运行时似乎寻找了 [word] 中 InitialProgram 的数据。如果我们把这个数据修改成cmd.exe 或 explorer.exe 会怎么样？呵呵，幸运的是我们真的可以指定运行这个程序，我曾利用这个方法无数次的绕过了登陆检查。只要确定程序是有效的存在的我们就可以运行它。现在我们已经在Citrix有了一个远程 shell。如果你运行的是 explorer.exe，那么你就打开了一个真正的桌面。我希望你熟悉如何提升自己的权限，在这里我就不多说了。另外，即使我以 guest 身份进入系统，我也可以运行只有管理员才可以运行的工具。很明显，这是一个严重的漏洞，你可以在网络上发现大量的弱口令用户。
-如果他们使用 NFuse 和 Citrix Secure Gateway 过滤了所有通过防火墙的连接。这样你修改 .ICA 文件就没用了。但是我们仍有很多的机会获得远程桌面。一般情况下 Citrix 管理员经常在办公室远程操作，太好了，如果你有权远程使用 excel ，做个一个 vbscript 当到启动菜单里面，就算你像我一样懒，只是用 IE 浏览网页的话，我们也可以得到 C:\winnt\explorer.exe，其他 Microsoft Word 软件都可以做到。实际上决大多数情况下，我们可以通过 帮助--&gt;帮助主题--&gt;跳至URL 填写 cmd.exe 你可以下载它。如果你的远程机器上有写权限，修改你的.ICA 文件，哈哈，你又可以得到一个 shell 了。
-类似的方法还有很多，你可以打开进程管理器启动一个新的进程，或者利用大部分程序中 打开--&gt;浏览 获得一个 shell,如果你可以浏览远程机器，还可以从默认的配置文件目录：
-NT4 ： %systemroot%\profiles\username\Application Data\
-Windows 2000 ： C:\Documents and Settings\username\Application Data\
-将里面的 .ICA 文件复制过来，覆盖你相应目录下的文件，之后打开 Citrix Program Neighborhood 你会发现你有权向所有已经连接的用户发出修改密码的消息。
-四、安全的Citrix
-还好这里有很多资料来提醒管理员加固Citrix，我曾经花费几周的时间试图找出一个应用与安全相平衡的安全策略：
-1、首先正确配置 NFuse / Citrix Secure Gateway
-2、确定 IIS/Apache 已经打了最新补丁，并且在 DMZ 的保护中，或者使用 NTLM 认证
-3、如果可能，要求远程用户使用 SecureID 认证方式（原有的 ICA 认证方式，被发现存在弱加密算法漏洞——译者注）
-4、使用其它的浏览器取代 IE
-5、建立一个组，把所有Citrix用户放到这个组里面，禁止他们访问 cmd.exe, <a href="ftp://ftp.exe/">ftp://ftp.exe/</a>, tftp.exe, rcp.exe, net.exe,command.com, iexplorer.exe 等可能对系统有危害的权限(在安全与应用的平衡之间选择)
-6、给你的Citrix打上最新的补丁
-7、禁止 winhelp32 的访问，设置 Internet 选项禁止下载,禁止使用进程管理器
-8、如果可能，设置 Citrix Connection Configuration—&gt;ica-tcp—&gt;client settings —&gt;选择必须
-五、写在最后
-翻译完着篇文章发现 Citrix系统很类似现在网吧广泛应用的类似虚拟桌面的程序，在研究了应用比较广泛的几款网吧管理程序后发现，此类程序都并非建立的系统内核基础上，很容易利用 Windows 本身的机制绕过，这才是这类软件漏洞产生的根本原因。</p>
-<p>名词解析：
-DMZ：De-Militarized Zone，非军事区，是防火墙的一个特性。它可以使某台特定计算机向互连网开放。有些应用程序需要开通多个TCP/IP接口。而DMZ就可以为微机实现这些功能。</p>
-<p>【作者: <a href="">417</a>】【访问统计:  】【2007年01月4日 星期四 20:18】【<a href="http://reg.bokee.com/account/web/register.jsp" target="_blank">注册</a>】【<a href="">打印</a>】</p>
-<p>[</p>
-<h3 id="-">搜索</h3>
-<p>]()   <a href=""><img src="" alt="Google"></a>
-[</p>
-<h3 id="trackback">Trackback</h3>
-<p>]()</p>
-<p>你可以使用这个链接引用该篇文章 <a href="http://publishblog.blogchina.com/blog/tb.b?diaryID=6017226" target="_blank">http://publishblog.blogchina.com/blog/tb.b?diaryID=6017226</a></p>
-<p>[</p>
-<h3 id="-">回复</h3>
-<p>]()
-验证码：    <img src="" alt=""> 评论内容：
-/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>作者已禁止回复功能/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>
-<a href="http://blog.bokee.com/" target="_blank">2003-2004 BOKEE.COM All rights reserved</a>
-<a href="http://www.blogdriver.com/" target="_blank">Powered by BlogDriver 2.1</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/虚拟化_Citrix/">虚拟化_Citrix</a></li></span></span> | <span class="tags">Tagged <a href="/tags/虚拟化_Citrix/" class="label label-primary">虚拟化_Citrix</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:37"datetime="2014-03-07 09:54:37"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-虚拟化_Citrix--Citrix系统的安全分析--欢迎访问417的博客/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-虚拟化_Citrix--Citrix系统的安全分析--欢迎访问417的博客" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
 
 
 <ul id="pagination" class="pagination pagination-lg">
@@ -1138,7 +1489,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:05:47</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:25:39</em></span></div>
 </div>
 <div class="clearfix"></div>
 

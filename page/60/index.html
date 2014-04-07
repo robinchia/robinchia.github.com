@@ -110,1124 +110,445 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-NIO--Javaaio异步网络IO初探/">Java aio(异步网络IO)初探</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--JavaAnnotation详解/">Java Annotation详解</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-NIO--Javaaio异步网络IO初探/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--JavaAnnotation详解/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="java-aio-io-">Java aio(异步网络IO)初探</h1>
-<p><a href="">&lt;</a> <a href="">&gt;</a>  猎头职位: <a href="http://www.iteye.com/jobs/2509" target="_blank">上海:  Junior Product Manager</a></p>
-<p>相关文章: <a href="&quot;关闭&quot;"> </a></p>
-<ul>
-<li><a href="http://www.iteye.com/topic/1113611" title="JDK7 AIO 初体验" target="_blank">JDK7 AIO 初体验</a></li>
-<li><a href="http://www.iteye.com/topic/446298" title="JavaSE7新特性 异步非阻塞I/O 网络通信 AIO" target="_blank">JavaSE7新特性 异步非阻塞I/O 网络通信 AIO</a></li>
-<li><p><a href="http://www.iteye.com/topic/834447" title="JAVA NIO 简介" target="_blank">JAVA NIO 简介</a>
-推荐群组: <a href="http://dlang.group.iteye.com/" target="_blank">D语言</a>
-<a href="http://www.iteye.com/wiki/topic/472333" target="_blank">更多相关推荐</a>
-<a href="http://www.iteye.com/forums/tag/%E4%BC%81%E4%B8%9A%E5%BA%94%E7%94%A8" target="_blank">企业应用</a></p>
-<p>  按照《Unix网络编程》的划分，IO模型可以分为：阻塞IO、非阻塞IO、IO复用、信号驱动IO和异步IO，按照POSIX标准来划分只分为两类：同步IO和异步IO。如何区分呢？首先一个IO操作其实分成了两个步骤：发起IO请求和实际的IO操作，同步IO和异步IO的区别就在于第二个步骤是否阻塞，如果实际的IO读写阻塞请求进程，那么就是同步IO，因此阻塞IO、非阻塞IO、IO服用、信号驱动IO都是同步IO，如果不阻塞，而是操作系统帮你做完IO操作再将结果返回给你，那么就是异步IO。阻塞IO和非阻塞IO的区别在于第一步，发起IO请求是否会被阻塞，如果阻塞直到完成那么就是传统的阻塞IO，如果不阻塞，那么就是非阻塞IO。
- Java nio 2.0的主要改进就是引入了异步IO（包括文件和网络），这里主要介绍下异步网络IO API的使用以及框架的设计，以TCP服务端为例。首先看下为了支持AIO引入的新的类和接口：
-<strong>java.nio.channels.AsynchronousChannel</strong></p>
-<pre><code> 标记一个channel支持异步IO操作。
-</code></pre><p><strong> java.nio.channels.AsynchronousServerSocketChannel</strong></p>
-<pre><code> ServerSocket的aio版本，创建TCP服务端，绑定地址，监听端口等。
-</code></pre><p><strong> java.nio.channels.AsynchronousSocketChannel</strong></p>
-<pre><code> 面向流的异步socket channel，表示一个连接。
-</code></pre><p><strong> java.nio.channels.AsynchronousChannelGroup</strong></p>
-<pre><code> 异步channel的分组管理，目的是为了资源共享。一个AsynchronousChannelGroup绑定一个线程池，这个线程池执行两个任务：处理IO事件和派发CompletionHandler。AsynchronousServerSocketChannel创建的时候可以传入一个 AsynchronousChannelGroup，那么通过AsynchronousServerSocketChannel创建的 AsynchronousSocketChannel将同属于一个组，共享资源。
-</code></pre><p><strong> java.nio.channels.CompletionHandler</strong></p>
-<pre><code> 异步IO操作结果的回调接口，用于定义在IO操作完成后所作的回调工作。AIO的API允许两种方式来处理异步操作的结果：返回的Future模式或者注册CompletionHandler，我更推荐用CompletionHandler的方式，这些handler的调用是由 AsynchronousChannelGroup的线程池派发的。显然，线程池的大小是性能的关键因素。AsynchronousChannelGroup允许绑定不同的线程池，通过三个静态方法来创建：
-</code></pre></li>
-</ul>
-<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public static AsynchronousChannelGroup withFixedThreadPool(int nThreads,  </li>
-<li>ThreadFactory threadFactory)  </li>
-<li>throws IOException  </li>
-<li></li>
-<li>public static AsynchronousChannelGroup withCachedThreadPool(ExecutorService executor,  </li>
-<li>int initialSize)  </li>
-<li></li>
-<li>public static AsynchronousChannelGroup withThreadPool(ExecutorService executor)  </li>
-<li>throws IOException  </li>
-</ol>
-<p>public static AsynchronousChannelGroup withFixedThreadPool(int nThreads,</p>
-<pre><code>                                                           ThreadFactory threadFactory)
-    throws IOException
-</code></pre><p>public static AsynchronousChannelGroup withCachedThreadPool(ExecutorService executor,</p>
-<pre><code>                                                            int initialSize)
-</code></pre><p>public static AsynchronousChannelGroup withThreadPool(ExecutorService executor)
-        throws IOException</p>
-<pre><code> 需要根据具体应用相应调整，从框架角度出发，需要暴露这样的配置选项给用户。
- 在介绍完了aio引入的TCP的主要接口和类之后，我们来设想下一个aio框架应该怎么设计。参考非阻塞nio框架的设计，一般都是采用**Reactor**模式，Reacot负责事件的注册、select、事件的派发；相应地，异步IO有个**Proactor**模式，Proactor负责 CompletionHandler的派发，查看一个典型的IO写操作的流程来看两者的区别：
- Reactor:  send(msg) -&gt; 消息队列是否为空，如果为空  -&gt; 向Reactor注册OP_WRITE，然后返回 -&gt; Reactor select -&gt; 触发Writable，通知用户线程去处理 -&gt;先注销Writable(很多人遇到的cpu 100%的问题就在于没有注销）,处理Writeable，如果没有完全写入，继续注册OP_WRITE。注意到，写入的工作还是用户线程在处理。
- Proactor: send(msg) -&gt; 消息队列是否为空，如果为空,发起read异步调用，并注册CompletionHandler，然后返回。 -&gt; 操作系统负责将你的消息写入，并返回结果（写入的字节数）给Proactor -&gt; Proactor派发CompletionHandler。可见，写入的工作是操作系统在处理，无需用户线程参与。事实上在aio的API 中,**AsynchronousChannelGroup就扮演了Proactor的角色**。
-CompletionHandler有三个方法，分别对应于处理成功、失败、被取消（通过返回的Future)情况下的回调处理：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public interface CompletionHandler<V,A> {  </li>
-<li></li>
-<li>void completed(V result, A attachment);  </li>
-<li></li>
-<li>void failed(Throwable exc, A attachment);  </li>
-<li></li>
-<li></li>
-<li>void cancelled(A attachment);  </li>
-<li>}  </li>
-</ol>
-<p>public interface CompletionHandler<V,A> {</p>
-<pre><code> void completed(V result, A attachment);
-
-
-void failed(Throwable exc, A attachment);
-
-
-
-
-void cancelled(A attachment);
-</code></pre><p>}</p>
-<pre><code>其中的泛型参数V表示IO调用的结果，而A是发起调用时传入的attchment。
-在初步介绍完aio引入的类和接口后，我们看看一个典型的tcp服务端是怎么启动的，怎么接受连接并处理读和写，这里引用的代码都是yanf4j 的aio分支中的代码，可以从svn checkout，svn地址: [http://yanf4j.googlecode.com/svn/branches/yanf4j-aio](http://yanf4j.googlecode.com/svn/branches/yanf4j-aio)
-第一步，创建一个AsynchronousServerSocketChannel，创建之前先创建一个 AsynchronousChannelGroup，上文提到AsynchronousServerSocketChannel可以绑定一个 AsynchronousChannelGroup，那么通过这个AsynchronousServerSocketChannel建立的连接都将同属于一个AsynchronousChannelGroup并共享资源：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>this.asynchronousChannelGroup = AsynchronousChannelGroup  </li>
-<li>.withCachedThreadPool(Executors.newCachedThreadPool(),  </li>
-<li>this.threadPoolSize);  </li>
-</ol>
-<p>this.asynchronousChannelGroup = AsynchronousChannelGroup</p>
-<pre><code>                .withCachedThreadPool(Executors.newCachedThreadPool(),
-                        this.threadPoolSize);
-
- 然后初始化一个AsynchronousServerSocketChannel，通过open方法：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>this.serverSocketChannel = AsynchronousServerSocketChannel  </li>
-<li>.open(this.asynchronousChannelGroup);  </li>
-</ol>
-<p>this.serverSocketChannel = AsynchronousServerSocketChannel</p>
-<pre><code>            .open(this.asynchronousChannelGroup);
-
-
-通过nio 2.0引入的SocketOption类设置一些TCP选项：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>this.serverSocketChannel  </li>
-<li>.setOption(  </li>
-<li>StandardSocketOption.SO_REUSEADDR,true);  </li>
-<li>this.serverSocketChannel  </li>
-<li>.setOption(  </li>
-<li>StandardSocketOption.SO_RCVBUF,16/*1024);  </li>
-</ol>
-<p>this.serverSocketChannel</p>
-<pre><code>                .setOption(
-                        StandardSocketOption.SO_REUSEADDR,true);
-</code></pre><p>this.serverSocketChannel
-                    .setOption(</p>
-<pre><code>                        StandardSocketOption.SO_RCVBUF,16/*1024);
-
-
-绑定本地地址：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>this.serverSocketChannel  </li>
-<li>.bind(new InetSocketAddress(&quot;localhost&quot;,8080), 100);  </li>
-</ol>
-<p>this.serverSocketChannel</p>
-<pre><code>                .bind(new InetSocketAddress(&quot;localhost&quot;,8080), 100);
-
-
-
-其中的100用于指定等待连接的队列大小(backlog)。完了吗？还没有，最重要的**监听**工作还没开始，监听端口是为了等待连接上来以便accept产生一个AsynchronousSocketChannel来表示一个新建立的连接，因此需要发起一个accept调用，调用是异步的，操作系统将在连接建立后，将最后的结果——**AsynchronousSocketChannel**返回给你：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public void pendingAccept() {  </li>
-<li>if (this.started &amp;&amp; this.serverSocketChannel.isOpen()) {  </li>
-<li>this.acceptFuture = this.serverSocketChannel.accept(null,  </li>
-<li>new AcceptCompletionHandler());  </li>
-<li></li>
-<li>} else {  </li>
-<li>throw new IllegalStateException(&quot;Controller has been closed&quot;);  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>public void pendingAccept() {</p>
-<pre><code>    if (this.started &amp;&amp; this.serverSocketChannel.isOpen()) {
-        this.acceptFuture = this.serverSocketChannel.accept(null,
-
-                new AcceptCompletionHandler());
-
-
-    } else {
-        throw new IllegalStateException(&quot;Controller has been closed&quot;);
-
-    }
-}
-</code></pre><p>   注意，重复的accept调用将会抛出PendingAcceptException，后文提到的read和write也是如此。accept方法的第一个参数是你想传给CompletionHandler的attchment，第二个参数就是注册的用于回调的CompletionHandler，最后返回结果Future<AsynchronousSocketChannel>。你可以对future做处理，这里采用更推荐的方式就是注册一个CompletionHandler。那么accept的CompletionHandler中做些什么工作呢？显然一个赤裸裸的 AsynchronousSocketChannel是不够的，我们需要将它封装成session，一个session表示一个连接（mina里就叫 IoSession了），里面带了一个缓冲的消息队列以及一些其他资源等。在连接建立后，除非你的服务器只准备接受一个连接，不然你需要在后面<strong>继续调用pendingAccept来发起另一个accept请求</strong>：</p>
-<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>private final class AcceptCompletionHandler implements  </li>
-<li>CompletionHandler<AsynchronousSocketChannel, Object> {  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void cancelled(Object attachment) {  </li>
-<li>logger.warn(&quot;Accept operation was canceled&quot;);  </li>
-<li>}  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void completed(AsynchronousSocketChannel socketChannel,  </li>
-<li>Object attachment) {  </li>
-<li>try {  </li>
-<li>logger.debug(&quot;Accept connection from &quot;  </li>
-<li><ul>
-<li>socketChannel.getRemoteAddress());  </li>
-</ul>
-</li>
-<li>configureChannel(socketChannel);  </li>
-<li>AioSessionConfig sessionConfig = buildSessionConfig(socketChannel);  </li>
-<li>Session session = new AioTCPSession(sessionConfig,  </li>
-<li>AioTCPController.this.configuration  </li>
-<li>.getSessionReadBufferSize(),  </li>
-<li>AioTCPController.this.sessionTimeout);  </li>
-<li>session.start();  </li>
-<li>registerSession(session);  </li>
-<li>} catch (Exception e) {  </li>
-<li>e.printStackTrace();  </li>
-<li>logger.error(&quot;Accept error&quot;, e);  </li>
-<li>notifyException(e);  </li>
-<li>} finally {  </li>
-<li><strong>pendingAccept</strong>();  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void failed(Throwable exc, Object attachment) {  </li>
-<li>logger.error(&quot;Accept error&quot;, exc);  </li>
-<li>try {  </li>
-<li>notifyException(exc);  </li>
-<li>} finally {  </li>
-<li><strong>pendingAccept</strong>();  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>private final class AcceptCompletionHandler implements</p>
-<pre><code>        CompletionHandler&lt;AsynchronousSocketChannel, Object&gt; {
-
-
-    @Override
-    public void cancelled(Object attachment) {
-
-        logger.warn(&quot;Accept operation was canceled&quot;);
-    }
-
-
-    @Override
-
-    public void completed(AsynchronousSocketChannel socketChannel,
-            Object attachment) {
-
-        try {
-            logger.debug(&quot;Accept connection from &quot;
-
-                    + socketChannel.getRemoteAddress());
-            configureChannel(socketChannel);
-
-            AioSessionConfig sessionConfig = buildSessionConfig(socketChannel);
-            Session session = new AioTCPSession(sessionConfig,
-
-                    AioTCPController.this.configuration
-                            .getSessionReadBufferSize(),
-
-                    AioTCPController.this.sessionTimeout);
-            session.start();
-
-            registerSession(session);
-        } catch (Exception e) {
-
-            e.printStackTrace();
-            logger.error(&quot;Accept error&quot;, e);
-
-            notifyException(e);
-        } finally {
-</code></pre><p><strong>pendingAccept</strong></p>
-<p>();
-            }</p>
-<pre><code>    }
-
-
-    @Override
-    public void failed(Throwable exc, Object attachment) {
-
-        logger.error(&quot;Accept error&quot;, exc);
-        try {
-
-            notifyException(exc);
-        } finally {
-</code></pre><p><strong>pendingAccept</strong></p>
-<p>();
-            }</p>
-<pre><code>    }
-}
-
-
-
-注意到了吧，我们在failed和completed方法中在最后都调用了pendingAccept来继续发起accept调用，等待新的连接上来。有的同学可能要说了，这样搞是不是递归调用，会不会堆栈溢出？实际上不会，因为发起accept调用的线程与CompletionHandler回调的线程并非同一个，不是一个上下文中，两者之间没有耦合关系。要注意到，CompletionHandler的回调共用的是 AsynchronousChannelGroup绑定的线程池，因此**千万别在CompletionHandler回调方法中调用阻塞或者长时间的操作**，例如sleep，回调方法最好能支持超时，防止线程池耗尽。
-连接建立后，怎么读和写呢？回忆下在nonblocking nio框架中，连接建立后的第一件事是干什么？注册OP_READ事件等待socket可读。异步IO也同样如此，连接建立后马上发起一个异步read调用，等待socket可读，这个是Session.start方法中所做的事情：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public class AioTCPSession {  </li>
-<li>protected void start0() {  </li>
-<li>pendingRead();  </li>
-<li>}  </li>
-<li></li>
-<li>protected final void pendingRead() {  </li>
-<li>if (!isClosed() &amp;&amp; this.asynchronousSocketChannel.isOpen()) {  </li>
-<li>if (!this.readBuffer.hasRemaining()) {  </li>
-<li>this.readBuffer = ByteBufferUtils  </li>
-<li>.increaseBufferCapatity(this.readBuffer);  </li>
-<li>}  </li>
-<li>this.readFuture = this.asynchronousSocketChannel.read(  </li>
-<li>this.readBuffer, this, this.readCompletionHandler);  </li>
-<li>} else {  </li>
-<li>throw new IllegalStateException(  </li>
-<li>&quot;Session Or Channel has been closed&quot;);  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>}  </li>
-</ol>
-<p>public class AioTCPSession {</p>
-<pre><code>protected void start0() {
-    pendingRead();
-
-}
-
-
-protected final void pendingRead() {
-    if (!isClosed() &amp;&amp; this.asynchronousSocketChannel.isOpen()) {
-
-        if (!this.readBuffer.hasRemaining()) {
-            this.readBuffer = ByteBufferUtils
-
-                    .increaseBufferCapatity(this.readBuffer);
-        }
-
-        this.readFuture = this.asynchronousSocketChannel.read(
-                this.readBuffer, this, this.readCompletionHandler);
-
-    } else {
-        throw new IllegalStateException(
-
-                &quot;Session Or Channel has been closed&quot;);
-    }
-
-}
-</code></pre><p>}</p>
-<pre><code> AsynchronousSocketChannel的read调用与AsynchronousServerSocketChannel的accept调用类似，同样是非阻塞的，返回结果也是一个Future，但是写的结果是整数，表示写入了多少字节，因此read调用返回的是 **Future&lt;Integer&gt;**，方法的第一个参数是读的缓冲区，操作系统将IO读到数据拷贝到这个缓冲区，第二个参数是传递给 CompletionHandler的attchment，第三个参数就是注册的用于回调的CompletionHandler。这里保存了read的结果Future，这是为了在关闭连接的时候能够主动取消调用，accept也是如此。现在可以看看read的CompletionHandler的实现：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public final class ReadCompletionHandler implements  </li>
-<li>CompletionHandler<Integer, AbstractAioSession> {  </li>
-<li></li>
-<li>private static final Logger log = LoggerFactory  </li>
-<li>.getLogger(ReadCompletionHandler.class);  </li>
-<li>protected final AioTCPController controller;  </li>
-<li></li>
-<li>public ReadCompletionHandler(AioTCPController controller) {  </li>
-<li>this.controller = controller;  </li>
-<li>}  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void cancelled(AbstractAioSession session) {  </li>
-<li>log.warn(&quot;Session(&quot; + session.getRemoteSocketAddress()  </li>
-<li><ul>
-<li>&quot;) read operation was canceled&quot;);  </li>
-</ul>
-</li>
-<li>}  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void completed(Integer result, AbstractAioSession session) {  </li>
-<li>if (log.isDebugEnabled())  </li>
-<li>log.debug(&quot;Session(&quot; + session.getRemoteSocketAddress()  </li>
-<li><ul>
-<li>&quot;) read +&quot; + result + &quot; bytes&quot;);  </li>
-</ul>
-</li>
-<li>if (result &lt; 0) {  </li>
-<li>session.close();  </li>
-<li>return;  </li>
-<li>}  </li>
-<li>try {  </li>
-<li>if (result &gt; 0) {  </li>
-<li>session.updateTimeStamp();  </li>
-<li>session.getReadBuffer().flip();  </li>
-<li>session.decode();  </li>
-<li>session.getReadBuffer().compact();  </li>
-<li>}  </li>
-<li>} finally {  </li>
-<li>try {  </li>
-<li>session.pendingRead();  </li>
-<li>} catch (IOException e) {  </li>
-<li>session.onException(e);  </li>
-<li>session.close();  </li>
-<li>}  </li>
-<li>}  </li>
-<li>controller.checkSessionTimeout();  </li>
-<li>}  </li>
-<li></li>
-<li>@Override  </li>
-<li>public void failed(Throwable exc, AbstractAioSession session) {  </li>
-<li>log.error(&quot;Session read error&quot;, exc);  </li>
-<li>session.onException(exc);  </li>
-<li>session.close();  </li>
-<li>}  </li>
-<li></li>
-<li>}  </li>
-</ol>
-<p>public final class ReadCompletionHandler implements</p>
-<pre><code>    CompletionHandler&lt;Integer, AbstractAioSession&gt; {
-
-
-private static final Logger log = LoggerFactory
-        .getLogger(ReadCompletionHandler.class);
-
-protected final AioTCPController controller;
-
-
-public ReadCompletionHandler(AioTCPController controller) {
-    this.controller = controller;
-
-}
-
-
-@Override
-public void cancelled(AbstractAioSession session) {
-
-    log.warn(&quot;Session(&quot; + session.getRemoteSocketAddress()
-            + &quot;) read operation was canceled&quot;);
-
-}
-
-
-@Override
-public void completed(Integer result, AbstractAioSession session) {
-
-    if (log.isDebugEnabled())
-        log.debug(&quot;Session(&quot; + session.getRemoteSocketAddress()
-
-                + &quot;) read +&quot; + result + &quot; bytes&quot;);
-    if (result &lt; 0) {
-
-        session.close();
-        return;
-
-    }
-    try {
-
-        if (result &gt; 0) {
-            session.updateTimeStamp();
-
-            session.getReadBuffer().flip();
-            session.decode();
-
-            session.getReadBuffer().compact();
-        }
-
-    } finally {
-        try {
-
-            session.pendingRead();
-        } catch (IOException e) {
-
-            session.onException(e);
-            session.close();
-
-        }
-    }
-
-    controller.checkSessionTimeout();
-}
-
-
-@Override
-
-public void failed(Throwable exc, AbstractAioSession session) {
-    log.error(&quot;Session read error&quot;, exc);
-
-    session.onException(exc);
-    session.close();
-
-}
-</code></pre><p>}</p>
-<p>   如果IO读失败，会返回失败产生的异常，这种情况下我们就主动关闭连接，通过session.close()方法，这个方法干了两件事情：关闭channel和取消read调用：</p>
-<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>if (null != this.readFuture) {  </li>
-<li>this.readFuture.cancel(true);  </li>
-<li>}  </li>
-<li>this.asynchronousSocketChannel.close();  </li>
-</ol>
-<p>if (null != this.readFuture) {</p>
-<pre><code>        this.readFuture.cancel(true);
-    }
-</code></pre><p>this.asynchronousSocketChannel.close();</p>
-<p>   在读成功的情况下，我们还需要判断结果result是否小于0，<strong>如果小于0就表示对端关闭了</strong>，这种情况下我们也主动关闭连接并返回。如果读到一定字节，也就是result大于0的情况下，我们就尝试从读缓冲区中decode出消息，并派发给业务处理器的回调方法，最终<strong>通过pendingRead继续发起read调用等待socket的下一次可读</strong>。可见，我们并不需要自己去调用channel来进行IO读，而是操作系统帮你直接读到了缓冲区，然后给你一个结果表示读入了多少字节，你处理这个结果即可。而nonblocking IO框架中，是reactor通知用户线程socket可读了，然后用户线程自己去调用read进行实际读操作。这里还有个需要注意的地方，就是decode出来的消息的派发给业务处理器工作最好交给一个线程池来处理，避免阻塞group绑定的线程池。</p>
-<p>   IO写的操作与此类似，不过通常写的话我们会在session中关联一个缓冲队列来处理，没有完全写入或者等待写入的消息都存放在队列中，队列为空的情况下发起write调用：</p>
-<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>protected void write0(WriteMessage message) {  </li>
-<li>boolean needWrite = false;  </li>
-<li>synchronized (this.writeQueue) {  </li>
-<li>needWrite = this.writeQueue.isEmpty();  </li>
-<li>this.writeQueue.offer(message);  </li>
-<li>}  </li>
-<li>if (needWrite) {  </li>
-<li>pendingWrite(message);  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>protected final void pendingWrite(WriteMessage message) {  </li>
-<li>message = preprocessWriteMessage(message);  </li>
-<li>if (!isClosed() &amp;&amp; this.asynchronousSocketChannel.isOpen()) {  </li>
-<li>this.asynchronousSocketChannel.write(message.getWriteBuffer(),  </li>
-<li>this, this.writeCompletionHandler);  </li>
-<li>} else {  </li>
-<li>throw new IllegalStateException(  </li>
-<li>&quot;Session Or Channel has been closed&quot;);  </li>
-<li>}  </li>
-<li><p>}  </p>
-<p>protected void write0(WriteMessage message) {</p>
-<p>   boolean needWrite = false;
-   synchronized (this.writeQueue) {</p>
-<pre><code>   needWrite = this.writeQueue.isEmpty();
-   this.writeQueue.offer(message);
-</code></pre><p>   }
-   if (needWrite) {</p>
-<pre><code>   pendingWrite(message);
-</code></pre><p>   }</p>
-<p>}</p>
-</li>
-</ol>
-<pre><code>protected final void pendingWrite(WriteMessage message) {
-    message = preprocessWriteMessage(message);
-
-    if (!isClosed() &amp;&amp; this.asynchronousSocketChannel.isOpen()) {
-        this.asynchronousSocketChannel.write(message.getWriteBuffer(),
-
-                this, this.writeCompletionHandler);
-    } else {
-
-        throw new IllegalStateException(
-                &quot;Session Or Channel has been closed&quot;);
-
-    }
-}
-
-
-
-
-write调用返回的结果与read一样是一个Future&lt;Integer&gt;，而write的CompletionHandler处理的核心逻辑大概是这样：
-</code></pre><p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>@Override  </li>
-<li>public void completed(Integer result, AbstractAioSession session) {  </li>
-<li>if (log.isDebugEnabled())  </li>
-<li>log.debug(&quot;Session(&quot; + session.getRemoteSocketAddress()  </li>
-<li><ul>
-<li>&quot;) writen &quot; + result + &quot; bytes&quot;);  </li>
-</ul>
-</li>
-<li></li>
-<li>WriteMessage writeMessage;  </li>
-<li>Queue<WriteMessage> writeQueue = session.getWriteQueue();  </li>
-<li>synchronized (writeQueue) {  </li>
-<li>writeMessage = writeQueue.peek();  </li>
-<li>if (writeMessage.getWriteBuffer() == null  </li>
-<li>|| !writeMessage.getWriteBuffer().hasRemaining()) {  </li>
-<li>writeQueue.remove();  </li>
-<li>if (writeMessage.getWriteFuture() != null) {  </li>
-<li>writeMessage.getWriteFuture().setResult(Boolean.TRUE);  </li>
-<li>}  </li>
-<li>try {  </li>
-<li>session.getHandler().onMessageSent(session,  </li>
-<li>writeMessage.getMessage());  </li>
-<li>} catch (Exception e) {  </li>
-<li>session.onException(e);  </li>
-<li>}  </li>
-<li>writeMessage = writeQueue.peek();  </li>
-<li>}  </li>
-<li>}  </li>
-<li>if (writeMessage != null) {  </li>
-<li>try {  </li>
-<li>session.pendingWrite(writeMessage);  </li>
-<li>} catch (IOException e) {  </li>
-<li>session.onException(e);  </li>
-<li>session.close();  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>@Override</p>
-<pre><code>public void completed(Integer result, AbstractAioSession session) {
-    if (log.isDebugEnabled())
-
-        log.debug(&quot;Session(&quot; + session.getRemoteSocketAddress()
-                + &quot;) writen &quot; + result + &quot; bytes&quot;);
-
-
-    WriteMessage writeMessage;
-
-    Queue&lt;WriteMessage&gt; writeQueue = session.getWriteQueue();
-    synchronized (writeQueue) {
-
-        writeMessage = writeQueue.peek();
-        if (writeMessage.getWriteBuffer() == null
-
-                || !writeMessage.getWriteBuffer().hasRemaining()) {
-            writeQueue.remove();
-
-            if (writeMessage.getWriteFuture() != null) {
-                writeMessage.getWriteFuture().setResult(Boolean.TRUE);
-
-            }
-            try {
-
-                session.getHandler().onMessageSent(session,
-                        writeMessage.getMessage());
-
-            } catch (Exception e) {
-                session.onException(e);
-
-            }
-            writeMessage = writeQueue.peek();
-
-        }
-    }
-
-    if (writeMessage != null) {
-        try {
-
-            session.pendingWrite(writeMessage);
-        } catch (IOException e) {
-
-            session.onException(e);
-            session.close();
-
-        }
-    }
-
-}
-</code></pre><p>   compete方法中的result就是实际写入的字节数，然后我们判断消息的缓冲区是否还有剩余，如果没有就将消息从队列中移除，如果队列中还有消息，那么继续发起write调用。
-   重复一下，这里引用的代码都是yanf4j aio分支中的源码，感兴趣的朋友可以直接check out出来看看: <a href="http://yanf4j.googlecode.com/svn/branches/yanf4j-aio" target="_blank"><a href="http://yanf4j.googlecode.com/svn/branches/yanf4j-aio">http://yanf4j.googlecode.com/svn/branches/yanf4j-aio</a></a>。
-   在引入了aio之后，java对于网络层的支持已经非常完善，该有的都有了，java也已经成为服务器开发的首选语言之一。java的弱项在于对内存的管理上，由于这一切都交给了GC，因此在高性能的网络服务器上还是Cpp的天下。java这种单一堆模型比之erlang的进程内堆模型还是有差距，很难做到高效的垃圾回收和细粒度的内存管理。
-   这里仅仅是介绍了aio开发的核心流程，对于一个网络框架来说，还需要考虑超时的处理、缓冲buffer的处理、业务层和网络层的切分、可扩展性、性能的可调性以及一定的通用性要求。</p>
-<p>刚看了一点，第一行有个错别字，不是IO服用，是复用，嘿嘿
-老大终于开始介绍java NIO了。。
-还有一点，看过一些源代码，对事件驱动还是理解不深，也请老大介绍下把。
-rain2005 写道</p>
-<p>刚看了一点，第一行有个错别字，不是IO服用，是复用，嘿嘿
-老大终于开始介绍java NIO了。。
-还有一点，看过一些源代码，对事件驱动还是理解不深，也请老大介绍下把。
-多谢指正，关于事件机制，我会画个UML图可能比较清晰</p>
-<p>上面提到几个类 怎么在jdk6中没发现那
-是不是要下载第三方框架
-正好想研究一下
-收藏啦
-xly_971223 写道</p>
-<p>上面提到几个类 怎么在jdk6中没发现那
-是不是要下载第三方框架
-正好想研究一下
-收藏啦
-aio是在jdk7引入的，请下载JDK7 preview1版本，或者open jdk</p>
-<p>dennis_zane 写道</p>
-<p>xly_971223 写道</p>
-<p>上面提到几个类 怎么在jdk6中没发现那
-是不是要下载第三方框架
-正好想研究一下
-收藏啦
-aio是在jdk7引入的，请下载JDK7 preview1版本，或者open jdk
-是不是这个意思。
-jdk7以前的nio是非阻塞IO,操作系统底层比方说linux,是用IO复用select实现的
-jdk7用的是真正的异步IO,操作系统底层是用epoll实现的
-是这样的吗？
-rain2005 写道</p>
-<p>dennis_zane 写道</p>
-<p>xly_971223 写道</p>
-<p>上面提到几个类 怎么在jdk6中没发现那
-是不是要下载第三方框架
-正好想研究一下
-收藏啦
-aio是在jdk7引入的，请下载JDK7 preview1版本，或者open jdk
-是不是这个意思。
-jdk7以前的nio是非阻塞IO,操作系统底层比方说linux,是用IO复用select实现的
-jdk7用的是真正的异步IO,操作系统底层是用epoll实现的
-是这样的吗？
-epoll也不是异步IO啊。异步IO在linux上目前仅限于文件系统，并且还没有得到广泛应用，很多平台都没有这玩意。
-java aio在windows上是利用iocp实现的，这是真正的异步IO。而在linux上，是通过epoll模拟的。</p>
-<p>楼主，你好，我写的server是p2p的应用，恩，想请教一下，因为我对数据库这一块的操作并不是特别的多，基本是客户自己也有很多是服务器，不知道是否可以在事件响应的当前线程来对数据库操作呢？前提是把线程池子的数目设的大些？或者用那个JDK提供的可自己增加线程的池子？
-因为如果在弄个池子来处理数据库的话，担心线程太多了，
-你如果时间充分心情好的话，真希望你能讲解一下和别人公用一台服务器（主机）是怎么用的呢。。。
-总之要谢谢你对这段代码的讲解，kang sang mi da
-wujingsong 写道</p>
-<p>楼主，你好，我写的server是p2p的应用，恩，想请教一下，因为我对数据库这一块的操作并不是特别的多，基本是客户自己也有很多是服务器，不知道是否可以在事件响应的当前线程来对数据库操作呢？前提是把线程池子的数目设的大些？或者用那个JDK提供的可自己增加线程的池子？
-因为如果在弄个池子来处理数据库的话，担心线程太多了，
-你如果时间充分心情好的话，真希望你能讲解一下和别人公用一台服务器（主机）是怎么用的呢。。。
-总之要谢谢你对这段代码的讲解，kang sang mi da
-按我的经验来说，类似数据库操作这样的IO操作，最好还是起个线程池来处理，防止阻塞框架内部的处理线程。如果这样的操作不是特别多，那么直接在响应线程处理也未尝不可，还是建议你自己搞两个版本性能对比一下。
-wujingsong 写道</p>
-<p>和别人公用一台是怎么用的呢？
-我还真不明白什么意思，现在我们的应用基本都跑在虚拟机上了，几个应用跑在一个物理机上。虚拟化我不懂，就不乱弹了。</p>
-<p>kang sa mi da,谢谢楼主的回复,确实是个很好的建议.
-闲聊啊,今天无意看到Google 上一个音乐的图片链接,点进去后,看到了一个不大容易理解的词,说什么
-            &quot;在南中国常年保持高收听率的极有个性的节目&quot;,
-费解.....广东那边是这么叫的吗?不大可能吧..</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/NIO/">NIO</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/NIO/" class="label label-success">NIO</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-NIO--Javaaio异步网络IO初探/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-NIO--Javaaio异步网络IO初探" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-SQL_Java--Java中，获得ResultSet的总行数与总列数/">Java中，获得ResultSet的总行数与总列数</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-SQL_Java--Java中，获得ResultSet的总行数与总列数/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-resultset-">Java中，获得ResultSet的总行数与总列数</h1>
-<h2 id="java-resultset-">Java中，获得ResultSet的总行数与总列数</h2>
-<p>在Java中，获得ResultSet的总行数的方法有以下几种。</p>
-<p><strong>第一种：利用ResultSet的getRow方法来获得ResultSet的总行数</strong></p>
-<p>Statement stmt = con.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE,ResultSet.CONCUR_UPDATABLE);
-ResultSet rset = stmt.executeQuery(&quot;select /* from yourTableName&quot;);
-rset.last();
-int rowCount = rset.getRow(); //获得ResultSet的总行数</p>
-<p><strong>第二种：利用循环ResultSet的元素来获得ResultSet的总行数</strong></p>
-<p>ResultSet rset = stmt.executeQuery(&quot;select /* from yourTableName&quot;);
-int rowCount = 0;
-while(rset.next()) {
-rowCount++;
-}</p>
-<p>rowCount就是ResultSet的总行数。</p>
-<p><strong>第三种：利用sql语句中的count函数获得ResultSet的总行数</strong></p>
-<p>ResultSet rset = stmt.executeQuery(&quot;select count(/*) totalCount from yourTableName&quot;);
-int rowCount = 0;
-if(rset.next()) {
-rowCount=rset .getInt(&quot;totalCount &quot;);
-}</p>
-<p>rowCount就是ResultSet的总行数。</p>
-<ul>
-<li>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/*</li>
-<li>Java中获得ResultSet的总列数是非常简单事情，因为Java中ResultSet提供了ResultSetMetaData工具类,ResultSetMetaData 是ResultSet的元数据的集合说明。</li>
-</ul>
-<p>java获得ResultSet总列数的代码如下：</p>
-<p>Statement stmt = con.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE,ResultSet.CONCUR_UPDATABLE);
-ResultSet rset = stmt.executeQuery(&quot;select /* from yourtable&quot;);
-ResultSetMetaData rsmd = rset.getMetaData() ;
-int columnCount = rsmd.getColumnCount();</p>
-<p>columnCount 就是ResultSet的总列数。</p>
+        <h1 id="java-annotation-">Java Annotation详解</h1>
+<p><strong>元数据的作用</strong></p>
+<p>如果要对于元数据的作用进行分类，目前还没有明确的定义，不过我们可以根据它所起的作用，大致可分为三类：</p>
+<p>l          编写文档：通过代码里标识的元数据生成文档。</p>
+<p>l          代码分析：通过代码里标识的元数据对代码进行分析。</p>
+<p>l          编译检查：通过代码里标识的元数据让编译器能实现基本的编译检查。</p>
+<p><strong>基本内置注释</strong></p>
+<pre><code>**@Override** 注释能实现编译时检查，你可以为你的方法添加该注释，以声明该方法是用于覆盖父类中的方法。如果该方法不是覆盖父类的方法，将会在编译时报错。例如我们为某类重写toString() 方法却写成了tostring() ，并且我们为该方法添加了@Override 注释；
+
+ **@Deprecated** 的作用是对不应该在使用的方法添加注释，当编程人员使用这些方法时，将会在编译时显示提示信息，它与javadoc 里的 @deprecated 标记有相同的功能，准确的说，它还不如javadoc @deprecated ，因为它不支持参数，
+</code></pre><p>注意：要了解详细信息，请使用 -Xlint:deprecation 重新编译。</p>
+<pre><code>**@SuppressWarnings** 与前两个注释有所不同，你需要添加一个参数才能正确使用，这些参数值都是已经定义好了的，我们选择性的使用就好了，参数如下：
+</code></pre><p>deprecation   使用了过时的类或方法时的警告</p>
+<p>unchecked  执行了未检查的转换时的警告，例如当使用集合时没有用泛型 (Generics) 来指定集合保存的类型</p>
+<p>fallthrough   当 Switch 程序块直接通往下一种情况而没有 Break 时的警告</p>
+<p>path   在类路径、源文件路径等中有不存在的路径时的警告</p>
+<p>serial 当在可序列化的类上缺少 serialVersionUID 定义时的警告</p>
+<p>finally    任何 finally 子句不能正常完成时的警告</p>
+<p>all 关于以上所有情况的警告</p>
+<p>注意：要了解详细信息，请使用 -Xlint:unchecked 重新编译。</p>
 <hr>
-<p>例子：
-Statement stmt = conn.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE,  ResultSet.CONCUR_READ_ONLY);   ResultSet rs = stmt.executeQuery(sql);   rs.last();   int length = rs.getRow();</p>
-<p>如上，length的值，就是行数了。如果在获取了行数后，还需要继续使用当前数据集rs，则需要rs.beforeFirst();一次，将游标回到初始位置。
-ResultSet.TYPE_SCROLL_INSENSITIVE 结果集的游标可以上下移动，当数据库变化时，当前结果集不变。
-ResultSet.CONCUR_READ_ONLY 不能用结果集更新数据库中的表。</p>
-<p>此外，给出Statement创建时的其他说明：
-通用格式为：Statement stmt=con.createStatement(int type，int concurrency);我们在访问数据库的时候，在读取返回结果的时候，可能要前后移动指针，比如我们先计算有多少条信息，这是我们就需要把指针移到最后来计算，然后再把指针移到最前面，逐条读取，有时我们只需要逐条读取就可以了。还有就是有只我们只需要读取数据，为了不破坏数据，我们可采用只读模式，有时我们需要望数据库里添加记录，这是我们就要采用可更新数据库的模式。
-下面是所有参数的说明：
-参数 int type
-ResultSet.TYPE_FORWORD_ONLY 结果集的游标只能向下滚动。
-ResultSet.TYPE_SCROLL_INSENSITIVE 结果集的游标可以上下移动，当数据库变化时，当前结果集不变。
-ResultSet.TYPE_SCROLL_SENSITIVE 返回可滚动的结果集，当数据库变化时，当前结果集同步改变。</p>
-<p>参数 int concurrency</p>
-<p>ResultSet.CONCUR_READ_ONLY 不能用结果集更新数据库中的表。
-ResultSet.CONCUR_UPDATETABLE 能用结果集更新数据库中的表。</p>
-<p>此外，当我们使用ResultSet re=stmt.executeQuery(SQL语句）查询后，我们可以使用下列方法获得信息：</p>
-<p>public boolean previous() 将游标向上移动，该方法返回boolean型数据，当移到结果集第一行之前时，返回false。
-public void beforeFirst 将游标移动到结果集的初始位置，即在第一行之前。
-public void afterLast() 将游标移到结果集最后一行之后。
-public void first() 将游标移到结果集的第一行。
-public void last() 将游标移到结果集的最后一行。
-public boolean isAfterLast() 判断游标是否在最后一行之后。
-public boolean isBeforeFirst() 判断游标是否在第一行之前。
-public boolean ifFirst() 判断游标是否指向结果集的第一行。
-public boolean isLast() 判断游标是否指向结果集的最后一行。
-public int getRow() 得到当前游标所指向行的行号，行号从1开始，如果结果集没有行，返回0。
-public boolean absolute(int row) 将游标移到参数row指定的行号。如果row取负值，就是倒数的行数，absolute(-1)表示移到最后一行，absolute(-2)表示移到倒数第2行。当移动到第一行前面或最后一行的后面时，该方法返回false。</p>
-<p>ResultSetMetaData rsmd = this.rs.getMetaData();
-this.columnCount = rsmd.getColumnCount();</p>
+<p><strong>定制注释类型</strong></p>
+<pre><code>好的，让我们创建一个自己的注释类型（annotation type ）吧。它类似于新创建一个接口类文件，但为了区分，我们需要将它声明为@interface, 如下例：
+</code></pre><p>public @interface NewAnnotation {</p>
+<p>}</p>
+<p><strong>使用定制的注释类型</strong></p>
+<pre><code>我们已经成功地创建好一个注释类型NewAnnotation ，现在让我们来尝试使用它吧，如果你还记得本文的第一部分，那你应该知道他是一个标记注释，使用也很容易，如下例：
+</code></pre><p>public class AnnotationTest {</p>
+<pre><code>@NewAnnotation
 
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/SQL_Java/">SQL_Java</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/SQL_Java/" class="label label-success">SQL_Java</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-SQL_Java--Java中，获得ResultSet的总行数与总列数/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-SQL_Java--Java中，获得ResultSet的总行数与总列数" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
+public static void main(String[] args) {
 
 
 
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency37-并发总结/">深入浅出 Java Concurrency (37)</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency37-并发总结/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-java-concurrency-37-">深入浅出 Java Concurrency (37): 并发总结</h1>
-<p><a href="http://www.blogjava.net/xylz/archive/2011/12/29/365149.html" target="_blank">深入浅出 Java Concurrency (37): 并发总结 part 1 死锁与活跃度</a></p>
-<h1 id="-">死锁与活跃度</h1>
-<p>前面谈了很多并发的特性和工具，但是大部分都是和锁有关的。我们使用锁来保证线程安全，但是这也会引起一些问题。</p>
-<ul>
-<li>锁顺序死锁(lock-ordering deadlock)：多个线程试图通过不同的顺序获得多个相同的资源，则发生的循环锁依赖现象。</li>
-<li>动态的锁顺序死锁（Dynamic Lock Order Deadlocks）：多个线程通过传递不同的锁造成的锁顺序死锁问题。</li>
-<li>资源死锁（Resource Deadlocks）：线程间相互等待对方持有的锁，并且谁都不会释放自己持有的锁发生的死锁。也就是说当现场持有和等待的目标成为资源，就有可能发生此死锁。这和锁顺序死锁不一样的地方是，竞争的资源之间并没有严格先后顺序，仅仅是相互依赖而已。</li>
-</ul>
-<h2 id="-">锁顺序死锁</h2>
-<p>最经典的锁顺序死锁就是LeftRightDeadLock.
-<img src="" alt=""></p>
-<p>public class LeftRightDeadLock {
-    final Object left = new Object();
-    final Object right = new Object();
-    public void doLeftRight() {
-        synchronized (left) {
-            synchronized (right) {
-                execute1();
-            }
-        }
-    }
-    public void doRightLeft() {
-        synchronized (right) {
-            synchronized (left) {
-                execute2();
-            }
-        }
-    }
-    private void execute2() {
-    }
-    private void execute1() {
-    }
-}</p>
-<p>这个例子很简单，当两个线程分别获取到left和right锁时，互相等待对方释放其对应的锁，很显然双方都陷入了绝境。</p>
-<h2 id="-">动态的锁顺序死锁</h2>
-<p>与锁顺序死锁不同的是动态的锁顺序死锁只是将静态的锁变成了动态锁。 一个比较生动的例子是这样的。</p>
-<p>public void transferMoney(Account fromAccount,//
-        Account toAccount,//
-        int amount
-        ) {
-    synchronized (fromAccount) {
-        synchronized (toAccount) {
-            fromAccount.decr(amount);
-            toAccount.add(amount);
-        }
-    }
 }
-当我们银行转账的时候，我们期望锁住双方的账户，这样保证是原子操作。 看起来很合理，可是如果双方同时在进行转账操作，那么就有可能发生死锁的可能性。</p>
-<p>很显然，动态的锁顺序死锁的解决方案应该看起来和锁顺序死锁解决方案差不多。 但是一个比较特殊的解决方式是纠正这种顺序。 例如可以调整成这样：
-Object lock = new Object();
-public void transferMoney(Account fromAccount,//
-        Account toAccount,//
-        int amount
-        ) {
-    int order = fromAccount.name().compareTo(toAccount.name());
-    Object lockFirst = order&gt;0?toAccount:fromAccount;
-    Object lockSecond = order&gt;0?fromAccount:toAccount;
-    if(order==0){
-        synchronized(lock){
-            synchronized(lockFirst){
-                synchronized(lockSecond){
-                    //do work
-                }
-            }
-        }
-    }else{
-        synchronized(lockFirst){
-            synchronized(lockSecond){
-                //do work
-            }
-        }
-    }
-}</p>
-<p>这个挺有意思的。比较两个账户的顺序，保证此两个账户之间的传递顺序总是按照某一种锁的顺序进行的， 即使多个线程同时发生，也会遵循一次操作完释放完锁才进行下一次操作的顺序，从而可以避免死锁的发生。</p>
-<h2 id="-">资源死锁</h2>
-<p>资源死锁比较容易理解，就是需要的资源远远大于已有的资源，这样就有可能线程间的资源竞争从而发生死锁。 一个简单的场景是，应用同时从两个连接池中获取资源，两个线程都在等待对方释放连接池的资源以便能够同时获取 到所需要的资源，从而发生死锁。</p>
-<p>资源死锁除了这种资源之间的直接依赖死锁外，还有一种叫线程饥饿死锁（thread-starvation deadlock）。 严格意义上讲，这种死锁更像是活跃度问题。例如提交到线程池中的任务由于总是不能够抢到线程从而一直不被执行， 造成任务的“假死”状况。</p>
-<p>除了上述几种问题外，还有协作对象间的死锁以及开发调用的问题。这个描述起来会比较困难，也不容易看出死锁来。</p>
-<h1 id="-">避免和解决死锁</h1>
-<p>通常发生死锁后程序难以自恢复。但也不是不能避免的。 有一些技巧和原则是可以降低死锁可能性的。</p>
-<p>最简单的原则是尽可能的减少锁的范围。锁的范围越小，那么竞争的可能性也越小。 尽快释放锁也有助于避开锁顺序。如果一个线程每次最多只能够获取一个锁，那么就不会产生锁顺序死锁。尽管应用中比较困难，但是减少锁的边界有助于分析程序的设计和简化流程。 减少锁之间的依赖以及遵守获取锁的顺序是避免锁顺序死锁的有效途径。</p>
-<p>另外尽可能的使用定时的锁有助于程序从死锁中自恢复。 例如对于上述顺序锁死锁中，使用定时锁很容易解决此问题。</p>
-<p>public void doLeftRight() throws Exception {
-    boolean over = false;
-    while (!over) {
-        if (left.tryLock(1, TimeUnit.SECONDS)) {
-            try {
-                if (right.tryLock(1, TimeUnit.SECONDS)) {
-                    try {
-                        execute1();
-                    } finally {
-                        right.unlock();
-                        over = true;
-                    }
-                }
-            } finally {
-                left.unlock();
-            }
-        }
-    }
+</code></pre><p>}</p>
+<p><strong>添加变量</strong></p>
+<pre><code>J2SE 5.0 里，我们了解到内置注释@SuppressWarnings() 是可以使用参数的，那么自定义注释能不能定义参数个数和类型呢？答案是当然可以，但参数类型只允许为基本类型、String 、Class 、枚举类型等，并且参数不能为空。我们来扩展NewAnnotation ，为之添加一个String 类型的参数，示例代码如下：
+</code></pre><p>public @interface NewAnnotation {</p>
+<pre><code>String value();
+</code></pre><p>}</p>
+<pre><code>使用该注释的代码如下：正如你所看到的，该注释的使用有两种写法，这也是在之前的文章里所提到过的。如果你忘了这是怎么回事，那就再去翻翻吧。
+</code></pre><p>public class AnnotationTest {</p>
+<pre><code>@NewAnnotation(&quot;Just a Test.&quot;)
+
+public static void main(String[] args) {
+
+    sayHello();
+
 }
-public void doRightLeft() throws Exception {
-    boolean over = false;
-    while (!over) {
-        if (right.tryLock(1, TimeUnit.SECONDS)) {
-            try {
-                if (left.tryLock(1, TimeUnit.SECONDS)) {
-                    try {
-                        execute2();
-                    } finally {
-                        left.unlock();
-                        over = true;
-                    }
-                }
-            } finally {
-                right.unlock();
-            }
-        }
-    }
+
+
+
+@NewAnnotation(value=&quot;Hello NUMEN.&quot;)
+
+public static void sayHello() {
+
+    // do something
+
 }
-看起来代码会比较复杂，但是这是避免死锁的有效方式。</p>
-<h1 id="-">活跃度</h1>
-<p>对于多线程来说，死锁是非常严重的系统问题，必须修正。除了死锁，遇到很多的就是活跃度问题了。 活跃度问题主要包括：饥饿，丢失信号，和活锁等。</p>
-<h2 id="-">饥饿</h2>
-<p>饥饿是指线程需要访问的资源被永久拒绝，以至于不能在继续进行。 比如说：某个权重比较低的线程可能一直不能够抢到CPU周期，从而一直不能够被执行。</p>
-<p>也有一些场景是比较容易理解的。对于一个固定大小的连接池中，如果连接一直被用完，那么过多的任务可能由于一直无法抢占到连接从而不能够被执行。这也是饥饿的一种表现。</p>
-<p>对于饥饿而言，就需要平衡资源的竞争，例如线程的优先级，任务的权重，执行的周期等等。总之，当空闲的资源较多的情况下，发生饥饿的可能性就越小。</p>
-<h2 id="-">弱响应性</h2>
-<p>弱响应是指，线程最终能够得到有效的执行，只是等待的响应时间较长。 最常见的莫过于GUI的“假死”了。很多时候GUI的响应只是为了等待后台数据的处理，如果线程协调不好，很有可能就会发生“失去响应”的现象。</p>
-<p>另外，和饥饿很类似的情况。如果一个线程长时间独占一个锁，那么其它需要此锁的线程很有可能就会被迫等待。</p>
-<h2 id="-">活锁</h2>
-<p>活锁（Livelock）是指线程虽然没有被阻塞，但是由于某种条件不满足，一直尝试重试，却终是失败。</p>
-<p>考虑一个场景，我们从队列中拿出一个任务来执行，如果任务执行失败，那么将任务重新加入队列，继续执行。假如任务总是执行失败，或者某种依赖的条件总是不满足，那么线程一直在繁忙却没有任何结果。</p>
-<p>错误的循环引用和判断也有可能导致活锁。当某些条件总是不能满足的时候，可能陷入死循环的境地。</p>
-<p>线程间的协同也有可能导致活锁。例如如果两个线程发生了某些条件的碰撞后重新执行，那么如果再次尝试后依然发生了碰撞，长此下去就有可能发生活锁。</p>
-<p>解决活锁的一种方案是对重试机制引入一些随机性。例如如果检测到冲突，那么就暂停随机的一定时间进行重试。这回大大减少碰撞的可能性。</p>
-<p>另外为了避免可能的死锁，适当加入一定的重试次数也是有效的解决办法。尽管这在业务上会引起一些复杂的逻辑处理。
-来源： <a href="[http://www.blogjava.net/xylz/archive/2011/12/29/365149.html](http://www.blogjava.net/xylz/archive/2011/12/29/365149.html)">[http://www.blogjava.net/xylz/archive/2011/12/29/365149.html](http://www.blogjava.net/xylz/archive/2011/12/29/365149.html)</a> </p>
-<h1 id="-">常见的并发场景</h1>
-<h2 id="-">线程池</h2>
-<p>并发最常见用于线程池，显然使用线程池可以有效的提高吞吐量。</p>
-<p>最常见、比较复杂一个场景是Web容器的线程池。Web容器使用线程池同步或者异步处理HTTP请求，同时这也可以有效的复用HTTP连接，降低资源申请的开销。通常我们认为HTTP请求时非常昂贵的，并且也是比较耗费资源和性能的，所以线程池在这里就扮演了非常重要的角色。</p>
-<p>在<a href="http://www.blogjava.net/xylz/archive/2010/12/19/341098.html" target="_blank">线程池</a>的章节中非常详细的讨论了线程池的原理和使用，同时也提到了，线程池的配置和参数对性能的影响是巨大的。不尽如此，受限于资源（机器的性能、网络的带宽等等）、依赖的服务，客户端的响应速度等，线程池的威力也不会一直增长。达到了线程池的瓶颈后，性能和吞吐量都会大幅度降低。</p>
-<p>一直增加机器的性能或者增大线程的个数，并不一定能有效的提高吞吐量。高并发的情况下，机器的负载会大幅提升，这时候机器的稳定性、服务的可靠性都会下降。</p>
-<p>尽管如此，线程池依然是提高吞吐量的一个有效措施，配合合适的参数能够有效的充分利用资源，提高资源的利用率。</p>
-<h2 id="-">任务队列</h2>
-<p>除了线程池是比较发杂的并发场景外，<a href="http://www.blogjava.net/xylz/archive/2010/07/21/326723.html" target="_blank">任务队列</a>也是一个不错的并发工具。JDK内部有大量的队列（Queue),这些工具不仅能够方便使用，提高生产力，也能够进行组合适应于不同的场景。即使线程池内部，也是用了任务队列来处理任务的积压，平衡资源的消耗。</p>
-<p>安全的任务队列能够有效的平衡机器的复杂，抵消由于峰值和波动带来的不稳定，有效提高服务的可靠性。同时任务队列的处理也有助于统计和分析服务的状况。</p>
-<p>任务队列也可以在多个线程之间传递数据，有助于并行处理任务。例如经典的“生产者-消费者”模型就可以有效的提高多个线程的并行处理能力。在IO延时比较大的服务中尤其有效。 我最喜欢的一个案例是导数据是，一个线程负责往固定大小的任务队列中压入大量的数据，队列满了以后就暂停，另外几个线程负责从任务队列中获取数据并消费。这将串行的“生产-消费”，变成了并行的“生产-消费”。实践证明极大的节省任务处理时间。</p>
-<h2 id="-">异步处理</h2>
-<p>线程池也是异步处理的一种表现形式，除此之外，使用异步处理的目的也是为了提高服务的处理速度。 例如AOP的一个例子就是使用切面来记录日志，如果说我们要远程收集日志，显然不希望由于收集日志而影响服务本身。这时候就将日志收集的过程进行异步处理。</p>
-<p>如今大量的开源组件都喜欢使用异步处理来提高IO的效率，某些不需要同步返回的操作使用异步处理后能够有效的提高吞吐量。</p>
-<p>当然，异步也不总是令人满意的，也会有相应的问题。例如引入异步设计后的复杂性，线程中断后的处理机制，失败后的处理策略，产生的消息比消费的还快时怎么办，关闭程序时如何关闭异步处理逻辑等等。这都会增加系统的复杂性。</p>
-<p>尽管大量的服务、业务使用异步来处理，但是很显然需要有保障机制能够保证异步处理的逻辑正确性。如果认为异步处理的任务不是特别重要，或者说主业务不能因为附属业务的逻辑出错而崩溃，那么使用异步处理是正确的选择。</p>
-<h2 id="-">同步操作</h2>
-<p>并发操作的同时还需要维护数据的一致性，或多或少的会涉及到同步操作。正确的使用原子操作，合理的使用独占锁和读写锁也是一个很大的挑战。</p>
-<p>线程间的协调与通信，尤其是状态的同步都是比较困难的。我们看到线程池<a href="http://www.blogjava.net/xylz/archive/2011/01/18/343183.html" target="_blank">ThreadPoolExecutor</a>的实现为了解决各个线程的执行状态，引入的很多的同步操作。线程越来越多的情况下，同步的成本会越来越高，同时也有可能引入死锁的情况。</p>
-<p>尽管如此，单个JVM内部的多线程同步还是比较容易控制的。JDK内部也提供了大量的工具来方便完成数据的同步。例如<a href="http://www.blogjava.net/xylz/archive/2010/07/05/325274.html" target="_blank">Lock</a>/<a href="http://www.blogjava.net/xylz/archive/2010/07/08/325540.html" target="_blank">Condition</a>/<a href="http://www.blogjava.net/xylz/archive/2010/07/09/325612.html" target="_blank">CountDownLatch</a>/<a href="http://www.blogjava.net/xylz/archive/2010/07/12/325913.html" target="_blank">CyclicBarrier</a>/<a href="http://www.blogjava.net/xylz/archive/2010/07/13/326021.html" target="_blank">Semaphore</a>/<a href="http://www.blogjava.net/xylz/archive/2010/11/22/338733.html" target="_blank">Exchanger</a>等等。</p>
-<h2 id="-">分布式锁</h2>
-<p>分布式的并发问题更难以处理，根据<a href="http://en.wikipedia.org/wiki/CAP_theorem" target="_blank">CAP</a>的原理，基本上没有一个至善至美的方案。 分布式资源协调使用分布式锁是一个不错的选择。<a href="http://blog.nosqlfan.com/html/1038.html" target="_blank">Google的分布式锁</a>（建立在BigTable之上），<a href="http://zookeeper.apache.org/doc/r3.3.2/zookeeperOver.html" target="_blank">Zookeeper的分布式锁</a>，甚至简单的利用<a href="http://memcached.org/" target="_blank">memcache</a>的add操作或者<a href="http://redis.io/" target="_blank">redis</a>的setnx操作建立伪分布式锁也可以解决类似的问题。
-来源： <a href="[http://www.blogjava.net/xylz/archive/2011/12/29/367480.html](http://www.blogjava.net/xylz/archive/2011/12/29/367480.html)">[http://www.blogjava.net/xylz/archive/2011/12/29/367480.html](http://www.blogjava.net/xylz/archive/2011/12/29/367480.html)</a> </p>
-<h1 id="-">常见的并发陷阱</h1>
-<h2 id="volatile">volatile</h2>
-<p>volatile只能强调数据的可见性，并不能保证原子操作和线程安全，因此volatile不是万能的。参考<a href="http://www.blogjava.net/xylz/archive/2010/07/03/325168.html" target="_blank">指令重排序</a></p>
-<p>volatile最常见于下面两种场景。</p>
-<p>a. 循环检测机制
-volatile boolean done = false;
-<img src="" alt="">
-    while( ! done ){
-        dosomething();
-    }</p>
-<p>b. 单例模型 （<a href="http://www.blogjava.net/xylz/archive/2009/12/18/306622.html%ef%bc%89" target="_blank"><a href="http://www.blogjava.net/xylz/archive/2009/12/18/306622.html）">http://www.blogjava.net/xylz/archive/2009/12/18/306622.html）</a>
-</a></p>
-<p><a href="http://www.blogjava.net/xylz/archive/2009/12/18/306622.html%ef%bc%89">public class DoubleLockSingleton {
-    private static volatile DoubleLockSingleton instance = null;
-    private DoubleLockSingleton() {
+</code></pre><p>}</p>
+<p><strong>为变量赋默认值</strong></p>
+<pre><code>我们对Java 自定义注释的了解正在不断的增多，不过我们还需要更过，在该条目里我们将了解到如何为变量设置默认值，我们再对NewAnnotaion 进行修改，看看它会变成什么样子，不仅参数多了几个，连类名也变了。但还是很容易理解的，我们先定义一个枚举类型，然后将参数设置为该枚举类型，并赋予默认值。
+</code></pre><p>public @interface Greeting {</p>
+<pre><code>public enum FontColor {RED, GREEN, BLUE};
+
+
+
+String name();
+
+
+
+String content();
+
+
+
+FontColor fontColor() default FontColor.BLUE;
+</code></pre><p>}</p>
+<p><strong>限定注释使用范围</strong></p>
+<pre><code>当我们的自定义注释不断的增多也比较复杂时，就会导致有些开发人员使用错误，主要表现在不该使用该注释的地方使用。为此，Java 提供了一个ElementType 枚举类型来控制每个注释的使用范围，比如说某些注释只能用于普通方法，而不能用于构造函数等。下面是Java 定义的ElementType 枚举：
+</code></pre><p>package java.lang.annotation;</p>
+<p>public enum ElementType {</p>
+<p>  TYPE,         // Class, interface, or enum (but not annotation)</p>
+<p>  FIELD,        // Field (including enumerated values)</p>
+<p>  METHOD,       // Method (does not include constructors)</p>
+<p>  PARAMETER,        // Method parameter</p>
+<p>  CONSTRUCTOR,      // Constructor</p>
+<p>  LOCAL_VARIABLE,   // Local variable or catch clause</p>
+<p>  ANNOTATION_TYPE,  // Annotation Types (meta-annotations)</p>
+<p>  PACKAGE       // Java package</p>
+<p>}</p>
+<pre><code>下面我们来修改Greeting 注释，为之添加限定范围的语句，这里我们称它为目标（Target ）使用方法也很简单，如下：
+</code></pre><p>@Target( { ElementType.METHOD, ElementType.CONSTRUCTOR })</p>
+<p>public @interface Greeting {</p>
+<p>}</p>
+<p>正如上面代码所展示的，我们只允许Greeting 注释标注在普通方法和构造函数上，使用在包申明、类名等时，会提示错误信息。</p>
+<p><strong>注释保持性策略</strong></p>
+<p>public enum RetentionPolicy {</p>
+<p>  SOURCE,// Annotation is discarded by the compiler</p>
+<p>  CLASS,// Annotation is stored in the class file, but ignored by the VM</p>
+<p>  RUNTIME// Annotation is stored in the class file and read by the VM</p>
+<p>}</p>
+<pre><code>RetentionPolicy 的使用方法与ElementType 类似，简单代码示例如下：
+</code></pre><p>@Retention(RetentionPolicy.RUNTIME)</p>
+<p>@Target( { ElementType.METHOD, ElementType.CONSTRUCTOR })</p>
+<p><strong>文档化功能</strong></p>
+<pre><code>Java 提供的Documented 元注释跟Javadoc 的作用是差不多的，其实它存在的好处是开发人员可以定制Javadoc 不支持的文档属性，并在开发中应用。它的使用跟前两个也是一样的，简单代码示例如下：
+</code></pre><p>@Documented</p>
+<p>@Retention(RetentionPolicy.RUNTIME)</p>
+<p>@Target( { ElementType.METHOD, ElementType.CONSTRUCTOR })</p>
+<p>public @interface Greeting {</p>
+<p>}</p>
+<p>值得大家注意的是，如果你要使用@Documented 元注释，你就得为该注释设置RetentionPolicy.RUNTIME 保持性策略。为什么这样做，应该比较容易理解，这里就不提了。</p>
+<p><a href=""><em>**</em></a> </p>
+<p><a href=""><strong>标注继承</strong></a></p>
+<p><a href="">继承应该是Java 提供的最复杂的一个元注释了，它的作用是控制注释是否会影响到子类，简单代码示例如下：</a></p>
+<p><a href="">@Inherited</a></p>
+<p><a href="">@Documented</a></p>
+<p><a href="">@Retention(RetentionPolicy.RUNTIME)</a></p>
+<p><a href="">@Target( { ElementType.METHOD, ElementType.CONSTRUCTOR })</a></p>
+<p><a href="">public @interface Greeting {</a></p>
+<p><a href="">}</a></p>
+<p><a href=""></a> </p>
+<p><a href=""><strong>读取注释信息</strong></a></p>
+<p><a href="">    </a><a href="">当我们想读取某个注释信息时，我们是在运行时通过反射来实现的，如果你对元注释还有点印象，那你应该记得我们需要将保持性策略设置为RUNTIME ，也就是说只有注释标记了@Retention(RetentionPolicy.RUNTIME)</a><a href="">的，我们才能通过反射来获得相关信息，下面的例子我们将沿用前面几篇文章中出现的代码，并实现读取AnnotationTest 类所有方法标记的注释并打印到控制台。好了，我们来看看是如何实现的吧：</a></p>
+<p><a href="">public class AnnotationIntro {</a></p>
+<p><a href=""></a> </p>
+<p><a href="">    public static void main(String[] args) throws Exception {</a></p>
+<p><a href=""></a> </p>
+<p><a href="">        Method[] methods = Class.forName(</a></p>
+<p><a href="">                &quot;com.gelc.annotation.demo.customize.AnnotationTest&quot;)</a></p>
+<p><a href="">                .getDeclaredMethods();</a></p>
+<p><a href="">        Annotation[] annotations;</a></p>
+<p><a href=""></a> </p>
+<p><a href="">        for (Method method : methods) {</a></p>
+<p><a href="">            annotations = method.getAnnotations();</a></p>
+<p><a href="">            for (Annotation annotation : annotations) {</a></p>
+<p><a href="">                System.out.println(method.getName() + &quot; : &quot;</a></p>
+<p><a href="">                        + annotation.annotationType().getName());</a></p>
+<p><a href="">            }</a></p>
+<p>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em>/<em>/</em></p>
+<p>Annotation(注解)</p>
+<p>Annotation对于程序运行没有影响,它的目的在于对编译器或分析工具说明程序的某些信息,您可以
+在包,类,方法,域成员等加上Annotation.每一个Annotation对应于一个实际的Annotation类型.</p>
+<p>1  限定Override父类方法@Override
+  java.lang.Override是J2SE5.0中标准的Annotation类型之一,它对编译器说明某个方法必须
+  是重写父类中的方法.编译器得知这项信息后,在编译程序时如果发现被@Override标示的方法
+  并非重写父类中的方法,就会报告错误.
+  例,如果在定义新类时想要重写Object类的toString()方法,可能会写成这样:
+  public class CustomClass{
+    public String ToString(){
+      return &quot;customObject&quot;;
     }
-    public static DoubleLockSingleton getInstance() {
-        if (instance == null) {
-            synchronized (DoubleLockSingleton.class) {
-                if (instance == null) {
-                    instance = new DoubleLockSingleton();
-                }
-            }
-        }
-        return instance;
+  }
+  在编写toString()方法时,因为输入错误或其他的疏忽,将之写成ToString()了,编译这个类时
+  并不会出现任何的错误,编译器不会知道您是想重写toString()方法,只会以为是定义了一个新
+  的ToString()方法.
+  可以使用java.lang.Override这个Annotation类型,在方法上加一个@Override的Annotation
+  这可以告诉编译器现在定义的这个方法,必须是重写父类中的同包方法.
+  public class CustomClass{
+    @Override
+    public String toString(){
+      return &quot;coustomObject&quot;;
     }
-}</a></p>
-<h2 id="synchronized-lock">synchronized/Lock</h2>
-<p>看起来Lock有更好的性能以及更灵活的控制，是否完全可以替换synchronized？</p>
-<p>在<a href="http://www.blogjava.net/xylz/archive/2010/07/16/326246.html" target="_blank">锁的一些其它问题</a>中说过，synchronized的性能随着JDK版本的升级会越来越高，而Lock优化的空间受限于CPU的性能，很有限。另外JDK内部的工具（线程转储）对synchronized是有一些支持的（方便发现死锁等），而对Lock是没有任何支持的。</p>
-<p>也就说简单的逻辑使用synchronized完全没有问题，随着机器的性能的提高，这点开销是可以忽略的。而且从代码结构上讲是更简单的。简单就是美。</p>
-<p>对于复杂的逻辑，如果涉及到读写锁、条件变量、更高的吞吐量以及更灵活、动态的用法，那么就可以考虑使用Lock。当然这里尤其需要注意Lock的正确用法。
-Lock lock = <img src="" alt="">
-lock.lock();
-try{
-    //do something
-}finally{
-    lock.unlock();
-}</p>
-<p>一定要将Lock的释放放入finally块中，否则一旦发生异常或者逻辑跳转，很有可能会导致锁没有释放，从而发生死锁。而且这种死锁是难以排查的。</p>
-<p>如果需要synchronized无法做到的尝试锁机制，或者说担心发生死锁无法自恢复，那么使用tryLock()是一个比较明智的选择的。
-Lock lock = <img src="" alt="">
-if(lock.tryLock()){
-    try{
-        //do something
-    }finally{
-        lock.unlock();
+  }
+  java.lang.Override是一个Marker Annotation,简单地说就是用于标示的Annotation，Annotation
+  名称本身表示了要给工具程序的信息。</p>
+<p>  Annotation类型与Annotation实际上是有区分的，Annotation是Annotation类型的实例，例如
+  @Override是个Annotation，它是java.lang.Override类型的一个实例，一个文件中可以有很多
+  个@Override，但它们都是属于java.lang.Override类型。</p>
+<p>2  标示方法为Deprecated @Deprecated
+  java.lang.Deprecated也是J2SE5.0中标准的Annotation类型之一。它对编译器说明某个方法已经不
+  建议使用。如果有开发人员试图使用或重写被@Deprecated标示的方法，编译器必须提出警告信息。
+  例:
+  public class Something{
+    @Deprecated
+    public Something getSomething(){
+      return new Something();
     }
-}</p>
-<p>甚至可以使用获取锁一段时间内超时的机制Lock.tryLock(long,TimeUnit)。 锁的使用可以参考前面文章的描述和建议。</p>
-<h2 id="-">锁的边界</h2>
-<p>一个流行的错误是这样的。
-ConcurrentMap<String,String> map = new ConcurrentHashMap<String,String>();
-if(!map.containsKey(key)){
-    map.put(key,value);
-}</p>
-<p>看起来很合理的，对于一个线程安全的Map实现，要存取一个不重复的结果，先检测是否存在然后加入。 其实我们知道两个原子操作和在一起的指令序列不代表就是线程安全的。 割裂的多个原子操作放在一起在多线程的情况下就有可能发生错误。</p>
-<p>实际上ConcurrentMap提供了putIfAbsent(K, V)的“原子操作”机制，这等价于下面的逻辑：
-if(map.containsKey(key)){
-    return map.get(key);
-}else{
-    return map.put(k,v);
-}</p>
-<p>除了putIfAbsent还有replace(K, V)以及replace(K, V, V)两种机制来完成组合的操作。</p>
-<p>提到Map，这里有一篇谈<a href="http://www.blogjava.net/xylz/archive/2009/12/18/306602.html" target="_blank">HashMap读写并发</a>的问题。</p>
-<h2 id="-">构造函数启动线程</h2>
-<p>下面的实例是在构造函数中启动一个线程。
-public class Runner{
-   int x,y;
-   Thread thread;
-   public Runner(){
-      this.x=1;
-      this.y=2;
-      this.thread=new MyThread();
-      this.thread.start();
+  }
+  如果有人试图在继承这个类后重写getSomething()方法，或是在程序中调用getSomething()方法，
+  则编译时会有警告出现。
+  java.lang.Deprecated也是一个Marker Annotation简单地说就是用于标示。</p>
+<p>3  抑制编译器警告 @SuppressWarnings
+  java.lang.SuppressWarnings也是J2SE5.0中标准的Annotation类型之一，它对编译器说明某个方法
+  中若有警告信息，则加以抑制，不用在编译完成后出现警告。
+  例:
+  public class SomeClass2{
+    @SuppressWarnings(value={&quot;unchecked&quot;});
+    public void doSomething(){
+      Map map = new HashMap();
+      map.put(&quot;some&quot;,&quot;thing&quot;);
+    }
+  }
+  这样，编译器将忽略unchecked的警告，您也可以指定忽略多个警告:
+  @SuppressWarnings(value={&quot;unchecked&quot;,&quot;deprecation&quot;});
+  @SuppressWarnings是所谓的Single-Value Annotation，因为这样的Annotation只有一个成员，称为
+  value成员，可在使用Annotation时作额外的信息指定。</p>
+<p>自定义Annotation类型
+  可以自定义Annotation类型，并使用这些自定义的Annotation类型在程序代码中使用Annotation，这些
+  Annotation将提供信息给程序代码分析工具。
+  首先来看看如何定义Marker Annotation，也就是Annotation名称本身即提供信息。对于程序分析工具来
+  说，主要是检查是否有Marker Annotation的出现,并做出对应的动作。要定义一个Annotation所需的动作
+  ,就类似于定义一个接口，只不过使用的是@interface。
+  例:
+  public @interface Debug{}</p>
+<p>  由于是一个Marker Annotation，所以没有任何成员在Annotation定义中。编译完成后，就可以在程序代码
+  中使用这个Annotation。
+  public class SomeObject{
+    @Debug
+    public void doSomething(){
+     ......
+    }
+  }
+  稍后可以看到如何在Java程序中取得Annotation信息(因为要使用Java程序取得信息，所以还要设置
+  meta-annotation,稍后会谈到）</p>
+<p>  接着来看看如何定义一个Single-Value Annotation，它只有一个Value成员。
+  例:
+  public @interface UnitTest{
+    String value();
+  }
+  实际上定义了value()方法，编译器在编译时会自动产生一个value的域成员,接着在使用UnitTest 
+  Annotation时要指定值。如：
+  public class MathTool{
+   @UnitTest(&quot;GCD&quot;)
+   public static int gcdOf(int num1,int num2){
+     ...............
    }
-}</p>
-<p>这里可能存在的陷阱是如果此类被继承，那么启动的线程可能无法正确读取子类的初始化操作。</p>
-<p>因此一个简单的原则是，禁止在构造函数中启动线程，可以考虑但是提供一个方法来启动线程。如果非要这么做，最好将类设置为final，禁止继承。</p>
-<h2 id="-">丢失通知的问题</h2>
-<p><a href="http://www.blogjava.net/xylz/archive/2011/09/05/326988.html" target="_blank">这篇文章</a>里面提到过notify丢失通知的问题。</p>
-<p>对于wait/notify/notifyAll以及await/singal/singalAll，如果不确定到底是否能够正确的收到消息，担心丢失通知，简单一点就是总是通知所有。</p>
-<p>如果担心只收到一次消息，使用循环一直监听是不错的选择。</p>
-<p>非常主用性能的系统，可能就需要区分到底是通知单个还是通知所有的挂起者。</p>
-<h2 id="-">线程数</h2>
-<p>并不是线程数越多越好，在下一篇文章里面会具体了解下性能和可伸缩性。 简单的说，线程数多少没有一个固定的结论，受限于CPU的内核数，IO的性能以及依赖的服务等等。因此选择一个合适的线程数有助于提高吞吐量。</p>
-<p>对于CPU密集型应用，线程数和CPU的内核数一致有助于提高吞吐量，所有CPU都很繁忙，效率就很高。 对于IO密集型应用，线程数受限于IO的性能，某些时候单线程可能比多线程效率更高。但通常情况下适当提高线程数，有利于提高网络IO的效率，因为我们总是认为网络IO的效率比较低。</p>
-<p>对于线程池而言，选择合适的线程数以及任务队列是提高线程池效率的手段。
-public ThreadPoolExecutor(
-    int corePoolSize,
-    int maximumPoolSize,
-    long keepAliveTime,
-    TimeUnit unit,
-    BlockingQueue<Runnable> workQueue,
-    ThreadFactory threadFactory,
-    RejectedExecutionHandler handler)</p>
-<p>对于线程池来说，如果任务总是有积压，那么可以适当提高corePoolSize大小；如果机器负载较低，那么可以适当提高maximumPoolSize的大小；任务队列不长的情况下减小keepAliveTime的时间有助于降低负载；另外任务队列的长度以及任务队列的<a href="http://www.blogjava.net/xylz/archive/2011/01/18/343183.html" target="_blank">拒绝策略</a>也会对任务的处理有一些影响。
-来源： <a href="[http://www.blogjava.net/xylz/archive/2011/12/30/367592.html](http://www.blogjava.net/xylz/archive/2011/12/30/367592.html)">[http://www.blogjava.net/xylz/archive/2011/12/30/367592.html](http://www.blogjava.net/xylz/archive/2011/12/30/367592.html)</a> </p>
-<h1 id="-">性能与伸缩性</h1>
-<p>使用线程的一种说法是为了提高性能。多线程可以使程序充分利用闲置的资源，提高资源的利用率，同时能够并行处理任务，提高系统的响应性。 但是很显然，引入线程的同时也引入了系统的复杂性。另外系统的性能并不是总是随着线程数的增加而总是提高。</p>
-<h2 id="-">性能与伸缩性</h2>
-<p>性能的提升通常意味着可以用更少的资源做更多的事情。这里资源是包括我们常说的CPU周期、内存、网络带宽、磁盘IO、数据库、WEB服务等等。 引入多线程可以充分利用多核的优势，充分利用IO阻塞带来的延迟，也可以降低网络开销带来的影响，从而提高单位时间内的响应效率。</p>
-<p>为了提高性能，需要有效的利用我们现有的处理资源，同时也要开拓新的可用资源。例如，对于CPU而言，理想状况下希望CPU能够满负荷工作。当然这里满负荷工作是指做有用的事情，而不是无谓的死循环或者等待。受限于CPU的计算能力，如果CPU达到了极限，那么很显然我们充分利用了计算能力。对于IO而言（内存、磁盘、网络等），如果达到了其对于的带宽，这些资源的利用率也就上去了。理想状况下所有资源的能力都被用完了，那么这个系统的性能达到了最大值。</p>
-<p>为了衡量系统的性能，有一些指标用于定性、定量的分析。例如服务时间、等待时间、吞吐量、效率、可伸缩性、生成量等等。服务时间、等待时间等用于衡量系统的效率，即到底有多快。吞吐量、生成量等用于衡量系统的容量，即能够处理多少数据。除此之外，有效服务时间、中断时间等用于能力系统的可靠性和稳定性等。</p>
-<p>可伸缩性的意思是指增加计算资源，吞吐量和生产量相应得到的改进。 从算法的角度讲，通常用复杂度来衡量其对应的性能。例如时间复杂度、空间复杂度等。</p>
-<h2 id="amdahl-">Amdahl定律</h2>
-<p>并行的任务增加资源显然能够提高性能，但是如果是串行的任务，增加资源并不一定能够得到合理的性能提升。 <a href="http://en.wikipedia.org/wiki/Amdahl%27s_law" target="_blank">Amdahl定律</a>描述的在一个系统中，增加处理器资源对系统行的提升比率。 假定在一个系统中，F是必须串行化执行的比重，N是处理器资源，那么随着N的增加最多增加的加速比：
-<img src="" alt=""></p>
-<p>理论上，当N趋近于无穷大时，加速比最大值无限趋近于1/F。 这意味着如果一个程序的串行化比重为50%，那么并行化后最大加速比为2倍。</p>
-<p>加速比除了可以用于加速的比率外，也可以用于衡量CPU资源的利用率。如果每一个CPU的资源利用率为100%，那么CPU的资源每次翻倍时，加速比也应该翻倍。 事实上，在拥有10个处理器的系统中，程序如果有10%是串行化的，那么最多可以加速1/(0.1+(1-0.1)/10)=5.3倍，换句话说CPU的利用率只用5.3/10=53%。而如果处理器增加到100倍，那么加速比为9.2倍，也就是说CPU的利用率只有个9.3%。</p>
-<p>显然增加CPU的数量并不能提高CPU的利用率。下图描述的是随着CPU的数量增加，不同串行化比重的系统的加速比。
-<img src="" alt=""></p>
-<p>很显然，串行比重越大，增加CPU资源的效果越不明显。</p>
-<h2 id="-">性能提升</h2>
-<p>性能的提升可以从以下几个方面入手。</p>
-<h3 id="-">系统平台的资源利用率</h3>
-<p>一个程序对系统平台的资源利用率是指某一个设备繁忙且服务于此程序的时间占所有时间的比率。从物理学的角度讲类似于有用功的比率。简单的说就是：资源利用率=有效繁忙时间/总耗费时间。</p>
-<p>也就说尽可能的让设备做有用的功，同时榨取其最大值。无用的循环可能会导致CPU 100%的使用率，但不一定是有效的工作。有效性通常难以衡量，通常只能以主观来评估，或者通过被优化的程序的行为来判断是否提高了有效性。</p>
-<h3 id="-">延迟</h3>
-<p>延迟描述的是完成任务所耗费的时间。延迟有时候也成为响应时间。如果有多个并行的操作，那么延迟取决于耗费时间最大的任务。</p>
-<h3 id="-">多处理</h3>
-<p>多处理是指在单一系统上同时执行多个进程或者多个程序的能力。多处理能力的好处是可以提高吞吐量。多处理可以有效利用多核CPU的资源。</p>
-<h3 id="-">多线程</h3>
-<p>多线程描述的是同一个地址空间内同时执行多个线程的过程。这些线程都有不同的执行路径和不同的栈结构。我们说的并发性更多的是指针对线程。</p>
-<h3 id="-">并发性</h3>
-<p>同时执行多个程序或者任务称之为并发。单程序内的多任务处理或者多程序间的多任务处理都认为是并发。</p>
-<h3 id="-">吞吐量</h3>
-<p>吞吐量衡量系统在单位之间内可以完成的工作总量。对于硬件系统而言，吞吐量是物理介质的上限。在没有达到物理介质之前，提高系统的吞吐量也可以大幅度改进性能。同时吞吐量也是衡量性能的一个指标。</p>
-<h3 id="-">瓶颈</h3>
-<p>程序运行过程中性能最差的地方。通常而言，串行的IO、磁盘IO、内存单元分配、网络IO等都可能造成瓶颈。某些使用太频繁的算法也有可能成为瓶颈。</p>
-<h3 id="-">可扩展性</h3>
-<p>这里的可扩展性主要是指程序或系统通过增加可使用的资源而增加性能的能力。</p>
-<h2 id="-">线程开销</h2>
-<p>假设引入的多线程都用于计算，那么性能一定会有很大的提升么？ 其实引入多线程以后也会引入更多的开销。</p>
-<h3 id="-">切换上下文</h3>
-<p>如果可运行的线程数大于CPU的内核数，那么OS会根据一定的调度算法，强行切换正在运行的线程，从而使其它线程能够使用CPU周期。</p>
-<p>切换线程会导致上下文切换。线程的调度会导致CPU需要在操作系统和进程间花费更多的时间片段，这样真正执行应用程序的时间就减少了。另外上下文切换也会导致缓存的频繁进出，对于一个刚被切换的线程来说，可能由于高速缓冲中没有数据而变得更慢，从而导致更多的IO开销。</p>
-<h3 id="-">内存同步</h3>
-<p>不同线程间要进行数据同步，synchronized以及volatile提供的可见性都会导致缓存失效。线程栈之间的数据要和主存进行同步，这些同步有一些小小的开销。如果线程间同时要进行数据同步，那么这些同步的线程可能都会受阻。</p>
-<h3 id="-">阻塞</h3>
-<p>当发生锁竞争时，失败的线程会导致阻塞。通常阻塞的线程可能在JVM内部进行自旋等待，或者被操作系统挂起。自旋等待可能会导致更多的CPU切片浪费，而操作系统挂起则会导致更多的上下文切换。</p>
-<p>了解了性能的提升的几个方面，也了解性能的开销后，应用程序就要根据实际的场景进行取舍和评估。没有一劳永逸的优化方案，不断的进行小范围改进和调整是提高性能的有效手段。当前一些大的架构调整也会导致较大的性能的提升。</p>
-<p>简单的原则是在保证逻辑正确的情况小，找到性能瓶颈，小步改进和优化。</p>
-<h2 id="-">参考资料</h2>
-<ul>
-<li>Amdahl&#39;s law: <a href="http://en.wikipedia.org/wiki/Amdahl%27s_law" target="_blank"><a href="http://en.wikipedia.org/wiki/Amdahl%27s_law">http://en.wikipedia.org/wiki/Amdahl%27s_law</a></a></li>
-<li>Gustafson&#39;s law: <a href="http://en.wikipedia.org/wiki/Gustafson%27s_law" target="_blank"><a href="http://en.wikipedia.org/wiki/Gustafson%27s_law">http://en.wikipedia.org/wiki/Gustafson%27s_law</a></a></li>
-<li>Sun-Ni law: <a href="http://en.wikipedia.org/wiki/Sun-Ni_law" target="_blank"><a href="http://en.wikipedia.org/wiki/Sun-Ni_law">http://en.wikipedia.org/wiki/Sun-Ni_law</a></a></li>
-<li>多核系统中三种典型锁竞争的加速比分析 <a href="http://blog.csdn.net/drzhouweiming/article/details/1800319" target="_blank"><a href="http://blog.csdn.net/drzhouweiming/article/details/1800319">http://blog.csdn.net/drzhouweiming/article/details/1800319</a></a></li>
-<li>阿姆达尔定律和Gustafson定律的等价性 <a href="http://book.51cto.com/art/201004/197506.htm" target="_blank"><a href="http://book.51cto.com/art/201004/197506.htm">http://book.51cto.com/art/201004/197506.htm</a></a>
-来源： <a href="[http://www.blogjava.net/xylz/archive/2011/12/31/367641.html](http://www.blogjava.net/xylz/archive/2011/12/31/367641.html)">[http://www.blogjava.net/xylz/archive/2011/12/31/367641.html](http://www.blogjava.net/xylz/archive/2011/12/31/367641.html)</a> </li>
-</ul>
+  }
+  @UnitTest(&quot;GCD&quot;)实际上是@UnitTest(value=&quot;GCD&quot;)的简便写法,value也可以是数组值。如：
+  public @interface FunctionTest{
+    String[] value();
+  }
+  在使用时，可以写成@FunctionTest({&quot;method1&quot;,&quot;method2&quot;})这样的简便形式。或是
+  @FunctionTest(value={&quot;method1&quot;,&quot;method2&quot;})这样的详细形式.</p>
+<p>  也可以对value成员设置默认值,使用default关键词即可。
+  例:
+  public @interface UnitTest2{
+    String value() default &quot;noMethod&quot;;
+  }
+  这样如果使用@UnitTest2时没有指定value值，则value默认就是noMethod.</p>
+<p>  也可以为Annotation定义额外的成员，以提供额外的信息给分析工具，如：
+  public @interface Process{
+    public enum Current{NONE,REQUIRE,ANALYSIS,DESIGN,SYSTEM};
+    Current current() default Current.NONE;
+    String tester();
+    boolean ok();
+  }
+  运用:
+  public class Application{
+    @process(
+      current = Process.Current.ANALYSIS,
+      tester = &quot;Justin Lin&quot;,
+      ok = true
+    )
+    public void doSomething(){
+      ...........
+    }
+  }
+  当使用@interface自行定义Annotation类型时，实际上是自动继承了
+  java.lang.annotation接口，并由编译器自动完成其他产生的细节，并且在定义Annotation类型时,
+  不能继承其他的Annotation类型或接口.
+  定义Annotation类型时也可以使用包机制来管理类。由于范例所设置的包都是onlyfun.caterpillar,
+  所以可以直接使用Annotation类型名称而不指定包名，但如果是在别的包下使用这些自定义的Annotation
+  ，记得使用import告诉编译器类型的包们置。
+  如:
+  import onlyfun.caterpillar.Debug;
+  public class Test{
+    @Debug
+    public void doTest(){
+      ......
+    }
+  }
+  或是使用完整的Annotation名称.如:
+  public class Test{
+    @onlyfun.caterpillar.Debug
+    public void doTest(){
+      ......
+    }
+  }</p>
+<p>meta-annotation
+  所谓neta-annotation就是Annotation类型的数据，也就是Annotation类型的Annotation。在定义
+  Annotation类型时，为Annotation类型加上Annotation并不奇怪，这可以为处理Annotation类型
+  的分析工具提供更多的信息。</p>
+<p>1  告知编译器如何处理annotation @Retention
+  java.lang.annotation.Retention类型可以在您定义Annotation类型时，指示编译器该如何对待自定
+  义的Annotation类型，编译器默认会将Annotation信息留在.class文件中，但不被虚拟机读取，而仅用
+  于编译器或工具程序运行时提供信息。</p>
+<p>  在使用Retention类型时，需要提供java.lang.annotation.RetentionPolicy的枚举类型。
+  RetentionPolicy的定义如下所示:
+  package java.lang.annotation;
+  public enum RetentionPolicy{
+    SOURCE,//编译器处理完Annotation信息后就没有事了
+    CLASS,//编译器将Annotation存储于class文件中，默认
+    RUNTIME //编译器将Annotation存储于class文件中，可由VM读入</p>
+<p>  }</p>
+<p>  RetentionPolicy为SOURCE的例子是@SuppressWarnings,这个信息的作用仅在编译时期告知
+  编译器来抑制警告，所以不必将这个信息存储在.class文件中。</p>
+<p>  RetentionPolicy为RUNTIME的时机，可以像是您使用Java设计一个程序代码分析工具，您必须让VM能读出
+  Annotation信息，以便在分析程序时使用，搭配反射机制，就可以达到这个目的。\</p>
+<p>  J2SE6.0的java.lang.reflect.AnnotatedElement接口中定义有4个方法:
+  public Annotation getAnnotation(Class annotationType)
+  public Annotation[] getAnnotations();
+  public Annotation[] getDeclaredAnnotations()
+  public boolean isAnnotationPresent(Class annotationType);</p>
+<p>  Class,Constructor,field,Method,Package等类，都实现了AnnotatedElement接口，所以可以从这些
+  类的实例上，分别取得标示于其上的Annotation与相关信息。由于在执行时读取Annotation信息，所以定
+  义Annotation时必须设置RetentionPolicy为RUNTIME,也就是可以在VM中读取Annotation信息。
+  例:
+  package onlyfun.caterpillar;
+  import java.lang.annotation.Retention;
+  import java.lang.annotation.RetentionPllicy;</p>
+<p>  @Retention(RetentionPolicy.RUNTIME)
+  public @interface SomeAnnotation{
+    String value();
+    String name();
+  }
+  由于RetentionPolicy为RUNTIME，编译器在处理SomeAnnotation时，会将Annotation及给定的相关信息
+  编译至.class文件中，并设置为VM可以读出Annotation信息。接下来：
+  package onlyfun.caterpillar;
+  public class SomeClass3{
+    @SomeAnotation{
+      value=&quot;annotation value1&quot;,
+      name=&quot;annotation name1&quot;
+    }
+    public void doSomething(){
+      ......
+    }
+  }</p>
+<p>  现在假设要设计一个源代码分析工具来分析所设计的类，一些分析时所需的信息已经使用Annotation标示于类
+  中了，可以在执行时读取这些Annotation的相关信息。例:</p>
+<p>  package onlyfun.caterpillar;</p>
+<p>  import java.lang.annotation.Annotation;
+  import java.lang.reflect.Method;</p>
+<p>  public class AnalysisApp{
+    public static void main(String [] args) throws NoSuchMethodException{
+      Class<SomeClass3> c = SomeClass3.class;
+      //因为SomeAnnotation标示于doSomething()方法上
+      //所以要取得doSomething()方法的Method实例
+      Method method = c.getMethod(&quot;doSomething&quot;);
+      //如果SomeAnnotation存在
+      if(method.isAnnotationPresent(SomeAnnotation.class){
+        System.out.println(&quot;找到@SomeAnnotation&quot;);
+        //取得SomeAnnotation
+        SomeAnnotation annotation = method.getAnnotation(SomeAnnotation.class);
+        //取得vlaue成员值
+        System.out.println(annotation.value);
+        //取得name成员值
+        System.out.println(annotation.name());
+      }else{
+        System.out.println(&quot;找不到@SomeAnnotation&quot;);
+      }
+      //取得doSomething()方法上所有的Annotation
+      Annotation[] annotations = method.getAnnotations();
+      //显示Annotation名称
+      for(Annotation annotation : annotations){
+        System.out.println(&quot;Annotation名称:&quot;+annotation.annotationType().getName());
+      }
+    }
+  }
+  若Annotation标示于方法上，就要取得方法的Method代表实例，同样的，如果Annotation标示于类或包上,
+  就要分别取得类的Class代表的实例或是包的Package代表的实例。之后可以使用实例上的getAnnotation()
+  等相关方法，以测试是否可取得Annotation或进行其他操作。</p>
+<p>2  限定annotation使用对象 @Target
+  在定义Annotation类型时，使用java.lang.annotation.Target可以定义其适用的时机，在定义时要指定
+  java.lang.annotation.ElementType的枚举值之一。
+  public enum elementType{
+    TYPE,//适用class,interface,enum
+    FIELD,//适用于field
+    METHOD,//适用于method
+    PARAMETER,//适用method上之parameter
+    CONSTRUCTOR,//适用constructor
+    LOCAL_VARIABLE,//适用于区域变量
+    ANNOTATION_TYPE,//适用于annotation类型
+    PACKAGE,//适用于package
+  }</p>
+<p>  举例，假设定义Annotation类型时，要限定它只能适用于构造函数与方法成员，则:
+  package onlyfun.caterpillar;</p>
+<p>  import java.lang.annotation.Target;
+  import java.lang.annotation.ElementType;</p>
+<p>  @Target({ElementType.CONSTRUCTOR,ElementType.METHOD})
+  public @interface MethodAnnotation{}</p>
+<p>  将MethodAnnotation标示于方法之上，如：</p>
+<p>  public class SomeoneClass{
+    @onlyfun.caterpillar.MethodAnnotation
+    public void doSomething(){
+      ......
+    }
+  }</p>
+<p>3  要求为API文件的一部分 @Documented</p>
+<p>  在制作Java Doc文件时，并不会默认将Annotation的数据加入到文件中.Annnotation用于标示程序代码以便
+  分析工具使用相关信息，有时Annotation包括了重要的信息，您也许会想要在用户制作Java Doc文件的同时,
+  也一并将Annotation的信息加入到API文件中。所以在定义Annotation类型时，可以使用
+  java.lang.annotation.Documented.例:</p>
+<p>  package onlyfun.caterpillar;</p>
+<p>  import java.lang.annotation.Documented;
+  import java.lang.annotation.Retention;
+  import java.lang.annotation.RetentionPolicy;</p>
+<p>  @Documented
+  @Retention(RetentionPolicy.RUNTIME)
+  public @interface TwoAnnotation{}</p>
+<p>  使用java.lang.annotation.Documented为定义的Annotation类型加上Annotation时，必须同时使用Retention
+  来指定编译器将信息加入.class文件，并可以由VM读取，也就是要设置RetentionPolicy为RUNTIME。接着可以使
+  用这个Annotation，并产生Java Doc文件,这样可以看到文件中包括了@TwoAnnotation的信息.</p>
+<p>4  子类是否可以继承父类的annotation @Inherited
+  在定义Annotation类型并使用于程序代码上后，默认父类中的Annotation并不会被继承到子类中。可以在定义
+  Annotation类型时加上java.lang.annotation.Inherited类型的Annotation，这让您定义的Annotation类型在
+  被继承后仍可以保留至子类中。
+  例:
+  package onlyfun.caterpillar;</p>
+<p>  import java.lang.annotation.Retention;
+  import java.lang.annotation.RetentionPolicy;
+  import java.lang.annotation.Inherited;</p>
+<p>  @Retention(RetentionPolicy.RUNTIME)
+  @Inherited
+  public @interface ThreeAnnotation{
+    String value();
+    String name();
+  }
+  可以在下面的程序中使用@ThreeAnnotation:
+  public class SomeoneClass{
+    @onlyfun.caterpillar.ThreeAnnotation(
+      value = &quot;unit&quot;,
+      name = &quot;debug1&quot;
+    )
+    public void doSomething(){
+      .....
+    }
+  }
+  如果有一个类继承了SomeoneClass类，则@ThreeAnnotation也会被继承下来。
+来源： <a href="[http://djjchobits.iteye.com/blog/569000](http://djjchobits.iteye.com/blog/569000)">[http://djjchobits.iteye.com/blog/569000](http://djjchobits.iteye.com/blog/569000)</a> </p>
 
       
     </div>
@@ -1237,8 +558,8 @@ public ThreadPoolExecutor(
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_多线程/">Java_多线程</a></li><li><a href="/categories/Java&J2EE/Java_多线程/并发/">并发</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_多线程/" class="label label-success">Java_多线程</a><a href="/tags/并发/" class="label label-info">并发</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency37-并发总结/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_多线程-并发--深入浅出JavaConcurrency37-并发总结" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/java深入分析/">java深入分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/java深入分析/" class="label label-success">java深入分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--JavaAnnotation详解/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-java深入分析--JavaAnnotation详解" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1253,552 +574,353 @@ public ThreadPoolExecutor(
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-NIO--javanio网络编程的一点心得/">java nio网络编程的一点心得</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--Java对存储过程的调用方法/">Java对存储过程的调用方法</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-NIO--javanio网络编程的一点心得/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--Java对存储过程的调用方法/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="java-nio-">java nio网络编程的一点心得</h1>
-<p>前几日用java nio写了一个<a href="http://code.google.com/p/marlon-tools/source/browse/tools/tcpmon/TCPMonitorSelect.java" target="_blank">tcp端口转发小工具</a>，还颇费周折，其中一个原因在于网上资料很混乱，不少还是错误的。这篇文章中我会以一个EchoServer作为例子。先看<a href="http://book.douban.com/subject/1438754/" target="_blank">《Java网络编程》</a>中的写法，这也是在网上颇为常见的一个写法。
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="http://marlonyao.iteye.com/images/icon_star.png" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>public class EchoServer {  </li>
-<li>public static int DEFAULT_PORT = 7777;  </li>
-<li></li>
-<li>public static void main(String[] args) throws IOException {  </li>
-<li>System.out.println(&quot;Listening for connection on port &quot; + DEFAULT_PORT);  </li>
-<li></li>
-<li>Selector selector = Selector.open();  </li>
-<li>initServer(selector);  </li>
-<li></li>
-<li>while (true) {  </li>
-<li>selector.select();  </li>
-<li></li>
-<li>for (Iterator<SelectionKey> itor = selector.selectedKeys().iterator(); itor.hasNext();) {  </li>
-<li>SelectionKey key = (SelectionKey) itor.next();  </li>
-<li>itor.remove();  </li>
-<li>try {  </li>
-<li>if (key.isAcceptable()) {  </li>
-<li>ServerSocketChannel server = (ServerSocketChannel) key.channel();  </li>
-<li>SocketChannel client = server.accept();  </li>
-<li>System.out.println(&quot;Accepted connection from &quot; + client);  </li>
-<li>client.configureBlocking(false);  </li>
-<li>SelectionKey clientKey = client.register(selector, SelectionKey.OP_WRITE|SelectionKey.OP_READ);  </li>
-<li>ByteBuffer buffer = ByteBuffer.allocate(100);  </li>
-<li>clientKey.attach(buffer);  </li>
-<li>}  </li>
-<li>if (key.isReadable()) {  </li>
-<li>SocketChannel client = (SocketChannel) key.channel();  </li>
-<li>ByteBuffer buffer = (ByteBuffer) key.attachment();  </li>
-<li>client.read(buffer);  </li>
-<li>}  </li>
-<li>if (key.isWritable()) {  </li>
-<li>// System.out.println(&quot;is writable...&quot;);  </li>
-<li>SocketChannel client = (SocketChannel) key.channel();  </li>
-<li>ByteBuffer buffer = (ByteBuffer) key.attachment();  </li>
-<li>buffer.flip();  </li>
-<li>client.write(buffer);  </li>
-<li>buffer.compact();  </li>
-<li>}  </li>
-<li>} catch (IOException e) {  </li>
-<li>key.cancel();  </li>
-<li>try { key.channel().close(); } catch (IOException ioe) { }  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>private static void initServer(Selector selector) throws IOException,  </li>
-<li>ClosedChannelException {  </li>
-<li>ServerSocketChannel serverChannel = ServerSocketChannel.open();  </li>
-<li>ServerSocket ss = serverChannel.socket();  </li>
-<li>ss.bind(new InetSocketAddress(DEFAULT_PORT));  </li>
-<li>serverChannel.configureBlocking(false);  </li>
-<li>serverChannel.register(selector, SelectionKey.OP_ACCEPT);  </li>
-<li>}  </li>
-<li>}  </li>
-</ol>
-<p>public class EchoServer {</p>
-<pre><code>public static int DEFAULT_PORT = 7777;
+        <h1 id="java-">Java对存储过程的调用方法</h1>
+<p>一:Java如何实现对存储过程的调用:
+   A:不带输出参数的
+   ---------------不带输出参数的----------------------------------
+create procedure getsum
+@n int =0&lt;--此处为参数--&gt;
+as
+declare @sum int&lt;--定义变量--&gt;
+declare @i int
+set @sum=0
+set @i=0
+while @i&lt;=@n begin
+set @sum=@sum+@i
+set @i=@i+1
+end
+print &#39;the sum is &#39;+ltrim(rtrim(str(@sum)))</p>
+<p>--------------在SQL中执行:--------------------
+   exec getsum 100</p>
+<p>------------在JAVA中调用:---------------------
+   JAVA可以调用   但是在JAVA程序却不能去显示该存储过程的结果 因为上面的存储
+   过程的参数类型int 传递方式是in(按值)方式
+   import java.sql./*;
+public class ProcedureTest 
+{
+public static void main(String args[]) throws Exception
+{
+   //加载驱动
+   DriverManager.registerDriver(new sun.jdbc.odbc.JdbcOdbcDriver());
+   //获得连接
+   Connection conn=DriverManager.getConnection(&quot;jdbc:odbc:mydata&quot;,&quot;sa&quot;,&quot;&quot;);</p>
+<pre><code>     //创建存储过程的对象
+     CallableStatement c=conn.prepareCall(&quot;{call getsum(?)}&quot;);
 
+     //给存储过程的参数设置值
+     c.setInt(1,100);   //将第一个参数的值设置成100
 
-public static void main(String[] args) throws IOException {
-    System.out.println(&quot;Listening for connection on port &quot; + DEFAULT_PORT);
-
-
-    Selector selector = Selector.open();
-
-    initServer(selector);
-
-
-    while (true) {
-        selector.select();
-
-
-        for (Iterator&lt;SelectionKey&gt; itor = selector.selectedKeys().iterator(); itor.hasNext();) {
-
-            SelectionKey key = (SelectionKey) itor.next();
-            itor.remove();
-
-            try {
-                if (key.isAcceptable()) {
-
-                    ServerSocketChannel server = (ServerSocketChannel) key.channel();
-                    SocketChannel client = server.accept();
-
-                    System.out.println(&quot;Accepted connection from &quot; + client);
-                    client.configureBlocking(false);
-
-                    SelectionKey clientKey = client.register(selector, SelectionKey.OP_WRITE|SelectionKey.OP_READ);
-                    ByteBuffer buffer = ByteBuffer.allocate(100);
-
-                    clientKey.attach(buffer);
-                }
-
-                if (key.isReadable()) {
-                    SocketChannel client = (SocketChannel) key.channel();
-
-                    ByteBuffer buffer = (ByteBuffer) key.attachment();
-                    client.read(buffer);
-
-                }
-                if (key.isWritable()) {
-
-                    // System.out.println(&quot;is writable...&quot;);
-                    SocketChannel client = (SocketChannel) key.channel();
-
-                    ByteBuffer buffer = (ByteBuffer) key.attachment();
-                    buffer.flip();
-
-                    client.write(buffer);
-                    buffer.compact();
-
-                }
-            } catch (IOException e) {
-
-                key.cancel();
-                try { key.channel().close(); } catch (IOException ioe) { }
-
-            }
-        }
-
-    }
-}
-
-
-private static void initServer(Selector selector) throws IOException,
-
-        ClosedChannelException {
-    ServerSocketChannel serverChannel = ServerSocketChannel.open();
-
-    ServerSocket ss = serverChannel.socket();
-    ss.bind(new InetSocketAddress(DEFAULT_PORT));
-
-    serverChannel.configureBlocking(false);
-    serverChannel.register(selector, SelectionKey.OP_ACCEPT);
-
-}
+     //执行存储过程
+     c.execute();
+     conn.close();
 </code></pre><p>}
-上面的代码很典型，运行结果似乎也是正确的。
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>marlon$ java EchoServer&amp;  </li>
-<li>--&gt; Listening for connection on port 7777  </li>
-<li>marlon$ telnet localhost 7777  </li>
-<li>--&gt; Accepted connection from java.nio.channels.SocketChannel[connected local=/127.0.0.1:7777 remote=/127.0.0.1:65030]  </li>
-<li>hello  </li>
-<li>--&gt; hello  </li>
-<li>world  </li>
-<li>--&gt;world  </li>
-</ol>
-<p>marlon$ java EchoServer&amp;</p>
-<p>--&gt; Listening for connection on port 7777
-marlon$ telnet localhost 7777</p>
-<p>--&gt; Accepted connection from java.nio.channels.SocketChannel[connected local=/127.0.0.1:7777 remote=/127.0.0.1:65030]
-hello</p>
-<p>--&gt; hello
-world</p>
-<p>--&gt;world
-但是如果你这时top用看一下发现服务器进程CPU占用到95%以上，如果取消掉32行的注释，服务器会不断地输出&quot;is writable...&quot;，这是为什么呢？让我们来分析当第一个客户端连接上时发生什么情况。</p>
-<ol>
-<li>在连接之前，服务器第11行：selector.select()处阻塞。当阻塞时，内核会将这个进程调度至休眠状态，此时基本不耗CPU。</li>
-<li>当客户端发起一个连接时，服务器检测到客户端连接，selector.select()返回。selector.selectedKeys()返回已就绪的SelectionKey的集合，在这种情况下，它只包含一个key，也就是53行注册的acceptable key。服务器开始运行17-25行的代码，server.accept()返回代码客户端连接的socket，第22行在socket上注册OP_READ和OP_WRITE，表示当socket可读或者可写时就会通知selector。</li>
-<li>接着服务器又回到第11行，尽管这时客户端还没有任何输入，但这时selector.select()不会阻塞，因为22行在socket注册了写操作，而socket只要send buffer不满就可以写，刚开始send buffer为空，socket总是可以写，于是server.select()立即返回，包含在22行注册的key。由于这个key可写，所以服务器会运行31-38行的代码，但是这时buffer为空，client.write(buffer)没有向socket写任何东西，立即返回0。</li>
-<li><p>接着服务器又回到第11行，由于客户端连接socket可以写，这时selector.select()会立即返回，然后运行31-38行的代码，像步骤3一样，由于buffer为空，服务器没有干任何事又返回到第11行，这样不断循环，服务器却实际没有干事情，却耗大量的CPU。
-从上面的分析可以看出问题在于我们在没有数据可写时就在socket上注册了OP_WRITE，导致服务器浪费大量CPU资源，解决办法是<strong>只有数据可以写时才注册OP_WRITE操作</strong>。上面的版本还不只浪费CPU那么简单，它还可能导致潜在的死锁。虽然死锁在我的机器上没有发生，对于这个简单的例子似乎也不大可能发生在别的机器上，但是在对于复杂的情况，比如我写的端口转发工具中就发生了，这还依赖于jdk的实现。对于上面的EchoServer，出现死锁的场景是这样的：</p>
-</li>
-<li><p>假设服务器已经启动，并且已经有一个客户端与它相连，此时正如上面的分析，服务器在不断地循环做无用功。这时用户在客户端输入&quot;hello&quot;。</p>
-</li>
-<li><p>当服务器运行到第11行：selector.select()时，这时selector.selectedKeys()会返回一个代表客户端连接的key，显然这时客户端socket是既可读又可写，但jdk却并不保证能够检测到两种状态。如果它检测到key既可读又可写，那么服务器会执行26-38行的代码。如果只检测到可读，那么服务器会执行26-30行的代码。如果只检测到可写，那么会执行31－38行的代码。对于前两种情况，不会造成死锁，因为当执行完29行，buffer会读到用户输入的内容，下次再运行到36行就可以将用户输入内容echo回。但是对最后一种情况，服务器完全忽略了客户端发过来的内容，如果每次selector.select()都只能检测到socket可写，那么服务器永远不能将echo回客户端输入的内容。
-避免死锁的一个简单方法就是<strong>不要在同一个socket同时注册多个操作</strong>。对于上面的EchoServer来说就是不要同时注册OP_READ和OP_WRITE，要么只注册OP_READ，要么只注册OP_WRITE。下面的EchoServer修正了以上的错误：
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>public static void main(String[] args) throws IOException {  </p>
-</li>
-<li>System.out.println(&quot;Listening for connection on port &quot; + DEFAULT_PORT);  </li>
-<li></li>
-<li>Selector selector = Selector.open();  </li>
-<li>initServer(selector);  </li>
-<li></li>
-<li>while (true) {  </li>
-<li>selector.select();  </li>
-<li></li>
-<li>for (Iterator<SelectionKey> itor = selector.selectedKeys().iterator(); itor.hasNext();) {  </li>
-<li>SelectionKey key = (SelectionKey) itor.next();  </li>
-<li>itor.remove();  </li>
-<li>try {  </li>
-<li>if (key.isAcceptable()) {  </li>
-<li>ServerSocketChannel server = (ServerSocketChannel) key.channel();  </li>
-<li>SocketChannel client = server.accept();  </li>
-<li>System.out.println(&quot;Accepted connection from &quot; + client);  </li>
-<li>client.configureBlocking(false);  </li>
-<li>SelectionKey clientKey = client.register(selector, SelectionKey.OP_READ);  </li>
-<li>ByteBuffer buffer = ByteBuffer.allocate(100);  </li>
-<li>clientKey.attach(buffer);  </li>
-<li>} else if (key.isReadable()) {  </li>
-<li>SocketChannel client = (SocketChannel) key.channel();  </li>
-<li>ByteBuffer buffer = (ByteBuffer) key.attachment();  </li>
-<li>int n = client.read(buffer);  </li>
-<li>if (n &gt; 0) {  </li>
-<li>buffer.flip();  </li>
-<li>key.interestOps(SelectionKey.OP_WRITE);     // switch to OP_WRITE  </li>
-<li>}  </li>
-<li>} else if (key.isWritable()) {  </li>
-<li>System.out.println(&quot;is writable...&quot;);  </li>
-<li>SocketChannel client = (SocketChannel) key.channel();  </li>
-<li>ByteBuffer buffer = (ByteBuffer) key.attachment();  </li>
-<li>client.write(buffer);  </li>
-<li>if (buffer.remaining() == 0) {  // write finished, switch to OP_READ  </li>
-<li>buffer.clear();  </li>
-<li>key.interestOps(SelectionKey.OP_READ);  </li>
-<li>}  </li>
-<li>}  </li>
-<li>} catch (IOException e) {  </li>
-<li>key.cancel();  </li>
-<li>try { key.channel().close(); } catch (IOException ioe) { }  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-<li><p>}  </p>
-<p> public static void main(String[] args) throws IOException {</p>
-<pre><code> System.out.println(&quot;Listening for connection on port &quot; + DEFAULT_PORT);
-</code></pre></li>
-</ol>
-<pre><code>    Selector selector = Selector.open();
-    initServer(selector);
+}</p>
+<p>   B:带输出参数的
+     1:返回int
+         -------------------------带输出参数的----------------
+alter procedure getsum
+@n int =0,
+@result int output
+as
+declare @sum int
+declare @i int
+set @sum=0
+set @i=0
+while @i&lt;=@n begin
+set @sum=@sum+@i
+set @i=@i+1
+end
+set @result=@sum
+   -------------------在查询分析器中执行------------
+   declare @myResult int
+exec getsum 100,@myResult output
+print @myResult</p>
+<p>   ------------在JAVA中调用---------------------
+import java.sql./*;
+public class ProcedureTest 
+{
+public static void main(String args[]) throws Exception
+{
+   //加载驱动
+   DriverManager.registerDriver(new sun.jdbc.odbc.JdbcOdbcDriver());
+   //获得连接
+   Connection conn=DriverManager.getConnection(&quot;jdbc:odbc:mydata&quot;,&quot;sa&quot;,&quot;&quot;);</p>
+<pre><code>     //创建存储过程的对象
+     CallableStatement c=conn.prepareCall(&quot;{call getsum(?,?)}&quot;);
 
+     //给存储过程的第一个参数设置值
+     c.setInt(1,100);
 
-    while (true) {
+     //注册存储过程的第二个参数
+     c.registerOutParameter(2,java.sql.Types.INTEGER);
 
-        selector.select();
+     //执行存储过程
+     c.execute();
 
-
-        for (Iterator&lt;SelectionKey&gt; itor = selector.selectedKeys().iterator(); itor.hasNext();) {
-            SelectionKey key = (SelectionKey) itor.next();
-
-            itor.remove();
-            try {
-
-                if (key.isAcceptable()) {
-                    ServerSocketChannel server = (ServerSocketChannel) key.channel();
-
-                    SocketChannel client = server.accept();
-                    System.out.println(&quot;Accepted connection from &quot; + client);
-
-                    client.configureBlocking(false);
-                    SelectionKey clientKey = client.register(selector, SelectionKey.OP_READ);
-
-                    ByteBuffer buffer = ByteBuffer.allocate(100);
-                    clientKey.attach(buffer);
-
-                } else if (key.isReadable()) {
-                    SocketChannel client = (SocketChannel) key.channel();
-
-                    ByteBuffer buffer = (ByteBuffer) key.attachment();
-                    int n = client.read(buffer);
-
-                    if (n &gt; 0) {
-                        buffer.flip();
-
-                        key.interestOps(SelectionKey.OP_WRITE);        // switch to OP_WRITE
-                    }
-
-                } else if (key.isWritable()) {
-                    System.out.println(&quot;is writable...&quot;);
-
-                    SocketChannel client = (SocketChannel) key.channel();
-                    ByteBuffer buffer = (ByteBuffer) key.attachment();
-
-                    client.write(buffer);
-                    if (buffer.remaining() == 0) {    // write finished, switch to OP_READ
-
-                        buffer.clear();
-                        key.interestOps(SelectionKey.OP_READ);
-
-                    }
-                }
-
-            } catch (IOException e) {
-                key.cancel();
-
-                try { key.channel().close(); } catch (IOException ioe) { }
-            }
-
-        }
-    }
-
+     //得到存储过程的输出参数值
+     System.out.println (c.getInt(2));
+     conn.close();
+</code></pre><p>}
 }
-</code></pre><p>主要变化，在第19行接受客户端连接时只注册OP_READ操作，第28行当读到数据时才切换到OP_WRITE操作，第35-38行，当写操作完成时再切换到OP_READ操作。由于一个key同时只能执行一个操作，我将原来三个并行if换成了if...else。
-上面的代码不够优雅，它将处理服务器Socket和客户连接Socket的代码搅在一起，对于简单的EchoServer这样做没什么问题，当服务器变得复杂，使用命令模式将它们分开变显得非常必要。首先创建一个接口来抽象对SelectionKey的处理。
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>interface Handler {  </li>
-<li>void execute(Selector selector, SelectionKey key);  </li>
-<li><p>}  </p>
-<p> interface Handler {</p>
-<pre><code> void execute(Selector selector, SelectionKey key);
-</code></pre><p> }
-再来看main函数：
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-</li>
-<li><p>public static void main(String[] args) throws IOException {  </p>
-</li>
-<li>System.out.println(&quot;Listening for connection on port &quot; + DEFAULT_PORT);  </li>
-<li></li>
-<li>Selector selector = Selector.open();  </li>
-<li>initServer(selector);  </li>
-<li></li>
-<li>while (true) {  </li>
-<li>selector.select();  </li>
-<li></li>
-<li>for (Iterator<SelectionKey> itor = selector.selectedKeys().iterator(); itor.hasNext();) {  </li>
-<li>SelectionKey key = (SelectionKey) itor.next();  </li>
-<li>itor.remove();  </li>
-<li>Handler handler = (Handler) key.attachment();  </li>
-<li>handler.execute(selector, key);  </li>
-<li>}  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>private static void initServer(Selector selector) throws IOException,  </li>
-<li>ClosedChannelException {  </li>
-<li>ServerSocketChannel serverChannel = ServerSocketChannel.open();  </li>
-<li>ServerSocket ss = serverChannel.socket();  </li>
-<li>ss.bind(new InetSocketAddress(DEFAULT_PORT));  </li>
-<li>serverChannel.configureBlocking(false);  </li>
-<li>SelectionKey serverKey = serverChannel.register(selector, SelectionKey.OP_ACCEPT);  </li>
-<li>serverKey.attach(new ServerHandler());  </li>
-<li><p>}  </p>
-<p> public static void main(String[] args) throws IOException {</p>
-<pre><code> System.out.println(&quot;Listening for connection on port &quot; + DEFAULT_PORT);
-</code></pre></li>
-</ol>
-<pre><code>    Selector selector = Selector.open();
-    initServer(selector);
-
-
-    while (true) {
-
-        selector.select();
-
-
-        for (Iterator&lt;SelectionKey&gt; itor = selector.selectedKeys().iterator(); itor.hasNext();) {
-            SelectionKey key = (SelectionKey) itor.next();
-
-            itor.remove();
-            Handler handler = (Handler) key.attachment();
-
-            handler.execute(selector, key);
-        }
-
-    }
+     2:返回varchar
+       ----------------存储过程带游标----------------
+---在存储过程中带游标   使用游标不停的遍历orderid
+create procedure CursorIntoProcedure
+@pname varchar(8000) output
+as
+--定义游标
+declare cur cursor for select orderid from orders
+--定义一个变量来接收游标的值
+declare @v varchar(5)
+--打开游标
+open cur
+set @pname=&#39;&#39;--给@pname初值
+--提取游标的值
+fetch next from cur into @v
+while @@fetch_status=0
+   begin</p>
+<p>set @pname=@pname+&#39;;&#39;+@v
+   fetch next from cur into @v
+end
+print @pname
+--关闭游标
+close cur
+--销毁游标
+deallocate cur</p>
+<p>   ------------执行存储过程--------------
+exec CursorIntoProcedure &#39;&#39;</p>
+<p>   --------------JAVA调用------------------
+import java.sql./*;
+public class ProcedureTest 
+{
+public static void main(String args[]) throws Exception
+{
+   //加载驱动
+   DriverManager.registerDriver(new sun.jdbc.odbc.JdbcOdbcDriver());
+   //获得连接
+   Connection conn=DriverManager.getConnection(&quot;jdbc:odbc:mydata&quot;,&quot;sa&quot;,&quot;&quot;);
+   CallableStatement c=conn.prepareCall(&quot;{call CursorIntoProcedure(?)}&quot;);</p>
+<p>   c.registerOutParameter(1,java.sql.Types.VARCHAR);</p>
+<p>   c.execute();</p>
+<p>   System.out.println (c.getString(1));
+   conn.close();
 }
-
-
-private static void initServer(Selector selector) throws IOException,
-
-        ClosedChannelException {
-    ServerSocketChannel serverChannel = ServerSocketChannel.open();
-
-    ServerSocket ss = serverChannel.socket();
-    ss.bind(new InetSocketAddress(DEFAULT_PORT));
-
-    serverChannel.configureBlocking(false);
-    SelectionKey serverKey = serverChannel.register(selector, SelectionKey.OP_ACCEPT);
-
-    serverKey.attach(new ServerHandler());
 }
-</code></pre><p>main函数非常简单，迭代SelectionKey，对每个key的attachment为Handler，调用它的execute的方法，不用管它是服务器Socket还是客户Socket。注意initServer方法将serverKey附加了一个ServerHandler。下面是ServerHandler的代码：
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>class ServerHandler implements Handler {  </li>
-<li>public void execute(Selector selector, SelectionKey key) {  </li>
-<li>ServerSocketChannel server = (ServerSocketChannel) key.channel();  </li>
-<li>SocketChannel client = null;  </li>
-<li>try {  </li>
-<li>client = server.accept();  </li>
-<li>System.out.println(&quot;Accepted connection from &quot; + client);  </li>
-<li>} catch (IOException e) {  </li>
-<li>e.printStackTrace();  </li>
-<li>return;  </li>
-<li>}  </li>
-<li></li>
-<li>SelectionKey clientKey = null;  </li>
-<li>try {  </li>
-<li>client.configureBlocking(false);  </li>
-<li>clientKey = client.register(selector, SelectionKey.OP_READ);  </li>
-<li>clientKey.attach(new ClientHandler());  </li>
-<li>} catch (IOException e) {  </li>
-<li>if (clientKey != null)  </li>
-<li>clientKey.cancel();  </li>
-<li>try { client.close(); } catch (IOException ioe) { }  </li>
-<li>}  </li>
-<li>}  </li>
-<li><p>}  </p>
-<p> class ServerHandler implements Handler {</p>
-<pre><code> public void execute(Selector selector, SelectionKey key) {
-     ServerSocketChannel server = (ServerSocketChannel) key.channel();
+   C:删除数据的存储过程
+     ------------------存储过程--------------------------</p>
+<p>drop table 学生基本信息表
+create table 学生基本信息表
+(
+StuID int primary key,
+StuName varchar(10),
+StuAddress varchar(20)
+)
+insert into   学生基本信息表 values(1,&#39;三毛&#39;,&#39;wuhan&#39;)
+insert into   学生基本信息表 values(2,&#39;三毛&#39;,&#39;wuhan&#39;)
+create table 学生成绩表
+(
+StuID int,
+Chinese int,
+PyhSics int
+foreign key(StuID) references   学生基本信息表(StuID)
+on delete cascade
+on update cascade
+) 
+insert into   学生成绩表 values(1,99,100)
+insert into   学生成绩表 values(2,99,100)</p>
+<p>--创建存储过程 
+create procedure delePro
+@StuID int
+as
+delete from 学生基本信息表 where StuID=@StuID
+--创建完毕
+exec delePro 1   --执行存储过程
+--创建存储过程
+create procedure selePro
+as
+select /<em> from 学生基本信息表
+--创建完毕
+exec selePro   --执行存储过程
+     ------------------在JAVA中调用----------------
+import java.sql./</em>;
+public class ProcedureTest 
+{
+public static void main(String args[]) throws Exception
+{
+   //加载驱动
+   DriverManager.registerDriver(new sun.jdbc.odbc.JdbcOdbcDriver());
+   //获得连接
+   Connection conn=DriverManager.getConnection(&quot;jdbc:odbc:mydata&quot;,&quot;sa&quot;,&quot;&quot;);</p>
+<pre><code>     //创建存储过程的对象
+     CallableStatement c=conn.prepareCall(&quot;{call delePro(?)}&quot;);
 
-     SocketChannel client = null;
-     try {
+     c.setInt(1,1);
 
-         client = server.accept();
-         System.out.println(&quot;Accepted connection from &quot; + client);
+     c.execute();
 
-     } catch (IOException e) {
-         e.printStackTrace();
+     c=conn.prepareCall(&quot;{call selePro}&quot;);
+     ResultSet rs=c.executeQuery();
 
-         return;
+     while(rs.next())
+     {
+     String Stu=rs.getString(&quot;StuID&quot;);
+     String name=rs.getString(&quot;StuName&quot;);
+     String add=rs.getString(&quot;StuAddress&quot;);
+
+     System.out.println (&quot;学号:&quot;+&quot;     &quot;+&quot;姓名:&quot;+&quot;     &quot;+&quot;地址&quot;);
+     System.out.println (Stu+&quot;     &quot;+name+&quot;   &quot;+add);
      }
-</code></pre></li>
-</ol>
-<pre><code>        SelectionKey clientKey = null;
-
-        try {
-            client.configureBlocking(false);
-
-            clientKey = client.register(selector, SelectionKey.OP_READ);
-            clientKey.attach(new ClientHandler());
-
-        } catch (IOException e) {
-            if (clientKey != null)
-
-                clientKey.cancel();
-            try { client.close(); } catch (IOException ioe) { }
-
-        }
-    }
-
+     c.close();
+</code></pre><p>}
 }
-</code></pre><p>ServerHandler接收连接，为每个客户Socket注册OP_READ操作，返回的clientKey附加上ClientHandler。
-Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
-<ol>
-<li>class ClientHandler implements Handler {  </li>
-<li>private ByteBuffer buffer;  </li>
-<li></li>
-<li>public ClientHandler() {  </li>
-<li>buffer = ByteBuffer.allocate(100);  </li>
-<li>}  </li>
-<li></li>
-<li>public void execute(Selector selector, SelectionKey key) {  </li>
-<li>try {  </li>
-<li>if (key.isReadable()) {  </li>
-<li>readKey(selector, key);  </li>
-<li>} else if (key.isWritable()) {  </li>
-<li>writeKey(selector, key);  </li>
-<li>}  </li>
-<li>} catch (IOException e) {  </li>
-<li>key.cancel();  </li>
-<li>try { key.channel().close(); } catch (IOException ioe) { }  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>private void readKey(Selector selector, SelectionKey key) throws IOException {  </li>
-<li>SocketChannel client = (SocketChannel) key.channel();  </li>
-<li>int n = client.read(buffer);  </li>
-<li>if (n &gt; 0) {  </li>
-<li>buffer.flip();  </li>
-<li>key.interestOps(SelectionKey.OP_WRITE);     // switch to OP_WRITE  </li>
-<li>}  </li>
-<li>}  </li>
-<li></li>
-<li>private void writeKey(Selector selector, SelectionKey key) throws IOException {  </li>
-<li>// System.out.println(&quot;is writable...&quot;);  </li>
-<li>SocketChannel client = (SocketChannel) key.channel();  </li>
-<li>client.write(buffer);  </li>
-<li>if (buffer.remaining() == 0) {  // write finished, switch to OP_READ  </li>
-<li>buffer.clear();  </li>
-<li>key.interestOps(SelectionKey.OP_READ);  </li>
-<li>}  </li>
-<li>}  </li>
-<li><p>}  </p>
-<p> class ClientHandler implements Handler {</p>
-<pre><code> private ByteBuffer buffer;
-</code></pre></li>
-</ol>
-<pre><code>    public ClientHandler() {
-        buffer = ByteBuffer.allocate(100);
+   D:修改数据的存储过程
+---------------------创建存储过程---------------------
+   create procedure ModPro
+@StuID int,
+@StuName varchar(10)
+as
+update 学生基本信息表 set StuName=@StuName where StuID=@StuID</p>
+<p>   -------------执行存储过程-------------------------
+exec ModPro 2,&#39;四毛&#39;
+   ---------------JAVA调用存储过程--------------------
+import java.sql./*;
+public class ProcedureTest 
+{
+public static void main(String args[]) throws Exception
+{
+   //加载驱动
+   DriverManager.registerDriver(new sun.jdbc.odbc.JdbcOdbcDriver());
+   //获得连接
+   Connection conn=DriverManager.getConnection(&quot;jdbc:odbc:mydata&quot;,&quot;sa&quot;,&quot;&quot;);</p>
+<pre><code>     //创建存储过程的对象
+     CallableStatement c=conn.prepareCall(&quot;{call ModPro(?,?)}&quot;);
 
-    }
+     c.setInt(1,2);
+     c.setString(2,&quot;美女&quot;);
 
+     c.execute();
 
-    public void execute(Selector selector, SelectionKey key) {
-        try {
+     c=conn.prepareCall(&quot;{call selePro}&quot;);
+     ResultSet rs=c.executeQuery();
 
-            if (key.isReadable()) {
-                readKey(selector, key);
+     while(rs.next())
+     {
+     String Stu=rs.getString(&quot;StuID&quot;);
+     String name=rs.getString(&quot;StuName&quot;);
+     String add=rs.getString(&quot;StuAddress&quot;);
 
-            } else if (key.isWritable()) {
-                writeKey(selector, key);
-
-            }
-        } catch (IOException e) {
-
-            key.cancel();
-            try { key.channel().close(); } catch (IOException ioe) { }
-
-        }
-    }
-
-
-    private void readKey(Selector selector, SelectionKey key) throws IOException {
-
-        SocketChannel client = (SocketChannel) key.channel();
-        int n = client.read(buffer);
-
-        if (n &gt; 0) {
-            buffer.flip();
-
-            key.interestOps(SelectionKey.OP_WRITE);        // switch to OP_WRITE
-        }
-
-    }
-
-
-    private void writeKey(Selector selector, SelectionKey key) throws IOException {
-        // System.out.println(&quot;is writable...&quot;);
-
-        SocketChannel client = (SocketChannel) key.channel();
-        client.write(buffer);
-
-        if (buffer.remaining() == 0) {    // write finished, switch to OP_READ
-            buffer.clear();
-
-            key.interestOps(SelectionKey.OP_READ);
-        }
-
-    }
+     System.out.println (&quot;学号:&quot;+&quot;     &quot;+&quot;姓名:&quot;+&quot;     &quot;+&quot;地址&quot;);
+     System.out.println (Stu+&quot;     &quot;+name+&quot;   &quot;+add);
+     }
+     c.close();
+</code></pre><p>}
 }
-</code></pre><p>这个代码没有什么新内容，只是将根据key是可读还可写拆分为两个方法，代码结构显得更清晰。对于EchoServer，这么做确实有些过度工程，对于稍微复杂一点的服务器这么做是很值得的。
-代码：<a href="http://pastebin.com/de64ZzUy" target="_blank">EchoServer.java</a>, <a href="http://pastebin.com/fFy0Uhbm" target="_blank">EchoServer2.java</a>, <a href="http://pastebin.com/DRMT4LdJ" target="_blank">EchoServer3.java</a>
-参考：</p>
-<ol>
-<li><a href="http://rox-xmlrpc.sourceforge.net/niotut/" target="_blank">The Rox Java NIO Tutorial</a></li>
-<li><a href="http://today.java.net/pub/a/today/2007/02/13/architecture-of-highly-scalable-nio-server.html" target="_blank">Architecture of a Highly Scalable NIO-Based Server</a></li>
-</ol>
+   E:查询数据的存储过程(模糊查询)
+     -----------------存储过程---------------------
+create procedure FindCusts
+@cust varchar(10)
+as
+select customerid from orders where customerid 
+like &#39;%&#39;+@cust+&#39;%&#39;
+     ---------------执行---------------------------
+execute FindCusts &#39;alfki&#39;
+   -------------在JAVA中调用--------------------------
+import java.sql./*;
+public class ProcedureTest 
+{
+public static void main(String args[]) throws Exception
+{
+   //加载驱动
+   DriverManager.registerDriver(new sun.jdbc.odbc.JdbcOdbcDriver());
+   //获得连接
+   Connection conn=DriverManager.getConnection(&quot;jdbc:odbc:mydata&quot;,&quot;sa&quot;,&quot;&quot;);</p>
+<pre><code>     //创建存储过程的对象
+     CallableStatement c=conn.prepareCall(&quot;{call FindCusts(?)}&quot;);
+     c.setString(1,&quot;Tom&quot;);
+
+     ResultSet rs=c.executeQuery();
+
+     while(rs.next())
+     {
+     String cust=rs.getString(&quot;customerid&quot;);        
+     System.out.println (cust);
+     }
+     c.close();
+</code></pre><p>}
+}
+   F:增加数据的存储过程</p>
+<p>------------存储过程--------------------
+create procedure InsertPro
+@StuID int,
+@StuName varchar(10),
+@StuAddress varchar(20)
+as
+insert into 学生基本信息表 values(@StuID,@StuName,@StuAddress)</p>
+<p>-----------调用存储过程---------------
+exec InsertPro 5,&#39;555&#39;,&#39;555&#39;
+-----------在JAVA中执行-------------
+import java.sql./*;
+public class ProcedureTest 
+{
+public static void main(String args[]) throws Exception
+{
+   //加载驱动
+   DriverManager.registerDriver(new sun.jdbc.odbc.JdbcOdbcDriver());
+   //获得连接
+   Connection conn=DriverManager.getConnection(&quot;jdbc:odbc:mydata&quot;,&quot;sa&quot;,&quot;&quot;);</p>
+<pre><code>     //创建存储过程的对象
+     CallableStatement c=conn.prepareCall(&quot;{call InsertPro(?,?,?)}&quot;);
+     c.setInt(1,6);
+     c.setString(2,&quot;Liu&quot;);
+     c.setString(3,&quot;wuhan&quot;);
+
+     c.execute();
+
+     c=conn.prepareCall(&quot;{call selePro}&quot;);
+     ResultSet rs=c.executeQuery();
+
+     while(rs.next())
+     {
+     String stuid=rs.getString(&quot;StuID&quot;);        
+     String name=rs.getString(&quot;StuName&quot;);        
+     String address=rs.getString(&quot;StuAddress&quot;);        
+     System.out.println (stuid+&quot;   &quot;+name+&quot;   &quot;+address);
+     }
+     c.close();
+</code></pre><p>}
+}</p>
+<p>G:在JAVA中创建存储过程   并且在JAVA中直接调用
+import java.sql./*;
+public class ProcedureTest 
+{
+public static void main(String args[]) throws Exception
+{
+   //加载驱动
+   DriverManager.registerDriver(new sun.jdbc.odbc.JdbcOdbcDriver());
+   //获得连接
+   Connection conn=DriverManager.getConnection(&quot;jdbc:odbc:mydata&quot;,&quot;sa&quot;,&quot;&quot;);</p>
+<p>   Statement stmt=conn.createStatement();
+   //在JAVA中创建存储过程
+   stmt.executeUpdate(&quot;create procedure OOP as select /* from 学生成绩表&quot;);</p>
+<p>   CallableStatement c=conn.prepareCall(&quot;{call OOP}&quot;);</p>
+<p>   ResultSet rs=c.executeQuery();
+   while(rs.next())
+   {
+   String chinese=rs.getString(&quot;Chinese&quot;);</p>
+<p>   System.out.println (chinese);
+   }
+   conn.close();</p>
+<p>}
+} 
+来源： <a href="[http://technicalsearch.iteye.com/blog/1433293](http://technicalsearch.iteye.com/blog/1433293)">[http://technicalsearch.iteye.com/blog/1433293](http://technicalsearch.iteye.com/blog/1433293)</a> </p>
 
       
     </div>
@@ -1808,8 +930,226 @@ Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代�
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/NIO/">NIO</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/NIO/" class="label label-success">NIO</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-NIO--javanio网络编程的一点心得/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-NIO--javanio网络编程的一点心得" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/java深入分析/">java深入分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/java深入分析/" class="label label-success">java深入分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--Java对存储过程的调用方法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-java深入分析--Java对存储过程的调用方法" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--JDKJREJVM区别/">JDKJREJVM区别</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--JDKJREJVM区别/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="jdkjrejvm-">JDKJREJVM区别</h1>
+<p><strong><a href="http://java-mzd.iteye.com/blog/838514" target="_blank">JDK,JRE,JVM区别与联系</a></strong></p>
+<p><strong>文章分类**</strong>:<a href="http://www.iteye.com/blogs/category/java" target="_blank">Java编程</a>**</p>
+<pre><code>很多朋友可能跟我一样，已经使用JAVA开发很久了，可是对JDK,JRE,JVM这三者的联系与区别，一直都是模模糊糊的。
+
+今天特写此文，来整理下三者的关系。
+
+
+
+JDK : Java Development ToolKit(Java开发工具包)。JDK是整个JAVA的核心，包括了Java运行环境（Java Runtime Envirnment），一堆Java工具（javac/java/jdb等）和Java基础的类库（即Java API 包括rt.jar）。
+
+最主流的JDK是Sun公司发布的JDK，除了Sun之外，还有很多公司和组织都开发了属于自己的JDK，例如国外IBM公司开发了属于自己的JDK，国内淘宝也开发了属于自己的JDK，各个组织开发自己的JDK都是为了在某些方面得到一些提高，以适应自己的需求，比如IBM的JDK据说运行效率就比SUN的JDK高的多。但不管怎么说，我们还是需要先把基础的Sun JDK掌握好。
+
+JDK有以下三种版本：
+</code></pre><p>J2SE，standard edition，标准版，是我们通常用的一个版本J2EE，enterpsise edtion，企业版，使用这种JDK开发J2EE应用程序J2ME，micro edtion，主要用于移动设备、嵌入式设备上的java应用程序</p>
+<pre><code>我们常常用JDK来代指Java API，Java API是Java的应用程序接口，其实就是前辈们写好的一些java Class，包括一些重要的语言结构以及基本图形，网络和文件I/O等等 ，我们在自己的程序中，调用前辈们写好的这些Class，来作为我们自己开发的一个基础。当然，现在已经有越来越多的性能更好或者功能更强大的第三方类库供我们使用。
+
+
+
+JRE:Java  Runtime  Enviromental(java运行时环境)。也就是我们说的JAVA平台，所有的Java程序都要在JRE下才能运行。包括JVM和JAVA核心类库和支持文件。与JDK相比，它不包含开发工具——编译器、调试器和其它工具。
+
+
+
+JVM：Java Virtual Mechinal(JAVA虚拟机)。JVM是JRE的一部分，它是一个虚构出来的计算机，是通过在实际的计算机上仿真模拟各种计算机功能来实现的。JVM有自己完善的硬件架构，如处理器、堆栈、寄存器等，还具有相应的指令系统。JVM 的主要工作是解释自己的指令集（即字节码）并映射到本地的 CPU 的指令集或 OS 的系统调用。Java语言是跨平台运行的，其实就是不同的操作系统，使用不同的JVM映射规则，让其与操作系统无关，完成了跨平台性。JVM 对上层的Java 源文件是不关心的，它关注的只是由源文件生成的类文件（ class file ）。类文件的组成包括JVM 指令集，符号表以及一些补助信息。
+</code></pre><p>下图很好的表面了JDK,JRE,JVM三者间的关系：</p>
+<p><img src="" alt="http://dl.iteye.com/upload/attachment/364841/7dbc84af-e878-3718-beb5-6471ad99b995.gif"></p>
+<pre><code>我们开发的实际情况是：我们利用JDK（调用JAVA API）开发了属于我们自己的JAVA程序后，通过JDK中的编译程序（javac）将我们的文本java文件编译成JAVA字节码，在JRE上运行这些JAVA字节码，JVM解析这些字节码，映射到CPU指令集或OS的系统调用。
+</code></pre><p>url: <a href="http://java-mzd.iteye.com/blog/838514" target="_blank">http://java-mzd.iteye.com/blog/838514</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/java深入分析/">java深入分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/java深入分析/" class="label label-success">java深入分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--JDKJREJVM区别/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-java深入分析--JDKJREJVM区别" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--IOC原理分析/">IOC原理分析</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:41.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--IOC原理分析/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="ioc-">IOC原理分析</h1>
+<p><strong><a href="http://java-mzd.iteye.com/blog/818344" target="_blank">IOC原理分析</a></strong></p>
+<p><strong>文章分类**</strong>:<a href="http://www.iteye.com/blogs/category/java" target="_blank">Java编程</a>**</p>
+<p>IOC(inversion of control)控制反转</p>
+<p>在我们的程序中，要实现某个功能，我们都会用到两个或两个以上的类来协同完成，那么在一个类中，我们就会要有它的合作类的引用，也就是说这个类依赖于别的类，这个合作类的获取，将会有一下几种不同的情况</p>
+<p>依赖获取的三种方式： </p>
+<p><strong>Java**</strong>代码<strong><strong> </strong></strong> <strong>[</strong><img src="&quot;&quot;收藏这段代码&quot; &quot;" alt="收藏代码]()**"><em>**</em></p>
+<ol>
+<li><p>情况1.自己生成   </p>
+</li>
+<li></li>
+<li><p>Class person{  </p>
+</li>
+<li></li>
+<li><p>Eat(){  </p>
+</li>
+<li></li>
+<li><p>Apple a=<strong>new</strong> Apple();  </p>
+</li>
+<li></li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li><p>}  </p>
+</li>
+</ol>
+<p>第一种方式：在person的eat()方法里就把吃的水果写死，从开始就创建对象，</p>
+<pre><code>  缺点 ：1.Person类必须依赖于Apple类，如果Apple类没完成，则编译都不能通过
+</code></pre><p>2.不能再更改，当person想再吃别的水果的时候，无法进行修改</p>
+<p>3.很难共享给其他人，只能单独使用</p>
+<p>4.person类要对Apple的整个生命周期负责，两个类始终耦合在一起</p>
+<p><strong>Java**</strong>代码<strong><strong> </strong></strong> <strong>[</strong><img src="&quot;&quot;收藏这段代码&quot; &quot;" alt="收藏代码]()**"><em>**</em></p>
+<ol>
+<li><p>情况2 通过中介得到  </p>
+</li>
+<li></li>
+<li><p>Class person{  </p>
+</li>
+<li></li>
+<li><p>Eat(String name){  </p>
+</li>
+<li></li>
+<li><p>Apple a=(Apple)Fruitfactory.getInstance(“name”);  </p>
+</li>
+<li></li>
+<li><p>}}  </p>
+</li>
+</ol>
+<p>第二种方式：1.通过使用工程类，间接得到需要的对象</p>
+<p>通过使用工程类，程序效果确实得到了改进，但是问题依然存在</p>
+<p>缺点：1.每个子类的生成的代码都写死在工厂类里面了，如果要换个子类，则必须更改工厂类中的方法</p>
+<pre><code>            2.面向接口编程，一般都会使用工厂类，一般每个接口都会对于一个工程类，当项目非常大的时候，则会有非常多的工厂类
+</code></pre><p><strong>Java**</strong>代码<strong><strong> </strong></strong> <strong>[</strong><img src="&quot;&quot;收藏这段代码&quot; &quot;" alt="收藏代码]()**"><em>**</em></p>
+<ol>
+<li><p>情况3.直接被注入  </p>
+</li>
+<li><p>Class person{  </p>
+</li>
+<li></li>
+<li><p>Eat(Fruit fruit){  </p>
+</li>
+<li></li>
+<li><p>//apple为Fruit实现类  </p>
+</li>
+<li></li>
+<li><p>}  </p>
+</li>
+<li></li>
+<li><p>}  </p>
+</li>
+</ol>
+<p>第三种方式：只需要在外部传入一个现成的对象给方法调用，不同的实现传入不同的对象即可（感觉这么说就是简单的面向接口的编程的好处，具体优势，请看后面）</p>
+<p>在系统中，我们可以用一个外部的容器Container 来统一调配整个系统的运行，将对象的创建和获取提取到外部容器，由外部容器为每个组件提供需要的组建.</p>
+<p>例如：</p>
+<p>在容器中创建Fruit类对象apple，</p>
+<p>将Person类依赖的Fruit对象传递给Person类</p>
+<p>将了这么多，那么，到底是控制的什么被反转了呢?</p>
+<p>获得依赖对象的方式被反转了.</p>
+<p>也就是说</p>
+<p>将一个对象如何获取它所依赖的对象这个任务的控制权反转到外部容器中。对象的依赖都是在对象创建时，由负责协调整个系统中各个实体间关系的外部容器提供了。</p>
+<p>了解了IOC的基本理念后</p>
+<p>剩下的问题就是：怎么样把类中依赖的对象的引用传递给类？（我们把这种将依赖对象的引用传递给类的方式叫做注入）</p>
+<p>接下来，我们需要研究，有几种方法，可以把对象注入到类的内部</p>
+<p>注入的三种方式： </p>
+<p>1．  通过接口注入</p>
+<pre><code>  这种方式要求我们自己定义的组建类必须实现容器给定的一个接口，然后容器通过这个接口，为我们的组建类注入所依赖的类
+
+  缺点：容器对组建的侵入性会很强，实现的组建只能给此容器用了，移植性不强
+</code></pre><p>2．  Setter注入</p>
+<pre><code>  在容器中，通过调用对象的setter()方法，将该对象的依赖传递到类当中
+</code></pre><p>3．构造器注入</p>
+<pre><code> 通过使用构造器，在类初始化的时候，传入对象的依赖
+</code></pre><p>知道了在容器中可以有三种方式把一个类的对象的依赖传入到这个对象的当中去，但是，这个类的对象我们到底该怎么得到呢？它的依赖又该怎么得到呢？</p>
+<p>难道也是在容器中，简单的通过new得到不同的对象，然后进行相互调用吗?</p>
+<p>如果是这样的话，那么我们仅仅只是完成了一些基于依赖倒转的代码重构工作而已，并没有真正的体现系统的动态性</p>
+<p>那么我们该怎么样才能最大程度的体现系统的动态性? 怎么样才能最大程度的将两个类之间的依赖降低，实现解耦合呢？</p>
+<p>我们可以给系统一个XML的配置文件，</p>
+<p>在该XML配置文件中，设置每个对象的相应的属性信息（即该类的具体依赖）</p>
+<p>然后在系统中，解析XML文件得到一个实体类obj类，obj类保留没一个对象的配置信息</p>
+<p>然后根据反射原理，利用解析得到的obj类中信息，动态的生成配置对应的对象，并且调用对象的setter()方法，完成对该对象的注入，</p>
+<p>因为XML只是一个符合一定格式要求的文本文件，</p>
+<p>所以我们可以随时更改XML文件，而不修改源代码</p>
+<p>来得到我们需要的任何类型的任何一个对象，并完全对该对象的注入</p>
+<p>使该对象的依赖得以进行，并能使系统最大程度的动态化，具有可拓展性</p>
+<p>IoC核心理念：</p>
+<p>1.在类当中不创建对象，在代码中不直接与对象和服务连接</p>
+<p>2.在配置文件中描述创建对象的方式，以及各个组件之间的联系</p>
+<p>3.外部容器通过解析配置文件，通过反射来将这些联系在一起</p>
+<p>The Hollywood principle：Don’t call us,we’ll call you.</p>
+<p>即，所有组件都是被动的、不主动联系（调用）外部代码，</p>
+<p>要等着外部代码的调用--------所有的组件的初始化和相互调用都由容器负责实现。</p>
+<p>简单的说，就是整个程序之间的关系，都由容器来控制:将程序的控制权反转给容器,就是所谓的外转</p>
+<p>而在我们传统代码中，由程序代码直接控制</p>
+<p>最后，使用一个比较形象的例子来最后阐述一次IOC的作用：</p>
+<p>  所谓IoC，对于spring框架来说，就是由spring来负责控制对象的生命周期和对象间的关系。这是什么意思呢，举个简单的例子，我们是如何找女朋友的？常见的情况是，我们到处去看哪里有长得漂亮身材又好的mm，然后打听她们的兴趣爱好、qq号、电话号、ip号、iq号………，想办法认识她们，投其所好送其所要，然后嘿嘿……这个过程是复杂深奥的，我们必须自己设计和面对每个环节。传统的程序开发也是如此，在一个对象中，如果要使用另外的对象，就必须得到它（自己new一个，或者从JNDI中查询一个），使用完之后还要将对象销毁（比如Connection等），对象始终会和其他的接口或类藕合起来。</p>
+<p>那么IoC是如何做的呢？有点像通过婚介找女朋友，在我和女朋友之间引入了一个第三者：婚姻介绍所。婚介管理了很多男男女女的资料，我可以向婚介提出一个列表，告诉它我想找个什么样的女朋友，比如长得像李嘉欣，身材像林熙雷，唱歌像周杰伦，速度像卡洛斯，技术像齐达内之类的，然后婚介就会按照我们的要求，提供一个mm，我们只需要去和她谈恋爱、结婚就行了。简单明了，如果婚介给我们的人选不符合要求，我们就会抛出异常。整个过程不再由我自己控制，而是有婚介这样一个类似容器的机构来控制。</p>
+<p>Spring所倡导的开发方式就是如此，所有的类都会在spring容器中登记，告诉spring你是个什么东西，你需要什么东西，然后spring会在系统运行到适当的时候，把你要的东西主动给你，同时也把你交给其他需要你的东西。所有的类的创建、销毁都由spring来控制，也就是说控制对象生存周期的不再是引用它的对象，而是spring。对于某个具体的对象而言，以前是它控制其他对象，现在是所有对象都被spring控制，所以这叫控制反转。</p>
+<p>IoC的一个重点,是在系统运行中动态的向某个对象提供它所需要的其他对象。这一点是通过DI（Dependency Injection，依赖注入）来实现的。比如对象A需要操作数据库，以前我们总是要在A中自己编写代码来获得一个Connection对象，有了 spring我们就只需要告诉spring，A中需要一个Connection，至于这个Connection怎么构造，何时构造，A不需要知道。在系统运行时，spring会在适当的时候制造一个Connection，然后像打针一样，注射到A当中，这样就完成了对各个对象之间关系的控制。A需要依赖 Connection才能正常运行，而这个Connection是由spring注入到A中的，依赖注入的名字就这么来的。那么DI是如何实现的呢？ Java 1.3之后一个重要特征是反射（reflection），它允许程序在运行的时候动态的生成对象、执行对象的方法、改变对象的属性，spring就是通过反射来实现注入的。</p>
+<p>附注：因为参考的文章和Blog太多，无法一一表示感谢.谨在此特别感谢CSDN博客的it_man大神</p>
+<p>和<a href="http://www.zhuoda.org/xiaoming/66303.html的作者" target="_blank">http://www.zhuoda.org/xiaoming/66303.html的作者</a></p>
+<p>以及百度百科作者、维基百科作者</p>
+<p>以及javaeye上的多为写了ioc的兄弟</p>
+<p>恩，IOC原理折腾了一天总算搞明白了。接下来自己动手写个玩具Spring吧。</p>
+<p>url: <a href="http://java-mzd.iteye.com/blog/818344" target="_blank">http://java-mzd.iteye.com/blog/818344</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/java深入分析/">java深入分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/java深入分析/" class="label label-success">java深入分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:41"datetime="2014-03-07 09:54:41"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-java深入分析--IOC原理分析/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-java深入分析--IOC原理分析" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -2505,7 +1845,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:05:46</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:25:39</em></span></div>
 </div>
 <div class="clearfix"></div>
 
