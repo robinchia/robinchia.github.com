@@ -110,6 +110,70 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/">JVM调优总结（五）</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="jvm-1">JVM调优总结（五）-分代垃圾回收详述1</h1>
+<h2 id="-">为什么要分代</h2>
+<pre><code>分代的垃圾回收策略，是基于这样一个事实：**不同的对象的生命周期是不一样的**。因此，不同生命周期的对象可以采取不同的收集方式，以便提高回收效率。
+
+
+
+在Java程序运行的过程中，会产生大量的对象，其中有些对象是与业务信息相关，比如Http请求中的Session对象、线程、Socket连接，这类对象跟业务直接挂钩，因此生命周期比较长。但是还有一些对象，主要是程序运行过程中生成的临时变量，这些对象生命周期会比较短，比如：String对象，由于其不变类的特性，系统会产生大量的这些对象，有些对象甚至只用一次即可回收。
+
+
+
+试想，在不进行对象存活时间区分的情况下，每次垃圾回收都是对整个堆空间进行回收，花费时间相对会长，同时，因为每次回收都需要遍历所有存活对象，但实际上，对于生命周期长的对象而言，这种遍历是没有效果的，因为可能进行了很多次遍历，但是他们依旧存在。因此，分代垃圾回收采用分治的思想，进行代的划分，把不同生命周期的对象放在不同代上，不同代上采用最适合它的垃圾回收方式进行回收。
+</code></pre><h2 id="-">如何分代</h2>
+<p><img src="" alt=""></p>
+<p>如图所示：</p>
+<pre><code>虚拟机中的共划分为三个代：**年轻代（Young Generation）、年老点（Old Generation）和持久代（Permanent Generation）**。其中持久代主要存放的是Java类的类信息，与垃圾收集要收集的Java对象关系不大。年轻代和年老代的划分是对垃圾收集影响比较大的。
+</code></pre><p><strong>年轻代:</strong></p>
+<pre><code>所有新生成的对象首先都是放在年轻代的。年轻代的目标就是尽可能快速的收集掉那些生命周期短的对象。年轻代分三个区。一个Eden区，两个Survivor区(一般而言)。大部分对象在Eden区中生成。当Eden区满时，还存活的对象将被复制到Survivor区（两个中的一个），当这个Survivor区满时，此区的存活对象将被复制到另外一个Survivor区，当这个Survivor去也满了的时候，从第一个Survivor区复制过来的并且此时还存活的对象，将被复制“年老区(Tenured)”。需要注意，Survivor的两个区是对称的，没先后关系，所以同一个区中可能同时存在从Eden复制过来 对象，和从前一个Survivor复制过来的对象，而复制到年老区的只有从第一个Survivor去过来的对象。而且，Survivor区总有一个是空的。同时，根据程序需要，Survivor区是可以配置为多个的（多于两个），这样可以增加对象在年轻代中的存在时间，减少被放到年老代的可能。
+</code></pre><p><strong>年老代:</strong></p>
+<pre><code>在年轻代中经历了N次垃圾回收后仍然存活的对象，就会被放到年老代中。因此，可以认为年老代中存放的都是一些生命周期较长的对象。
+</code></pre><p><strong>持久代:</strong></p>
+<pre><code>用于存放静态文件，如今Java类、方法等。持久代对垃圾回收没有显著影响，但是有些应用可能动态生成或者调用一些class，例如Hibernate等，在这种时候需要设置一个比较大的持久代空间来存放这些运行过程中新增的类。持久代大小通过-XX:MaxPermSize=&lt;N&gt;进行设置。
+</code></pre><h2 id="-">什么情况下触发垃圾回收</h2>
+<pre><code>由于对象进行了分代处理，因此垃圾回收区域、时间也不一样。GC有两种类型：**Scavenge GC**和**Full GC**。
+</code></pre><p><strong>Scavenge GC</strong></p>
+<pre><code>一般情况下，当新对象生成，并且在Eden申请空间失败时，就会触发Scavenge GC，对Eden区域进行GC，清除非存活对象，并且把尚且存活的对象移动到Survivor区。然后整理Survivor的两个区。这种方式的GC是对年轻代的Eden区进行，不会影响到年老代。因为大部分对象都是从Eden区开始的，同时Eden区不会分配的很大，所以Eden区的GC会频繁进行。因而，一般在这里需要使用速度快、效率高的算法，使Eden去能尽快空闲出来。
+</code></pre><p><strong>Full GC</strong></p>
+<pre><code>对整个堆进行整理，包括Young、Tenured和Perm。Full GC因为需要对整个对进行回收，所以比Scavenge GC要慢，因此应该尽可能减少Full GC的次数。在对JVM调优的过程中，很大一部分工作就是对于FullGC的调节。有如下原因可能导致Full GC：
+</code></pre><p>· 年老代（Tenured）被写满</p>
+<p>· 持久代（Perm）被写满 </p>
+<p>· System.gc()被显示调用 </p>
+<p>·上一次GC之后Heap的各域分配策略动态变化</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（八）-典型配置举例2/">JVM调优总结（八）</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（八）-典型配置举例2/">feb. 2 2014</a></time></span>      
@@ -193,46 +257,31 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/">JVM调优总结（五）</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/">JVM调优总结（十二）</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jvm-1">JVM调优总结（五）-分代垃圾回收详述1</h1>
-<h2 id="-">为什么要分代</h2>
-<pre><code>分代的垃圾回收策略，是基于这样一个事实：**不同的对象的生命周期是不一样的**。因此，不同生命周期的对象可以采取不同的收集方式，以便提高回收效率。
-
-
-
-在Java程序运行的过程中，会产生大量的对象，其中有些对象是与业务信息相关，比如Http请求中的Session对象、线程、Socket连接，这类对象跟业务直接挂钩，因此生命周期比较长。但是还有一些对象，主要是程序运行过程中生成的临时变量，这些对象生命周期会比较短，比如：String对象，由于其不变类的特性，系统会产生大量的这些对象，有些对象甚至只用一次即可回收。
-
-
-
-试想，在不进行对象存活时间区分的情况下，每次垃圾回收都是对整个堆空间进行回收，花费时间相对会长，同时，因为每次回收都需要遍历所有存活对象，但实际上，对于生命周期长的对象而言，这种遍历是没有效果的，因为可能进行了很多次遍历，但是他们依旧存在。因此，分代垃圾回收采用分治的思想，进行代的划分，把不同生命周期的对象放在不同代上，不同代上采用最适合它的垃圾回收方式进行回收。
-</code></pre><h2 id="-">如何分代</h2>
-<p><img src="" alt=""></p>
-<p>如图所示：</p>
-<pre><code>虚拟机中的共划分为三个代：**年轻代（Young Generation）、年老点（Old Generation）和持久代（Permanent Generation）**。其中持久代主要存放的是Java类的类信息，与垃圾收集要收集的Java对象关系不大。年轻代和年老代的划分是对垃圾收集影响比较大的。
-</code></pre><p><strong>年轻代:</strong></p>
-<pre><code>所有新生成的对象首先都是放在年轻代的。年轻代的目标就是尽可能快速的收集掉那些生命周期短的对象。年轻代分三个区。一个Eden区，两个Survivor区(一般而言)。大部分对象在Eden区中生成。当Eden区满时，还存活的对象将被复制到Survivor区（两个中的一个），当这个Survivor区满时，此区的存活对象将被复制到另外一个Survivor区，当这个Survivor去也满了的时候，从第一个Survivor区复制过来的并且此时还存活的对象，将被复制“年老区(Tenured)”。需要注意，Survivor的两个区是对称的，没先后关系，所以同一个区中可能同时存在从Eden复制过来 对象，和从前一个Survivor复制过来的对象，而复制到年老区的只有从第一个Survivor去过来的对象。而且，Survivor区总有一个是空的。同时，根据程序需要，Survivor区是可以配置为多个的（多于两个），这样可以增加对象在年轻代中的存在时间，减少被放到年老代的可能。
-</code></pre><p><strong>年老代:</strong></p>
-<pre><code>在年轻代中经历了N次垃圾回收后仍然存活的对象，就会被放到年老代中。因此，可以认为年老代中存放的都是一些生命周期较长的对象。
-</code></pre><p><strong>持久代:</strong></p>
-<pre><code>用于存放静态文件，如今Java类、方法等。持久代对垃圾回收没有显著影响，但是有些应用可能动态生成或者调用一些class，例如Hibernate等，在这种时候需要设置一个比较大的持久代空间来存放这些运行过程中新增的类。持久代大小通过-XX:MaxPermSize=&lt;N&gt;进行设置。
-</code></pre><h2 id="-">什么情况下触发垃圾回收</h2>
-<pre><code>由于对象进行了分代处理，因此垃圾回收区域、时间也不一样。GC有两种类型：**Scavenge GC**和**Full GC**。
-</code></pre><p><strong>Scavenge GC</strong></p>
-<pre><code>一般情况下，当新对象生成，并且在Eden申请空间失败时，就会触发Scavenge GC，对Eden区域进行GC，清除非存活对象，并且把尚且存活的对象移动到Survivor区。然后整理Survivor的两个区。这种方式的GC是对年轻代的Eden区进行，不会影响到年老代。因为大部分对象都是从Eden区开始的，同时Eden区不会分配的很大，所以Eden区的GC会频繁进行。因而，一般在这里需要使用速度快、效率高的算法，使Eden去能尽快空闲出来。
-</code></pre><p><strong>Full GC</strong></p>
-<pre><code>对整个堆进行整理，包括Young、Tenured和Perm。Full GC因为需要对整个对进行回收，所以比Scavenge GC要慢，因此应该尽可能减少Full GC的次数。在对JVM调优的过程中，很大一部分工作就是对于FullGC的调节。有如下原因可能导致Full GC：
-</code></pre><p>· 年老代（Tenured）被写满</p>
-<p>· 持久代（Perm）被写满 </p>
-<p>· System.gc()被显示调用 </p>
-<p>·上一次GC之后Heap的各域分配策略动态变化</p>
-
+        <h1 id="jvm-">JVM调优总结（十二）-参考资料</h1>
+<pre><code>能整理出上面一些东西，也是因为站在巨人的肩上。下面是一些参考资料，供大家学习，大家有更好的，可以继续完善：）
+</code></pre><p>· <a href="http://www.ibm.com/developerworks/cn/java/j-jtp10283/" target="_blank">Java 理论与实践: 垃圾收集简史</a></p>
+<p>· <a href="http://pengjiaheng.iteye.com/admin/blogs/#resources" target="_blank">Java SE 6 HotSpot[tm] Virtual Machine Garbage Collection Tuning</a></p>
+<p>· <a href="http://pengjiaheng.iteye.com/admin/blogs/#16.2.6" target="_blank">Improving Java Application Performance and Scalability by Reducing Garbage Collection Times and Sizing Memory Using JDK 1.4.1</a></p>
+<p>· <a href="https://java.sun.com/j2se/reference/whitepapers/memorymanagement_whitepaper.pdf" target="_blank">Hotspot memory management whitepaper</a></p>
+<p>· <a href="http://java.sun.com/performance/reference/whitepapers/tuning.html" target="_blank">Java Tuning White Paper</a></p>
+<p>· <a href="http://java.sun.com/docs/hotspot/gc1.4.2/example.html" target="_blank">Diagnosing a Garbage Collection problem</a></p>
+<p>· <a href="http://java.sun.com/javase/technologies/hotspot/vmoptions.jsp" target="_blank">Java HotSpot VM Options</a></p>
+<p>· <a href="http://blogs.sun.com/watt/resource/jvm-options-list.html" target="_blank">A Collection of JVM Options</a></p>
+<p>· <a href="http://research.sun.com/jtech/pubs/04-g1-paper-ismm.pdf" target="_blank">Garbage-First Garbage Collection</a></p>
+<p>· <a href="http://java.sun.com/docs/hotspot/gc1.4.2/faq.html" target="_blank">Frequently Asked Questions about Garbage Collection in the HotspotTM JavaTM Virtual Machine</a></p>
+<p>· <a href="http://pengjiaheng.spaces.live.com/blog/cns!2DAA368B386E6AEA!685.entry" target="_blank">JProfiler试用手记</a></p>
+<p>· <a href="http://kenwu.me/java6-jvm-options-chinese-edition-published" target="_blank">Java6 JVM参数选项大全</a></p>
+<p>· <a href="http://www.douban.com/subject/1138768/" target="_blank">《深入Java虚拟机》</a>。虽然过去了很多年，但这本书依旧是经典。</p>
+<pre><code>这里是本系列的最后一篇了，很高兴大家能够喜欢这系列的文章。期间也提了很多问题，其中有些是我之前没有想到的或者考虑欠妥的，感谢提出这些问题的朋友，我也学到的不少东西。
+</code></pre>
       
     </div>
     
@@ -242,7 +291,7 @@ var _js2load = [];
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（五）-分代垃圾回收详述1" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -336,31 +385,105 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/">JVM调优总结（十二）</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--设计文档模板-我的文章-崔超的思想备忘录/">设计文档模板 </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--设计文档模板-我的文章-崔超的思想备忘录/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jvm-">JVM调优总结（十二）-参考资料</h1>
-<pre><code>能整理出上面一些东西，也是因为站在巨人的肩上。下面是一些参考资料，供大家学习，大家有更好的，可以继续完善：）
-</code></pre><p>· <a href="http://www.ibm.com/developerworks/cn/java/j-jtp10283/" target="_blank">Java 理论与实践: 垃圾收集简史</a></p>
-<p>· <a href="http://pengjiaheng.iteye.com/admin/blogs/#resources" target="_blank">Java SE 6 HotSpot[tm] Virtual Machine Garbage Collection Tuning</a></p>
-<p>· <a href="http://pengjiaheng.iteye.com/admin/blogs/#16.2.6" target="_blank">Improving Java Application Performance and Scalability by Reducing Garbage Collection Times and Sizing Memory Using JDK 1.4.1</a></p>
-<p>· <a href="https://java.sun.com/j2se/reference/whitepapers/memorymanagement_whitepaper.pdf" target="_blank">Hotspot memory management whitepaper</a></p>
-<p>· <a href="http://java.sun.com/performance/reference/whitepapers/tuning.html" target="_blank">Java Tuning White Paper</a></p>
-<p>· <a href="http://java.sun.com/docs/hotspot/gc1.4.2/example.html" target="_blank">Diagnosing a Garbage Collection problem</a></p>
-<p>· <a href="http://java.sun.com/javase/technologies/hotspot/vmoptions.jsp" target="_blank">Java HotSpot VM Options</a></p>
-<p>· <a href="http://blogs.sun.com/watt/resource/jvm-options-list.html" target="_blank">A Collection of JVM Options</a></p>
-<p>· <a href="http://research.sun.com/jtech/pubs/04-g1-paper-ismm.pdf" target="_blank">Garbage-First Garbage Collection</a></p>
-<p>· <a href="http://java.sun.com/docs/hotspot/gc1.4.2/faq.html" target="_blank">Frequently Asked Questions about Garbage Collection in the HotspotTM JavaTM Virtual Machine</a></p>
-<p>· <a href="http://pengjiaheng.spaces.live.com/blog/cns!2DAA368B386E6AEA!685.entry" target="_blank">JProfiler试用手记</a></p>
-<p>· <a href="http://kenwu.me/java6-jvm-options-chinese-edition-published" target="_blank">Java6 JVM参数选项大全</a></p>
-<p>· <a href="http://www.douban.com/subject/1138768/" target="_blank">《深入Java虚拟机》</a>。虽然过去了很多年，但这本书依旧是经典。</p>
-<pre><code>这里是本系列的最后一篇了，很高兴大家能够喜欢这系列的文章。期间也提了很多问题，其中有些是我之前没有想到的或者考虑欠妥的，感谢提出这些问题的朋友，我也学到的不少东西。
-</code></pre>
+        <h1 id="-">设计文档模板 - 我的文章 - 崔超的思想备忘录</h1>
+<p>  <a href="http://blog.chinaunix.net/" target="_blank">博客首页</a> <a href="http://blog.chinaunix.net/register.php" target="_blank">注册</a> <a href="http://bbs.chinaunix.net/forumdisplay.php?fid=51" target="_blank">建议与交流</a> <a href="http://blog.chinaunix.net/top/" target="_blank">排行榜</a> <a href="http://blog.chinaunix.net/u/31756/" target="_blank">加入友情链接</a>  <img src="" alt=""> <a href="http://blog.chinaunix.net/u2/star.php?blogid=31756" title="给此博客推荐值" target="_blank">推荐</a> <a href="http://blog.chinaunix.net/u2/complaint.php?blogid=31756" title="投诉此博客" target="_blank">投诉</a> 搜索：  <a href="http://blog.chinaunix.net/help/" target="_blank">帮助</a>  <strong>崔超的思想备忘录</strong></p>
+<p> 思想有重量吗？    <a href="http://cuichaox.cublog.cn/" target="_blank">cuichaox.cublog.cn</a> </p>
+<ul>
+<li><a href="http://control.cublog.cn/" target="_blank">管理博客</a></li>
+<li><a href="http://control.cublog.cn/article_new.php" target="_blank">发表文章</a></li>
+<li><a href="http://blog.chinaunix.net/u/31756/guestbook.html" target="_blank">留言</a></li>
+<li><a href="http://blog.chinaunix.net/u/31756/links.html" target="_blank">收藏夹</a></li>
+<li><a href="http://blog.chinaunix.net/u/31756/group.html" target="_blank">博客圈</a></li>
+<li><a href="http://blog.chinaunix.net/u/31756/music.html" target="_blank">音乐</a></li>
+<li><p><a href="http://blog.chinaunix.net/u/31756/photo.html" target="_blank">相册</a></p>
+</li>
+<li><p><a href="http://blog.chinaunix.net/u/31756/photo_6788.html" target="_blank">· 软件图的艺术</a></p>
+</li>
+<li><p><a href="http://blog.chinaunix.net/u/31756/article.html" target="_blank">文章</a></p>
+</li>
+<li><p><a href="http://blog.chinaunix.net/u/31756/article_48992.html" target="_blank">· 设计模式</a></p>
+</li>
+<li><a href="http://blog.chinaunix.net/u/31756/index.html" target="_blank">首页</a>  <strong>关于作者</strong> <img src="&quot;收起&quot;" alt="">   <a href="http://blog.chinaunix.net/u/31756/up_user.gif" target="_blank"><img src="" alt=""></a> 只有原创和翻译 cuichaox@gmail.com
+<strong>我的分类</strong> <img src="&quot;收起&quot;" alt=""> 
+<a href="http://blog.chinaunix.net/u/rss.php?id=31756" target="_blank"><img src="" alt=""></a>
+<strong>设计文档模板</strong>设计文档模板。 对今后思考“如何更好的编写设计文档&quot;有一个的从出发点</li>
+</ul>
+<p>xx系统,xx模块</p>
+<p>设计文档v0.1</p>
+<p>部门：xx</p>
+<p>作者：崔超<a href="&#109;&#97;&#105;&#108;&#x74;&#x6f;&#58;&#91;&#99;&#117;&#x69;&#x63;&#104;&#97;&#111;&#x40;&#x62;&#111;&#x63;&#111;&#46;&#x63;&#111;&#109;&#46;&#99;&#x6e;&#93;&#40;&#x6d;&#x61;&#x69;&#x6c;&#x74;&#111;&#58;&#99;&#117;&#x69;&#99;&#x68;&#97;&#x6f;&#64;&#x62;&#x6f;&#x63;&#111;&#x2e;&#x63;&#x6f;&#x6d;&#x2e;&#99;&#x6e;&#41;">&#91;&#99;&#117;&#x69;&#x63;&#104;&#97;&#111;&#x40;&#x62;&#111;&#x63;&#111;&#46;&#x63;&#111;&#109;&#46;&#99;&#x6e;&#93;&#40;&#x6d;&#x61;&#x69;&#x6c;&#x74;&#111;&#58;&#99;&#117;&#x69;&#99;&#x68;&#97;&#x6f;&#64;&#x62;&#x6f;&#x63;&#111;&#x2e;&#x63;&#x6f;&#x6d;&#x2e;&#99;&#x6e;&#41;</a></p>
+<p>版权说明: ××拥有本文档的全部版权，没有经过明确的书面说明，任何人不能复制，转载本文档的所有内容.</p>
+<p>可以把上面的内容放在一个好看的封面页上.</p>
+<p>文档更新记录
+版本</p>
+<p>说明</p>
+<p>完成日期</p>
+<p>修改人 0.1</p>
+<p>创建文档</p>
+<p>崔超</p>
+<h1 id="1-">1.概述</h1>
+<h2 id="1-1-">1.1.术语表</h2>
+<p>编号</p>
+<p>缩写</p>
+<p>全写</p>
+<p>定义 1 2</p>
+<h2 id="1-3-">1.3引用文档</h2>
+<p>编号</p>
+<p>文档名称</p>
+<p>作者</p>
+<p>说明 1 2</p>
+<h2 id="-1-4-"><strong>1.4**</strong>文档说明**</h2>
+<p>本设计文档作为XX模块的设计文档，为编码的依据。也作为代码的说明，在代码开发过程中应该保持本文档的更新。</p>
+<h2 id="1-5-">1.5项目背景</h2>
+<p>对项目的背景进行介绍</p>
+<h2 id="-1-3-"><strong>1.3**</strong>系统说明**</h2>
+<p>对整个系统的情况进行介绍。列举参考的文档</p>
+<h2 id="-1-4-"><strong>1.4**</strong>模块说明**</h2>
+<p>从功能角度模块进行简单的说明</p>
+<p><strong>2.**</strong>工具和方法论**</p>
+<p>对使用的设计方法，关键的概念和工具进行说明。比如：是否使用面向对象的方法，组件技术？是否使用到某种开发框架？最终使用哪种编码语言?</p>
+<p><strong>3.**</strong>分析**</p>
+<h2 id="-3-1-"><strong>3.1.**</strong>本模块在整个系统中的地位**</h2>
+<p>最好使用结构图的形式并补充详细的说明。</p>
+<h2 id="-3-2-"><strong>3.2.**</strong>功能说明**</h2>
+<p>使用列表或描述的形式对功能进行详细的说明。对强调数据处理类型的模块，这里可以使用数据流图进行说明。对强调交互过程的模块，可以使用用例图进行说明。</p>
+<p><strong>3.3.**</strong>非功能需求**</p>
+<p>性能的要求，从异常中恢复的要求等非功能的要求.</p>
+<p><strong>4.**</strong>概要设计**</p>
+<p><strong>4.1**</strong>外部接口**</p>
+<h3 id="4-1-1-">4.1.1接口要求</h3>
+<p>对外部接口进行精确的描述。如果更上层的文档已经有了这个模块的接口要求，对文档进行引用.</p>
+<h3 id="4-1-2-">4.1.2界面设计</h3>
+<p>如果存在界面设计</p>
+<h3 id="4-1-3-">4.1.3配置文件</h3>
+<p>如果这个模块有自己的配置文件</p>
+<p><strong>4.2**</strong>模块划分**</p>
+<p>使用软件结构图（结构化设计）。或使用包图，类图(面向对象设计)作为说明的主体。并且补充详细的文字说明.关键要说明每个子模块的（或类）的功能和职责。（对面向对象的设计，应该更多使用职责这样的词汇）。如果结构明显的呈现出层次，要对每个层次进行说明。</p>
+<p><strong>5.**</strong>详细设计**</p>
+<p>对每个模块，或者每一个类，进行详细的说明.说明内容包括(1)接口定义 (2)关键算法。可能使用到，类图，流程图，顺序图，交互图，等.如果是多线程程序，还可能堆同步模型进行说明。</p>
+<p><strong>5.1**</strong>子模块<strong><strong>/</strong></strong>类<strong>**1</strong></p>
+<p>... ...</p>
+<p><strong>5.2**</strong>子模块<strong><strong>/</strong></strong>类<strong>**2</strong></p>
+<p>... ...</p>
+<p><strong>6.**</strong>测试考虑**</p>
+<p>这节内容主要提供给测试人员使用，主要说明测试的重点。</p>
+<p><strong>7.**</strong>总结**</p>
+<p>开发完成后，自己有什么体会，对近一步的改进有什么好的想法，好好的写一下总结。对软件今后改进，扩展.对自己进步都有好处.</p>
+<p>update 2007-3-16 修改错字  发表于： 2007-03-15，修改于： 2007-03-16 13:41 已浏览4413次，有评论1条 <a href="http://blog.chinaunix.net/u2/star.php?blogid=31756&amp;artid=259400" title="推荐这篇文章" target="_blank">推荐</a> <a href="http://blog.chinaunix.net/u2/complaint.php?blogid=31756&amp;artid=259400" title="投诉这篇文章" target="_blank">投诉</a>
+  <strong>网友评论</strong>  <strong>本站网友</strong> 时间：2009-04-10 19:56:31 IP地址：59.108.199.★  <strong>** 很好,很强大,很个性
+  </strong>发表评论** Copyright © 2001-2010 ChinaUnix.net All Rights Reserved</p>
+<p>感谢所有关心和支持过ChinaUnix的朋友们
+页面生成时间：0.014</p>
+<p><a href="http://www.miibeian.gov.cn/" target="_blank">京ICP证041476号</a></p>
+
       
     </div>
     
@@ -369,81 +492,8 @@ var _js2load = [];
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--JVM调优总结（十二）-参考资料" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/">豆列：从表到里学习JVM实现</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:42.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-jvm-">豆列：从表到里学习JVM实现</h1>
-<p>刚写了个学习JVM用的豆列跟大家分享。
-豆列地址：<a href="http://book.douban.com/doulist/2545443/" target="_blank"><a href="http://book.douban.com/doulist/2545443/">http://book.douban.com/doulist/2545443/</a></a>
-下面把豆列的介绍贴过来。具体书单请到上面的豆列地址那边去看。
-在社会化分工、软件行业细分专业化的趋势下，会真的参与到底层系统实现的人肯定是越来越少（比例上说）。真的会参与到JVM实现的人肯定是少数。
-但如果您对JVM是如何实现的有兴趣、充满好奇，却苦于没有足够系统的知识去深入，那么这个豆列就是为您打好基础而准备的。
-如果只想用用Java用用JVM，对深入到实现细节无甚兴趣的话，这个豆列就请不必参考了，免得浪费钱浪费时间精力，呵呵 :-)
-本豆列的脉络是：</p>
-<ol>
-<li>JVM与Java语言规范
-要了解JVM是如何实现的，首先必须要知道JVM到底是什么、不是什么，表面上应该提供怎样的功能。为此，JVM规范必读，而且应该时常放在手边参考。
-而JVM的主要服务对象是Java编程语言。虽然JVM也可以支持众多其它语言，但JVM里的“J”仍然最重要，Java的语言特性影响了JVM的原始设计，所以Java语言规范也应该阅读。特别是，JVM关于线程和同步相关的规定都是交由Java语言规范的相关章节定义的。</li>
-<li>虚拟机概论
-这里选取《Virtual Machines: Versatile Platforms for Systems and Processes》，帮助您了解“虚拟机”一词到底指代什么，有什么不同类型，大概有哪些实现方法，等等。读完这本书有助获得一个清晰的大局观。</li>
-<li>为Java程序员从用户的角度介绍JVM的使用经验的几本书
-虽然这几本并没有深入到JVM实现的非常细节的角落，但对已经习惯用Java语言编程的程序员来说，有这么几本书带领自己从熟悉的领域进入不熟悉的领域总是件好事。
-这几本书中，最深入JVM内部的是《Oracle JRockit: The Definitive Guide》；有丰富调优建议的是《Java Performance》；结合实现大概介绍JVM的抽象概念的是周志明的《深入理解Java虚拟机》。</li>
-<li>虚拟机的入门级实现
-先通过《Language Implementation Patterns》了解编程语言的一些入门级实现方式，把高级语言编译器与虚拟机两个概念联系起来。
-然后通过《プログラミング言語を作る》了解非常简易的、用树遍历式以及字节码式解释器实现虚拟机大概是个怎么回事。虽然这本书没有实现JVM，但它介绍的Diksam与早期JVM的实现颇有相似之处，可参考。
-接下来《深入嵌入式Java虚拟机》介绍了一种实际的JVM——KVM的实现细节。KVM是CLDC的参考实现（RI）里的JVM，结构简单，资源消耗小，适合入门阅读。
-这部分最后是《The School of Niklaus Wirth》，里面有一章介绍了HotSpot Client Compiler (C1)的原始设计思路。这是个非常简单、但相对来说性能还不错的JIT编译器，可用于对JIT编译器的基本了解。这本书本身就很赞，不为学习虚拟机也可以一读。
-需要注意的是从“简易的JVM实现”到“高性能、复杂的JVM实现”跨度非常大；前者的许多部分的实现方式与后者相当不同。先从简易的实现开始入手主要是为了对JVM里大概都有些什么组件有所了解。但如果目标是了解高性能JVM的实现，那就必须在GC、编译原理方面打下更好的基础，重新洗一次脑。</li>
-<li>C++基础书
-下面要开始逐渐深入JVM的内部实现，如果没有良好的C或（与？）C++基础会比较吃力。虽然也有几乎完全用Java语言实现的高性能JVM，例如Maxine VM与Jikes RVM，但它们都是研究性质的；商用JVM实现仍然是C与C++的天下。
-这里我先推荐C++之父自己写的那本书来入门。虽然BS巨巨后来还出过本新书，而近来也渐渐开始有介绍C++11的入门书，但实际上现在多数JVM实现用的还是C99或非常古老的C++（连C++03都不一定用到了），所以用这本老书应该就够了。
-然后通过《深度探索C++对象模型》来学习C++对象模型的常见实现方式。这对后面理解Java对象模型的实现很有帮助。</li>
-<li>GC与编译原理的入门书
-GC书总共就那么几本，倒也没啥可挑的。《The Garbage Collection Handbook》是绝对必读。
-编译原理的书就稍微尴尬些。现有的编译原理书大都针对静态编译器、针对像C或C++那样的偏静态、偏native的语言。我还没读到过什么编译原理书是专门介绍JIT编译器或者说动态编译器的。静态与动态编译器会有些取舍上、实现策略上的差异，不过还好其核心的原理都是一样的，所以还是可以推荐几本书。龙书用来最初入门，鲸书用来补充一些优化相关的知识，EAC第二版用来学习编译器一种比较良好的逻辑组织方式，最后学一下针对现代机器的优化。</li>
-<li>介绍计算机体系结构的书
-实际JVM实现里，如果有JIT编译器或者动态编译器那它们的编译目标多半是底层机器的机器码。这就涉及到计算机体系结构了。
-如果您只对Java语言和抽象的JVM有一定了解，那可以用《计算机组成及汇编语言原理》来入门。这本书比较奇葩，用JVM的字节码指令集来当作真实机器介绍体系结构的概念。我并不太喜欢这本书，但感觉它对有Java背景的初学者来说应该有点用。要注意的是千万别只读这本书来入门，请结合下面要介绍的一本书来重新洗一次脑。
-如果对C或C++已经有所了解，那《深入理解计算机系统》（CSAPP）是计算机体系结构入门的最适合的书了。</li>
-<li>进一步阅读
-到此为止各种抽象概念应该都了解得差不多了。那么要在真实的机器上实现高性能JVM，就必须要对真实机器的指令集细节有所了解。x86/x86-64、SPARC、ARM、MIPS，要在哪个平台上做高性能实现就要学习哪个平台的指令集及指令级别优化技巧。这里就不具体推荐书了。
-操作系统层面的知识同样重要。像是说JVM要实现线程、内存分配啥的，都可能要跟系统调用或CRT对系统调用的包装打交道。这部分也需要另外找书来读。我回头再考虑下要不要加几本道这个豆列里来。
-另外，从80年代开始高级语言虚拟机的实现技术有了突飞猛进的发展，但却没有专门的书对这个领域做综述和导读。多数有用的资料其实还是在论文里。光靠读书是远远不够用的，论文这块也请关注。<h1 id="-http-rednaxelafx-iteye-com-blog-362738-http-rednaxelafx-iteye-com-blog-362738-">顺便广告一下：我的博客里关于虚拟机的文章也推荐给大家参考：<a href="http://rednaxelafx.iteye.com/blog/362738" target="_blank"><a href="http://rednaxelafx.iteye.com/blog/362738">http://rednaxelafx.iteye.com/blog/362738</a></a></h1>
-这个豆列没有漏掉 <a href="http://book.douban.com/subject/1788390/" target="_blank">《Inside the Java Virtual Machine, Second Edition》</a> ，中文版<a href="http://book.douban.com/subject/1138768/" target="_blank">《深入Java虚拟机(原书第2版)》</a>，只是我现在已经不再推荐它。这本书刚出版的时候确实引起了一番学习Java虚拟机的热潮，但其部分内容从现在的角度看已经过时，特别是涉及JVM实现的部分。像火车算法什么的现在已经没有JVM实现使用。不过话说回来，了解了解这些过时的信息也没什么不好，前提是能自己分辨清楚哪些信息是适用于现在的JVM的，而哪些已经成为了历史。</li>
-</ol>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/JVM/">JVM</a></li></span></span> | <span class="tags">Tagged <a href="/tags/JVM/" class="label label-primary">JVM</a><a href="/tags/Java&J2EE/" class="label label-success">Java&J2EE</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-JVM--豆列：从表到里学习JVM实现" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/Java_设计类/">Java_设计类</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/Java_设计类/" class="label label-success">Java_设计类</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:42"datetime="2014-03-07 09:54:42"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-Java_设计类--设计文档模板-我的文章-崔超的思想备忘录/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-Java_设计类--设计文档模板-我的文章-崔超的思想备忘录" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -523,7 +573,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 17:26:53</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 17:30:36</em></span></div>
 </div>
 <div class="clearfix"></div>
 

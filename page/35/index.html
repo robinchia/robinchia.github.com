@@ -110,6 +110,1128 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-连接池--JavaSocket连接池/">Java Socket连接池</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-连接池--JavaSocket连接池/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="java-socket-">Java Socket连接池</h1>
+<p>1：SocketAdapter类，此类继承了socket，重载了socket类的close方法，目的是当用户关闭socket的时候，我们并不关闭它只是放在连接池内部。
+package com.tarena.socketpool;
+import java.net./<em>;
+import java.io.IOException;
+//</em>/<em>
+/</em> <p>socket连接的简单实现</p>
+/<em> <p>Description: </p>
+/</em> <p>Copyright: Copyright Tarena(c) 2005</p>
+/<em> <p>Company: Tarena</p>
+/</em> @author chengxing
+/<em> @version 1.0
+/</em>/
+public class ConnectionAdapter extends Socket{
+//<em>/</em>
+/<em> 连接状态
+/</em>/
+private boolean status=true;
+//<em>/</em>
+/<em> 默认的构造函数
+/</em>/
+public ConnectionAdapter() {
+super();
+}
+public ConnectionAdapter(String host,int port)throws UnknownHostException,IOException{
+super(host,port);
+}
+//<em>/</em>
+/<em> 判断此连接是否空闲
+/</em> @return boolean 空闲返回ture,否则false
+/<em>/
+public boolean isFree(){
+return status;
+}
+//</em>/<em>
+/</em> 当使用此连接的时候设置状态为false（忙碌）
+/<em>/
+public void setBusy(){
+this.status=false;
+}
+//</em>/<em>
+/</em> 当客户端关闭连接的时候状态设置为true(空闲）
+/*/
+public void close(){
+System.out.println(Close : set the status is free );
+status=true;
+}
+public void destroy(){
+//Close socket connection
+close();
+// System.out.println(Close success );
+}
+}
+第二个类连接管理器。
+package com.tarena.socketpool;</p>
+<p>import java.lang.reflect./<em>;
+import java.util.Properties;
+//</em>/<em>
+/</em> <p>连接管理器</p>
+/<em> <p>Copyright: Copyright Tarena(c) 2005</p>
+/</em> <p>Company: Tarena</p>
+/<em> @author chengxing
+/</em> @version 1.0
+/<em>/
+public class ConnectionManager {
+//测试程序默认的连接池实现类
+public static final String PROVIDER_CLASS=com.tarena.socketpool.MyConnectionProvider;
+//测试程序的默认ip
+public static final String HOST=127.0.0.1;
+//测试程序的默认端口号
+public static final String PORT=9880;
+//</em>/<em>
+/</em> 注册钩子程序的静态匿名块
+/<em>/
+static {
+//增加钩子控制资源的释放周期
+Runtime runtime = Runtime.getRuntime();
+Class c = runtime.getClass();
+try {
+Method m = c.getMethod(addShutdownHook, new Class[] { Thread.class } );
+m.invoke(runtime, new Object[] { new ShutdownThread() });
+}
+catch (NoSuchMethodException e) {
+e.printStackTrace();
+// Ignore -- the user might not be running JDK 1.3 or later.
+}
+catch (Exception e) {
+e.printStackTrace();
+}
+}
+//</em>/<em>
+/</em> 默认的构造函数
+/<em>/
+public ConnectionManager() {
+}
+//</em>/<em>
+/</em> 得到并初始化一个连接池
+/<em> 连接池的实现类通过系统参数来传递进来，通过命令行-DConnectionProvider=YourImplClass
+/</em> 如果没有指定的实现的话，则采用系统默认的实现类
+/<em> 通过命令行传入的参数列表如下
+/</em> 对方主机名-DHost=192.168.0.200
+/<em> 对方端口号　-DPort=9880
+/</em> 最小连接数 -DMax_style=&#39;font-size:10px&#39;0
+/<em> 最大连结数　-DMin_style=&#39;font-size:14px&#39;0
+/</em> 以上的值可以改变，但是参数不能改变，
+/<em> 最大连结数和最小连接数可以省略，默认值分别为２０和１０
+/</em> @return ConnectionProvider
+/*/
+public static ConnectionProvider getConnectionProvider()throws Exception{
+String provider_class=System.getProperty(ConnectionProvider);
+if(provider_class==null)provider_class=PROVIDER_CLASS;</p>
+<p>String host=System.getProperty(Host);
+if(host==null)host=HOST;</p>
+<p>String port=System.getProperty(port);
+if(port==null)port=PORT;</p>
+<p>String max_size=System.getProperty(Max_size);
+String min_size=System.getProperty(Min_size);</p>
+<p>Properties pro=new Properties();
+pro.setProperty(ConnectionProvider.SERVER_IP,host);
+pro.setProperty(ConnectionProvider.SERVER_PORT,port);
+if(max_size!=null)pro.setProperty(ConnectionProvider.MAX_SIZE,max_size);
+if(min_size!=null)pro.setProperty(ConnectionProvider.MIN_SIZE,min_size);
+//通过反射得到实现类
+System.out.println(provider_class);
+System.out.flush();
+Class provider_impl=Class.forName(provider_class);
+//由于是单子模式，采用静态方法回调
+Method m=provider_impl.getMethod(newInstance,new Class[]{java.util.Properties.class});
+ConnectionProvider provider=null;
+try{
+provider = (ConnectionProvider) m.invoke(provider_impl, new Object[]{pro});
+}catch(Exception e){
+e.printStackTrace();
+}</p>
+<p>return provider;
+}
+//<em>/</em>
+/<em>
+/</em> <p>一个钩子的线程: 在程序结束的时候调用注销连接池</p>
+/<em> <p>Description: </p>
+/</em> <p>Copyright: Copyright Tarena(c) 2005</p>
+/<em> <p>Company: Tarena</p>
+/</em> @author chengxing
+/<em> @version 1.0
+/</em>/
+private static class ShutdownThread extends Thread {
+public void run() {
+try{
+ConnectionProvider provider = ConnectionManager.getConnectionProvider();
+if (provider != null) {
+provider.destroy();
+}
+}catch(Exception e){
+e.printStackTrace();
+}
+}
+}</p>
+<p>}</p>
+<p>第三个类，连接池的接口定义
+package com.tarena.socketpool;</p>
+<p>import java.net./<em>;
+import java.util./</em>;
+import java.io.IOException;</p>
+<p>//<em>/</em>
+/<em>
+/</em> <p>定义的抽象类，所有的子类必须单子模式去实现，
+/<em> 统一方法为public ConnectionProvider newInstance();
+/</em> 连接提供器的抽象接口，每一个实现它的子类最好都是JAVABEAN，
+/<em> 这样它的方法就可以是被外界控制</p>
+/</em> @see JiveBeanInfo
+/<em> <p>Copyright: Copyright Tarena(c) 2005</p>
+/</em> <p>Company: Tarena</p>
+/<em> @author chengxing
+/</em> @version 1.0
+/*/
+public interface
+ConnectionProvider {
+public static final String SERVER_IP = SERVER_IP_ADDRESS;
+public static final String SERVER_PORT = SERVER_IP_PORT;
+public static final String MAX_SIZE = MAX_SIZE;
+public static final String MIN_SIZE = MIN_SIZE;</p>
+<p>//<em>/</em>
+/<em>判断连接池内是否有连接
+/</em> @return true 有连接返回true,否则返回false
+/*/
+public boolean isPooled();</p>
+<p>//<em>/</em>
+/<em> 当此方法被调用的时候提供一个 socket
+/</em> @see Socket
+/<em> @return Socket a Connection object.
+/</em>/
+public Socket getConnection() throws java.net.SocketException;</p>
+<p>//<em>/</em>
+/<em> 连接池初始化
+/</em>/
+public void init() throws UnknownHostException, IOException;</p>
+<p>//<em>/</em>
+/<em> 连接池重新启动
+/</em>/
+public void restart() throws UnknownHostException, IOException;</p>
+<p>//<em>/</em>
+/<em> 注销连接池
+/</em>/
+public void destroy();
+}
+第四个类MyConnectionProvider，自己写的一个连接池的简单实现
+package com.tarena.socketpool;</p>
+<p>import java.util./<em>;
+import java.net./</em>;
+import java.net.SocketException;
+import java.io.IOException;</p>
+<p>//<em>/</em>
+/<em>
+/</em> <p>这是一个连接管理器的简单实现</p>
+/<em> <p>Description: implements the Interface ConnectionProvider</p>
+/</em> <p>Copyright: Copyright Tarena(c) 2005</p>
+/<em> <p>Company: Tarena</p>
+/</em> @author chengxing
+/<em> @version 1.0
+/</em>/
+public class MyConnectionProvider
+implements ConnectionProvider {</p>
+<p>private Properties pro = null;
+private static ConnectionProvider provider = null;
+private static Object object_lock = new Object();
+private String ip;
+private String port;</p>
+<p>//<em>/</em>
+/<em> 默认的最大连接数
+/</em>/
+private int max_size = 20;</p>
+<p>//<em>/</em>
+/<em> 默认的最小连接数
+/</em>/
+private int min_size = 10;</p>
+<p>//<em>/</em>
+/<em> Socket connection池数组
+/</em>/
+private ConnectionAdapter[] socketpool = null;</p>
+<p>//<em>/</em>
+/<em> 构造对象的时候初始化连接池
+/</em> @throws UnknownHostException 未知的主机异常
+/<em> @throws IOException
+/</em>/
+private MyConnectionProvider(Properties pro) throws UnknownHostException,
+IOException {
+ip = pro.getProperty(SERVER_IP);
+port = pro.getProperty(SERVER_PORT);
+String max_size_s = pro.getProperty(MAX_SIZE);
+String min_size_s = pro.getProperty(MIN_SIZE);
+if (max_size_s != null) {
+max_size = Integer.parseInt(max_size_s);
+}
+if (min_size_s != null) {
+min_size = Integer.parseInt(min_size_s);
+}</p>
+<p>init(); //构造对象的时候初始化连接池
+}</p>
+<p>//<em>/</em>
+/<em> 判断是否已经池化
+/</em> @return boolean 如果池化返回ture,反之返回false
+/*/
+public boolean isPooled() {
+if (socketpool != null) {
+return true;
+}
+else return false;
+}</p>
+<p>//<em>/</em>
+/<em>返回一个连接
+/</em> @return a Connection object.
+/*/
+public Socket getConnection() {
+Socket s = null;
+for (int i = 0; i &lt; socketpool.length; i++) {
+if (socketpool[i] != null) {
+//如果有空闲的连接，返回一个空闲连接，如果没有，继续循环
+if (socketpool[i].isFree()) {
+s = socketpool[i];
+return s;
+}
+else continue;
+}
+else { //如果连接为空，证明超过最小连接数，重新生成连接
+try {
+s = socketpool[i] = new ConnectionAdapter(ip, Integer.parseInt(port));
+}
+catch (Exception e) {
+//never throw
+}
+}
+}
+//如果连接仍旧为空的话，则超过了最大连接数
+if (s == null) {
+try { //生成普通连接，由客户端自行关闭，释放资源，不再由连接池管理
+s = new Socket(ip, Integer.parseInt(port));
+}
+catch (Exception e) { //此异常永远不会抛出
+}
+}
+return s;
+}</p>
+<p>//<em>/</em>
+/<em> 初始化连接池
+/</em> @throws UnknownHostException 主机ip找不到
+/<em> @throws IOException 此端口号上无server监听
+/</em>/
+public void init() throws UnknownHostException, IOException {</p>
+<p>socketpool = new ConnectionAdapter[max_size];
+for (int i = 0; i &lt; min_size; i++) {
+socketpool[i] = new ConnectionAdapter(ip, Integer.parseInt(port));
+System.out.print( . );
+}
+System.out.println();
+System.out.println(System init success ....);
+}</p>
+<p>//<em>/</em>
+/<em> 重新启动连接池
+/</em> @throws UnknownHostException
+/<em> @throws IOException
+/</em>/
+public void restart() throws UnknownHostException, IOException {
+destroy();
+init();
+}</p>
+<p>//<em>/</em>
+/<em> 注销此连接池
+/</em>/
+public void destroy() {
+for (int i = 0; i &lt; socketpool.length; i++) {
+if (socketpool[i] != null) {
+ConnectionAdapter adapter = (ConnectionAdapter) socketpool[i];
+adapter.destroy();
+System.out.print( . );
+}
+}
+System.out.println(\ndestory success ....);
+}
+//<em>/</em>
+/<em> 静态方法，生成此连接池实现的对象
+/</em> @param pro Properties 此连接池所需要的所有参数的封装
+/<em> @throws UnknownHostException 主机无法找到
+/</em> @throws IOException 与服务器无法建立连接
+/<em> @return ConnectionProvider 返回父类ConnectionProvider
+/</em>/
+public static ConnectionProvider newInstance(java.util.Properties pro) throws
+UnknownHostException, IOException {
+if (provider == null) {
+synchronized (object_lock) {
+if (provider == null) {
+provider = new MyConnectionProvider(pro);
+}
+}
+}
+return provider;
+}
+//<em>/</em>
+/<em>设置系统属性 通过封装系统properties对象来封装所需要的不同值
+/</em> SERVER_IP，SERVER_PORT，MAX_SIZE,MIN_SIZE等父类定义的不同的参数
+/<em> @param pro Properties 传进来的系统属性
+/</em>/
+public void setProperties(Properties pro) {
+this.pro = pro;
+}
+}</p>
+<p>posted on 2008-04-26 16:51 <a href="http://www.cnblogs.com/pony/" target="_blank">马森</a> 阅读(661) <a href="http://www.cnblogs.com/pony/archive/2008/04/26/1172288.html#Post" target="_blank">评论(0)</a> <a href="http://www.cnblogs.com/pony/admin/EditPosts.aspx?postid=1172288" target="_blank">编辑</a> <a href="http://www.cnblogs.com/pony/AddToFavorite.aspx?id=1172288" target="_blank">收藏</a> <a href="http://www.cnblogs.com/pony/archive/2008/04/26/1172288.html#" target="_blank">网摘</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/连接池/">连接池</a></li></span></span> | <span class="tags">Tagged <a href="/tags/连接池/" class="label label-primary">连接池</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-连接池--JavaSocket连接池/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-连接池--JavaSocket连接池" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-连接池--druid教程/">druid 教程</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-连接池--druid教程/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="druid-">druid 教程</h1>
+<pre><code> java程序很大一部分要操作数据库，为了提高性能操作数据库的时候，有不得不使用数据库连接池。数据库连接池有很多选择，c3p、dhcp、proxool等，druid作为一名后起之秀，凭借其出色的性能，也逐渐印入了大家的眼帘。接下来本教程就说一下druid的简单使用。
+</code></pre><p> 首先从<a href="http://repo1.maven.org/maven2/com/alibaba/druid/" target="_blank"><a href="http://repo1.maven.org/maven2/com/alibaba/druid/">http://repo1.maven.org/maven2/com/alibaba/druid/</a></a> 下载最新的jar包。如果想使用最新的源码编译，可以从<a href="https://github.com/alibaba/druid" target="_blank"><a href="https://github.com/alibaba/druid">https://github.com/alibaba/druid</a></a> 下载源码，然后使用maven命令行，或者导入到eclipse中进行编译。</p>
+<h2 id="-1-"><a href=""></a>1 配置</h2>
+<p>和dbcp类似，druid的配置项如下</p>
+<p>配置 缺省值 说明 name   配置这个属性的意义在于，如果存在多个数据源，监控的时候
+可以通过名字来区分开来。如果没有配置，将会生成一个名字，
+格式是：&quot;DataSource-&quot; + System.identityHashCode(this) jdbcUrl   连接数据库的url，不同数据库不一样。例如：
+mysql : jdbc:mysql://10.20.153.104:3306/druid2 
+oracle : jdbc:oracle:thin:@10.20.149.85:1521:ocnauto username   连接数据库的用户名 password   连接数据库的密码。如果你不希望密码直接写在配置文件中，
+可以使用ConfigFilter。详细看这里：
+<a href="https://github.com/alibaba/druid/wiki/%E4%BD%BF%E7%94%A8ConfigFilter" target="_blank"><a href="https://github.com/alibaba/druid/wiki/%E4%BD%BF%E7%94%A8ConfigFilter">https://github.com/alibaba/druid/wiki/%E4%BD%BF%E7%94%A8ConfigFilter</a></a> driverClassName 根据url自动识别 这一项可配可不配，如果不配置druid会根据url自动识别dbType，
+然后选择相应的driverClassName initialSize 0 初始化时建立物理连接的个数。初始化发生在显示调用init方法，
+或者第一次getConnection时 maxActive 8 最大连接池数量 maxIdle 8 已经不再使用，配置了也没效果 minIdle   最小连接池数量 maxWait   获取连接时最大等待时间，单位毫秒。配置了maxWait之后，
+缺省启用公平锁，并发效率会有所下降，
+如果需要可以通过配置useUnfairLock属性为true使用非公平锁。 poolPreparedStatements false 是否缓存preparedStatement，也就是PSCache。
+PSCache对支持游标的数据库性能提升巨大，比如说oracle。
+在mysql下建议关闭。 maxOpenPreparedStatements -1 要启用PSCache，必须配置大于0，当大于0时，
+poolPreparedStatements自动触发修改为true。
+在Druid中，不会存在Oracle下PSCache占用内存过多的问题，
+可以把这个数值配置大一些，比如说100 validationQuery   用来检测连接是否有效的sql，要求是一个查询语句。
+如果validationQuery为null，testOnBorrow、testOnReturn、
+testWhileIdle都不会其作用。 testOnBorrow true 申请连接时执行validationQuery检测连接是否有效，
+做了这个配置会降低性能。 testOnReturn false 归还连接时执行validationQuery检测连接是否有效，
+做了这个配置会降低性能 testWhileIdle false 建议配置为true，不影响性能，并且保证安全性。
+申请连接的时候检测，如果空闲时间大于
+timeBetweenEvictionRunsMillis，
+执行validationQuery检测连接是否有效。 timeBetweenEvictionRunsMillis   有两个含义：
+1) Destroy线程会检测连接的间隔时间
+ 2) testWhileIdle的判断依据，详细看testWhileIdle属性的说明 numTestsPerEvictionRun   不再使用，一个DruidDataSource只支持一个EvictionRun minEvictableIdleTimeMillis     connectionInitSqls   物理连接初始化的时候执行的sql exceptionSorter 根据dbType自动识别 当数据库抛出一些不可恢复的异常时，抛弃连接 filters   属性类型是字符串，通过别名的方式配置扩展插件，
+常用的插件有：
+监控统计用的filter:stat 
+日志用的filter:log4j
+ 防御sql注入的filter:wall proxyFilters   类型是List<com.alibaba.druid.filter.Filter>，
+如果同时配置了filters和proxyFilters，
+是组合关系，并非替换关系<strong>表1.1 配置属性</strong></p>
+<p>根据常用的配置属性，首先给出一个如下的配置文件，放置于src目录下。</p>
+<p><strong>[plain]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>url:jdbc:mysql://localhost:3306/dragoon_v25_masterdb  </li>
+<li>driverClassName:com.mysql.jdbc.Driver  </li>
+<li>username:root  </li>
+<li>password:aaaaaaaa  </li>
+<li></li>
+<li>filters:stat  </li>
+<li></li>
+<li>maxActive:20  </li>
+<li>initialSize:1  </li>
+<li>maxWait:60000  </li>
+<li>minIdle:10  </li>
+<li>/#maxIdle:15  </li>
+<li></li>
+<li>timeBetweenEvictionRunsMillis:60000  </li>
+<li>minEvictableIdleTimeMillis:300000  </li>
+<li></li>
+<li>validationQuery:SELECT &#39;x&#39;  </li>
+<li>testWhileIdle:true  </li>
+<li>testOnBorrow:false  </li>
+<li>testOnReturn:false  </li>
+<li>/#poolPreparedStatements:true  </li>
+<li>maxOpenPreparedStatements:20  </li>
+<li></li>
+<li>/#对于长时间不使用的连接强制关闭  </li>
+<li>removeAbandoned:true  </li>
+<li>/#超过30分钟开始关闭空闲连接  </li>
+<li>removeAbandonedTimeout:1800  </li>
+<li>/#将当前关闭动作记录到日志  </li>
+<li>logAbandoned:true  </li>
+</ol>
+<p><strong>配置文件1.1 </strong></p>
+<p>配置项中指定了各个参数后，在连接池内部是这么使用这些参数的。数据库连接池在初始化的时候会创建initialSize个连接，当有数据库操作时，会从池中取出一个连接。如果当前池中正在使用的连接数等于maxActive，则会等待一段时间，等待其他操作释放掉某一个连接，如果这个等待时间超过了maxWait，则会报错；如果当前正在使用的连接数没有达到maxActive，则判断当前是否空闲连接，如果有则直接使用空闲连接，如果没有则新建立一个连接。在连接使用完毕后，不是将其物理连接关闭，而是将其放入池中等待其他操作复用。</p>
+<p>同时连接池内部有机制判断，如果当前的总的连接数少于miniIdle，则会建立新的空闲连接，以保证连接数得到miniIdle。如果当前连接池中某个连接在空闲了timeBetweenEvictionRunsMillis时间后任然没有使用，则被物理性的关闭掉。有些数据库连接的时候有超时限制（mysql连接在8小时后断开），或者由于网络中断等原因，连接池的连接会出现失效的情况，这时候设置一个testWhileIdle参数为true，可以保证连接池内部定时检测连接的可用性，不可用的连接会被抛弃或者重建，最大情况的保证从连接池中得到的Connection对象是可用的。当然，为了保证绝对的可用性，你也可以使用testOnBorrow为true（即在获取Connection对象时检测其可用性），不过这样会影响性能。</p>
+<h2 id="-2-"><a href=""></a>2 代码编写</h2>
+<h3 id="-2-1-spring"><a href=""></a>2.1 使用spring</h3>
+<p>首先给出spring配置文件</p>
+<p><strong>[html]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;  </li>
+<li>&lt;beans xmlns=&quot;<a href="http://www.springframework.org/schema/beans" target="_blank">http://www.springframework.org/schema/beans</a>&quot;  </li>
+<li>xmlns:xsi=&quot;<a href="http://www.w3.org/2001/XMLSchema-instance" target="_blank">http://www.w3.org/2001/XMLSchema-instance</a>&quot;  </li>
+<li>xsi:schemaLocation=&quot;<a href="http://www.springframework.org/schema/mvc" target="_blank">http://www.springframework.org/schema/mvc</a> <a href="http://www.springframework.org/schema/mvc/spring-mvc-3.0.xsd" target="_blank">http://www.springframework.org/schema/mvc/spring-mvc-3.0.xsd</a>  </li>
+<li><a href="http://www.springframework.org/schema/beans" target="_blank">http://www.springframework.org/schema/beans</a> <a href="http://www.springframework.org/schema/beans/spring-beans-3.0.xsd" target="_blank">http://www.springframework.org/schema/beans/spring-beans-3.0.xsd</a>  </li>
+<li><a href="http://www.springframework.org/schema/context" target="_blank">http://www.springframework.org/schema/context</a> <a href="http://www.springframework.org/schema/context/spring-context-3.0.xsd&quot;&gt;" target="_blank">http://www.springframework.org/schema/context/spring-context-3.0.xsd&quot;&gt;</a>  </li>
+<li><!-- 给web使用的spring文件 -->  </li>
+<li>&lt;bean id=&quot;propertyConfigurer&quot;  </li>
+<li>class=&quot;org.springframework.beans.factory.config.PropertyPlaceholderConfigurer&quot;&gt;  </li>
+<li><property name="locations">  </li>
+<li><list>  </li>
+<li><value>/WEB-INF/classes/dbconfig.properties</value>  </li>
+<li></list>  </li>
+<li></property>  </li>
+<li></bean>  </li>
+<li>&lt;bean id=&quot;dataSource&quot; class=&quot;com.alibaba.druid.pool.DruidDataSource&quot;  </li>
+<li>destroy-method=&quot;close&quot;&gt;  </li>
+<li><property name="url" value="${url}" />  </li>
+<li><property name="username" value="${username}" />  </li>
+<li><property name="password" value="${password}" />  </li>
+<li><property name="driverClassName" value="${driverClassName}" />  </li>
+<li><property name="filters" value="${filters}" />  </li>
+<li></li>
+<li><property name="maxActive" value="${maxActive}" />  </li>
+<li><property name="initialSize" value="${initialSize}" />  </li>
+<li><property name="maxWait" value="${maxWait}" />  </li>
+<li><property name="minIdle" value="${minIdle}" />  </li>
+<li></li>
+<li><property name="timeBetweenEvictionRunsMillis" value="${timeBetweenEvictionRunsMillis}" />  </li>
+<li><property name="minEvictableIdleTimeMillis" value="${minEvictableIdleTimeMillis}" />  </li>
+<li></li>
+<li><property name="validationQuery" value="${validationQuery}" />  </li>
+<li><property name="testWhileIdle" value="${testWhileIdle}" />  </li>
+<li><property name="testOnBorrow" value="${testOnBorrow}" />  </li>
+<li><property name="testOnReturn" value="${testOnReturn}" />  </li>
+<li>&lt;property name=&quot;maxOpenPreparedStatements&quot;  </li>
+<li>value=&quot;${maxOpenPreparedStatements}&quot; /&gt;  </li>
+<li><property name="removeAbandoned" value="${removeAbandoned}" /> <!-- 打开removeAbandoned功能 -->  </li>
+<li><property name="removeAbandonedTimeout" value="${removeAbandonedTimeout}" /> <!-- 1800秒，也就是30分钟 -->  </li>
+<li><property name="logAbandoned" value="${logAbandoned}" /> <!-- 关闭abanded连接时输出错误日志 -->  </li>
+<li></bean>  </li>
+<li></li>
+<li>&lt;bean id=&quot;dataSourceDbcp&quot; class=&quot;org.apache.commons.dbcp.BasicDataSource&quot;  </li>
+<li>destroy-method=&quot;close&quot;&gt;  </li>
+<li></li>
+<li><property name="driverClassName" value="${driverClassName}" />  </li>
+<li><property name="url" value="${url}" />  </li>
+<li><property name="username" value="${username}" />  </li>
+<li><property name="password" value="${password}" />  </li>
+<li></li>
+<li><property name="maxActive" value="${maxActive}" />  </li>
+<li><property name="minIdle" value="${minIdle}" />  </li>
+<li><property name="maxWait" value="${maxWait}" />  </li>
+<li><property name="defaultAutoCommit" value="true" />  </li>
+<li></li>
+<li><property name="timeBetweenEvictionRunsMillis" value="${timeBetweenEvictionRunsMillis}" />  </li>
+<li><property name="minEvictableIdleTimeMillis" value="${minEvictableIdleTimeMillis}" />  </li>
+<li></li>
+<li><property name="validationQuery" value="${validationQuery}" />  </li>
+<li><property name="testWhileIdle" value="${testWhileIdle}" />  </li>
+<li><property name="testOnBorrow" value="${testOnBorrow}" />  </li>
+<li><property name="testOnReturn" value="${testOnReturn}" />  </li>
+<li>&lt;property name=&quot;maxOpenPreparedStatements&quot;  </li>
+<li>value=&quot;${maxOpenPreparedStatements}&quot; /&gt;  </li>
+<li><property name="removeAbandoned" value="${removeAbandoned}" />   </li>
+<li><property name="removeAbandonedTimeout" value="${removeAbandonedTimeout}" />  </li>
+<li><property name="logAbandoned" value="${logAbandoned}" />  </li>
+<li></bean>  </li>
+<li></li>
+<li></li>
+<li><!-- jdbcTemplate -->  </li>
+<li><bean id="jdbc" class="org.springframework.jdbc.core.JdbcTemplate">  </li>
+<li><property name="dataSource">  </li>
+<li><ref bean="dataSource" />  </li>
+<li></property>  </li>
+<li></bean>  </li>
+<li></li>
+<li>&lt;bean id=&quot;SpringTableOperatorBean&quot; class=&quot;com.whyun.druid.model.TableOperator&quot;  </li>
+<li>scope=&quot;prototype&quot;&gt;  </li>
+<li><property name="dataSource">  </li>
+<li><ref bean="dataSource" />  </li>
+<li></property>  </li>
+<li></bean>  </li>
+<li></li>
+<li></beans>  </li>
+</ol>
+<p><strong>配置文件2.1</strong></p>
+<p>其中第一个bean中给出的配置文件/WEB-INF/classes/dbconfig.properties就是第1节中给出的配置文件。我这里还特地给出dbcp的spring配置项，目的就是将两者进行对比，方便大家进行迁移。这里没有使用JdbcTemplate，所以jdbc那个bean没有使用到。下面给出com.whyun.druid.model.TableOperator类的代码。</p>
+<p><strong>[java]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>package com.whyun.druid.model;  </li>
+<li></li>
+<li>import java.sql.Connection;  </li>
+<li>import java.sql.PreparedStatement;  </li>
+<li>import java.sql.SQLException;  </li>
+<li>import java.sql.Statement;  </li>
+<li></li>
+<li>import javax.sql.DataSource;  </li>
+<li></li>
+<li>public class TableOperator {  </li>
+<li>private DataSource dataSource;  </li>
+<li>public void setDataSource(DataSource dataSource) {  </li>
+<li>this.dataSource = dataSource;  </li>
+<li>}  </li>
+<li></li>
+<li>private static final int COUNT = 800;      </li>
+<li></li>
+<li>public TableOperator() {  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>public void tearDown() throws Exception {  </li>
+<li>try {  </li>
+<li>dropTable();  </li>
+<li>} catch (SQLException e) {  </li>
+<li>e.printStackTrace();  </li>
+<li>}         </li>
+<li>}  </li>
+<li></li>
+<li>public void insert() throws Exception {  </li>
+<li></li>
+<li>StringBuffer ddl = new StringBuffer();  </li>
+<li>ddl.append(&quot;INSERT INTO t_big (&quot;);  </li>
+<li>for (int i = 0; i &lt; COUNT; ++i) {  </li>
+<li>if (i != 0) {  </li>
+<li>ddl.append(&quot;, &quot;);  </li>
+<li>}  </li>
+<li>ddl.append(&quot;F&quot; + i);  </li>
+<li>}  </li>
+<li>ddl.append(&quot;) VALUES (&quot;);  </li>
+<li>for (int i = 0; i &lt; COUNT; ++i) {  </li>
+<li>if (i != 0) {  </li>
+<li>ddl.append(&quot;, &quot;);  </li>
+<li>}  </li>
+<li>ddl.append(&quot;?&quot;);  </li>
+<li>}  </li>
+<li>ddl.append(&quot;)&quot;);  </li>
+<li></li>
+<li>Connection conn = dataSource.getConnection();  </li>
+<li></li>
+<li>//        System.out.println(ddl.toString());  </li>
+<li></li>
+<li>PreparedStatement stmt = conn.prepareStatement(ddl.toString());  </li>
+<li></li>
+<li>for (int i = 0; i &lt; COUNT; ++i) {  </li>
+<li>stmt.setInt(i + 1, i);  </li>
+<li>}  </li>
+<li>stmt.execute();  </li>
+<li>stmt.close();  </li>
+<li></li>
+<li>conn.close();  </li>
+<li>}  </li>
+<li></li>
+<li>private void dropTable() throws SQLException {  </li>
+<li></li>
+<li>Connection conn = dataSource.getConnection();  </li>
+<li></li>
+<li>Statement stmt = conn.createStatement();  </li>
+<li>stmt.execute(&quot;DROP TABLE t_big&quot;);  </li>
+<li>stmt.close();  </li>
+<li></li>
+<li>conn.close();  </li>
+<li>}  </li>
+<li></li>
+<li>public void createTable() throws SQLException {  </li>
+<li>StringBuffer ddl = new StringBuffer();  </li>
+<li>ddl.append(&quot;CREATE TABLE t_big (FID INT AUTO_INCREMENT PRIMARY KEY &quot;);  </li>
+<li>for (int i = 0; i &lt; COUNT; ++i) {  </li>
+<li>ddl.append(&quot;, &quot;);  </li>
+<li>ddl.append(&quot;F&quot; + i);  </li>
+<li>ddl.append(&quot; BIGINT NULL&quot;);  </li>
+<li>}  </li>
+<li>ddl.append(&quot;)&quot;);  </li>
+<li></li>
+<li>Connection conn = dataSource.getConnection();  </li>
+<li></li>
+<li>Statement stmt = conn.createStatement();  </li>
+<li>stmt.execute(ddl.toString());  </li>
+<li>stmt.close();  </li>
+<li></li>
+<li>conn.close();  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p><strong>代码片段2.1</strong></p>
+<p><strong>注意：在使用的时候，通过获取完Connection对象，在使用完之后，要将其close掉，这样其实是将用完的连接放入到连接池中，如果你不close的话，会造成连接泄露。</strong>
+然后我们写一个servlet来测试他.</p>
+<p><strong>[java]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>package com.whyun.druid.servelt;  </li>
+<li></li>
+<li>import java.io.IOException;  </li>
+<li>import java.io.PrintWriter;  </li>
+<li>import java.sql.SQLException;  </li>
+<li></li>
+<li>import javax.servlet.ServletContext;  </li>
+<li>import javax.servlet.ServletException;  </li>
+<li>import javax.servlet.http.HttpServlet;  </li>
+<li>import javax.servlet.http.HttpServletRequest;  </li>
+<li>import javax.servlet.http.HttpServletResponse;  </li>
+<li></li>
+<li>import org.springframework.web.context.WebApplicationContext;  </li>
+<li>import org.springframework.web.context.support.WebApplicationContextUtils;  </li>
+<li></li>
+<li>import com.whyun.druid.model.TableOperator;  </li>
+<li></li>
+<li>public class TestServlet extends HttpServlet {  </li>
+<li>private TableOperator operator;  </li>
+<li></li>
+<li></li>
+<li>@Override  </li>
+<li>public void init() throws ServletException {  </li>
+<li></li>
+<li>super.init();  </li>
+<li>ServletContext servletContext = this.getServletContext();     </li>
+<li></li>
+<li>WebApplicationContext ctx  </li>
+<li>= WebApplicationContextUtils.getWebApplicationContext(servletContext);  </li>
+<li>operator = (TableOperator)ctx.getBean(&quot;SpringTableOperatorBean&quot;);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* The doGet method of the servlet. <br> </li>
+<li>/* </li>
+<li>/* This method is called when a form has its tag value method equals to get. </li>
+<li>/*  </li>
+<li>/* @param request the request send by the client to the server </li>
+<li>/* @param response the response send by the server to the client </li>
+<li>/* @throws ServletException if an error occurred </li>
+<li>/* @throws IOException if an error occurred </li>
+<li>/*/  </li>
+<li>public void doGet(HttpServletRequest request, HttpServletResponse response)  </li>
+<li>throws ServletException, IOException {  </li>
+<li></li>
+<li>response.setContentType(&quot;text/html&quot;);  </li>
+<li>PrintWriter out = response.getWriter();  </li>
+<li></li>
+<li>boolean createResult = false;  </li>
+<li>boolean insertResult = false;  </li>
+<li>boolean dropResult = false;  </li>
+<li></li>
+<li>try {  </li>
+<li>operator.createTable();  </li>
+<li>createResult = true;  </li>
+<li>} catch (SQLException e) {  </li>
+<li>e.printStackTrace();  </li>
+<li>}  </li>
+<li>if (createResult) {  </li>
+<li>try {  </li>
+<li>operator.insert();  </li>
+<li>insertResult = true;  </li>
+<li>} catch (Exception e) {  </li>
+<li>e.printStackTrace();  </li>
+<li>}  </li>
+<li>try {  </li>
+<li>operator.tearDown();  </li>
+<li>dropResult = true;  </li>
+<li>} catch (Exception e) {  </li>
+<li>e.printStackTrace();  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li></li>
+<li>out.println(&quot;{&#39;createResult&#39;:&quot;+createResult+&quot;,&#39;insertResult&#39;:&quot;  </li>
+<li>+insertResult+&quot;,&#39;dropResult&#39;:&quot;+dropResult+&quot;}&quot;);  </li>
+<li></li>
+<li>out.flush();  </li>
+<li>out.close();  </li>
+<li>}  </li>
+<li></li>
+<li>}<br><strong>代码片段2.2</strong></li>
+</ol>
+<p>这里没有用到struts2或者springmvc，虽然大部分开发者用的是这两种框架。</p>
+<h3 id="-2-2-spring"><a href=""></a>2.2 不使用spring</h3>
+<p>类似于dbcp，druid也提供了原生态的支持。先看下面这段代码：</p>
+<p><strong>[java]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>package com.whyun.util.db;  </li>
+<li></li>
+<li>import javax.sql.DataSource;  </li>
+<li></li>
+<li>import org.apache.commons.dbcp.BasicDataSourceFactory;  </li>
+<li></li>
+<li>import com.alibaba.druid.pool.DruidDataSourceFactory;  </li>
+<li>import com.whyun.util.config.MySqlConfigProperty;  </li>
+<li>import com.whyun.util.config.MySqlConfigProperty2;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* The Class DataSourceUtil. </li>
+<li>/*/  </li>
+<li>public class DataSourceUtil {  </li>
+<li></li>
+<li>//<em>/</em> 使用配置文件dbconfig.properties构建Druid数据源. /*/  </li>
+<li>public static final int DRUID_MYSQL_SOURCE = 0;  </li>
+<li></li>
+<li>//<em>/</em> 使用配置文件dbconfig2.properties构建Druid数据源. /*/  </li>
+<li>public static final int DRUID_MYSQL_SOURCE2 = 1;  </li>
+<li></li>
+<li>//<em>/</em> 使用配置文件dbconfig.properties构建Dbcp数据源. /*/  </li>
+<li>public static final int DBCP_SOURCE = 4;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 根据类型获取数据源 </li>
+<li>/* </li>
+<li>/* @param sourceType 数据源类型 </li>
+<li>/* @return druid或者dbcp数据源 </li>
+<li>/* @throws Exception the exception </li>
+<li>/*/  </li>
+<li>public static final DataSource getDataSource(int sourceType)  </li>
+<li>throws Exception {  </li>
+<li>DataSource dataSource = null;  </li>
+<li>switch(sourceType) {  </li>
+<li>case DRUID_MYSQL_SOURCE:              </li>
+<li>dataSource = DruidDataSourceFactory.createDataSource(  </li>
+<li>MySqlConfigProperty.getInstance().getProperties());               </li>
+<li>break;  </li>
+<li>case DRUID_MYSQL_SOURCE2:  </li>
+<li>dataSource = DruidDataSourceFactory.createDataSource(  </li>
+<li>MySqlConfigProperty2.getInstance().getProperties());  </li>
+<li>break;  </li>
+<li>case DBCP_SOURCE:  </li>
+<li>dataSource = BasicDataSourceFactory.createDataSource(  </li>
+<li>MySqlConfigProperty.getInstance().getProperties());  </li>
+<li>break;  </li>
+<li>}  </li>
+<li>return dataSource;  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p><strong>代码片段2.3 手动读取配置文件初始化连接池</strong></p>
+<p>第37行中调用了类com.alibaba.druid.pool.DruidDataSourceFactory中createDataSource方法来初始化一个连接池。对比dbcp的使用方法，两者很相似。</p>
+<p>下面给出一个多线程的测试程序。运行后可以比较druid和dbcp的性能差别。</p>
+<p><strong>[java]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>package com.whyun.druid.test;  </li>
+<li></li>
+<li>import java.sql.SQLException;  </li>
+<li>import java.util.ArrayList;  </li>
+<li>import java.util.List;  </li>
+<li>import java.util.concurrent.Callable;  </li>
+<li>import java.util.concurrent.ExecutorService;  </li>
+<li>import java.util.concurrent.Executors;  </li>
+<li>import java.util.concurrent.Future;  </li>
+<li>import java.util.concurrent.TimeUnit;  </li>
+<li></li>
+<li>import com.whyun.druid.model.TableOperator;  </li>
+<li>import com.whyun.util.db.DataSourceUtil;  </li>
+<li></li>
+<li>public class MutilThreadTest {  </li>
+<li>public static void test(int dbType, int times)  </li>
+<li>throws Exception {   </li>
+<li>int numOfThreads =Runtime.getRuntime().availableProcessors()/*2;  </li>
+<li>ExecutorService executor = Executors.newFixedThreadPool(numOfThreads);    </li>
+<li>final TableOperator test = new TableOperator();  </li>
+<li>//        int dbType = DataSourceUtil.DRUID_MYSQL_SOURCE;  </li>
+<li>//        dbType = DataSourceUtil.DBCP_SOURCE;  </li>
+<li>test.setDataSource(DataSourceUtil.getDataSource(dbType));  </li>
+<li></li>
+<li>boolean createResult = false;  </li>
+<li>try {  </li>
+<li>test.createTable();  </li>
+<li>createResult = true;  </li>
+<li>} catch (SQLException e) {  </li>
+<li>e.printStackTrace();  </li>
+<li>}  </li>
+<li>if (createResult) {  </li>
+<li>List<Future<Long>&gt; results = new ArrayList<Future<Long>&gt;();     </li>
+<li>for (int i = 0; i &lt; times; i++) {    </li>
+<li>results.add(executor.submit(new Callable<Long>() {    </li>
+<li>@Override    </li>
+<li>public Long call() throws Exception {    </li>
+<li>long begin = System.currentTimeMillis();  </li>
+<li>try {  </li>
+<li>test.insert();  </li>
+<li>//insertResult = true;  </li>
+<li>} catch (Exception e) {  </li>
+<li>e.printStackTrace();  </li>
+<li>}                             </li>
+<li>long end = System.currentTimeMillis();    </li>
+<li>return end - begin;    </li>
+<li>}    </li>
+<li>}));    </li>
+<li>}    </li>
+<li>executor.shutdown();    </li>
+<li>while(!executor.awaitTermination(Long.MAX_VALUE, TimeUnit.DAYS));    </li>
+<li></li>
+<li>long sum = 0;    </li>
+<li>for (Future<Long> result : results) {    </li>
+<li>sum += result.get();    </li>
+<li>}    </li>
+<li></li>
+<li></li>
+<li>System.out.println(&quot;---------------db type &quot;+dbType+&quot;------------------&quot;);    </li>
+<li>System.out.println(&quot;number of threads :&quot; + numOfThreads + &quot; times:&quot; + times);    </li>
+<li>System.out.println(&quot;running time: &quot; + sum + &quot;ms&quot;);    </li>
+<li>System.out.println(&quot;TPS: &quot; + (double)(100000 /* 1000) / (double)(sum));    </li>
+<li>System.out.println();    </li>
+<li>try {  </li>
+<li>test.tearDown();  </li>
+<li>//dropResult = true;  </li>
+<li>} catch (Exception e) {  </li>
+<li>e.printStackTrace();  </li>
+<li>}  </li>
+<li>} else {  </li>
+<li>System.out.println(&quot;初始化数据库失败&quot;);  </li>
+<li>}  </li>
+<li></li>
+<li>}    </li>
+<li></li>
+<li>public static void main (String argc[])  </li>
+<li>throws Exception {  </li>
+<li>test(DataSourceUtil.DBCP_SOURCE,50);  </li>
+<li>test(DataSourceUtil.DRUID_MYSQL_SOURCE,50);  </li>
+<li></li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p><strong>代码片段2.4 连接池多线程测试程序</strong></p>
+<hr>
+<h2 id="-3-"><a href=""></a><strong>3 监控</strong></h2>
+<h3 id="-3-1-web-"><a href=""></a><strong>3.1 web监控</strong></h3>
+<p>druid提供了sql语句查询时间等信息的监控功能。为了让数据库查询一直运行，下面特地写了一个ajax进行轮询。同时，还要保证在web.xml中配置如下信息</p>
+<p><strong>[html]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li><servlet>  </li>
+<li><servlet-name>DruidStatView</servlet-name>  </li>
+<li><servlet-class>com.alibaba.druid.support.http.StatViewServlet</servlet-class>  </li>
+<li></servlet>  </li>
+<li><servlet-mapping>  </li>
+<li><servlet-name>DruidStatView</servlet-name>  </li>
+<li><url-pattern>/druid//*</url-pattern>  </li>
+<li></servlet-mapping><br><strong>配置文件3.1 在web.xml中添加druid监控</strong></li>
+</ol>
+<p><em>**</em>同时将ajax代码提供如下</p>
+<p><strong>[javascript]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li>function showTime() {  </li>
+<li>var myDate = new Date();  </li>
+<li>var timeStr = &#39;&#39;;  </li>
+<li>timeStr += myDate.getFullYear()+&#39;-&#39;; //获取完整的年份(4位,1970-????)  </li>
+<li>timeStr += myDate.getMonth()+&#39;-&#39;;      //获取当前月份(0-11,0代表1月)  </li>
+<li>timeStr += myDate.getDate() + &#39; &#39;;      //获取当前日(1-31)  </li>
+<li>timeStr += myDate.getHours()+&#39;:&#39;;      //获取当前小时数(0-23)  </li>
+<li>timeStr += myDate.getMinutes()+&#39;:&#39;;    //获取当前分钟数(0-59)  </li>
+<li>timeStr += myDate.getSeconds();    //获取当前秒数(0-59)  </li>
+<li>return timeStr  </li>
+<li>}  </li>
+<li>$(document).ready(function() {  </li>
+<li>function loadDBTestMessage() {  </li>
+<li>$.get(&#39;servlet/MysqlTestServlet&#39;,function(data) {  </li>
+<li>if (typeof(data) != &#39;object&#39;) {  </li>
+<li>data = eval(&#39;(&#39; + data + &#39;)&#39;);  </li>
+<li>}  </li>
+<li>var html = &#39;[&#39;+showTime()+&#39;]&#39;;  </li>
+<li>html += &#39;创建：&#39; + data[&#39;createResult&#39;];  </li>
+<li>html +=  &#39;插入：&#39; + data[&#39;insertResult&#39;];  </li>
+<li>html += &#39;销毁:&#39; + data[&#39;dropResult&#39;];  </li>
+<li>html +=   </li>
+<li>$(&#39;/#message&#39;).html(html);  </li>
+<li>});  </li>
+<li>}  </li>
+<li></li>
+<li>setInterval(function() {  </li>
+<li>loadDBTestMessage();  </li>
+<li>}, 10000);  </li>
+<li>});<br><strong>代码片段3.1 ajax轮询</strong></li>
+</ol>
+<p>这时打开<a href="http://localhost/druid-web/druid/" target="_blank">http://localhost/druid-web/druid/</a> 地址，会看到监控界面，点击其中的sql标签。</p>
+<p><img src="" alt=""></p>
+<p><strong>图3.1 监控界面查看sql查询时间</strong></p>
+<p><strong>注意：在写配置文件1.1时，要保证filter配置项中含有stat属性，否则这个地方看不到sql语句的监控数据。</strong></p>
+<p>表格中各项含义如下</p>
+<hr>
+<p>名称</p>
+<p>解释</p>
+<p>备注 ExecuteCount</p>
+<p>当前sql已执行次数 ExecTime</p>
+<p>当前sql已执行时间 ExecMax</p>
+<p>当前sql最大执行时间 Txn</p>
+<p>当前运行的事务数量 Error</p>
+<p>当前sql执行出错的数目 Update</p>
+<p>当前sql更新或者删除操作中已经影响的行数 FetchRow</p>
+<p>当前sql操作中已经读取的行数 Running</p>
+<p>当前sql正在运行的数目 Concurrent</p>
+<p>当前sql最大并发执行数  ExecHisto </p>
+<p>当前sql做execute操作的时间分布数组</p>
+<p>分为0-1,1-10,10-100,100-1000，&gt;1000，5个时间分布区域，单位为ms ExecRsHisto </p>
+<p>当前sql做execute操作和resultSet</p>
+<p>打开至关闭的时间总和分布数组</p>
+<p>同上 FetchRowHisto</p>
+<p>当前sql查询时间分布数组</p>
+<p>同上 UpdateHisto </p>
+<p>当前sql更新、删除时间分布数组</p>
+<p>同上表3.1 监控字段含义</p>
+<p>老版本的druid的jar包中不支持通过web界面进行远程监控，从0.2.14开始可以通过配置jmx地址来获取远程运行druid的服务器的监控信息。具体配置方法如下：</p>
+<p><strong>[html]</strong> <a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/yunnysunny/article/details/8657095#" title="copy" target="_blank">copy</a></p>
+<ol>
+<li><servlet>  </li>
+<li><servlet-name>DruidStatView</servlet-name>  </li>
+<li><servlet-class>com.alibaba.druid.support.http.StatViewServlet</servlet-class>  </li>
+<li><init-param>  </li>
+<li><param-name>jmxUrl</param-name>  </li>
+<li><param-value>service:jmx:rmi:///jndi/rmi://localhost:9004/jmxrmi</param-value>  </li>
+<li></init-param>  </li>
+<li></servlet>  </li>
+<li><servlet-mapping>  </li>
+<li><servlet-name>DruidStatView</servlet-name>  </li>
+<li><url-pattern>/druid//*</url-pattern>  </li>
+<li></servlet-mapping><br>配置文件3.2 远程监控web</li>
+</ol>
+<p>这里连接的配置参数中多了一个jmxUrl，里面配置一个jmx连接地址。jmx连接中也可以指定用户名、密码，在上面的servlet中添加两个init-param，其param-name分别为jmxUsername和jmxPassword，分别对应连接jmx的用户名和密码。对于jmx在服务器端的配置，可以参考3.2节中的介绍。</p>
+<h3 id="-3-2-jconsole-"><a href=""></a><strong>3.2 jconsole监控</strong></h3>
+<p>同时druid提供了jconsole监控的功能，因为界面做的不是很好，所以官方中没有对其的相关介绍。如果是纯java程序的话，上面提到的web监控就无法使用了，jconsole的作用就体现出来了。不过我在下面做教程的时候，依然使用的是刚才用的web项目。</p>
+<p>首先在catalina.bat（或者catalina.sh）中加入java的启动选项，放置于if &quot;%OS%&quot; == &quot;Windows_NT&quot; setlocal这句之后。</p>
+<p>set JAVA_OPTS=%JAVA_OPTS% -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=&quot;9004&quot; -Dcom.sun.management.jmxremote.authenticate=&quot;false&quot; -Dcom.sun.management.jmxremote.ssl=&quot;false&quot;</p>
+<p>保存完之后，启动startup.bat(或者startup.sh)来运行tomcat（上面设置java启动项的配置，按理来说在eclipse中也能适用，但是笔者在其下没有试验成功）。然后在远程的某台电脑的命令行中运行如下命令</p>
+<p>jconsole -pluginpath E:\kuaipan\workspace6\druid-web\WebRoot\WEB-INF\lib\druid-0.2.11.jar</p>
+<p>这里的最后一个参数就是你的druid的jar包的路径。</p>
+<p><img src="" alt=""></p>
+<p><strong>图3.2 jconsole连接界面</strong></p>
+<p>在远程进程的输入框里面输入ip:端口号，然后点击连接（上面的配置中没有指定用户名、密码，所以这里不用填写）。打开的界面如下：</p>
+<p><img src="" alt=""></p>
+<p><strong>图3.3 jconsole 连接成功界面</strong></p>
+<p>可以看到和web监控界面类似的数据了。
+来源： <a href="[http://blog.csdn.net/yunnysunny/article/details/8657095](http://blog.csdn.net/yunnysunny/article/details/8657095)">[http://blog.csdn.net/yunnysunny/article/details/8657095](http://blog.csdn.net/yunnysunny/article/details/8657095)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/连接池/">连接池</a></li></span></span> | <span class="tags">Tagged <a href="/tags/连接池/" class="label label-primary">连接池</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-连接池--druid教程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-连接池--druid教程" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-代理--Sundy-shome_张凌华-ConfuciusIcan-tchoosethe/">Sundy</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-代理--Sundy-shome_张凌华-ConfuciusIcan-tchoosethe/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-goagent-gae-http-mobidever-com-post-2011-08-goagente58f88e4b880e4b8aae59fbae4ba8egaee79a84e7a9bfe8b68ae588a9e599a8-aspx-"><a href="http://mobidever.com/post/2011/08/GOAGENTe58f88e4b880e4b8aae59fbae4ba8eGAEe79a84e7a9bfe8b68ae588a9e599a8.aspx" target="_blank">GOAGENT又一个基于GAE的穿越利器</a></h1>
+<p>by <a href="http://mobidever.com/author/sundy.aspx" target="_blank">sundy</a> 8/16/2011 7:26:00 AM</p>
+<h3 id="goagent-python-google-appengine-sdk-python-google-appenginge-sdk-">GoAgent是 一个使用Python和Google Appengine SDK编写的代理软件。部署和使用方法非常简单，不需要安装Python或者Google Appenginge SDK ，几分钟即可搞定。</h3>
+<h3 id="-">具体步骤如下：</h3>
+<h3 id="goagent-">GoAgent『申请与创建』</h3>
+<p>首先申请<a href="https://www.google.com/accounts/Login?hl=zh-CN" target="_blank"> </a>注册一个<strong>Google App Engine</strong>账号（<a href="http://appengine.google.com/" target="_blank"><strong>点此注册</strong></a>）。没有<strong>Gmail</strong>账号先注册一个， 用你的<strong>Gmaill</strong>账号登录。</p>
+<p>过程详解如下：<strong>下图：</strong></p>
+<p><img src="" alt=""></p>
+<p>登录之后，自动转向<strong>Application</strong>注册页面，如<strong>下图</strong>：</p>
+<p><img src="" alt=""></p>
+<p>接下来的页面，<strong>输入你的手机号码</strong>，<strong>如下图：</strong></p>
+<p><img src="" alt=""></p>
+<p>需要注意的是，<strong>手机号码前面要+86 </strong>格式如：<strong>+86 13888888888</strong>。然后等待收取手机短信，收到短信后（一串数字号码）填入下图表单，点<strong>send</strong>提交.</p>
+<p><img src="" alt=""></p>
+<p>提交完成之后，<strong>GAE</strong>账号即被激活，然后就可以创建新的应用程序了。转入<strong>“My Applications”</strong>页面，点击<strong>“Create an Application”</strong>新建应用，如<strong>下图</strong>：</p>
+<p><img src="" alt=""></p>
+<p>一个<strong>Gmail</strong>账户最多可以创建十个<strong>GAE</strong>应用。这里我们只创建一个应用就可以了。进入下一步，填写新应用的必要信息，<strong>如下图</strong>：</p>
+<p><img src="" alt=""></p>
+<p>在上图中<strong>第一处添加一个应用名称</strong>，如<strong>abc555</strong>验证一下是否可用，如果通过那么<strong>abc555</strong>就是你的<strong>Appid</strong>（记住这个<strong>id</strong>），而abc555 .appspoft.com就是你的应用服务器地址了。<strong>第二个空可随便填</strong>，点击提交按钮，如果能看到下图这个页面，就说明你成功创建了一个新的应用,你也可以点击应用名称，进入控制面板进行管理。</p>
+<p><img src="" alt=""></p>
+<h3 id="goagent-">GoAgent『部署和使用』</h3>
+<h3 id="1-google-appengine-appid">1.申请Google Appengine并创建appid</h3>
+<p>2.下载GoAgent  <a href="https://github.com/phus/goagent/zipball/master" target="_blank"><a href="https://github.com/phus/goagent/zipball/master">https://github.com/phus/goagent/zipball/master</a></a> （新版）
+3.双击server\upload.bat,输入你的appid和你的Gmail帐号和密码，就会自动上传到服务端
+4.把local\proxy.ini中的your_appid 改成你申请到的appid
+5.设置浏览器代理为127.0.0.1：8087
+6.运行taskbar.exe  好了，现在你可以穿墙了。</p>
+<p><img src="" alt=""></p>
+<p><strong>上图为第3 步截图</strong>。（输入AppID按回车，再输入gmail帐号按回车，输入密码后再按回车键（注：输入密码时不会显示）就开始自动上传了，多等一会，上传完毕后黑窗口会自动关.</p>
+<p><img src="" alt=""></p>
+<p><img src="" alt=""></p>
+<p><strong>上图为第4步的截图。</strong>把<strong>local\proxy.ini</strong>中的<strong>your_appid</strong> 改成你申请到的<strong>appid</strong> (用windows的记事本也可以）</p>
+<p><img src="" alt=""></p>
+<p>你也可登录你的GAE账户，在后台管理查看<strong>（上图）</strong></p>
+<p><strong>笔者建议用Firefox浏览器，再安装一个Autoproxy 插件，可以在是否使用代理选择上非常方便地切换。安装插件<a href="https://addons.mozilla.org/zh-CN/firefox/addon/autoproxy/" target="_blank"><a href="https://addons.mozilla.org/zh-CN/firefox/addon/autoproxy/">https://addons.mozilla.org/zh-CN/firefox/addon/autoproxy/</a></a> 安装后，因autoproxy插件里没有goagent代理选项，须自建一个，步骤如下：
+重启浏览器后，点击浏览器上方的/工具/autoproxy/代理服务器/编辑代理服务器/添加代理/然后新建一个“名称goagent  主机127.0.0.1  端口8087/确定”，然后选择代理服务器/goagent/确定。（下图）</strong></p>
+<p><img src="" alt=""></p>
+<p><img src="" alt=""></p>
+<p><strong>运行taskbar.exe （下图）</strong></p>
+<p><img src="" alt=""></p>
+<p><strong>启动Firefox浏览器，（autoproxy插件安装后，在浏览器的右上角或右下角有一个“福”字，点击这个字，绿色为全局代理，红色为自动判别模式）。点击<a href="http://www.ip-adress.com/ip_tracer/" target="_blank"><a href="http://www.ip-adress.com/ip_tracer/">http://www.ip-adress.com/ip_tracer/</a></a>，全局模式下看到下图，穿越成功。</strong></p>
+<p><img src="" alt=""></p>
+<p>GoAgent 现在越来越简单了，太容易搭建了，且速度飞快。（不建议用<strong>IE</strong>浏览器，在<strong>Chrome**</strong>和Firefox<strong>下没有任何问题，但用</strong>IE**时常常翻不出去。）Goagent 打开SSL连接的网站，如果浏览器弹出证书无效警告，可以用这样的方法解决:导入证书：在local文件夹下的ssl文件夹有一个ca.crt证书文件；/# Firefox依次操作：“首选项-&gt;高级-&gt;加密-&gt;查看证书-&gt;证书机构-&gt;导入-&gt;选择 local-&gt;sll-&gt;ca.crt 文件–&gt;确定”，即可导入成功。（Chrome下直接双击ca.crt安装证书）
+Currently rated 2.6 by 517 people</p>
+<ul>
+<li>Currently 2.601584/5 Stars.</li>
+<li><a href="&quot;Rate this 1 star out of 5&quot;">1</a></li>
+<li><a href="&quot;Rate this 2 stars out of 5&quot;">2</a></li>
+<li><a href="&quot;Rate this 3 stars out of 5&quot;">3</a></li>
+<li><a href="&quot;Rate this 4 stars out of 5&quot;">4</a></li>
+<li><a href="&quot;Rate this 5 stars out of 5&quot;">5</a></li>
+</ul>
+<p>Tags:</p>
+<p><a href="http://mobidever.com/category/Internet-Communion.aspx" target="_blank">Internet Communion</a> | <a href="http://mobidever.com/category/Mobile-amp3b-Wireless.aspx" target="_blank">Mobile &amp; Wireless</a></p>
+<p><a href="mailto:?subject=GOAGENT又一个基于GAE的穿越利器&amp;body=Thought you might like this: http://www.lhzhang.org/post/2011/08/GOAGENTe58f88e4b880e4b8aae59fbae4ba8eGAEe79a84e7a9bfe8b68ae588a9e599a8.aspx">E-mail</a> | <a href="http://www.dotnetkicks.com/submit?url=http%3a%2f%2fwww.lhzhang.org%2fpost%2f2011%2f08%2fGOAGENTe58f88e4b880e4b8aae59fbae4ba8eGAEe79a84e7a9bfe8b68ae588a9e599a8.aspx&amp;title=GOAGENT%e5%8f%88%e4%b8%80%e4%b8%aa%e5%9f%ba%e4%ba%8eGAE%e7%9a%84%e7%a9%bf%e8%b6%8a%e5%88%a9%e5%99%a8" target="_blank">Kick it!</a> | <a href="http://www.dzone.com/links/add.html?url=http%3a%2f%2fwww.lhzhang.org%2fpost%2f2011%2f08%2fGOAGENTe58f88e4b880e4b8aae59fbae4ba8eGAEe79a84e7a9bfe8b68ae588a9e599a8.aspx&amp;title=GOAGENT%e5%8f%88%e4%b8%80%e4%b8%aa%e5%9f%ba%e4%ba%8eGAE%e7%9a%84%e7%a9%bf%e8%b6%8a%e5%88%a9%e5%99%a8" target="_blank">DZone it!</a> | <a href="http://del.icio.us/post?url=http%3a%2f%2fwww.lhzhang.org%2fpost%2f2011%2f08%2fGOAGENTe58f88e4b880e4b8aae59fbae4ba8eGAEe79a84e7a9bfe8b68ae588a9e599a8.aspx&amp;title=GOAGENT%e5%8f%88%e4%b8%80%e4%b8%aa%e5%9f%ba%e4%ba%8eGAE%e7%9a%84%e7%a9%bf%e8%b6%8a%e5%88%a9%e5%99%a8" target="_blank">del.icio.us</a><a href="http://www.lhzhang.org/post.aspx?id=b3c84fae-92d8-4ab6-9a11-6e674e7c0359" target="_blank">Permalink</a> | <a href="http://mobidever.com/post/2011/08/GOAGENTe58f88e4b880e4b8aae59fbae4ba8eGAEe79a84e7a9bfe8b68ae588a9e599a8.aspx#comment" target="_blank">Comments (0)</a> | <a href="http://mobidever.com/syndication.axd?post=b3c84fae-92d8-4ab6-9a11-6e674e7c0359" target="_blank">Post RSS<img src="" alt="RSS comment feed"></a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/代理/">代理</a></li></span></span> | <span class="tags">Tagged <a href="/tags/代理/" class="label label-primary">代理</a></span> | <span class="time">recent updated:<time title="2014-03-26 21:07:46"datetime="2014-03-26 21:07:46"> mar. 26 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-代理--Sundy-shome_张凌华-ConfuciusIcan-tchoosethe/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-代理--Sundy-shome_张凌华-ConfuciusIcan-tchoosethe" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
       <h1 class="title"><a href="/2014/02/02/2014-02-02-敏捷开发--结对编程（Pairprogramming）/">结对编程（Pair programming）</a></h1>
       
         <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-敏捷开发--结对编程（Pairprogramming）/">feb. 2 2014</a></time></span>      
@@ -173,633 +1295,530 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-ISO使用--UltraISO软碟通图解详细使用教程_多特软件教程/">UltraISO(软碟通)图解详细使用教程_多特软件教程</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-连接池--基于ApacheDBCP的数据库连接获取类原创-BeanSoft-sJavaBlo/">基于 Apache DBCP 的数据库连接获取类(原创) </a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-ISO使用--UltraISO软碟通图解详细使用教程_多特软件教程/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-连接池--基于ApacheDBCP的数据库连接获取类原创-BeanSoft-sJavaBlo/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="ultraiso-_-">UltraISO(软碟通)图解详细使用教程_多特软件教程</h1>
-<p><a href="http://login.duote.com/login.php" target="_blank">登 录</a> | <a href="http://login.duote.com/reg.php" target="_blank">注 册</a><a href="http://www.duote.com/about.html" target="_blank">中国最快最安全的软件下载站！</a></p>
-<p><a href="http://www.duote.com/" target="_blank"><img src="" alt="多特软件站-中国最快的软件下载站"></a></p>
-<p>全部教程</p>
-<p><a href="http://www.duote.com/tech/1/481.html#"></a></p>
+        <h1 id="-apache-dbcp-beansoft-s-java-blog-blogjava">基于 Apache DBCP 的数据库连接获取类(原创) - BeanSoft&#39;s Java Blog - BlogJava</h1>
+<p><a href="http://www.blogjava.net/beansoft/" target="_blank">BeanSoft&#39;s Java Blog</a></p>
+<p>MyEclipse 教程, Java EE 5, JSPWiki, Spring, Struts, Hibernate, JPA, SWT, Swing, AJAX, JavaScript, Netbeans</p>
+<h1 id="-">导航</h1>
 <ul>
-<li><a href="http://www.duote.com/tech/1/481.html#" target="_blank">软件教程</a></li>
-<li><a href="http://www.duote.com/tech/1/481.html#" target="_blank">全部软件</a></li>
-<li><a href="http://www.duote.com/tech/1/481.html#" target="_blank">使用疑问</a>
-<a href="http://www.duote.com/v_search.html" target="_blank">高级搜索</a></li>
-<li><a href="http://www.duote.com/" target="_blank">多特首页</a></li>
-<li><p><a href="http://www.duote.com/sort.html" target="_blank">软件分类</a></p>
-</li>
-<li><p><a href="http://www.duote.com/win7/" target="_blank">WIN7专区</a></p>
-</li>
-<li><a href="http://www.duote.com/sort/5_0_date_0_1_.html" target="_blank">网络工具</a></li>
-<li><a href="http://www.duote.com/sort/2_0_date_0_1_.html" target="_blank">应用软件</a></li>
-<li><a href="http://www.duote.com/sort/3_0_date_0_1_.html" target="_blank">图文处理</a></li>
-<li><a href="http://www.duote.com/sort/13_0_date_0_1_.html" target="_blank">硬件驱动</a></li>
-<li><a href="http://www.duote.com/sort/4_0_date_0_1_.html" target="_blank">媒体工具</a></li>
-<li><a href="http://www.duote.com/sort/7_0_date_0_1_.html" target="_blank">病毒安全</a></li>
-<li><a href="http://www.duote.com/sort/9_0_date_0_1_.html" target="_blank">教育教学</a></li>
-<li><a href="http://www.duote.com/sort/1_0_date_0_1_.html" target="_blank">联络聊天</a></li>
-<li><a href="http://www.duote.com/sort/6_0_date_0_1_.html" target="_blank">系统程序</a></li>
-<li><a href="http://www.duote.com/sort/8_0_date_0_1_.html" target="_blank">管理软件</a></li>
-<li><a href="http://www.duote.com/sort/11_0_date_0_1_.html" target="_blank">编程开发</a></li>
-<li><a href="http://www.duote.com/sort/12_0_date_0_1_.html" target="_blank">手机软件</a></li>
-<li><a href="http://www.duote.com/sort/15_0_date_0_1_.html" target="_blank">源码素材</a></li>
-<li><a href="http://www.duote.com/green/0_4_date_1.html" target="_blank">绿色软件</a>
+<li><a href="http://www.blogjava.net/" target="_blank">BlogJava</a></li>
+<li><a href="http://www.blogjava.net/beansoft/" target="_blank">首页</a></li>
+<li><a href="http://www.blogjava.net/beansoft/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a>
 *</li>
-<li><a href="http://www.duote.com/bang/top10.html" target="_blank">排行榜</a></li>
-<li><a href="http://www.duote.com/update/" target="_blank">最新更新</a></li>
-<li><a href="http://news.duote.com/" target="_blank">软件资讯</a></li>
-<li><a href="http://zhidao.duote.com/" target="_blank">多特知道</a></li>
-<li><a href="http://www.duote.com/tech/" target="_blank">软件教程</a></li>
-<li><a href="http://bbs.duote.com/" target="_blank">软件论坛</a></li>
-<li><a href="http://www.duote.com/soft/29608.html" target="_blank">装机光盘</a></li>
-</ul>
-<p>您的位置：<a href="http://www.duote.com/" target="_blank">多特软件站首页</a> -&gt; <a href="http://www.duote.com/tech/" target="_blank">软件教程</a> -&gt; <a href="http://www.duote.com/techlist/4/0/" target="_blank">媒体工具</a> -&gt; <a href="http://www.duote.com/techlist/4/141/" target="_blank">光盘刻录</a></p>
-<p><a href="http://zhidao.duote.com/" target="_blank">更多&gt;&gt;</a>相关问题</p>
-<ul>
-<li>·<a href="http://zhidao.duote.com/qs/118252.html" title="怎么样才能在BLOS中加入自己的LOGO" target="_blank">怎么样才能在BLOS中加入自己的LOGO</a></li>
-<li>·<a href="http://zhidao.duote.com/qs/118250.html" title="600元800元-1200元=1500元-1800元这5个价钱可以配什么样的主机装置啊？麻烦高手帮我配5台出来看下，谢谢" target="_blank">600元800元-1200元=1500元-1800元这5个价钱可以配什么样的主机装置啊？麻烦高手帮我配5台出来看下，谢谢</a></li>
-<li>·<a href="http://zhidao.duote.com/qs/118249.html" title="更改IE中的搜索引擎" target="_blank">更改IE中的搜索引擎</a></li>
-<li>·<a href="http://zhidao.duote.com/qs/118247.html" title="ps如何用将剪贴板的内容粘到当前图形中" target="_blank">ps如何用将剪贴板的内容粘到当前图形中</a></li>
-<li>·<a href="http://zhidao.duote.com/qs/118243.html" title="ps如何用合并拷贝" target="_blank">ps如何用合并拷贝</a></li>
-<li>·<a href="http://zhidao.duote.com/qs/118234.html" title="减小PowerPoint文档体积" target="_blank">减小PowerPoint文档体积</a></li>
-<li>·<a href="http://zhidao.duote.com/qs/117979.html" title="怎样重新安装电脑系统？" target="_blank">怎样重新安装电脑系统？</a></li>
-<li>·<a href="http://zhidao.duote.com/qs/117977.html" title="XP和WIN7怎么建立局域网?" target="_blank">XP和WIN7怎么建立局域网?</a></li>
-<li>·<a href="http://zhidao.duote.com/qs/117975.html" title="我的笔记本是window7系统，想改个xp，硬盘模式应该怎么改？" target="_blank">我的笔记本是window7系统，想改个xp，硬盘模式应该怎么改？</a></li>
-<li>·<a href="http://zhidao.duote.com/qs/117846.html" title="怎样才能用右键添加MP3到千千静听播放列表" target="_blank">怎样才能用右键添加MP3到千千静听播放列表</a></li>
-</ul>
-<p>栏目推荐</p>
-<ul>
-<li>·<a href="http://www.duote.com/tech/1/90.html" target="_blank">LameGUI使用教程</a></li>
-<li>·<a href="http://www.duote.com/tech/1/88.html" target="_blank">MP3调音器(MP3Gain)使用教程</a></li>
-<li>·<a href="http://www.duote.com/tech/1/86.html" target="_blank">暴风影音影友速成技巧之五大绝招</a></li>
-<li>·<a href="http://www.duote.com/tech/1/85.html" target="_blank">QQ用户的最爱——QQ音乐播放器</a></li>
-<li>·<a href="http://www.duote.com/tech/1/70.html" target="_blank">全能音频转换通使用教程</a></li>
-<li>·<a href="http://www.duote.com/tech/1/57.html" target="_blank">KMPlayer播放器常见疑难问题/解决</a></li>
-<li>·<a href="http://www.duote.com/tech/1/43.html" target="_blank">可下载专辑封面的青苹果音乐播放器</a></li>
-<li>·<a href="http://www.duote.com/tech/1/41.html" target="_blank">暴风影音3.6智能高清版</a></li>
-<li>·<a href="http://www.duote.com/tech/1/37.html" target="_blank">音乐窗 让千千静听迈向新“视”界</a></li>
-<li><p>·<a href="http://www.duote.com/tech/1/22.html" target="_blank">酷我音乐盒实用技巧之歌曲全攻略</a>
-栏目热文</p>
+<li><a href="http://www.blogjava.net/beansoft/rss" target="_blank">聚合</a><a href="http://www.blogjava.net/beansoft/rss" target="_blank"><img src="" alt=""></a></li>
+<li><p><a href="http://www.blogjava.net/beansoft/admin/EditPosts.aspx" target="_blank">管理</a>
+公告</p>
 </li>
-<li><p>·<a href="http://www.duote.com/tech/1/517.html" target="_blank">快播(QvodPlayer)播放器使用帮助</a></p>
-</li>
-<li>·<a href="http://www.duote.com/tech/1/191.html" target="_blank">歌曲我剪最爱 我的最佳MP3剪切工具</a></li>
-<li>·<a href="http://www.duote.com/tech/1/253.html" target="_blank">轻松玩转酷狗音乐！听歌越听越舒服</a></li>
-<li>·<a href="http://www.duote.com/tech/1/495.html" target="_blank">KMPlayer播放器设置指南</a></li>
-<li>·<a href="http://www.duote.com/tech/1/2455.html" target="_blank">大量免费QQ秀代码漏出！一分钟就可以拥有一身漂亮的衣服</a></li>
-<li>·<a href="http://www.duote.com/tech/1/86.html" target="_blank">暴风影音影友速成技巧之五大绝招</a></li>
-<li>·<a href="http://www.duote.com/tech/1/602.html" target="_blank">Nero Burning Rom刻录软件使用攻略</a></li>
-<li>·<a href="http://www.duote.com/tech/1/502.html" target="_blank">Nero Burning Rom光盘刻录教程</a></li>
-<li>·<a href="http://www.duote.com/tech/1/2835.html" target="_blank">格式工厂使用方法</a></li>
-<li>·<a href="http://www.duote.com/tech/2/5316.html" target="_blank">变声宝宝使用方法</a>
-正文</li>
-</ul>
-<p>字体：<a href="">大</a> <a href="">中</a> <a href="">小</a></p>
-<h1 id="ultraiso-">UltraISO(软碟通)图解详细使用教程</h1>
-<h2 id="-2008-09-08-27830-http-www-duote-com-tech-1-481-html-">出处：多特软件站     时间：2008-09-08     人气：27830 次     <a href="http://www.duote.com/tech/1/481.html###" target="_blank"><img src="" alt="收藏此页"></a></h2>
-<p>核心提示：UltraISO软碟通是一款功能强大而又方便实用的软碟文件制作/编辑/转换工具，它可以直接编辑软碟文件和从软碟中提取文件，也可以从CD-ROM直接制作软碟或者将硬盘上的文件制作成ISO文件。</p>
-<pre><code> UltraISO软碟通是一款功能强大而又方便实用的软碟文件制作/编辑/转换工具，它可以直接编辑软碟文件和从软碟中提取文件，也可以从CD-ROM直接制作软碟或者将硬盘上的文件制作成ISO文件。同时，你也可以处理ISO文件的启动信息，从而制作可引导光盘。使用UltraISO，你可以随心所欲地制作/编辑软碟文件，配合光盘刻录软件烧录出自己所需要的光碟。
-
- 下面我们详细介绍 UltraISO(软碟通)使用教程。
-</code></pre><p><img src="" alt=""></p>
-<p>根据界面我们可以初步判定，这款软件的强大之处在于镜像文件的制作，复制，刻录等等!</p>
-<p>那么这里如何用它来刻录ISO镜像文件我就不详细介绍了，大家可以参考系统DIY相关文章来了解。</p>
-<p>今天我们详细介绍UltraISO的其他主要功能</p>
-<p><img src="" alt=""></p>
-<p>1、浏览光盘映像并直接提取其中的文件
-目的：直接提取光盘映像的内容,无需刻录成光碟或虚拟光驱软件
-方法：直接打开并提取文件或文件夹就可以了（UltraISO支持27种常见光盘映像格式）
-要点：提取文件可以用“提取到”功能再指定目的目录；也可以在界面下方的“本地”浏览器中选择路径并直接拖放。</p>
-<p><img src="" alt=""></p>
-<p>2、将光盘制作成ISO，保存在硬盘上
-目的：备份光盘内容，用于虚拟或以后刻录
-方法：使用“制作光盘映像”功能，选择光驱，按“制作”就可以了。
-要点：UltraISO采用逐扇区复制方式，因此可以制作启动光盘的映像，刻录后仍然能启动。但是，UltraISO不支持音乐光碟、VCD光碟和加密游戏碟的拷贝。</p>
-<p><img src="" alt=""></p>
-<p>3、将已经解开在硬盘上的文件制作成ISO
-目的：用于刻录或虚拟使用
-方法：新建ISO文件，将文件或目录从界面下方的“本地”浏览器拖放到上方的“光盘”浏览器，最后保存就可以了。
-要点：UltraISO可以制作10GB的 DVD映像文件，如果是CD-R,注意顶部的“大小总计”，避免容量超出限制。另外，制作DVD映像建议选择“UDF”，制作CD映像选择“Joliet”就可以了。</p>
-<p>4、制作启动光盘
-目的：制作可以直接启动的系统光盘
-方法：文件准备同上，关键是设定正确的“引导文件”。Windows 98使用setup.img，Windows NT/2000/XP使用w2ksect.bin。如果手头没有的话，可以下载配套工具EasyBoot,在安装目录disk1ezboot下有这两个文件。另外，UltraISO可以直接从启动光盘提取引导文件(.bfi)，或者将可启动软盘制作成引导文件(.img)。
-要点：如果要制作N合1启动光盘，需要用EasyBoot制作图形化中文启动菜单，将’ezboot’目录加入光盘根目录，“引导文件”选用loader.bin就可以了。另外，制作N合1注意选择“优化文件”选项，可以将1.5G的Windows 2000 3合1优化到700M左右。</p>
-<p>5、编辑已有的光盘映像文件内容
-目的：编辑已有光盘文件，添加或删除部分内容
-方法：打开映像文件，进行添加/删除/重命名等操作，保存就可以了。
-要点：对标准ISO文件，UltraISO可以直接保存；其它格式可选择ISO, BIN或NRG格式。注意直接保存ISO时，尽管删除了文件，ISO大小可能没有变化；用“另存”可压缩其中未用的空间，光盘映像文件才会变小。</p>
-<p><img src="" alt=""></p>
-<p>6、光盘映像格式转换
-目的：将无法处理的格式转换成ISO,BIN或NRG格式，供刻录/虚拟软件使用
-方法：使用“转换”功能，选择映像文件，指定输出目录和格式，按“转换”就可以了。
-要点：一次选择多个文件，可实现“批量转换”功能。</p>
-<p>7、制作/编辑音轨文件
-目的：制作自己喜爱的音乐光碟
-方法：用Nero、ISOBuster等工具从音乐CD中提取.WAV各式的音轨文件，用UltraISO制作成.NRG格式的映像文件，用Nero刻录。
-要点：.WAV文件必须是CD质量的格式(16bit/2channel/44.1Khz)。</p>
-<p>8、UltraISO配套工具
-EasyBoot启动易：可制作多重启动光盘中文菜单
-SoftDisc自由碟：将UltraISO与Nero刻录软件、Daemon-Tools虚拟光驱软件集成在一起使用。</p>
-<p><a href="http://www.duote.com/tech/1/481.html#" target="_blank">顶一下(25)</a> <a href="http://www.duote.com/tech/1/481.html#" target="_blank">踩一下(12)</a></p>
-<p>分享到 <a href="http://www.duote.com/tech/1/481.html#" target="_blank"><img src="" alt="分享到用户中心"></a><a href="http://www.duote.com/tech/1/481.html#" target="_blank"><img src="" alt="分享到QQ空间"></a><a href="http://www.duote.com/tech/1/481.html#" target="_blank"><img src="" alt="分享到新浪微博"></a><a href="http://www.duote.com/tech/1/481.html#" target="_blank"><img src="" alt="分享到人人"></a><a href="http://www.duote.com/tech/1/481.html#" target="_blank"><img src="" alt="分享到开心"></a><a href="http://www.duote.com/tech/1/481.html#" target="_blank"><img src="" alt="分享到豆瓣"></a><a href="http://www.duote.com/tech/1/481.html#" target="_blank"><img src="" alt="复制链接地址"></a></p>
-<ul>
-<li><a href="http://www.duote.com/tech/1/480.html" target="_blank">简单易用，新手的最爱：视频转换软件U</a> <a href="http://www.duote.com/tech/1/480.html" target="_blank"><img src="" alt=""></a></li>
-<li><a href="http://www.duote.com/tech/1/482.html" target="_blank"><img src="" alt=""></a> <a href="http://www.duote.com/tech/1/482.html" target="_blank">QQ空间小秘书使用教程</a>
-相关软件 · <a href="http://www.duote.com/soft/2808.html" target="_blank">UltraISO Premium Edition(UltraISO软碟通)V9.3.6.27</a> (好评:953 差评:127)</li>
-</ul>
-<p>资源统计：无插件软件：21906个 无病毒软件：21956个 昨日已处理116个带插件、病毒的软件
-本站总软件：21956个 软件教程文章：11516篇 软件总下载次数：5.293亿次 <a href="http://www.duote.com/about.html" target="_blank">关于多特</a>| <a href="http://www.duote.com/help.html" target="_blank">帮助(？)</a> | <a href="http://www.duote.com/gg.html" target="_blank">联系我们</a>| <a href="http://bbs.duote.com/forumdisplay.php?fid=48" target="_blank">提意见</a>| <a href="http://submit.duote.com/" target="_blank">软件发布</a>| <a href="http://www.duote.com/bq.html" target="_blank">版权声明</a>| <a href="http://www.duote.com/link.html" target="_blank">友情链接</a>| <a href="http://www.duote.com/sitemap.html" target="_blank">网站地图</a>| <a href="http://www.ruichuang.net/recruit.html" target="_blank">诚聘英才</a> DuoTe.com 版权所有 <a href="http://www.miitbeian.gov.cn/" target="_blank">ICP证沪B2-20090004</a><a href="http://www.3000idc.com/" target="_blank">普尔网络赞助多特部分带宽</a> <a href="http://police.cnool.net/" target="_blank"><img src="" alt=""></a> <a href="https://ss.cnnic.cn/verifyseal.dll?sn=2010101200100002590&amp;pa=094605" target="_blank"><img src="" alt="可信网站"></a> <a href="http://union.rising.com.cn/InfoManage/attestation.aspx?p0=i1qlslOKi94/wZWRmdGpxYexwTyWM6DJ" title="您访问的网站目前没有发现被挂马行为" target="_blank"><img src="" alt="您访问的网站目前没有发现被挂马行为"></a> <a href="http://url.pc120.com/aHR0cDovL3d3dy5kdW90ZS5jb20v/" title="金山云安全中心网站安全检测" target="_blank"><img src="" alt=""></a> <a href="http://www.jiangmin.com/" title="江民安全认证" target="_blank"><img src="" alt=""></a> <a href="http://www.avira.com/zh-cn/avira-free-antivirus" title="小红伞安全认证" target="_blank"><img src="" alt=""></a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/ISO使用/">ISO使用</a></li></span></span> | <span class="tags">Tagged <a href="/tags/ISO使用/" class="label label-primary">ISO使用</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-ISO使用--UltraISO软碟通图解详细使用教程_多特软件教程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-ISO使用--UltraISO软碟通图解详细使用教程_多特软件教程" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-gitgithub--Github上搭建博客-小妖_OTZ-博客园/">Github上搭建博客 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-gitgithub--Github上搭建博客-小妖_OTZ-博客园/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="github-_otz-">Github上搭建博客 - 小妖_OTZ - 博客园</h1>
-<p><a href=""></a></p>
-<p><a href="http://www.cnblogs.com/sunwufan/" target="_blank">午饭</a></p>
-<ul>
-<li><a href="http://www.cnblogs.com/" target="_blank">博客园</a></li>
-<li><a href="http://www.cnblogs.com/sunwufan/" target="_blank">首页</a></li>
-<li><a href="http://q.cnblogs.com/" target="_blank">博问</a></li>
-<li><a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a></li>
-<li><a href="http://www.cnblogs.com/sunwufan/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a></li>
-<li><a href="http://space.cnblogs.com/msg/send/%e5%b0%8f%e5%a6%96.OTZ" target="_blank">联系</a></li>
-<li><a href="http://www.cnblogs.com/sunwufan/rss" target="_blank">订阅</a></li>
-<li><a href="http://www.cnblogs.com/sunwufan/admin/EditPosts.aspx" target="_blank">管理</a>
-随笔-38 文章-0 评论-3 </li>
-</ul>
-<h1 id="-github-http-www-cnblogs-com-sunwufan-archive-2012-10-16-2726225-html-"><a href="http://www.cnblogs.com/sunwufan/archive/2012/10/16/2726225.html" target="_blank">Github上搭建博客</a></h1>
-<p>本文将详细介绍如何在Windows系统下搭建博客，并发布到GitHub Pages上，以及后期博客发布后的更新工作....</p>
-<h3 id="-"><strong>一、博客整体效果</strong></h3>
-<p><strong>         搭建博客效果</strong>：<a href="http://www.sunfanwu.com/" target="_blank"><a href="http://www.sunfanwu.com/">http://www.sunfanwu.com/</a></a>（绑定域名后的效果，未绑定则调转到<a href="http://sunfanwu.github.com/" target="_blank">sunfanwu.github.com</a>）</p>
-<p><strong>         网站成本：</strong>域名注册<a href="http://www.sunfanwu.com/" target="_blank"><a href="http://www.sunfanwu.com/">http://www.sunfanwu.com/</a></a> 50元（可不要）</p>
-<p><strong>         服  务 器：</strong>免费托管在GitHub个人主页上（无数据库，但有整个网站备份。由于GitHub网站性质，博客源码文档为所有人可见）。</p>
-<p><strong>         博客类型：</strong>静态博客，无数据库，博客通过html编写。</p>
-<p><strong>         本地软件：<a href="http://code.google.com/p/msysgit/downloads/list" target="_blank">msysgit</a>、<a href="http://rubyforge.org/frs/download.php/75127/rubyinstaller-1.9.2-p290.exe" target="_blank">ruby</a>、<a href="https://github.com/downloads/oneclick/rubyinstaller/DevKit-tdm-32-4.5.2-20111229-1559-sfx.exe" target="_blank">DevKit</a>、<a href="http://www.activestate.com/activepython/downloads" target="_blank">python</a>。</strong></p>
-<p><strong>         备       注：</strong>GitHub为开源项目网站，请不要上传过大的且无意义的附件（如视频等）。</p>
-<h3 id="-"><strong>二、搭建本地环境</strong></h3>
-<pre><code>   为了在Github上使用Octopress，需要首先配置一下本地环境：
-
-   安装Git，下载[msysgit](http://code.google.com/p/msysgit/downloads/list)，安装可参考[官方文档](https://help.github.com/articles/set-up-git)。（Git分布式版本管理系统，在此主要是用来操作GitHub。不推荐使用Git 客户端—github for windows）
-
-   然后安装Ruby，[Octopress 官方文档](http://octopress.org/docs/setup/)中指定的 Ruby 版本是 1.9.2，下载 [rubyinstaller-1.9.2-p290.exe](http://rubyforge.org/frs/download.php/75127/rubyinstaller-1.9.2-p290.exe)，安装时记得选中“Add Ruby executables to your PATH”。
-
-   为了检查Git、ruby是否已加入到PATH中，可在 Windows 的cmd窗口中执行以下命令：
-</code></pre><p>path</p>
-<pre><code>   接着安装Devkit，选择下载 4.5.2 版本：[DevKit-tdm-32-4.5.2-20111229-1559-sfx.exe](https://github.com/downloads/oneclick/rubyinstaller/DevKit-tdm-32-4.5.2-20111229-1559-sfx.exe)，下载完成后，将其解压到如 E:DevKit，然后在win的cmd窗口中执行如下命令进行安装：
-</code></pre><p>E:
-cd E:DevKit
-ruby dk.rb init
-ruby dk.rb install</p>
-<pre><code>    （选装）最后安装python，主要是博客代码加亮模块需要python环境的支持，[下载2.7版](http://www.activestate.com/activepython/downloads)，安装完以后，在Windows的cmd窗口中执行：
-
-     本地环境配置结束。
-</code></pre><h3 id="-">三、更新本地环境配置</h3>
-<pre><code>   为了支持中文UTF-8编码，对Windows环境变量配置如下：
-</code></pre><p>LANG=zh_CN.UTF-8
-LC_ALL=zh_CN.UTF-8</p>
-<pre><code>  也可在直接在Windows的cmd窗口下运行命令：
-</code></pre><p>set LANG=zh_CN.UTF-8
-set LC_ALL=zh_CN.UTF-8</p>
-<pre><code>    更新gem的更新源，ruby的官方更新源经常被河蟹，换成国内的更新源，这样速度就快多了，变更如下：
-</code></pre><p>gem sources -a <a href="http://ruby.taobao.org/" target="_blank">http://ruby.taobao.org/</a>
-gem sources -r <a href="http://rubygems.org/" target="_blank">http://rubygems.org/</a>
-gem sources -l</p>
-<pre><code>    最后一个命令可查看更改后的更新源列表。
-</code></pre><h3 id="-octopress">四、下载并配置Octopress</h3>
-<pre><code>    首先下载Octopress源码，可以使用下面git命令（具体应用可参见git官方文档）下载，也可直接在Octopress Github库中下载octopress的zip包（[点击下载](https://nodeload.github.com/imathis/octopress/zipball/master)），然后将下载的压缩包解压到E盘根目录，修改解压后的文件夹名称为 octopress。
-</code></pre><p>E:
-git clone git://github.com/imathis/octopress.git  octopress</p>
-<pre><code>     然后更新 Octopress 的gem更新源：进到 E:octopress 目录，用文本编辑器（例如记事本）打开文件Gemfile，将里面source “http://rubygems.org/”改为source “http://ruby.taobao.org/”。
-
-     最后安装Octopress的依赖项，在Windows的CMD窗口输入以下命令：
-</code></pre><p>E:
-cd octopress
-gem install bundler
-bundle install</p>
-<h3 id="-github-repositories">五、新建Github Repositories</h3>
-<pre><code>   登录[Github](https://github.com/)，假设你的用户名是username，首先要新建一个命名为 **username.github.com**的Repo，命名必须是这个格式，如果不这样命名的话，在运行命令 rake setup_github_pages  之后不能够自动创建后面提到的master和source 分支，而是作为普通仓库生成 gh-pages 分支。
-
-   创建Repo（如果没用过GitHub，需先注册账户），如下图：
-</code></pre><p><img src="" alt="image"></p>
-<pre><code>   Repo的设置，如下图：
-</code></pre><p> <img src="" alt="20121016155745"></p>
-<h3 id="-octopress-github">六、发布Octopress到Github</h3>
-<pre><code>   1、打开Windows下的命令窗口，进入到Octopress所在的目录，输入命令：
-</code></pre><p>rake setup_github_pages</p>
-<pre><code>    按照提示输入刚才新建的Repo地址，类似：[git@github.com:用户名/用户](mailto:git@github.com:用户名/用户)[名.github.com.git](mailto:git@github.com)。
-</code></pre><p><img src="" alt="在Github上搭建Octopress博客03"></p>
-<pre><code>   2、接着输入命令：
-</code></pre><p>rake install</p>
-<p>rake generate</p>
-<p>rake preview</p>
-<pre><code> 其中rake install是安装Octopress默认主题的，rake gnerate是生成静态页面的，这两个命令是必须运行的，而rake preview则是用来本地浏览的（运行时看屏幕上提示，按Ctrl+C并输入Y来终止批处理操作），运行后打开浏览器，输入 [http://localhost:4000/](http://localhost:4000/) 就可以看到如下的界面了，不想预览的话也可以不运行，直接进入下一步。
-</code></pre><p><img src="" alt="在Github上搭建Octopress博客04"></p>
-<pre><code>  3、将博客发布到Github上，输入下面命令：
-</code></pre><p>rake deploy</p>
-<pre><code> **备注：此处遇到错误，请看问题一。**
-
- 这样，生成的内容将会自动发布到master分支，并且可以使用 [http://用户名.github.com](http://用户名.github.com/) 访问内容。
-</code></pre><p><img src="" alt="在Github上搭建Octopress博客05"></p>
-<pre><code>    4、别忘了把所有源文件发布到 source 分支下面：
-</code></pre><p>git add .</p>
-<p>git commit -m “your message”</p>
-<p>git push origin source</p>
-<pre><code>    至此，所有发布完成，接下来就是对博客的设置了。
-</code></pre><h3 id="-ocotpress-">七、Ocotpress博客配置</h3>
-<pre><code>      更改下面的配置后，还需要运行 rake generate、rake deploy等等命令的。
-
-  1、默认的博客运行成功的话，就需要按照自己的要求对博客配置进行修改了，主要是修改Octopress根目录下的主配置文件_config.yml。
-</code></pre><p>url:  <a href="http://username.github.com" target="_blank">http://username.github.com</a>                 /# 博客地址</p>
-<p>title:                                                       /# 博客标题
-subtitle:                                                  /# 副标题
-author:                                                   /# 作者
-simple_search:  <a href="http://www.google.com.hk/search" target="_blank">http://www.google.com.hk/search</a>     /# 搜索引擎
-description:                                                            /# 关于博客的描述
-subscribe_rss:  /atom.xml                  /# Rss订阅地址, 默认是  /atom.xml
-subscribe_email:                               /# 提供Email订阅的地址
-email:                                              /# Rss订阅的Email地址</p>
-<p>root:  /               /# 博客路径，默认是“/“，如果你打算在子目录中，记得修改这个路径
-permalink: /blog/:year/:month/:day/:title/           /# 文章的固定链接形式</p>
-<pre><code> 2、更换主题
-
-     主题位于 octopress/.theme 目录下，默认主题为 classic。 如果需要更改主题（可在网上查找），下载后将主题也放在.theme目录下即可，如果主题名字为blog_theme，那么安装主题时输入以下命令即可：
-</code></pre><p>rake install [&#39;blog_theme&#39;]</p>
-<h3 id="-">八、绑定域名</h3>
-<pre><code>    Github Pages绑定域名，需要在Octopress/source目录下建个无后缀的CNAME文本文件，文件内容就是你的域名，例如：
-</code></pre><p>www.sunfanwu.com</p>
-<pre><code>    然后进入你的域名管理网站，修改A纪录为：“207.97.227.245” ，或者 CNAME 指向 username.github.com，下面就等着解析生效了。
-</code></pre><p><strong>九、更新博客</strong>（发布日志将在下一篇进行详细说明，敬请期待....）</p>
-<pre><code>    由于每次写博客都通过html格式比较麻烦，所以此处推荐使用[Windows Live Writer](http://baike.baidu.com/view/1049077.htm)本地编辑。
-
-    1.编辑完成，选择以“源代码”形式查看,复制文本。
-
-    2.在本地“octopress/public/blog/”找到需要更新的日志,通过记事本软件打开此html。
-
-    3.找到&lt;div class=&quot;entry-content&quot;&gt;&lt;/div&gt;，将复制的代码粘贴进去，保存关闭。
-
-    4.通过之前说过的“rake deploy”命令就可以发布了。（发布之前可“rake preview”本地查看一下~）
-
-   **备注：**如有图片的话，一般做法还需将图片保存到对应文件夹。此处可以先在“博客园”等网站通过[Windows Live Writer](http://baike.baidu.com/view/1049077.htm)发布博客，再将源码复制。即省去图片调用。又可做到一篇博客不同地方迅速发布，保留备份。
-</code></pre><p><strong>问题一：发布时git出现提示：</strong>
-Agent admitted failure to sign using the key. Permission denied (publickey)
-fatal: The remote end hung up unexpectedly</p>
-<p>   github的<a href="http://help.github.com/linux-set-up-git/" target="_blank">官方文档</a></p>
-<p>/#1. Check for SSH keys. $ cd ~/.ssh /#2. Backup and remove existing SSH keys. $ lsLists all the subdirectories in the current directory $ mkdir key_backupmakes a subdirectory called &quot;key_backup&quot; in the current directory $ cp id_rsa/<em> key_backupCopies the contents of the id_rsa directory into key_backup $ rm id_rsa/</em> /#3. Generate a new SSH key. $ ssh-keygen -t rsa -C &quot;your_email@youremail.com&quot; /#4. Add your SSH key to GitHub. /#5. Test everything out. $ ssh -T <a href="mailto:git@github.com">git@github.com</a></p>
-<pre><code> 大概意思就是你先在本地建立自己的SSH密码对，然后将公钥上传到github。进行上传服务时输入密码即可（cmd输入密码是为不可见状态，输入好后点击“回车”即可）。
-</code></pre><p>参考文章：</p>
-<pre><code>        教程参考： [http://xuhehuan.com/783.html](http://xuhehuan.com/783.html) （80%为参考此处进行整理）。
-
-                      [http://mrzhang.me/blog/blog-equals-github-plus-octopress.html](http://mrzhang.me/blog/blog-equals-github-plus-octopress.html &quot;http://mrzhang.me/blog/blog-equals-github-plus-octopress.html&quot;)
-
-                      [http://caok.github.com/blog/2012/06/24/install-octopress-to-write-blog/](http://caok.github.com/blog/2012/06/24/install-octopress-to-write-blog/ &quot;http://caok.github.com/blog/2012/06/24/install-octopress-to-write-blog/&quot;)
-
-        octopress官方建立github主页参考： [http://octopress.org/docs/deploying/github/](http://octopress.org/docs/deploying/github/ &quot;http://octopress.org/docs/deploying/github/&quot;)
-</code></pre><p>posted @ 2012-10-16 16:10 <a href="http://www.cnblogs.com/sunwufan/" target="_blank">小妖.OTZ</a> 阅读(2654) 评论(0) <a href="http://www.cnblogs.com/sunwufan/admin/EditPosts.aspx?postid=2726225" target="_blank">编辑</a> <a href="http://www.cnblogs.com/sunwufan/archive/2012/10/16/2726225.html#" target="_blank">收藏</a>
-<img src="" alt=""></p>
-<p><a href="">刷新评论</a><a href="http://www.cnblogs.com/sunwufan/archive/2012/10/16/2726225.html#" target="_blank">刷新页面</a><a href="http://www.cnblogs.com/sunwufan/archive/2012/10/16/2726225.html#top" target="_blank">返回顶部</a></p>
-<p><a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园首页</a><a href="http://q.cnblogs.com/" title="程序员问答社区" target="_blank">博问</a><a href="http://news.cnblogs.com/" title="IT新闻" target="_blank">新闻</a><a href="http://home.cnblogs.com/ing/" target="_blank">闪存</a><a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a><a href="http://kb.cnblogs.com/" target="_blank">知识库</a></p>
-<h3 id="-">公告</h3>
-<p>Copyright ©2013 小妖.OTZ</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/git&github/">git&github</a></li></span></span> | <span class="tags">Tagged <a href="/tags/git&github/" class="label label-primary">git&github</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-gitgithub--Github上搭建博客-小妖_OTZ-博客园/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-gitgithub--Github上搭建博客-小妖_OTZ-博客园" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-unix--bash-useradd-commandnotfound/">bash</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-unix--bash-useradd-commandnotfound/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="bash-useradd-command-not-found">bash: useradd :command not found</h1>
-<h2 id="bash-useradd-command-not-found">bash: useradd :command not found</h2>
-<p>在网上查了一下,发现应该如下操作：
-利用su - ，而不是su进入root，然后再敲useradd test1,这样就OK了.
-注意：是su - 而不是su，因为su是只取得ROOT的权限，su - 是取得ROOT的权限后还执行ROOT的PROFILE来取得ROOT的环境变量。</p>
-<p>加了这个减号的目的是使环境变量和欲转换的用户相同、不加-是取得用户的临时权限
-来源： <a href="[http://hi.baidu.com/peng123/item/0751b74478ccefeabdf451f0](http://hi.baidu.com/peng123/item/0751b74478ccefeabdf451f0)">[http://hi.baidu.com/peng123/item/0751b74478ccefeabdf451f0](http://hi.baidu.com/peng123/item/0751b74478ccefeabdf451f0)</a> 
-对于bash:useradd:command not found错误</p>
-<p>在命令行中添加用户时显示bash:useradd:command not found的错误，在网上查了一下资料。
-思路：
-        在UNIX系统里面，每个系统用户都由自己的环境变量来定义自己登录上来的shell、终端类型、路径等。Linux下Bshell用户登录后执行主目录下的.bash_profile，Cshell用户执行.cshrc_profile文件。
-        当以普通用户登录主机，而此用户的环境里没有定义系统命令所在的路径，如/usr/bin，/usr/sbin等；或在一些情况下TELNET上主机后也会遗失环境变量。
-解决方法：
-       1.在绝对路径/usr/sbin中执行；
-       2.用root用户执行命令。用“su -”可以取得root用户的权限和环境（注：是“su -”不是“su”，因为“su”只取得root的权限，“su -”取得root权限后还执行root的profile来取得root的环境变量）
-       3.如果确定要使用非root用户的当前用户来执行命令，需要把系统路径加到该用户的.bash_profile或者.cshrc_profile文件中去
-附：
-      useradd指令的用法
-       作用：账户建立或更新使用者的信息
-       语法：useradd  &lt;选项&gt;  用户名
-       常用参数：</p>
-<pre><code>   1. -c comment
-      新账号password档的说明栏
-   2. -d home_dir
-      新账号的家目录路径
-   3. -e expire_date
-      账号的截止日期，格式为MM/DD/YY
-   4. -f inactive_days
-      账号过期几日后永久封停。当值为0时账号立即被封停，当值为-1时则是关闭这个功能，默认为-1
-   5. -g initial_group
-      group名称或以数字来做为使用者登陆的起始组。组名必须是存在的名称
-   6. -G group,[...]
-      定义用户所属的其他组，可以有多个
-   7. -m [-k skeleton_dir]
-      用户家目录如果不存在则自动建立。如果使用-k选项，skeleton_dir内的文档会被复制到家目录下，而/etc/skel目录下的文档也会被复制过来
-   8. -M
-      强制不建立用户家目录，即使/etc/login.defs设定要建立家目录
-   9. -s
-      使用者登陆后使用的shell名称。预设是不填写，这样系统会指定预设的登陆shell
-   10. -u
-      手动设定用户的ID值，ID值必须是唯一的。
-
-  userdel指令的用法
-</code></pre><p>来源： <a href="&#x6d;&#x61;&#105;&#x6c;&#116;&#111;&#x3a;&#x5b;&#104;&#x74;&#x74;&#x70;&#58;&#47;&#47;&#98;&#108;&#x6f;&#x67;&#x2e;&#x31;&#x36;&#x33;&#x2e;&#x63;&#111;&#109;&#x2f;&#x62;&#104;&#106;&#x62;&#104;&#106;&#64;&#121;&#x65;&#97;&#x68;&#x2f;&#98;&#108;&#x6f;&#103;&#x2f;&#115;&#116;&#x61;&#116;&#x69;&#99;&#x2f;&#x36;&#x37;&#57;&#x32;&#x32;&#49;&#x30;&#x39;&#50;&#x30;&#49;&#50;&#56;&#51;&#53;&#x31;&#x35;&#51;&#x34;&#49;&#x30;&#57;&#x2f;&#x5d;&#x28;&#104;&#116;&#116;&#112;&#x3a;&#x2f;&#47;&#x62;&#108;&#x6f;&#x67;&#x2e;&#49;&#54;&#51;&#x2e;&#x63;&#x6f;&#x6d;&#x2f;&#x62;&#x68;&#106;&#98;&#x68;&#106;&#x40;&#121;&#x65;&#97;&#x68;&#x2f;&#x62;&#108;&#111;&#x67;&#x2f;&#x73;&#116;&#x61;&#x74;&#105;&#99;&#47;&#x36;&#55;&#x39;&#x32;&#x32;&#49;&#x30;&#57;&#x32;&#48;&#x31;&#50;&#x38;&#51;&#53;&#x31;&#53;&#51;&#x34;&#x31;&#48;&#x39;&#47;&#x29;">&#x5b;&#104;&#x74;&#x74;&#x70;&#58;&#47;&#47;&#98;&#108;&#x6f;&#x67;&#x2e;&#x31;&#x36;&#x33;&#x2e;&#x63;&#111;&#109;&#x2f;&#x62;&#104;&#106;&#x62;&#104;&#106;&#64;&#121;&#x65;&#97;&#x68;&#x2f;&#98;&#108;&#x6f;&#103;&#x2f;&#115;&#116;&#x61;&#116;&#x69;&#99;&#x2f;&#x36;&#x37;&#57;&#x32;&#x32;&#49;&#x30;&#x39;&#50;&#x30;&#49;&#50;&#56;&#51;&#53;&#x31;&#x35;&#51;&#x34;&#49;&#x30;&#57;&#x2f;&#x5d;&#x28;&#104;&#116;&#116;&#112;&#x3a;&#x2f;&#47;&#x62;&#108;&#x6f;&#x67;&#x2e;&#49;&#54;&#51;&#x2e;&#x63;&#x6f;&#x6d;&#x2f;&#x62;&#x68;&#106;&#98;&#x68;&#106;&#x40;&#121;&#x65;&#97;&#x68;&#x2f;&#x62;&#108;&#111;&#x67;&#x2f;&#x73;&#116;&#x61;&#x74;&#105;&#99;&#47;&#x36;&#55;&#x39;&#x32;&#x32;&#49;&#x30;&#57;&#x32;&#48;&#x31;&#50;&#x38;&#51;&#53;&#x31;&#53;&#51;&#x34;&#x31;&#48;&#x39;&#47;&#x29;</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/unix/">unix</a></li></span></span> | <span class="tags">Tagged <a href="/tags/unix/" class="label label-primary">unix</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-unix--bash-useradd-commandnotfound/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-unix--bash-useradd-commandnotfound" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-操作系统-win7--Windows7sp1简体中文旗舰版官方MSDN正式版下载-XP系统之家/">Windows7 sp1 简体中文旗舰版(官方MSDN正式版)下载 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:43.000Z"> <a href="/2014/02/02/2014-02-02-操作系统-win7--Windows7sp1简体中文旗舰版官方MSDN正式版下载-XP系统之家/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="windows7-sp1-msdn-xp-">Windows7 sp1 简体中文旗舰版(官方MSDN正式版)下载 - XP系统之家</h1>
-<ul>
-<li><a href="http://www.xp510.com/" target="_blank">首页</a></li>
-<li>|</li>
-<li><a href="http://www.xp510.com/soft/" title="下载中心" target="_blank">下载中心</a></li>
-<li>|</li>
-<li><a href="http://www.xp510.com/article/" title="文章中心" target="_blank">文章中心</a></li>
-<li>|</li>
-<li><a href="http://www.xp510.com/soft/showtype.asp?type=%C2%CC%C9%AB%C8%ED%BC%FE" title="绿色软件" target="_blank">绿色软件</a></li>
-<li>|</li>
-<li><a href="http://www.xp510.com/soft/showtype.asp?type=%B9%FA%B2%FA%C8%ED%BC%FE" title="最新软件" target="_blank">国产软件</a></li>
-<li>|</li>
-<li><a href="http://www.xp510.com/soft/showtype.asp?type=%BA%BA%BB%AF%C8%ED%BC%FE" title="汉化软件" target="_blank">汉化软件</a></li>
-<li>|</li>
-<li><a href="http://www.xp510.com/soft/showtype.asp?type=%B9%FA%CD%E2%C8%ED%BC%FE" title="国外软件" target="_blank">国外软件</a></li>
-<li>|</li>
-<li><a href="http://www.3987.com/" title="统一下载站" target="_blank">统一下载</a></li>
-<li>|</li>
-<li><a href="http://www.3993.com/" title="美眉秀秀网" target="_blank">美眉秀秀</a></li>
-<li>|</li>
-<li><a href="&quot;将本站加入到你的收藏夹&quot;">收藏本站</a> | <a href="mailto:xp580@vip.qq.com">联系我们</a>  | <a href="http://www.636.com/?xp510/" title="636网址导航" target="_blank">636导航</a>|  <a href="http://www.3500.com/?xp510/" title="35单机游戏" target="_blank">35单机游戏</a>|  <a href="">繁體</a></li>
-</ul>
-<p><a href="http://www.xp510.com/" target="_blank"><img src="" alt="XP系统之家"></a></p>
-<p><a href="http://www.windown8.com/?580" target="_blank"><img src="" alt=""></a>
-<a href="http://1.xp510.com:801/xp2011/PPLiveG.rar" target="_blank"><img src="" alt=""></a></p>
-<ul>
-<li><a href="http://www.xp510.com/" target="_blank">首 页</a></li>
-<li><a href="http://www.xp510.com/soft/01.html" target="_blank">最近更新</a></li>
-<li><a href="http://www.xp510.com/soft/31.html" target="_blank">热门软件</a></li>
-<li><a href="http://www.xp510.com/soft/11.html" target="_blank">推荐软件</a></li>
-<li><a href="http://www.xp510.com/article/" target="_blank">文章教材</a></li>
-<li><a href="http://www.xp510.com/soft/desk/378/1.html" target="_blank">桌面壁纸</a></li>
-<li><a href="http://www.xp510.com/soft/Ebook/380/1.html" target="_blank">书籍教程</a></li>
-<li><a href="http://www.xp510.com/soft/iphoneOS/498/1.html" target="_blank">手机系统</a></li>
-<li><a href="http://www.xp510.com/soft/NewSoft.asp" target="_blank">一键转帖</a>
-<a href="http://www.xp510.com/soft/Linux/366/1.html" title="Linux" target="_blank">Linux</a> | <a href="http://www.xp510.com/soft/MAC/367/1.html" title="MAC苹果系统" target="_blank">MAC</a> | <a href="http://www.xp510.com/soft/QQ/369/1.html" title="腾讯QQ" target="_blank">腾讯QQ</a> | <a href="http://www.xp510.com/soft/CDROM/372/1.html" title="大型软件光盘" target="_blank">大型光盘</a> | <a href="http://www.xp510.com/soft/VS/142/1.html" title="美化主题" target="_blank">美化主题</a> | <a href="http://www.xp510.com/soft/ScrS/141/1.html" title="屏幕保护" target="_blank">屏保</a> | <a href="http://www.xp510.com/soft/Graphics/374/1.html" title="图形图像" target="_blank">图形图像</a> | <a href="http://www.xp510.com/soft/Networking/371/1.html" title="网络软件" target="_blank">网络软件</a> | <a href="http://www.xp510.com/soft/Application/370/1.html" title="应用软件" target="_blank">应用软件</a> | <a href="http://www.xp510.com/soft/ossoft/368/1.html" title="系统工具" target="_blank">系统工具</a> | <a href="http://www.xp510.com/soft/media/375/1.html" title="多媒体软件" target="_blank">多媒体</a> | <a href="http://www.xp510.com/soft/anti/376/1.html" title="杀毒软件" target="_blank">杀毒</a> | <a href="http://www.xp510.com/soft/game/377/1.html" title="游戏娱乐" target="_blank">游戏娱乐</a> | <a href="http://www.xp510.com/soft/desk/378/1.html" title="桌面壁纸" target="_blank">壁纸</a> | <a href="http://www.xp510.com/soft/Ebook/380/1.html" title="书籍教程" target="_blank">书籍</a> | <a href="http://www.xp510.com/soft/LT/497/1.html" title="聊天工具" target="_blank">聊天工具</a> | <a href="http://www.xp510.com/soft/iphoneOS/498/1.html" title="手机系统" target="_blank">手机系统</a> | <a href="http://www.xp510.com/soft/Graphics/ImageProduction/449/1.html" title="图像制作" target="_blank">图像制作</a></li>
-<li><a href=""></a></li>
-<li><a href="http://www.xp510.com/soft/Search.Asp?keyword=%C6%A4%C6%A4" target="_blank">皮皮影音</a>  <a href="http://www.xp510.com/soft/Search.Asp?keyword=%BF%E1%B9%B7%D2%F4%C0%D6" target="_blank">酷狗音乐</a>  <a href="http://www.xp510.com/soft/Search.Asp?keyword=pptv" target="_blank">PPTV</a>  <a href="http://www.xp510.com/soft/Search.Asp?keyword=%BF%E1%CE%D2%D2%F4%C0%D6" target="_blank">酷我音乐盒</a>  <a href="http://www.xp510.com/soft/Search.Asp?keyword=%CB%D1%B9%B7%C6%B4%D2%F4" target="_blank">搜狗拼音</a>  <a href="http://www.xp510.com/soft/Search.Asp?keyword=%BD%F0%C9%BD%B6%BE%B0%D4" target="_blank">金山毒霸</a>  <a href="http://www.xp510.com/soft/Search.Asp?keyword=%B0%C1%D3%CE" target="_blank">傲游浏览器</a>  <a href="http://www.xp510.com/soft/Search.Asp?keyword=360%B0%B2%C8%AB%CE%C0%CA%BF" target="_blank">360安全卫士</a>  <a href="http://www.xp510.com/soft/Search.Asp?keyword=360%C9%B1%B6%BE" target="_blank">360杀毒</a>  <a href="http://www.xp510.com/soft/Application/office/11728.html" target="_blank">office</a></li>
-</ul>
-<ul>
-<li><a href="http://u.diannaodian.com/" target="_blank"><img src="" alt=""></a>
-您的位置: <a href="http://www.xp510.com/" target="_blank">XP系统之家</a> » <a href="http://www.xp510.com/soft/CDROM/372/1.html" target="_blank">大型光盘</a> » <a href="">Windows7 sp1 简体中文旗舰版(官方MSDN正式版)</a></li>
-</ul>
-<ul>
-<li><p>本类下载排行</p>
-</li>
-<li><p>1<a href="&quot;Windows7 sp1 简体中文旗舰版(官方MSDN正式版">Windows7 sp1 简体中文旗舰版(官方...</a>&quot;)</p>
-</li>
-<li>2<a href="http://www.xp510.com/soft/CDROM/10979.html" title="晨枫U盘维护工具v3.0 官方正式版" target="_blank">晨枫U盘维护工具v3.0 官方正式版</a></li>
-<li>3<a href="http://www.xp510.com/soft/CDROM/14318.html" title="Windows 8操作系统 32Bit 开发者预览版" target="_blank">Windows 8操作系统 32Bit 开发者预...</a></li>
-<li>4<a href="http://www.xp510.com/soft/CDROM/7734.html" title="秋无痕常用软件全功能装机光盘 论坛四周年纪念版V201111" target="_blank">秋无痕常用软件全功能装机光盘 论坛...</a></li>
-<li>5<a href="http://www.xp510.com/soft/CDROM/13642.html" title="Windows XP SP3 简体中文官方安装版" target="_blank">Windows XP SP3 简体中文官方安装版...</a></li>
-<li>6<a href="http://www.xp510.com/soft/CDROM/14526.html" title="Microsoft SQL Server 2008 SP3 官方简体中文版" target="_blank">Microsoft SQL Server 2008 SP3 官...</a></li>
-<li>7<a href="http://www.xp510.com/soft/CDROM/8992.html" title="完美者U盘维护系统v10.2 完整终结版" target="_blank">完美者U盘维护系统v10.2 完整终结版...</a></li>
-<li>8<a href="http://www.xp510.com/soft/CDROM/6834.html" title="《开天辟地5—全能版 CD8》之 操作系统安装与电脑维护" target="_blank">《开天辟地5—全能版 CD8》之 操作...</a></li>
-<li>9<a href="http://www.xp510.com/soft/CDROM/2943.html" title="Microsoft SQL Server 2008 R2 SP1 简体中文正式版" target="_blank">Microsoft SQL Server 2008 R2 SP1...</a></li>
-<li>10<a href="http://www.xp510.com/soft/CDROM/14753.html" title="Microsoft SQL Server 2012 RC 官方简体中文版" target="_blank">Microsoft SQL Server 2012 RC 官方...</a></li>
-<li>11<a href="http://www.xp510.com/soft/CDROM/6839.html" title="《万事无忧4》6CD 洪恩软件光盘" target="_blank">《万事无忧4》6CD 洪恩软件光盘</a></li>
-<li>12<a href="http://www.xp510.com/soft/CDROM/6832.html" title="《开天辟地5—全能版 CD1》之Windows Vista入门篇" target="_blank">《开天辟地5—全能版 CD1》之Windo...</a></li>
-<li>13<a href="http://www.xp510.com/soft/CDROM/12061.html" title="金狐多功能系统维护盘 2012 简体中文版" target="_blank">金狐多功能系统维护盘 2012 简体中...</a></li>
-<li>14<a href="http://www.xp510.com/soft/CDROM/2172.html" title="Microsoft Visual Studio 2005 (vs2005) 简体中文企业版(含MSDN版)" target="_blank">Microsoft Visual Studio 2005 (vs...</a></li>
-<li><p>15<a href="http://www.xp510.com/soft/CDROM/6833.html" title="《开天辟地5—全能版 CD7》之 全面掌握Windows XP操作系统" target="_blank">《开天辟地5—全能版 CD7》之 全面...</a></p>
-</li>
-<li><p>相关软件</p>
-</li>
-<li><p><a href="http://www.xp510.com/soft/ossoft/Optimization/14947.html" title="Windows瑞士军刀v1.2 简体中文特别版" target="_blank">Windows瑞士军刀v1.2 简体中文特别版</a></p>
-</li>
-<li><a href="http://www.xp510.com/soft/ossoft/OtherSystems/14686.html" title="Windows Server 2003 PE系统 简体中文版" target="_blank">Windows Server 2003 PE系统 简体中文版...</a></li>
-<li><a href="http://www.xp510.com/soft/ossoft/Optimization/14664.html" title="System Engineer(Windows优化圣手)v1.02 特别版" target="_blank">System Engineer(Windows优化圣手)v1.0...</a></li>
-<li><a href="http://www.xp510.com/soft/Application/other/14375.html" title="Windows8开始界面设置v1.01 绿色版" target="_blank">Windows8开始界面设置v1.01 绿色版</a></li>
-<li><a href="http://www.xp510.com/soft/ossoft/OtherSystems/14334.html" title="Windows8开始菜单切换器v1.01 绿色版" target="_blank">Windows8开始菜单切换器v1.01 绿色版</a></li>
-<li><a href="http://www.xp510.com/soft/CDROM/14319.html" title="Windows 8操作系统汉化包 简体中文安装版" target="_blank">Windows 8操作系统汉化包 简体中文安装...</a></li>
-<li><a href="http://www.xp510.com/soft/CDROM/14318.html" title="Windows 8操作系统 32Bit 开发者预览版" target="_blank">Windows 8操作系统 32Bit 开发者预览版...</a></li>
-<li><a href="http://www.xp510.com/soft/ScrS/14082.html" title="YoWindow (天气屏保软件)v2.1 简体中文注册版" target="_blank">YoWindow (天气屏保软件)v2.1 简体中文...</a></li>
-<li><a href="http://www.xp510.com/soft/game/GameTools/14068.html" title="Windows7游戏全屏修复工具v1.0 绿色版" target="_blank">Windows7游戏全屏修复工具v1.0 绿色版</a></li>
-<li><a href="http://www.xp510.com/soft/Networking/Servers/13986.html" title="WindowsWAMP (本地运行网站)v7.8 绿色汉化版" target="_blank">WindowsWAMP (本地运行网站)v7.8 绿色汉...</a></li>
-<li><p>推荐软件下载</p>
-</li>
-<li><p><a href="http://www.xp510.com/soft/anti/SystemSecurity/11034.html" title="360安全卫士v8.6.0.1001h 官方安装版" target="_blank">360安全卫士v8.6.0.1001h 官方安装...</a></p>
-</li>
-<li><a href="http://www.xp510.com/soft/Networking/browsing/10905.html" title="傲游浏览器(Maxthon)v3.3.3 官方安装版" target="_blank">傲游浏览器(Maxthon)v3.3.3 官方安...</a></li>
-<li><a href="http://www.xp510.com/soft/LT/13797.html" title="9158多人视频聊天软件v5.20 官方安装版" target="_blank">9158多人视频聊天软件v5.20 官方安...</a></li>
-<li><a href="http://www.xp510.com/soft/Application/input/11533.html" title="搜狗拼音输入法v6.1.0.6652 官方安装版" target="_blank">搜狗拼音输入法v6.1.0.6652 官方安...</a></li>
-<li><a href="http://www.xp510.com/soft/media/NetworkTV/10956.html" title="皮皮高清影视(皮皮播放器)v2.10.0.2 官方正式版" target="_blank">皮皮高清影视(皮皮播放器)v2.10.0....</a></li>
-<li><a href="http://www.xp510.com/soft/CDROM/13642.html" title="Windows XP SP3 简体中文官方安装版" target="_blank">Windows XP SP3 简体中文官方安装版...</a></li>
-<li><a href="http://www.xp510.com/soft/anti/SystemSecurity/11515.html" title="QQ电脑管家2011v6.7(2230) 官方安装版" target="_blank">QQ电脑管家2011v6.7(2230) 官方安装...</a></li>
-<li><a href="http://www.xp510.com/soft/anti/NetworkSecurity/13204.html" title="360安全卫士v8.5.0.2001f 官方正式版" target="_blank">360安全卫士v8.5.0.2001f 官方正式...</a></li>
-<li><a href="http://www.xp510.com/soft/Application/winrar/11063.html" title="好压压缩软件(HaoZip)v2.5 官方安装版" target="_blank">好压压缩软件(HaoZip)v2.5 官方安装...</a></li>
-<li><a href="http://www.xp510.com/soft/media/MediaPlayer/13250.html" title="酷我音乐盒2011(酷我音乐盒2012免费下载)v6.0.1.6 官方安装版" target="_blank">酷我音乐盒2011(酷我音乐盒2012免费...</a></li>
-<li><a href="http://www.xp510.com/soft/anti/Antivirus/11157.html" title="金山毒霸2012猎豹版 SP2.1(0110) 官方安装版" target="_blank">金山毒霸2012猎豹版 SP2.1(0110) 官...</a></li>
-<li><a href="http://www.xp510.com/soft/media/NetworkTV/10972.html" title="UUSee网络电视2012 v7.11.826.3 官方安装版" target="_blank">UUSee网络电视2012 v7.11.826.3 官...</a></li>
-<li><a href="http://www.xp510.com/soft/media/NetworkTV/13310.html" title="风行网络电视v2.6.1.10 官方正式版" target="_blank">风行网络电视v2.6.1.10 官方正式版...</a></li>
-<li><a href="http://www.xp510.com/soft/game/Puzzle/13474.html" title="JJ比赛客户端2011(JJ斗地主)v1.6.1.14 官方安装版" target="_blank">JJ比赛客户端2011(JJ斗地主)v1.6.1...</a></li>
-<li><p><a href="http://www.xp510.com/soft/LT/11001.html" title="可乐视频社区2011 Beta3(可乐55聊天室) 简体中文版" target="_blank">可乐视频社区2011 Beta3(可乐55聊天...</a></p>
-</li>
-<li><p>最新文章教程</p>
-</li>
-<li><p><a href="http://www.xp510.com/article/152.html" title="硬盘安装Win7的图解详细教程" target="_blank">硬盘安装Win7的图解详细教程</a></p>
-</li>
-<li><a href="http://www.xp510.com/article/273.html" title="【最新教程】Windows Xp下硬盘安装Win7系统图文教程" target="_blank">【最新教程】Windows Xp下硬盘安装...</a></li>
-<li><a href="http://www.xp510.com/article/1466.html" title="【图文教程】苹果iOS5.0.1完美越狱教程" target="_blank">【图文教程】苹果iOS5.0.1完美越狱...</a></li>
-<li><a href="http://www.xp510.com/article/151.html" title="硬盘安装系统教程/U盘安装系统教程-WinXP安装版教程" target="_blank">硬盘安装系统教程/U盘安装系统教程...</a></li>
-<li><a href="http://www.xp510.com/article/1479.html" title="小雨伞备份shsh教程 如何用shsh恢复固件？" target="_blank">小雨伞备份shsh教程 如何用shsh恢复...</a></li>
-<li><a href="http://www.xp510.com/article/922.html" title="iOS 5.0正式版越狱教程出炉？ iOS5完美越狱降临？" target="_blank">iOS 5.0正式版越狱教程出炉？ iOS5...</a></li>
-<li><a href="http://www.xp510.com/article/261.html" title="【最新教程】Win7系统下安装xp系统教程" target="_blank">【最新教程】Win7系统下安装xp系统...</a></li>
-<li><a href="http://www.xp510.com/article/667.html" title="Windows8安装过程欣赏 和Win8安装教程！" target="_blank">Windows8安装过程欣赏 和Win8安装教...</a></li>
-<li><a href="http://www.xp510.com/article/19.html" title="用UltraISO刻录U盘安装系统【图文教程】" target="_blank">用UltraISO刻录U盘安装系统【图文教...</a></li>
-<li><a href="http://www.xp510.com/article/140.html" title="无线路由器密码破解-BT3-spoonwep2" target="_blank">无线路由器密码破解-BT3-spoonwep2...</a></li>
-<li><a href="http://www.xp510.com/article/18.html" title="制作U盘启动盘来使用GHOST安装系统" target="_blank">制作U盘启动盘来使用GHOST安装系统...</a></li>
-<li><a href="http://www.xp510.com/article/225.html" title="推荐：Windows 7系统安装完全图文全过程" target="_blank">推荐：Windows 7系统安装完全图文全...</a></li>
-<li><p>Windows7 sp1 简体中文旗舰版(官方MSDN正式版)</p>
-</li>
-<li><p>软件大小：2.47 GB</p>
-</li>
-<li>软件语言：简体中文</li>
-<li>软件类别：大型光盘</li>
-<li>运行环境：Win7/</li>
-<li>更新时间：2012-1-12 17:07:41</li>
-<li>软件评级：<img src="" alt=""></li>
-<li>软件授权：免费版</li>
-<li>相关链接：<a href="http://www.xp580.com/" target="_blank">Home Page</a></li>
-<li>软件预览：<a href="http://www.xp510.com/soft/Previewimg.asp?SoftID=13493" title="点击看大图" target="_blank">点击看大图</a></li>
-<li><a href="http://www.xp510.com/soft/softdown.asp?softid=13493" target="_blank"><img src="" alt=""></a> <a href="http://www.xp510.com/soft/comment.asp?softid=13493" target="_blank"><img src="" alt=""></a> <img src="" alt=""></li>
-</ul>
-<p>-</p>
-<ul>
-<li>软件介绍 <strong>收藏到网摘:</strong> <a href="&quot;Baidu搜藏&quot;"><img src="" alt="Baidu搜藏"></a> <a href=""><img src="&quot;QQ书签&quot;" alt="QQ书签"></a> <a href=""><img src="" alt="Google书签"></a> <a href="http://www.xp510.com/soft/CDROM/13493.html#" target="_blank"><img src="" alt="Yahoo雅虎中国书签"></a> <a href="&quot;新浪ViVi&quot;"><img src="" alt="新浪ViVi"></a> <a href="&quot;鼠标选中部分作为描述，提交到diglog.com&quot;"><img src="" alt="提交新发现，Dig it"></a>
-<a href="http://down.636.com:808/360se.exe" target="_blank"><img src="" alt=""></a></li>
-</ul>
-<p>推荐您使用Windows 7 Professional with Service Pack 1，在此提供微软官方MSDN专业版和旗舰版下载，至于家庭版还有基础版，安装无意义，所以不提供下载。</p>
-<p><strong>Windows 7 with sp 1 专业版 (x86)  简体中文版
-文件名 cn_windows_7_professional_with_sp1_x86_dvd_u_677162.iso
-发布日期 5/12/2011 2:37:37 PM
-SHA1 7BB512B6AF82632D6B080C1E9C3C10CD0C738F0E</strong></p>
-<p><strong>Windows 7 with sp 1 专业版 (x64)  简体中文版
-文件名 cn_windows_7_professional_with_sp1_x64_dvd_u_677031.iso
-发布日期 5/12/2011 2:37:44 PM
-SHA1 9B57E67888434C24DD683968A3CE2C72755AB148</strong></p>
-<p><strong>Windows 7 with sp 1 旗舰版 (x86)  简体中文版
-文件名 cn_windows_7_ultimate_with_sp1_x86_dvd_u_677486.iso
-发布日期 5/12/2011 2:45:58 PM
-SHA1 B92119F5B732ECE1C0850EDA30134536E18CCCE7</strong></p>
-<p><strong>Windows 7 with sp 1 旗舰版 (x64)  简体中文版
-文件名 cn_windows_7_ultimate_with_sp1_x64_dvd_u_677408.iso
-发布日期 5/12/2011 2:46:19 PM
-SHA1 2CE0B2DB34D76ED3F697CE148CB7594432405E23</strong></p>
-<p><strong>下载请右键迅雷下载！</strong></p>
-<p><strong>下载地址是按介绍的顺序排列。每个系统4个地址，一个快车，两个迅雷，一个IE高速。</strong></p>
-<p><strong>1.2.3.4的下载地址是第一个系统，再1.2.3.4的下载地址是第2个系统，依照排列！</strong></p>
-<p><strong>所以下的朋友注意下！</strong></p>
-<p> 下激活工具下载：<a href="http://www.pccppc.com/download/oem7F.rar" target="_blank">官方下载</a>   <a href="http://cid-ac9a82108a9e0ee8.skydrive.live.com/self.aspx/.Public/oem7F7.rar/">微软网盘
-</a>MD5: 2B13B58CCBB7F3CE02C9BF957F7F529E
-<a href="http://www.xp510.com/soft/Previewimg.asp?SoftID=13493" title="Windows7 sp1 简体中文旗舰版(官方MSDN正式版)" target="_blank"><img src="" alt=""></a></p>
-<ul>
-<li><p>本地下载地址：(推荐使用“迅雷”或“快车”、“右键使用迅雷下载”)</p>
-</li>
-<li><p><a href=""><img src="" alt="">迅雷高速下载1</a></p>
-</li>
-<li><a href=""><img src="" alt="">快车高速下载2</a></li>
-<li><a href=""><img src="" alt="">迅雷高速下载3</a></li>
-<li><a href=""><img src="" alt="">IE高速下载4</a></li>
-<li><a href=""><img src="" alt="">迅雷高速下载1</a></li>
-<li><a href=""><img src="" alt="">快车高速下载2</a></li>
-<li><a href=""><img src="" alt="">迅雷高速下载3</a></li>
-<li><a href=""><img src="" alt="">IE高速下载4</a></li>
-<li><a href=""><img src="" alt="">迅雷高速下载1</a></li>
-<li><a href=""><img src="" alt="">快车高速下载2</a></li>
-<li><a href=""><img src="" alt="">迅雷高速下载3</a></li>
-<li><a href=""><img src="" alt="">IE高速下载4</a></li>
-<li><a href=""><img src="" alt="">迅雷高速下载1</a></li>
-<li><a href=""><img src="" alt="">快车高速下载2</a></li>
-<li><a href=""><img src="" alt="">迅雷高速下载3</a></li>
-<li><p><a href=""><img src="" alt="">IE高速下载4</a>    <a href="http://www.xp510.com/soft/download.asp?softid=10984&amp;downid=36&amp;id=13317" target="_blank"><img src="" alt=""></a></p>
-</li>
-<li><p>发表评论(请用文明用语！) 解压密码：<a href="http://www.xp580.com/" target="_blank">www.xp580.com</a></p>
-</li>
-<li><p>（评论者 ！）</p>
-</li>
-<li>评分：100分 85分 70分 55分 40分 25分 10分 0分
-*</li>
-<li>（注 ！为必填内容。） 验证码： <img src="" alt="验证码,看不
-清楚?请点击刷新验证码"></li>
-<li>软件说明
-<strong>/*</strong>为了达到最快的下载速度，推荐用<a href="http://www.xp510.com/soft/Search.Asp?keyword=%D1%B8%C0%D7" target="_blank"><strong>迅雷</strong></a> 或<a href="http://down6.flashget.com/un/flashget_626_1.exe" target="_blank"><strong>网际快车</strong></a>下载本站软件。
-<strong>/*</strong>请升级到<a href="http://www.xp510.com/soft/search.asp?m=2&amp;keyword=WinRAR" target="_blank">WinRAR</a>最新版才能正常解压软件!<strong>部分破解补丁或注册机可能会被检测病毒木马，请自己选择下载使用。</strong>
-<strong>/*</strong>如果您发现下载链接错误，请点击<a href="">报告错误</a>谢谢！
-<strong>/*</strong>本站所提供软件，仅供用户测试交流，请在下载时先检测病毒再使用，并在24小时内删除，请勿用于任何商业行为，一切后果与法律责任与本站无关。</li>
-</ul>
-<p><img src="" alt=""></p>
-<p><img src="" alt="">
-<a href="http://www.xp510.com/support/about.asp" target="_blank">关于本站</a> - <a href="http://www.xp510.com/support/help.asp" target="_blank">网站帮助</a> - <a href="http://www.xp510.com/support/advertise.asp" target="_blank">广告合作</a> - <a href="http://www.xp510.com/support/declare.asp" target="_blank">下载声明</a> - <a href="http://www.xp510.com/link/" target="_blank">友情连接</a> - <a href="http://www.xp510.com/support/sitemap.asp" target="_blank">网站地图</a> - <a href="http://www.xp510.com/soft/sitemap.xml" target="_blank">RSS 2.0</a> -</p>
-<p><a href="http://www.cnzz.com/stat/website.php?web_id=1239876" title="站长统计" target="_blank">站长统计</a><img src="" alt="">
+<li><p>Java EE 专家
+Java 高清视频
+Mail: <a href="mailto:beansoft@126.com">beansoft@126.com</a>
+Location: Beijing
 <img src="" alt="">
-Copyright © 2007 XP510.com. All Rights Reserved <a href="http://www.miibeian.gov.cn/" target="_blank">闽ICP备05037531号-1</a>
- <img src="" alt=""><img src="" alt=""></p>
+<img src="" alt=""></p>
+</li>
+</ul>
+<h1 id="-">随笔分类</h1>
+<ul>
+<li><a href="http://www.blogjava.net/beansoft/category/19463.html" target="_blank">AJAX(22)</a> <a href="http://www.blogjava.net/beansoft/category/19463.html/rss" title="Subscribe to AJAX(22)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/21451.html" target="_blank">Database(11)</a> <a href="http://www.blogjava.net/beansoft/category/21451.html/rss" title="Subscribe to Database(11)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17556.html" target="_blank">Eclipse(30)</a> <a href="http://www.blogjava.net/beansoft/category/17556.html/rss" title="Subscribe to Eclipse(30)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17516.html" target="_blank">Firefox(3)</a> <a href="http://www.blogjava.net/beansoft/category/17516.html/rss" title="Subscribe to Firefox(3)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17577.html" target="_blank">Free Software(20)</a> <a href="http://www.blogjava.net/beansoft/category/17577.html/rss" title="Subscribe to Free Software(20)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/24282.html" target="_blank">Game(4)</a> <a href="http://www.blogjava.net/beansoft/category/24282.html/rss" title="Subscribe to Game(4)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/23349.html" target="_blank">Hibernate(8)</a> <a href="http://www.blogjava.net/beansoft/category/23349.html/rss" title="Subscribe to Hibernate(8)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/22785.html" target="_blank">Java Code Share(12)</a> <a href="http://www.blogjava.net/beansoft/category/22785.html/rss" title="Subscribe to Java Code Share(12)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17555.html" target="_blank">Java EE(32)</a> <a href="http://www.blogjava.net/beansoft/category/17555.html/rss" title="Subscribe to Java EE(32)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17517.html" target="_blank">Java SE(27)</a> <a href="http://www.blogjava.net/beansoft/category/17517.html/rss" title="Subscribe to Java SE(27)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/26076.html" target="_blank">JavaMail(5)</a> <a href="http://www.blogjava.net/beansoft/category/26076.html/rss" title="Subscribe to JavaMail(5)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/26857.html" target="_blank">JavaScript(1)</a> <a href="http://www.blogjava.net/beansoft/category/26857.html/rss" title="Subscribe to JavaScript(1)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/26074.html" target="_blank">JBoss(3)</a> <a href="http://www.blogjava.net/beansoft/category/26074.html/rss" title="Subscribe to JBoss(3)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/26022.html" target="_blank">JSF(4)</a> <a href="http://www.blogjava.net/beansoft/category/26022.html/rss" title="Subscribe to JSF(4)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/27072.html" target="_blank">JSP(3)</a> <a href="http://www.blogjava.net/beansoft/category/27072.html/rss" title="Subscribe to JSP(3)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17506.html" target="_blank">JSPWiki(16)</a> <a href="http://www.blogjava.net/beansoft/category/17506.html/rss" title="Subscribe to JSPWiki(16)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/18621.html" target="_blank">Michael Jackson(1)</a> <a href="http://www.blogjava.net/beansoft/category/18621.html/rss" title="Subscribe to Michael Jackson(1)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17569.html" target="_blank">My Open Source Toys(30)</a> <a href="http://www.blogjava.net/beansoft/category/17569.html/rss" title="Subscribe to My Open Source Toys(30)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/26073.html" target="_blank">MyEclipse(43)</a> <a href="http://www.blogjava.net/beansoft/category/26073.html/rss" title="Subscribe to MyEclipse(43)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/21997.html" target="_blank">NetBeans(15)</a> <a href="http://www.blogjava.net/beansoft/category/21997.html/rss" title="Subscribe to NetBeans(15)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17575.html" target="_blank">Open Source World(14)</a> <a href="http://www.blogjava.net/beansoft/category/17575.html/rss" title="Subscribe to Open Source World(14)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/26075.html" target="_blank">Oracle(2)</a> <a href="http://www.blogjava.net/beansoft/category/26075.html/rss" title="Subscribe to Oracle(2)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17585.html" target="_blank">Other(72)</a> <a href="http://www.blogjava.net/beansoft/category/17585.html/rss" title="Subscribe to Other(72)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17518.html" target="_blank">Portable Java IDE(3)</a> <a href="http://www.blogjava.net/beansoft/category/17518.html/rss" title="Subscribe to Portable Java IDE(3)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/25965.html" target="_blank">ROR(2)</a> <a href="http://www.blogjava.net/beansoft/category/25965.html/rss" title="Subscribe to ROR(2)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/23350.html" target="_blank">Spring(29)</a> <a href="http://www.blogjava.net/beansoft/category/23350.html/rss" title="Subscribe to Spring(29)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/20433.html" target="_blank">Swing, GUI(9)</a> <a href="http://www.blogjava.net/beansoft/category/20433.html/rss" title="Subscribe to Swing, GUI(9)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/20278.html" target="_blank">SWT/JFACE/RCP(24)</a> <a href="http://www.blogjava.net/beansoft/category/20278.html/rss" title="Subscribe to SWT/JFACE/RCP(24)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/26856.html" target="_blank">Tomcat(1)</a> <a href="http://www.blogjava.net/beansoft/category/26856.html/rss" title="Subscribe to Tomcat(1)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17587.html" target="_blank">Web(42)</a> <a href="http://www.blogjava.net/beansoft/category/17587.html/rss" title="Subscribe to Web(42)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/22027.html" target="_blank">Web Framework(8)</a> <a href="http://www.blogjava.net/beansoft/category/22027.html/rss" title="Subscribe to Web Framework(8)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17929.html" target="_blank">Weblogic(7)</a> <a href="http://www.blogjava.net/beansoft/category/17929.html/rss" title="Subscribe to Weblogic(7)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17574.html" target="_blank">What&#39;s Hot(17)</a> <a href="http://www.blogjava.net/beansoft/category/17574.html/rss" title="Subscribe to What&#39;s Hot(17)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/17511.html" target="_blank">战地2 Battle Field 2(2)</a> <a href="http://www.blogjava.net/beansoft/category/17511.html/rss" title="Subscribe to 战地2 Battle Field 2(2)" target="_blank">(rss)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/category/18212.html" target="_blank">老军医悬壶济世(13)</a> <a href="http://www.blogjava.net/beansoft/category/18212.html/rss" title="Subscribe to 老军医悬壶济世(13)" target="_blank">(rss)</a></li>
+</ul>
+<h3 id="-">最新随笔</h3>
+<ul>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/174610.html" target="_blank">1. 关于MyEclipse 6.0.0 GA开发SSH应用的%%%% Error Creating SessionFactory %%%% java.lang.SecurityException: class &quot;org.apache.commons.collections.SequencedHashMap&quot;&#39;异常的解决方案</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/10/174248.html" target="_blank">2. 可以在多普达微软 Pocket PC Windows Mobile 5 手机上运行的eswt程序包</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/08/173714.html" target="_blank">3. BlogJava 备份文章阅读器:增加日期范围增量备份功能</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/07/173395.html" target="_blank">4. 电子书 《MyEclipse 6 Java 开发中文教程》 第十章 开发 Spring 应用 完工</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/07/173298.html" target="_blank">5. 如何购买《MyEclipse 6 Java 开发中文教程》DVD光盘（含源代码，视频和软件）及网上答疑</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/04/172725.html" target="_blank">6. IBM 中文网站的 Spring 系列等资料</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/02/172266.html" target="_blank">7. Spring 1.2和2.0的简单AOP例子</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/27/171006.html" target="_blank">8. Word 文档加入带链接功能的目录的方法</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/27/170997.html" target="_blank">9. 电子书 《MyEclipse 6 Java 开发中文教程》 第九章 开发Struts 1.x应用 完工</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/21/169400.html" target="_blank">10. 电子书 《MyEclipse 6 Java 开发中文教程》第八章 开发 Web 应用</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/19/168742.html" target="_blank">11. 电子书 《MyEclipse 6 Java 开发中文教程》 第七章 Hibernate 开发预览</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/18/168600.html" target="_blank">12. MyEclipse 6 实战开发讲解视频入门 11 Struts 文件上传</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/14/167733.html" target="_blank">13. 电子书 《MyEclipse 6 Java 开发中文教程》 第五，六章预览</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/10/166631.html" target="_blank">14. 原创电子书 《MyEclipse 6 Java 开发中文教程》下载</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/03/164796.html" target="_blank">15. 感谢 2007 年 12 月的 &lt;&lt;程序员&gt;&gt; 杂志推荐我的 Blog</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/03/164748.html" target="_blank">16. 视频讲解: Eclipse/MyEclipse 如何导入项目源代码</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/02/164704.html" target="_blank">17. MyEclipse 6 实战开发讲解视频入门 10 JSP 文件上传下载</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/02/164696.html" target="_blank">18. Java SE 6 Update N Early Access 提供下载</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/30/164230.html" target="_blank">19. Spring 2.5 标注开发的简单例子</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/30/164166.html" target="_blank">20. MyEclipse 6 实战开发讲解视频入门 9 JSF 1.2 入门开发</a></li>
+</ul>
+<h3 id="-">搜索</h3>
+<p>*</p>
+<ul>
+<li></li>
+</ul>
+<h3 id="-">积分与排名</h3>
+<ul>
+<li>积分 - 632502</li>
+<li>排名 - 1</li>
+</ul>
+<h3 id="-http-www-blogjava-net-beansoft-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/beansoft/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
+<ul>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/12/173298.html#174772" target="_blank">1. re: 如何购买《MyEclipse 6 Java 开发中文教程》DVD光盘（含源代码，视频和软件）及网上答疑</a></li>
+<li>评论内容较长,点击标题查看</li>
+<li>--jerryhu</li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/173298.html#174727" target="_blank">2. re: 如何购买《MyEclipse 6 Java 开发中文教程》DVD光盘（含源代码，视频和软件）及网上答疑</a></li>
+<li>建议增加spring+jdbc介绍另外JPA部分也增加与spring整和的介绍</li>
+<li>--建议</li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/173395.html#174585" target="_blank">3. re: 电子书 《MyEclipse 6 Java 开发中文教程》 第十章 开发 Spring 应用 完工</a></li>
+<li>评论内容较长,点击标题查看</li>
+<li>--BeanSoft</li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/104339.html#174565" target="_blank">4. re: 老军医讲牙石</a></li>
+<li>正在想最近总是牙出血是什么原因呢，原来如此！</li>
+<li>--爱上鸟的鱼</li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/104339.html#174559" target="_blank">5. re: 老军医讲牙石</a></li>
+<li>正在向最近总是牙出血是什么原因呢，原来如此！</li>
+<li>--爱上鸟的鱼</li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/166631.html#174553" target="_blank">6. re: 原创电子书 《MyEclipse 6 Java 开发中文教程》下载[未登录]</a></li>
+<li>评论内容较长,点击标题查看</li>
+<li>--什么捷</li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/173395.html#174537" target="_blank">7. re: 电子书 《MyEclipse 6 Java 开发中文教程》 第十章 开发 Spring 应用 完工</a></li>
+<li>评论内容较长,点击标题查看</li>
+<li>--爱上鸟的鱼</li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/11/161502.html#174516" target="_blank">8. re: MyEclipse 6 实战开发讲解视频入门 6 Web 入门开发 - JSP/HTML/JDBC 登录</a></li>
+<li>美国就是变态!怎么搞的!下你个东西,也是左搞搞右搞搞!</li>
+<li>--pzxy</li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/10/157925.html#174437" target="_blank">9. re: 原创歌曲: Java 就是好呀</a></li>
+<li>没发现,老师您这么有喜剧天份</li>
+<li>--tott</li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/10/163354.html#174429" target="_blank">10. re: MyEclipse 6 实战开发讲解视频入门 7 Struts 入门开发</a></li>
+<li>正好,我急用学struts1.0.thanks</li>
+<li>--张晓云</li>
+</ul>
+<h3 id="-">阅读排行榜</h3>
+<ul>
+<li><a href="http://www.blogjava.net/beansoft/archive/2006/11/25/83486.html" target="_blank">1. XLoadTree 基于AJAX + XML动态加载的JS树组件的文档翻译- 已完成(原创)(5081)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/08/15/137067.html" target="_blank">2. MyEclipse Hibernate 快速入门中文版(4417)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/06/18/124894.html" target="_blank">3. Sysdeo Eclipse Tomcat 3.2.1 插件中文版下载(4393)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/10/07/150877.html" target="_blank">4. MyEclipse 5.5 开发 Spring + Struts + Hibernate 的详解视频(长1.5小时)(4341)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/05/10/116486.html" target="_blank">5. 《jsf入门》简体中文版.rar 电子书下载(4100)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2006/12/31/91144.html" target="_blank">6. JSP 中 AJAX 的表单提交中文问题的简单解决方案 - GBK 版本(原创)(3942)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/02/01/97294.html" target="_blank">7. JSP 文件下载的相对完整代码(解决中文问题和Weblogic报错)(3807)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/03/27/106733.html" target="_blank">8. 北京市IT公司黑名单(转载)(3707)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/05/08/115878.html" target="_blank">9. AJAX 入门培训 PPT 及示例代码(3651)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/03/18/104577.html" target="_blank">10. Jigloo 开发 SWT 的入门教程(3626)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2006/11/22/82765.html" target="_blank">11. Eclipse 插件精选介绍(原创)(3612)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2006/12/22/89577.html" target="_blank">12. Tomcat 5.5 的 Apache Tomcat Native library(3557)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2006/12/25/89835.html" target="_blank">13. JSP 中 AJAX 的表单提交中文问题的简单解决方案(3536)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/02/05/97940.html" target="_blank">14. MySQL 5 绿色版(BAT版本)(3515)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/10/24/155586.html" target="_blank">15. MyEclipse 6 学习视频集中下载(文档,视频,源代码)(3470)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2006/12/19/88881.html" target="_blank">16. LambdaProbe 中文包下载(99%完成)(3434)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/02/03/97760.html" target="_blank">17. 用开源软件搭建企业内部协作平台, Kill QQ MSN(3391)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/01/08/92320.html" target="_blank">18. 理解并使用 JSPWiki 中的权限控制(3299)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2006/12/13/87494.html" target="_blank">19. 使用 JDK 6 中的 JConsole 监控应用(原创)(3289)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/05/21/118869.html" target="_blank">20. Netbeans 5.5 + JPA + Hibernate 3 + Tomcat 实例有声视频(3173)</a></li>
+</ul>
+<h3 id="60-">60天内阅读排行</h3>
+<ul>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/27/163416.html" target="_blank">1. 翻译: MyEclipse Spring 入门教程(含官方视频和AOP例子)(2239)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/22/162498.html" target="_blank">2. 翻译: MyEclipse AJAX 调试教程(含官方视频)(2203)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/10/166631.html" target="_blank">3. 原创电子书 《MyEclipse 6 Java 开发中文教程》下载(2063)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/30/164230.html" target="_blank">4. Spring 2.5 标注开发的简单例子(2030)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/13/160288.html" target="_blank">5. 翻译: MyEclipse Hibernate 入门教程(含官方视频)(1966)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/23/162700.html" target="_blank">6. 击破谎言: Spring 2.5 并非&quot;完全&quot;支持基于标注的配置(1914)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/19/161502.html" target="_blank">7. MyEclipse 6 实战开发讲解视频入门 6 Web 入门开发 - JSP/HTML/JDBC 登录(1668)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/26/163354.html" target="_blank">8. MyEclipse 6 实战开发讲解视频入门 7 Struts 入门开发(1644)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/30/164166.html" target="_blank">9. MyEclipse 6 实战开发讲解视频入门 9 JSF 1.2 入门开发(1554)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/02/164704.html" target="_blank">10. MyEclipse 6 实战开发讲解视频入门 10 JSP 文件上传下载(1424)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/29/163907.html" target="_blank">11. MyEclipse 6 实战开发讲解视频入门 8 XFire Web Service 入门开发(1369)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/11/16/160876.html" target="_blank">12. 翻译: MyEclipse Struts 1.x 教程(PDF格式)(1351)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/02/172266.html" target="_blank">13. Spring 1.2和2.0的简单AOP例子(1253)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/19/168742.html" target="_blank">14. 电子书 《MyEclipse 6 Java 开发中文教程》 第七章 Hibernate 开发预览(1174)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/14/167733.html" target="_blank">15. 电子书 《MyEclipse 6 Java 开发中文教程》 第五，六章预览(1165)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2008/01/07/173395.html" target="_blank">16. 电子书 《MyEclipse 6 Java 开发中文教程》 第十章 开发 Spring 应用 完工(1101)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/18/168600.html" target="_blank">17. MyEclipse 6 实战开发讲解视频入门 11 Struts 文件上传(1099)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/27/170997.html" target="_blank">18. 电子书 《MyEclipse 6 Java 开发中文教程》 第九章 开发Struts 1.x应用 完工(961)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/03/164748.html" target="_blank">19. 视频讲解: Eclipse/MyEclipse 如何导入项目源代码(900)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/12/03/164796.html" target="_blank">20. 感谢 2007 年 12 月的 &lt;&lt;程序员&gt;&gt; 杂志推荐我的 Blog(736)</a></li>
+</ul>
+<p><a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html" target="_blank">基于 Apache DBCP 的数据库连接获取类(原创)</a></p>
+<p>2005年12月5日星期一</p>
+<p>基于 Apache DBCP 的数据库连接获取类, 可以让你在 Tomcat 之外的 J2SE 程序或者其它应用服务器上使用 Apache 的数据库连接池.</p>
+<p>TODO: 增加最大连接数和最小连接数的设置功能</p>
+<p>配置文件:</p>
+<p>ConnectionFactory.properties</p>
+<p>/# 2004-12-30
+/# 数据库连接工厂的配置文件, 类文件参见 util.ConnectionFactory
+/# 调试标志, 为 true 时使用 JDBC 直接连接(使用 url, driver, user, password 四个参数)
+/# 为 false 时使用内置数据库连接池(使用参数 jdbc.jndi), 配置文件位于 db.properties 中
+debug=false
+/# JDBC的连接地址 URL
+jdbc.url=jdbc:microsoft:sqlserver://127.0.0.1:1433;DatabaseName=yuelao
+/# JDBC 的驱动
+jdbc.driver=com.microsoft.jdbc.sqlserver.SQLServerDriver
+/# JDBC 的连接用户名
+jdbc.user=sa
+/# JDBC 的连接密码
+jdbc.password=
+/#debug 为 false 时, 将根据连接池名获取数据库连接, 适用于程序在服务器运行的时候</p>
+<p>.Java 文件:</p>
+<p>//<em>
+/</em> @(/#)ConnectionFactory.java 1.2 2005-11-25
+/<em>
+/</em> Copyright 2005 BeanSoft Studio. All rights reserved.
+/<em> PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
+/</em>/</p>
+<p>package beansoft.util;</p>
+<p>import java.io.ByteArrayInputStream;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.Properties;</p>
+<p>import javax.sql.DataSource;
+import org.apache.commons.dbcp.BasicDataSource;</p>
+<p>import beansoft.jsp.StringUtil;
+import beansoft.sql.DatabaseUtil;</p>
+<p>//<em>/</em>
+/<em> ConnectionFactory provide a factory class that produces all database
+/</em> connections from here, and it provides methods for shutdown and restart
+/<em> data sources as well as reading and saving configuration parameters from/to file.
+/</em>
+/<em> 数据库连接工厂类, 所有的数据库连接都从这里产生, 提供关闭和重启数据源的方法, 以及读取和保存
+/</em> 配置参数到文件的能力.
+/<em>
+/</em> 2005-08-19
+/<em> Using Apache DBCP as database connection pool provider.
+/</em> 使用 Apache DBCP 作为连接池的提供类.
+/<em>
+/</em> @link <a href="http://jakarta.apache.org/commons/dbcp/" target="_blank"><a href="http://jakarta.apache.org/commons/dbcp/">http://jakarta.apache.org/commons/dbcp/</a></a>
+/<em>
+/</em> Dependency:
+/<em> commons-collections.jar
+/</em> commons-pool.jar
+/<em> commons-dbcp.jar
+/</em> j2ee.jar (for the javax.sql classes)
+/<em>
+/</em> If you using this class with Tomcat&#39;s web application, then all the above jars
+/<em> not need to be added because the Tomcat it self has included these class libs.
+/</em> 如果你在 Tomcat 的 Web Application 中调用这个类, 以上的 JAR 都不用单独
+/<em> 加入的, 因为 Tomcat 默认已经自带了这些类库.
+/</em>
+/<em> @author BeanSoft
+/</em> @version 1.2
+/<em> 2005-11-25
+/</em>/
+public class ConnectionFactory {</p>
+<p>//<em>/</em> Database password /*/
+private static String password;</p>
+<p>//<em>/</em> Database username /*/
+private static String user;</p>
+<p>//<em>/</em> JDBC URL /*/
+private static String url;</p>
+<p>//<em>/</em>
+/<em> JDBC driver class name
+/</em>/
+private static String driver;</p>
+<p>//<em>/</em>
+/<em> DEBUG flag, default value is true, returns a connection that directly fetched using
+/</em> JDBC API; if falg is false, returns a connection returned by the connection pool,
+/<em> if u want depoly the application, please make this flag be false.
+/</em> 调试标记, 默认值为 true, 则返回直接使用 JDBC 获取的连接; 如果标记为 false,
+/<em> 则从连接池中返回器连接, 发布程序时请将这个标志 设置为 false.
+/</em>/
+private static boolean DEBUG = true;</p>
+<p>//<em>/</em> Connection properties value /*/
+private static Properties props = new Properties();</p>
+<p>//<em>/</em> The data source object, added at 2005-08-19 /*/
+private static DataSource dataSource = null;</p>
+<p>// Load configuration from resource /ConnectionFactory.properties
+static {
+loadConfiguration();
+}</p>
+<p>private ConnectionFactory() {
+}</p>
+<p>//<em>/</em>
+/<em> Factory method: obtain a database connection.
+/</em> 工厂方法: 获取一个数据库连接.
+/<em>
+/</em>
+/<em> @return Connection a java.sql.Connection object
+/</em>/
+public static Connection getConnection() {
+try {
+Connection conn = null;</p>
+<p>// Debug mode, obtain connection directly through JDBC API
+if (DEBUG) {</p>
+<p>Class.forName(driver);</p>
+<p>conn = DriverManager.getConnection(url, user, password);
+} else {
+// TODO
+// // Looking data source through JNDI tree
+// DataSource dataSource = (DataSource) getInitialContext()
+// .lookup(jndi);
+// conn = dataSource.getConnection();
+conn = setupDataSource().getConnection();
+}</p>
+<p>return conn;
+} catch (Exception ex) {
+System.err.println(&quot;Error: Unable to get a connection: &quot; + ex);
+ex.printStackTrace();
+}</p>
+<p>return null;
+}</p>
+<p>//<em>/</em>
+/<em> Load and parse configuration.
+/</em>/
+public static void loadConfiguration() {
+try {
+props.load(new ByteArrayInputStream(readConfigurationString().getBytes()));</p>
+<p>// Load DEBUG flag, default to true
+DEBUG = Boolean.valueOf(props.getProperty(&quot;debug&quot;, &quot;true&quot;))
+.booleanValue();
+password = props.getProperty(&quot;jdbc.password&quot;, null);
+user = props.getProperty(&quot;jdbc.user&quot;, null);
+url = props.getProperty(&quot;jdbc.url&quot;, null);
+driver = props.getProperty(&quot;jdbc.driver&quot;);
+} catch (Exception e) {
+e.printStackTrace();
+}
+}</p>
+<p>//<em>/</em>
+/<em> Save the current configuration properties.
+/</em>/
+public static void saveConfiguration() {
+saveConfiguration(getProperties());
+}</p>
+<p>//<em>/</em>
+/<em> Read content string from configuration file. Because Class.getResourceAsStream(String)
+/</em> sometimes cache the contents, so here used this method.
+/<em> 读取配置文件中的字符串.
+/</em> 因为 Class 类的 getResourceAsStream(String) 方法有时候会出现缓存, 因此
+/<em> 不得已使用了这种办法.
+/</em> @return String, null if failed
+/*/
+public static String readConfigurationString() {
+try {
+java.io.FileInputStream fin = new java.io.FileInputStream(
+getConfigurationFilePath());
+java.io.ByteArrayOutputStream bout = new
+java.io.ByteArrayOutputStream();</p>
+<p>int data;
+while( (data = fin.read()) != -1) {
+bout.write(data);
+}
+bout.close();
+fin.close();</p>
+<p>return bout.toString();
+} catch (Exception ex) {
+System.err.println(&quot;Unable to load ConnectionFactory.properties:&quot; +
+ex.getMessage());
+ex.printStackTrace();
+}
+return null;
+}</p>
+<p>//<em>/</em>
+/<em> Get the configuration file&#39;s real physical path.
+/</em>/
+private static String getConfigurationFilePath() {
+return StringUtil.getRealFilePath(&quot;/ConnectionFactory.properties&quot;);
+}</p>
+<p>//<em>/</em>
+/<em> Save string content of a java.util.Properties object.
+/</em> 保存配置文件中的字符串.
+/<em>
+/</em> @param props configuration string
+/<em> @return operation result
+/</em>/
+protected static boolean saveConfigurationString(String props) {
+if(props == null || props.length() &lt;= 0) return false;
+try {
+FileWriter out = new FileWriter(getConfigurationFilePath());
+out.write(props);
+out.close();</p>
+<p>return true;
+} catch (Exception ex) {
+System.err.println(&quot;Unable save configuration string to ConnectionFactory.properties:&quot;</p>
+<ul>
+<li>ex);
+ex.printStackTrace();
+}</li>
+</ul>
+<p>return false;
+}</p>
+<p>//<em>/</em>
+/<em> Returns the current database connection properties.
+/</em> @return Properties object
+/*/
+public static Properties getProperties() {
+return props;
+}</p>
+<p>//<em>/</em>
+/<em> Save configuration properties.
+/</em>
+/<em> @param props Properties
+/</em> @return operation result
+/*/
+public static boolean saveConfiguration(Properties props) {
+if(props == null || props.size() &lt;= 0) return false;</p>
+<p>try {
+FileOutputStream out = new FileOutputStream(getConfigurationFilePath());
+props.store(out, &quot;&quot;);
+out.close();</p>
+<p>return true;
+} catch (Exception ex) {
+System.err.println(&quot;Unable to save ConnectionFactory.properties:&quot; + ex.getMessage());
+ex.printStackTrace();
+}</p>
+<p>return false;
+}</p>
+<p>//<em>/</em>
+/<em> Create a DataSource instance based on the Apache DBCP.
+/</em> 创建基于 Apache DBCP 的 DataSource.
+/<em>
+/</em> @return a poolable DataSource
+/*/
+public static DataSource setupDataSource() {
+if(dataSource == null) {
+BasicDataSource ds = new BasicDataSource();
+ds.setDriverClassName(driver);
+ds.setUsername(user);
+ds.setPassword(password);
+ds.setUrl(url);</p>
+<p>dataSource = ds;
+}</p>
+<p>return dataSource;
+}</p>
+<p>//<em>/</em>
+/<em> Display connection status of current data source.
+/</em>
+/<em> 显示当前数据源的状态.
+/</em>/
+public static String getDataSourceStats() {
+BasicDataSource bds = (BasicDataSource) setupDataSource();
+StringBuffer info = new StringBuffer();</p>
+<p>info.append(&quot;Active connection numbers: &quot; + bds.getNumActive());
+info.append(&quot;\n&quot;);
+info.append(&quot;Idle connection numbers: &quot; + bds.getNumIdle());</p>
+<p>return info.toString();
+}</p>
+<p>//<em>/</em>
+/<em> Shut down the data source, if want use it again,
+/</em> please call setupDataSource().
+/*/
+public static void shutdownDataSource() {
+BasicDataSource bds = (BasicDataSource) setupDataSource();
+try {
+bds.close();
+} catch (SQLException e) {
+// TODO auto generated try-catch
+e.printStackTrace();
+}
+}</p>
+<p>//<em>/</em>
+/<em> Restart the data source.
+/</em> 重新启动数据源.
+/*/
+public static void restartDataSource() {
+shutdownDataSource();
+setupDataSource();
+}</p>
+<p>//<em>/</em> Test method /*/
+public static void main(String[] args) {
+Connection conn = ConnectionFactory.getConnection();
+DatabaseUtil dbUtil = new DatabaseUtil();
+dbUtil.setConnection(conn);
+// try {
+// java.sql.ResultSet rs = conn.createStatement().executeQuery(
+// &quot;SELECT MAX(ID) FROM items&quot;);
+//
+// while(rs.next()) {
+// System.out.println(rs.getString(1));
+// }
+//
+// rs.close();
+//
+// } catch (Exception ex) {
+// ex.printStackTrace();
+// }
+System.out.println(dbUtil.getAllCount(&quot;SELECT MAX(ID) FROM items&quot;));</p>
+<p>System.out.println(conn);</p>
+<p>try {
+conn.close();
+} catch (Exception ex) {
+// ex.printStackTrace();
+}</p>
+<p>conn = ConnectionFactory.getConnection();</p>
+<p>System.out.println(conn);</p>
+<p>try {
+conn.close();
+} catch (Exception ex) {
+// ex.printStackTrace();
+}</p>
+<p>System.exit(0);
+}</p>
+<p>}
+posted on 2007-01-19 11:04 <a href="http://www.blogjava.net/beansoft/" target="_blank">BeanSoft</a> 阅读(2136) <a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html#Post" target="_blank">评论(1)</a>  <a href="http://www.blogjava.net/beansoft/admin/EditPosts.aspx?postid=94882" target="_blank">编辑</a>  <a href="http://www.blogjava.net/beansoft/AddToFavorite.aspx?id=94882" target="_blank">收藏</a> 所属分类: <a href="http://www.blogjava.net/beansoft/category/21451.html" target="_blank">Database</a><img src="" alt=""></p>
+<p><a href=""></a><a href=""></a></p>
+<p>[Comments</p>
+<ul>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html#95631" title="permalink: re: 基于 Apache DBCP 的数据库连接获取类(原创)" target="_blank">/#</a> <a href=""></a>re: 基于 Apache DBCP 的数据库连接获取类(原创)<a href=""></a><a href="http://www.blogjava.net/liubowu/" target="_blank">小车马</a>
+Posted @ 2007-01-23 23:38
+恩，以前也用过，apache的很多东西都非常不错，
+楼主，潜力贴论坛（<a href="http://content.uu1001.com/" target="_blank"><a href="http://content.uu1001.com/">http://content.uu1001.com/</a></a>）是我个人的一个设想，如果你对java非常的专注，并且愿意交我这个朋友，可以发邮件给我（lbw070105@gmail.com），希望我们可以一起发展它。  <a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html#post" target="_blank">回复</a>  <a href="http://www.blogjava.net/comment?author=%e5%b0%8f%e8%bd%a6%e9%a9%ac" title="查看该作者发表过的评论" target="_blank">更多评论</a> <a href=""></a>  <a href="">]()
+</a>
+<a href="">刷新评论列表</a>  </li>
+</ul>
+<p><a href=""></a> 标题  请输入标题 姓名  请输入你的姓名 主页 请输入验证码 验证码 /*  <img src="" alt=""> 内容(请不要发表任何与政治相关的内容) 请输入评论内容 Remember Me?   <a href="http://www.blogjava.net/login.aspx?ReturnURL=http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html&amp;SourceURL=/beansoft/archive/2007/01/19/94882.html">登录</a>  <a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html?login=1#Post" target="_blank">使用高级评论</a>  <a href="http://www.blogjava.net/RequireRegister.aspx" target="_blank">新用户注册</a>  <a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html#Top" target="_blank">返回页首</a>  <a href="http://www.blogjava.net/beansoft/archive/2007/01/19/94882.html#Post" target="_blank">恢复上次提交</a>       [使用Ctrl+Enter键可以直接提交] 该文被作者在 2007-09-22 12:56 编辑过      相关文章:</p>
+<ul>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/10/23/155318.html" target="_blank">基于<em>JDBC_2.0</em>驱动的分页代码实现</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/10/01/150075.html" target="_blank">BeanSoft MySQL Java 开发套装(服务器,管理工具,JDBC驱动,示例代码) 无中文问题</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/09/24/147657.html" target="_blank">SQL中主键和外键的区别?(zz)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/09/22/147366.html" target="_blank">常用 JDBC 驱动名字和 URL 列表</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/09/18/146115.html" target="_blank">如何连接SQL Server数据库(Tomcat 连接池配置) (转载)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/07/11/129652.html" target="_blank">Oracle Sequence 和 java.sql.PreparedStatement 的协同使用</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/07/10/129354.html" target="_blank">学习 SQL 语法的好资料: Transact-SQL 参考</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/07/10/129329.html" target="_blank">Hibernate 如何配置显示生成的 SQL?</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/04/09/109432.html" target="_blank">Mysql 优化的资料(收集转载)</a></li>
+<li><a href="http://www.blogjava.net/beansoft/archive/2007/02/05/97940.html" target="_blank">MySQL 5 绿色版(BAT版本)</a></li>
+</ul>
+<p>Powered by:
+<a href="http://www.blogjava.net/" target="_blank">BlogJava</a>
+Copyright © BeanSoft</p>
 
       
     </div>
@@ -809,8 +1828,8 @@ Copyright © 2007 XP510.com. All Rights Reserved <a href="http://www.miibeian.go
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/操作系统/">操作系统</a></li></span><span class="breadcrumb"><li><a href="/categories/操作系统/">操作系统</a></li><li><a href="/categories/操作系统/win7/">win7</a></li></span></span> | <span class="tags">Tagged <a href="/tags/win7/" class="label label-primary">win7</a><a href="/tags/操作系统/" class="label label-success">操作系统</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-操作系统-win7--Windows7sp1简体中文旗舰版官方MSDN正式版下载-XP系统之家/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-操作系统-win7--Windows7sp1简体中文旗舰版官方MSDN正式版下载-XP系统之家" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/连接池/">连接池</a></li></span></span> | <span class="tags">Tagged <a href="/tags/连接池/" class="label label-primary">连接池</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:43"datetime="2014-03-07 09:54:43"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-连接池--基于ApacheDBCP的数据库连接获取类原创-BeanSoft-sJavaBlo/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-连接池--基于ApacheDBCP的数据库连接获取类原创-BeanSoft-sJavaBlo" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -890,7 +1909,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 17:26:53</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 17:30:36</em></span></div>
 </div>
 <div class="clearfix"></div>
 

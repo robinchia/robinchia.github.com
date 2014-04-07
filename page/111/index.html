@@ -110,114 +110,694 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--hdfs_shell/">hdfs_shell</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--CentOS的Hadoop集群配置/">CentOS的Hadoop集群配置</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--hdfs_shell/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--CentOS的Hadoop集群配置/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="hdfs_shell">hdfs_shell</h1>
-<p>HDFS File System Shell Guide
+        <h1 id="centos-hadoop-">CentOS的Hadoop集群配置</h1>
+<h3 id="-centos-hadoop-http-blog-csdn-net-inte_sleeper-article-details-6569985-"><a href="http://blog.csdn.net/inte_sleeper/article/details/6569985" target="_blank">CentOS的Hadoop集群配置（一）</a></h3>
+<h3 id="-"> </h3>
+<p>参考资料：</p>
+<p><a href="http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-single-node-cluster/" target="_blank"><a href="http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-single-node-cluster/">http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-single-node-cluster/</a></a></p>
+<p><a href="http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-multi-node-cluster/" target="_blank"><a href="http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-multi-node-cluster/">http://www.michael-noll.com/tutorials/running-hadoop-on-ubuntu-linux-multi-node-cluster/</a></a></p>
+<p><a href="http://www.michael-noll.com/tutorials/writing-an-hadoop-mapreduce-program-in-python/" target="_blank"><a href="http://www.michael-noll.com/tutorials/writing-an-hadoop-mapreduce-program-in-python/">http://www.michael-noll.com/tutorials/writing-an-hadoop-mapreduce-program-in-python/</a></a></p>
+<p><a href="http://hadoop.apache.org/common/docs/current/cluster_setup.html" target="_blank"><a href="http://hadoop.apache.org/common/docs/current/cluster_setup.html">http://hadoop.apache.org/common/docs/current/cluster_setup.html</a></a></p>
+<p>以下集群配置内容，以两台机器为例。其中一台是 master ，另一台是 slave1 。</p>
+<p>master 上运行 name node, data node, task tracker, job tracker ， secondary name node ；</p>
+<p>slave1 上运行 data node, task tracker 。</p>
+<p>前面加 /* 表示对两台机器采取相同的操作</p>
+<ol>
+<li>安装 JDK /*</li>
+</ol>
+<p>yum install java-1.6.0-openjdk-devel</p>
+<ol>
+<li>设置环境变量 /*</li>
+</ol>
+<p>编辑 /etc/profile 文件，设置 JAVA_HOME 环境变量以及类路径：</p>
+<p>export JAVA_HOME=&quot;/usr/lib/jvm/java-1.6.0-openjdk-1.6.0.0.x86_64&quot;</p>
+<p>export PATH=$PATH:$JAVA_HOME/bin</p>
+<p>export CLASSPATH=.:$JAVA_HOME/lib/tools.jar:$JAVA_HOME/lib/dt.jar</p>
+<ol>
+<li>添加 hosts 的映射 /*</li>
+</ol>
+<p>编辑 /etc/hosts 文件，<strong>注意</strong> <strong>host name **</strong>不要有下划线，见下步骤 9**</p>
+<p>192.168.225.16 master</p>
+<p>192.168.225.66 slave1</p>
+<ol>
+<li>配置 SSH /*</li>
+</ol>
+<p>cd /root &amp; mkdir .ssh</p>
+<p>chmod 700 .ssh &amp; cd .ssh</p>
+<p>创建密码为空的 RSA 密钥对：</p>
+<p>ssh-keygen -t rsa -P &quot;&quot;</p>
+<p>在提示的对称密钥名称中输入 id_rsa</p>
+<p>将公钥添加至 authorized_keys 中：</p>
+<p>cat id_rsa.pub &gt;&gt; authorized_keys</p>
+<p>chmod 644 authorized_keys <strong>/#</strong> <strong>重要</strong></p>
+<p>编辑 sshd 配置文件 /etc/ssh/sshd_config ，把 /#AuthorizedKeysFile  .ssh/authorized_keys 前面的注释取消掉。</p>
+<p>重启 sshd 服务：</p>
+<p>service sshd restart</p>
+<p>测试 SSH 连接。连接时会提示是否连接，按回车后会将此公钥加入至 knows_hosts 中：</p>
+<p>ssh localhost</p>
+<ol>
+<li>配置 master 和 slave1 的 ssh 互通</li>
+</ol>
+<p>在 slave1 中重复步骤 4 ，然后把 slave1 中的 .ssh/authorized_keys 复制至 master 的 .ssh/authorized_keys中。注意复制过去之后，要看最后的类似 root@localhost 的字符串，修改成 root@slave1 。同样将 master的 key 也复制至 slave1 ，并将最后的串修改成 root@master 。</p>
+<p>或者使用如下命令：</p>
+<p>ssh-copy-id -i ~/.ssh/id_rsa.pub root@slave1</p>
+<p>测试 SSH 连接：</p>
+<p>在 master 上运行：</p>
+<p>ssh slave1</p>
+<p>在 slave1 上运行：</p>
+<p>ssh master</p>
+<ol>
+<li>安装 Hadoop</li>
+</ol>
+<p>下载 hadoop 安装包：</p>
+<p>wget <a href="http://mirror.bjtu.edu.cn/apache/hadoop/common/hadoop-0.20.203.0/hadoop-0.20.203.0rc1.tar.gz" target="_blank"><a href="http://mirror.bjtu.edu.cn/apache/hadoop/common/hadoop-0.20.203.0/hadoop-0.20.203.0rc1.tar.gz">http://mirror.bjtu.edu.cn/apache/hadoop/common/hadoop-0.20.203.0/hadoop-0.20.203.0rc1.tar.gz</a></a></p>
+<p>复制安装包至 slave1 ：</p>
+<p>scp hadoop-0.20.203.0rc1.tar.gz root@slave1:/root/</p>
+<p>解压：</p>
+<p>tar xzvf hadoop-0.20.203.0rc1.tar.gz</p>
+<p>mkdir /usr/local/hadoop</p>
+<p>mv hadoop-0.20.203.0//* /usr/local/hadoop</p>
+<pre><code>     修改 .bashrc 文件（位于用户目录下，即 ~/.bashrc ，对于 root ，即为 /root/.bashrc ）
+
+     添加环境变量：
+
+     export HADOOP_HOME=/usr/local/hadoop
+
+export PATH=$PATH:$HADOOP_HOME/bin
+</code></pre><ol>
+<li>配置 Hadoop 环境变量 /*</li>
+</ol>
+<p><strong>以下所有 hadoop **</strong>目录下的文件，均以相对路径 hadoop <strong>**开始</strong></p>
+<p>修改 hadoop/conf/hadoop-env.sh 文件，将里面的 JAVA_HOME 改成步骤 2 中设置的值。</p>
+<ol>
+<li>创建 Hadoop 本地临时文件夹 /*</li>
+</ol>
+<p>mkdir /root/hadoop_tmp （<strong>注意这一步，千万不要放在</strong> <strong>/tmp **</strong>目录下面！！因为 <strong><strong>/tmp </strong></strong>默认分配的空间是很小的，往 <strong><strong>hdfs </strong></strong>里放几个大文件就会导致空间满了，就会报错）**</p>
+<p>修改权限：</p>
+<p>chown -R hadoop:hadoop /root/hadoop_tmp</p>
+<p>更松地，也可以这样：</p>
+<p>chmod –R 777 /root/hadoop_tmp</p>
+<ol>
+<li>配置 Hadoop</li>
+</ol>
+<p>修改 master 的 hadoop/conf/core-site.xml ，在 <configuration> 节中添加如下内容：</p>
+<p>注意： <strong>fs.default.name **</strong>的值不能带下划线**</p>
+<property>
+
+    <name>hadoop.tmp.dir</name>
+
+    <value>/root/hadoop<em>tmp/hadoop</em>${user.name}</value>
+
+</property>
+
+<property>
+
+    <name>fs.default.name</name>
+
+    <value>hdfs://localhost:54310</value> 
+
+</property>
+
+<property>
+
+    <name>io.sort.mb</name>
+
+    <value>1024</value> 
+
+</property>
+
+<pre><code>     其中 io.sort.mb 值，指定了排序使用的内存，大的内存可以加快 job 的处理速度。
+
+
+
+     修改 hadoop/conf/mapred-site.xml ，在 &lt;configuration&gt; 节中添加如下内容：
+</code></pre><property>
+
+    <name>mapred.job.tracker</name>
+
+    <value>localhost:54311</value>
+
+</property>
+
+<property>
+
+    <name>mapred.map.child.java.opts</name>
+
+    <value>-Xmx4096m</value>
+
+</property>
+
+<property>
+
+    <name>mapred.reduce.child.java.opts</name>
+
+    <value>-Xmx4096m</value>
+
+</property>
+
+<pre><code>     其中 mapred.map.child.java.opts, mapred.reduce.child.java.opts 分别指定 map/reduce 任务使用的最大堆内存。较小的内存可能导致程序抛出 OutOfMemoryException 。
+</code></pre><p>修改 conf/hdfs -site.xml ，在 <configuration> 节中添加如下内容：</p>
+<property>
+
+    <name>dfs.replication</name>
+
+    <value>2</value>
+
+</property>
+
+
+
+<p>同样，修改 slave1 的 /usr/local/hadoop/conf/core-site.xml ，在 <configuration> 节中添加如下内容：</p>
+<property>
+
+    <name>hadoop.tmp.dir</name>
+
+    <value>/root/hadoop<em>tmp/hadoop</em>${user.name}</value>
+
+</property>
+
+<property>
+
+    <name>fs.default.name</name>
+
+    <value>hdfs://localhost:54310</value> 
+
+</property>
+
+<property>
+
+    <name>io.sort.mb</name>
+
+    <value>1024</value> 
+
+</property>
+
+
+
+<pre><code>     修改 conf/mapred-site.xml ，在 &lt;configuration&gt; 节中添加如下内容：
+</code></pre><property>
+
+    <name>mapred.job.tracker</name>
+
+    <value>localhost:54311</value>
+
+</property>
+
+<property>
+
+    <name>mapred.map.child.java.opts</name>
+
+    <value>-Xmx4096m</value>
+
+</property>
+
+<property>
+
+    <name>mapred.reduce.child.java.opts</name>
+
+    <value>-Xmx4096m</value>
+
+</property>
+
+
+
+<pre><code>     修改 conf/hdfs -site.xml ，在 &lt;configuration&gt; 节中添加如下内容：
+</code></pre><property>
+
+    <name>dfs.replication</name>
+
+    <value>2</value>
+
+    </property>
+
+
+
+<ol>
+<li>修改 hadoop/bin/hadoop 文件</li>
+</ol>
+<p>把 221 行修改成如下。因为对于 root 用户， -jvm 参数是有问题的，所以需要加一个判断 ( 或者以非 root 用户运行这个脚本也没问题 )</p>
+<p>HADOOP_OPTS=&quot;$HADOOP_OPTS -jvm server $HADOOP_DATANODE_OPTS&quot;  à</p>
+<pre><code>/#for root, -jvm option is invalid.
+
+CUR_USER=`whoami`
+
+if [ &quot;$CUR_USER&quot; = &quot;root&quot; ]; then
+
+    HADOOP_OPTS=&quot;$HADOOP_OPTS -server $HADOOP_DATANODE_OPTS&quot;
+
+else
+
+    HADOOP_OPTS=&quot;$HADOOP_OPTS -jvm server $HADOOP_DATANODE_OPTS&quot;
+
+fi 
+</code></pre><p>unset $CUR_USER</p>
+<p>至此， master 和 slave1 都已经完成了 single_node 的搭建，可以分别在两台机器上测试单节点。</p>
+<p>启动节点：</p>
+<p>hadoop/bin/start-all.sh</p>
+<p>运行 jps 命令，应能看到类似如下的输出：</p>
+<p>937 DataNode</p>
+<p>9232 Jps</p>
+<p>8811 NameNode</p>
+<p>12033 JobTracker</p>
+<p>12041 TaskTracker
+来源： <a href="[http://blog.csdn.net/inte_sleeper/article/details/6569985](http://blog.csdn.net/inte_sleeper/article/details/6569985)">[http://blog.csdn.net/inte_sleeper/article/details/6569985](http://blog.csdn.net/inte_sleeper/article/details/6569985)</a> </p>
+<p><a href="http://blog.csdn.net/inte_sleeper/article/details/6569990" target="_blank">CentOS的Hadoop集群配置（二）</a>
+下面的教程把它们合并至 multi-node cluster 。</p>
+<ol>
+<li>合并 single-node 至 multi-node cluster</li>
+</ol>
+<p>修改 master 的 hadoop/conf/core-site.xml ：</p>
+<property>
+
+    <name>hadoop.tmp.dir</name>
+
+    <value>/root/hadoop<em>tmp/hadoop</em>${user.name}</value>
+
+</property>
+
+<property>
+
+    <name>fs.default.name</name>
+
+    <value>hdfs://<strong>master</strong> :54310</value>
+
+</property>
+
+<property>
+
+    <name>io.sort.mb</name>
+
+    <value>1024</value> 
+
+</property>
+
+
+
+<pre><code>     修改 conf/mapred-site.xml ，在 &lt;configuration&gt; 节中添加如下内容：
+</code></pre><property>
+
+    <name>mapred.job.tracker</name>
+
+    <value><strong>master</strong> :54311</value>
+
+</property>
+
+<property>
+
+    <name>mapred.map.child.java.opts</name>
+
+    <value>-Xmx4096m</value>
+
+</property>
+
+<property>
+
+    <name>mapred.reduce.child.java.opts</name>
+
+    <value>-Xmx4096m</value>
+
+</property>
+
+<pre><code>     修改 conf/hdfs -site.xml ，在 &lt;configuration&gt; 节中添加如下内容：
+</code></pre><property>
+
+    <name>dfs.replication</name>
+
+    <value>2</value>
+
+</property>
+
+<p>把这三个文件复制至 slave1 相应的目录 hadoop/conf 中 <strong>( **</strong>即 master <strong><strong>和 slave1 </strong></strong>的内容完全一致 )**</p>
+<pre><code>     修改所有节点的 hadoop/conf/masters ，把文件内容改成： master
+
+     修改所有节点的 hadoop/conf/slaves ，把文件内容改成：
+</code></pre><p>master</p>
+<pre><code>slave1
+
+
+
+     分别删除 master 和 slave1 的 dfs/data 文件：
+
+     rm –rf /root/hadoop_tmp/hadoop_root/dfs/data
+</code></pre><p>重新格式化 namenode ：</p>
+<pre><code>     hadoop/bin/hadoop namenode -format
+
+
+
+     测试，在 master 上运行：
+
+     hadoop/bin/start-all.sh
+
+     在 master 上运行 jps 命令
+</code></pre><p>此时输出应类似于：</p>
+<pre><code>     11648 TaskTracker
+</code></pre><p>11166 NameNode</p>
+<p>11433 SecondaryNameNode</p>
+<p>12552 Jps</p>
+<p>11282 DataNode</p>
+<p>11525 JobTracker</p>
+<p>在 slave1 上运行 jps</p>
+<p>此时输出应包含 ( 即至少有 DataNode, 否则即为出错 ) ：</p>
+<p>3950 Jps</p>
+<p>3121 TaskTracker</p>
+<p>3044 DataNode</p>
+<ol>
+<li>测试一个 JOB</li>
+</ol>
+<p>首先升级 python( 可选，如果 JOB 是 python 写的 ) ：</p>
+<p>cd /etc/yum.repos.d/</p>
+<p>wget <a href="http://mirrors.geekymedia.com/centos/geekymedia.repo" target="_blank">http://mirrors.geekymedia.com/centos/geekymedia.repo</a></p>
+<p>yum makecache</p>
+<p>yum -y install python26</p>
+<p><strong>升级 python **</strong>的教程，见另外一篇文档。如果已经通过以上方法安装了 python2.6 <strong>**，那需要先卸载：</strong></p>
+<p>yum remove python26 python26-devel</p>
+<pre><code>     CentOS 的 yum 依赖于 python2.4 ，而 /usr/bin 中 python 程序即为 python2.4 。我们需要把它修改成python2.6 。
+
+
+
+     cd /usr/bin/
+
+     编辑 yum 文件，把第一行的
+</code></pre><p>/#!/usr/bin/python   à   /#!/usr/bin/python2.4  </p>
+<p>保存文件。</p>
+<pre><code>     删除旧版本的 python 可执行文件（这个文件跟该目录下 python2.4 其实是一样的，所以可以直接删除）
+
+     rm -f python
+
+     让 python 指向 python2.6 的可执行程序。
+
+     ln -s python26 python  
+</code></pre><ol>
+<li>Word count python 版本</li>
+</ol>
+<p><strong>Map.py</strong></p>
+<p>/#! /usr/bin/python</p>
+<p>import sys;</p>
+<p>for line in sys.stdin:</p>
+<p>  line =  line.strip();</p>
+<p>  words = line.split();</p>
+<p>  for word in words:</p>
+<pre><code>  print &#39;%s/t%s&#39; % (word,1);
+</code></pre><p><strong>Reduce.py</strong></p>
+<p>/#!/usr/bin/python</p>
+<p>import sys;</p>
+<p>wc = {};</p>
+<p>for line in sys.stdin:</p>
+<p>  line = line.strip();</p>
+<p>  word,count = line.split(&#39;/t&#39;,1);</p>
+<p>  try:</p>
+<pre><code>  count = int(count);
+</code></pre><p>  except Error:</p>
+<pre><code>  pass;
+</code></pre><p>  if wc.has_key(word):</p>
+<pre><code>  wc[word] += count;
+</code></pre><p>  else: wc[word] = count;</p>
+<p>for key in wc.keys():</p>
+<p>  print &#39;%s/t%s&#39; % (key, wc[key]);</p>
+<p>本机测试：</p>
+<p>echo &quot;foo foo bar bar foo abc&quot; | map.py</p>
+<p>echo &quot;foo foo bar bar foo abc&quot; | map.py | sort | reduce.py</p>
+<p>在 hadoop 中测试：</p>
+<p>hadoop jar /usr/local/hadoop/contrib/streaming/hadoop-streaming-0.20.203.0.jar -file mapper.py -mapper mapper.py -file reducer.py -reducer reducer.py -input wc//* -output wc-out</p>
+<p>Job 成功后，会在 HDFS 中生成 wc-out 目录。</p>
+<p>查看结果：</p>
+<p>hadoop fs –ls wc-out</p>
+<p>hadoop fs –cat wc-out/part-00000</p>
+<ol>
+<li>集群增加新节点</li>
+</ol>
+<p>a.       执行步骤 1 ， 2.</p>
+<p>b.       修改 hosts 文件，将集群中的 hosts 加入本身 /etc/hosts 中。并修改集群中其他节点的 hosts ，将新节点加入。</p>
+<p>c.       master 的 conf/slaves 文件中，添加新节点。</p>
+<p>d.       启动 datanode 和 task tracker 。</p>
+<p>hadoop-daemon.sh start datanode</p>
+<p>hadoop-daemon.sh start tasktracker</p>
+<ol>
+<li>Trouble-shooting</li>
+</ol>
+<p>hadoop 的日志在 hadoop/logs 中。</p>
+<p>其中， logs 根目录包含的是 namenode, datanode, jobtracker, tasktracker 等的日志。分别以 hadoop-{username}-namenode/datanode/jobtracker/tasktracker-hostname.log 命名。</p>
+<p>userlogs 目录里包含了具体的 job 日志，每个 job 有一个单独的目录，以 job<em>YYYYmmddHHmm_xxxx 命名。里面包含数个 attempt</em>{jobname}<em>m_xxxxx 或 attempt</em>{jobname}_r_xxxx 等数个目录。其中目录名中的m 表示 map 任务的日志， r 表示 reduce 任务的日志。因此，出错时，可以有针对性地查看特定的日志。</p>
+<p>常见错误：</p>
+<ol>
+<li>出现类似：</li>
+</ol>
+<p><em>ERROR org.apache.hadoop.hdfs.server.datanode.DataNode: java.io.IOException: Incompatible namespaceIDs …</em></p>
+<p>的异常，是因为先格式化了 namenode ，后来又修改了配置导致。将 dfs/data 文件夹内容删除，再重新格式化 namenode 即可。</p>
+<ol>
+<li>出现类似：</li>
+</ol>
+<p><em>INFO org.apache.hadoop.ipc.Client: Retrying connect to server:…</em></p>
+<p>的异常，首先确认 name node 是否启动。如果已经启动，有可能是 master 或 slave1 中的配置出错，集群配置参考步骤 11 。也有可能是防火墙问题，需添加以下例外：</p>
+<p>50010 端口用于数据传输， 50020 用于 RPC 调用， 50030 是 WEB 版的 JOB 状态监控， 54311 是job tracker ， 54310 是与 master 通信的端口。</p>
+<p>完整的端口列表见：</p>
+<p><a href="http://www.cloudera.com/blog/2009/08/hadoop-default-ports-quick-reference/" target="_blank"><a href="http://www.cloudera.com/blog/2009/08/hadoop-default-ports-quick-reference/">http://www.cloudera.com/blog/2009/08/hadoop-default-ports-quick-reference/</a></a></p>
+<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 50010 -j ACCEPT</p>
+<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 50020 -j ACCEPT</p>
+<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 50030 -j ACCEPT</p>
+<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 50060 -j ACCEPT</p>
+<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 54310 -j ACCEPT</p>
+<p>iptables -A RH-Firewall-1-INPUT -p tcp -m tcp --dport 54311 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --dport 50010 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --dport 50020 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --sport 50010 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --sport 50020 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --dport 50030 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --sport 50030 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --dport 50060 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --sport 50060 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --dport 54310 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --sport 54310 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --dport 54311 -j ACCEPT</p>
+<p>iptables -A OUTPUT -p tcp -m tcp --sport 54311 -j ACCEPT</p>
+<p>保存规则：</p>
+<p>/etc/init.d/iptables save</p>
+<p>重启 iptables 服务：</p>
+<p>service iptables restart</p>
+<p>如果还是出现问题 2 的错误，那可能需要手工修改 /etc/sysconfig/iptables 的规则。手动添加这些规则。若有 ”reject-with icmp-host-prohibited” 的规则，需将规则加到它的前面。注意修改配置文件的时候，不需要带 iptables 命令。直接为类似于：</p>
+<p>-A OUTPUT -p tcp -m tcp --sport 54311 -j ACCEPT</p>
+<p>或关闭防火墙 <strong>( **</strong>建议，因为端口太多，要加的例外很多 )**</p>
+<p>service iptables stop</p>
+<ol>
+<li><p>在 /etc/hosts 文件中，确保一个 host 只对应一个 IP ，否则会出错（如同时将 slave1 指向 127.0.0.1 和192.168.225.66 ），<strong>可能导致数据无法从一个节点复制至另一节点。</strong></p>
+</li>
+<li><p>出现类似：</p>
+</li>
+</ol>
+<p><em>FATAL org.apache.hadoop.mapred.TaskTracker: Error running child : java.lang.OutOfMemoryError: Java heap space…</em></p>
+<p>的异常，是因为堆内存不够。有以下几个地方可以考虑配置：</p>
+<p>a.       conf/hadoop-env.sh 中， export HADOOP_HEAPSIZE=1000 这一行，默认为注释掉，堆大小为1000M ，可以取消注释，将这个值调大一些（对于 16G 的内存，可以调至 8G ）。</p>
+<p>b.       conf/mapred-site.xml 中，添加 mapred.map.child.java.opts 属性，手动指定 JAVA 堆的参数值为 -Xmx2048m 或更大。这个值调整 map 任务的堆大小。即：</p>
+<property>
+
+    <name>mapred.map.child.java.opts </name>
+
+    <value>-Xmx2048m</value>
+
+</property>
+
+<p>c.       conf/mapred-site.xml 中，添加 mapred.reduce.child.java.opts 属性，手动指定 JAVA 堆的参数值为 -Xmx2048m 或更大。这个值调整 reduce 任务的堆大小。即：</p>
+<property>
+
+    <name>mapred.reduce.child.java.opts </name>
+
+    <value>-Xmx2048m</value>
+
+</property>
+
+<pre><code>               注意调整这些值之后，要重启 name node 。
+</code></pre><p><em>5.       </em>出现类似： <em>java.io.IOException: File /user/root/pv_product_110124 could only be replicated to 0 nodes, instead of 1…</em></p>
+<p>的异常，首先确保 hadoop 临时文件夹中有足够的空间，空间不够会导致这个错误。</p>
+<p>如果空间没问题，那就尝试把临时文件夹中 dfs/data 目录删除，然后重新格式化 name node ：</p>
+<p>hadoop namenode -format</p>
+<p>注意：此命令会删除 hdfs 上的文件</p>
+<p><em>6.       </em>出现类似： <em>java.io.IOException: Broken pipe…</em></p>
+<p>的异常，检查你的程序吧，没准输出了不该输出的信息，如调试信息等。
+来源： <a href="[http://blog.csdn.net/inte_sleeper/article/details/6569990](http://blog.csdn.net/inte_sleeper/article/details/6569990)">[http://blog.csdn.net/inte_sleeper/article/details/6569990](http://blog.csdn.net/inte_sleeper/article/details/6569990)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--CentOS的Hadoop集群配置/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--CentOS的Hadoop集群配置" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--hdfs_design/">hdfs_design</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--hdfs_design/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="hdfs_design">hdfs_design</h1>
+<p>HDFS Architecture
+by Dhruba Borthakur
 Table of contents
-1
-Overview............................................................................................................................3
-1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9
-cat ................................................................................................................................. 3 chgrp ............................................................................................................................. 3 chmod ........................................................................................................................... 3 chown ........................................................................................................................... 4 copyFromLocal..............................................................................................................4 copyToLocal..................................................................................................................4 count ............................................................................................................................. 4 cp .................................................................................................................................. 4 du................................................................................................................................... 5 dus ...............................................................................................................................5 expunge .......................................................................................................................5 get ................................................................................................................................5 getmerge ......................................................................................................................6 ls...................................................................................................................................6 lsr................................................................................................................................. 6 mkdir ...........................................................................................................................7 moveFromLocal ..........................................................................................................7 moveToLocal............................................................................................................... 7 mv ............................................................................................................................... 7 put ............................................................................................................................... 8 rm ................................................................................................................................ 8 rmr ...............................................................................................................................8 setrep ...........................................................................................................................9
+1 2
+Introduction .......................................................................................................................3 Assumptions and Goals .....................................................................................................3
+2.1 2.2 2.3 2.4 2.5 2.6
+Hardware Failure .......................................................................................................... 3 Streaming Data Access .................................................................................................3 Large Data Sets .............................................................................................................3 Simple Coherency Model ............................................................................................. 4 “Moving Computation is Cheaper than Moving Data” ................................................4 Portability Across Heterogeneous Hardware and Software Platforms .........................4
+3 4 5
+NameNode and DataNodes ...............................................................................................4 The File System Namespace ............................................................................................. 5 Data Replication ................................................................................................................6
+5.1 5.2 5.3
+Replica Placement: The First Baby Steps .................................................................... 7 Replica Selection .......................................................................................................... 8 Safemode ...................................................................................................................... 8
+6 7 8
+The Persistence of File System Metadata ......................................................................... 8 The Communication Protocols ......................................................................................... 9 Robustness ........................................................................................................................ 9
+8.1 8.2 8.3 8.4 8.5
+Data Disk Failure, Heartbeats and Re-Replication .....................................................10 Cluster Rebalancing ....................................................................................................10 Data Integrity ..............................................................................................................10 Metadata Disk Failure ................................................................................................ 10 Snapshots ....................................................................................................................11
 Copyright © 2008 The Apache Software Foundation. All rights reserved.
-1.10 1.11 1.12 1.13 1.14 1.15 1.16 1.17 1.18 1.19 1.20 1.21 1.22 1.23
-HDFS File System Shell Guide
-1.24 1.25 1.26 1.27 1.28
-stat ...............................................................................................................................9 tail ............................................................................................................................... 9 test .............................................................................................................................10 text ............................................................................................................................ 10 touchz ........................................................................................................................10
+HDFS Architecture
+9
+Data Organization ........................................................................................................... 11
+9.1 9.2 9.3
+Data Blocks ................................................................................................................ 11 Staging ........................................................................................................................11 Replication Pipelining ................................................................................................ 12 FS Shell .....................................................................................................................12 DFSAdmin ................................................................................................................ 13 Browser Interface ......................................................................................................13 File Deletes and Undeletes ....................................................................................... 13 Decrease Replication Factor ..................................................................................... 14
+10
+Accessibility .................................................................................................................. 12
+10.1 10.2 10.3 11
+Space Reclamation ........................................................................................................ 13
+11.1 11.2 12
+References ..................................................................................................................... 14
 Page 2
 Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS File System Shell Guide</p>
+HDFS Architecture</p>
 <ol>
-<li>Overview
-The FileSystem (FS) shell is invoked by bin/hadoop fs <args>. All FS shell commands take path URIs as arguments. The URI format is scheme://autority/path. For HDFS the scheme is hdfs, and for the local filesystem the scheme is file. The scheme and authority are optional. If not specified, the default scheme specified in the configuration is used. An HDFS file or directory such as /parent/child can be specified as hdfs://namenodehost/parent/child or simply as /parent/child (given that your configuration is set to point to hdfs://namenodehost). Most of the commands in FS shell behave like corresponding Unix commands. Differences are described with each of the commands. Error information is sent to stderr and the output is sent to stdout.
-1.1. cat
-Usage: hadoop fs -cat URI [URI …] Copies source paths to stdout. Example: • hadoop fs -cat hdfs://nn1.example.com/file1 hdfs://nn2.example.com/file2 • hadoop fs -cat file:///file3 /user/hadoop/file4 Exit Code: Returns 0 on success and -1 on error.
-1.2. chgrp
-Usage: hadoop fs -chgrp [-R] GROUP URI [URI …] Change group association of files. With -R, make the change recursively through the directory structure. The user must be the owner of files, or else a super-user. Additional information is in the HDFS Admin Guide: Permissions.
-1.3. chmod
-Usage: hadoop fs -chmod [-R] <MODE[,MODE]... | OCTALMODE> URI [URI …] Change the permissions of files. With -R, make the change recursively through the directory structure. The user must be the owner of the file, or else a super-user. Additional information is in the HDFS Admin Guide: Permissions.
+<li>Introduction
+The Hadoop Distributed File System (HDFS) is a distributed file system designed to run on commodity hardware. It has many similarities with existing distributed file systems. However, the differences from other distributed file systems are significant. HDFS is highly fault-tolerant and is designed to be deployed on low-cost hardware. HDFS provides high throughput access to application data and is suitable for applications that have large data sets. HDFS relaxes a few POSIX requirements to enable streaming access to file system data. HDFS was originally built as infrastructure for the Apache Nutch web search engine project. HDFS is part of the Apache Hadoop Core project. The project URL is <a href="http://hadoop.apache.org/core/" target="_blank">http://hadoop.apache.org/core/</a>.</li>
+<li>Assumptions and Goals
+2.1. Hardware Failure
+Hardware failure is the norm rather than the exception. An HDFS instance may consist of hundreds or thousands of server machines, each storing part of the file system’s data. The fact that there are a huge number of components and that each component has a non-trivial probability of failure means that some component of HDFS is always non-functional. Therefore, detection of faults and quick, automatic recovery from them is a core architectural goal of HDFS.
+2.2. Streaming Data Access
+Applications that run on HDFS need streaming access to their data sets. They are not general purpose applications that typically run on general purpose file systems. HDFS is designed more for batch processing rather than interactive use by users. The emphasis is on high throughput of data access rather than low latency of data access. POSIX imposes many hard requirements that are not needed for applications that are targeted for HDFS. POSIX semantics in a few key areas has been traded to increase data throughput rates.
+2.3. Large Data Sets
+Applications that run on HDFS have large data sets. A typical file in HDFS is gigabytes to terabytes in size. Thus, HDFS is tuned to support large files. It should provide high aggregate data bandwidth and scale to hundreds of nodes in a single cluster. It should support tens of millions of files in a single instance.
 Page 3
 Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS File System Shell Guide
-1.4. chown
-Usage: hadoop fs -chown [-R] [OWNER][:[GROUP]] URI [URI ] Change the owner of files. With -R, make the change recursively through the directory structure. The user must be a super-user. Additional information is in the HDFS Admin Guide: Permissions.
-1.5. copyFromLocal
-Usage: hadoop fs -copyFromLocal <localsrc> URI Similar to put command, except that the source is restricted to a local file reference.
-1.6. copyToLocal
-Usage: hadoop fs -copyToLocal [-ignorecrc] [-crc] URI <localdst> Similar to get command, except that the destination is restricted to a local file reference.
-1.7. count
-Usage: hadoop fs -count [-q] <paths> Count the number of directories, files and bytes under the paths that match the specified file pattern. The output columns are: DIR_COUNT, FILE_COUNT, CONTENT_SIZE FILE_NAME. The output columns with -q are: QUOTA, REMAINING_QUATA, SPACE_QUOTA, REMAINING_SPACE_QUOTA, DIR_COUNT, FILE_COUNT, CONTENT_SIZE, FILE_NAME. Example: • hadoop fs -count hdfs://nn1.example.com/file1 hdfs://nn2.example.com/file2 • hadoop fs -count -q hdfs://nn1.example.com/file1 Exit Code: Returns 0 on success and -1 on error.
-1.8. cp
+HDFS Architecture
+2.4. Simple Coherency Model
+HDFS applications need a write-once-read-many access model for files. A file once created, written, and closed need not be changed. This assumption simplifies data coherency issues and enables high throughput data access. A Map/Reduce application or a web crawler application fits perfectly with this model. There is a plan to support appending-writes to files in the future.
+2.5. “Moving Computation is Cheaper than Moving Data”
+A computation requested by an application is much more efficient if it is executed near the data it operates on. This is especially true when the size of the data set is huge. This minimizes network congestion and increases the overall throughput of the system. The assumption is that it is often better to migrate the computation closer to where the data is located rather than moving the data to where the application is running. HDFS provides interfaces for applications to move themselves closer to where the data is located.
+2.6. Portability Across Heterogeneous Hardware and Software Platforms
+HDFS has been designed to be easily portable from one platform to another. This facilitates widespread adoption of HDFS as a platform of choice for a large set of applications.</li>
+<li>NameNode and DataNodes
+HDFS has a master/slave architecture. An HDFS cluster consists of a single NameNode, a master server that manages the file system namespace and regulates access to files by clients. In addition, there are a number of DataNodes, usually one per node in the cluster, which manage storage attached to the nodes that they run on. HDFS exposes a file system namespace and allows user data to be stored in files. Internally, a file is split into one or more blocks and these blocks are stored in a set of DataNodes. The NameNode executes file system namespace operations like opening, closing, and renaming files and directories. It also determines the mapping of blocks to DataNodes. The DataNodes are responsible for serving read and write requests from the file system’s clients. The DataNodes also perform block creation, deletion, and replication upon instruction from the NameNode.
 Page 4
 Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS File System Shell Guide
-Usage: hadoop fs -cp URI [URI …] <dest> Copy files from source to destination. This command allows multiple sources as well in which case the destination must be a directory. Example: • hadoop fs -cp /user/hadoop/file1 /user/hadoop/file2 • hadoop fs -cp /user/hadoop/file1 /user/hadoop/file2 /user/hadoop/dir Exit Code: Returns 0 on success and -1 on error.
-1.9. du
-Usage: hadoop fs -du URI [URI …] Displays aggregate length of files contained in the directory or the length of a file in case its just a file. Example: hadoop fs -du /user/hadoop/dir1 /user/hadoop/file1 hdfs://nn.example.com/user/hadoop/dir1 Exit Code: Returns 0 on success and -1 on error.
-1.10. dus
-Usage: hadoop fs -dus <args> Displays a summary of file lengths.
-1.11. expunge
-Usage: hadoop fs -expunge Empty the Trash. Refer to HDFS Architecture for more information on Trash feature.
-1.12. get
-Usage: hadoop fs -get [-ignorecrc] [-crc] <src> <localdst> Copy files to the local file system. Files that fail the CRC check may be copied with the -ignorecrc option. Files and CRCs may be copied using the -crc option.
+<img src="" alt=""> HDFS Architecture
+The NameNode and DataNode are pieces of software designed to run on commodity machines. These machines typically run a GNU/Linux operating system (OS). HDFS is built using the Java language; any machine that supports Java can run the NameNode or the DataNode software. Usage of the highly portable Java language means that HDFS can be deployed on a wide range of machines. A typical deployment has a dedicated machine that runs only the NameNode software. Each of the other machines in the cluster runs one instance of the DataNode software. The architecture does not preclude running multiple DataNodes on the same machine but in a real deployment that is rarely the case. The existence of a single NameNode in a cluster greatly simplifies the architecture of the system. The NameNode is the arbitrator and repository for all HDFS metadata. The system is designed in such a way that user data never flows through the NameNode.</li>
+<li>The File System Namespace
+HDFS supports a traditional hierarchical file organization. A user or an application can create directories and store files inside these directories. The file system namespace hierarchy is
 Page 5
 Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS File System Shell Guide
-Example: • hadoop fs -get /user/hadoop/file localfile • hadoop fs -get hdfs://nn.example.com/user/hadoop/file localfile Exit Code: Returns 0 on success and -1 on error.
-1.13. getmerge
-Usage: hadoop fs -getmerge <src> <localdst> [addnl] Takes a source directory and a destination file as input and concatenates files in src into the destination local file. Optionally addnl can be set to enable adding a newline character at the end of each file.
-1.14. ls
-Usage: hadoop fs -ls <args> For a file returns stat on the file with the following format: permissions number_of_replicas userid groupid filesize modification_date modification_time filename For a directory it returns list of its direct children as in unix.A directory is listed as: permissions userid groupid modification_date modification_time dirname Example: hadoop fs -ls /user/hadoop/file1 Exit Code: Returns 0 on success and -1 on error.
-1.15. lsr
-Usage: hadoop fs -lsr <args> Recursive version of ls. Similar to Unix ls -R.
+HDFS Architecture
+similar to most other existing file systems; one can create and remove files, move a file from one directory to another, or rename a file. HDFS does not yet implement user quotas or access permissions. HDFS does not support hard links or soft links. However, the HDFS architecture does not preclude implementing these features. The NameNode maintains the file system namespace. Any change to the file system namespace or its properties is recorded by the NameNode. An application can specify the number of replicas of a file that should be maintained by HDFS. The number of copies of a file is called the replication factor of that file. This information is stored by the NameNode.</li>
+<li>Data Replication
+HDFS is designed to reliably store very large files across machines in a large cluster. It stores each file as a sequence of blocks; all blocks in a file except the last block are the same size. The blocks of a file are replicated for fault tolerance. The block size and replication factor are configurable per file. An application can specify the number of replicas of a file. The replication factor can be specified at file creation time and can be changed later. Files in HDFS are write-once and have strictly one writer at any time. The NameNode makes all decisions regarding replication of blocks. It periodically receives a Heartbeat and a Blockreport from each of the DataNodes in the cluster. Receipt of a Heartbeat implies that the DataNode is functioning properly. A Blockreport contains a list of all blocks on a DataNode.
 Page 6
 Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS File System Shell Guide
-1.16. mkdir
-Usage: hadoop fs -mkdir <paths> Takes path uri&#39;s as argument and creates directories. The behavior is much like unix mkdir -p creating parent directories along the path. Example: • hadoop fs -mkdir /user/hadoop/dir1 /user/hadoop/dir2 • hadoop fs -mkdir hdfs://nn1.example.com/user/hadoop/dir hdfs://nn2.example.com/user/hadoop/dir Exit Code: Returns 0 on success and -1 on error.
-1.17. moveFromLocal
-Usage: dfs -moveFromLocal <localsrc> <dst> Similar to put command, except that the source localsrc is deleted after it&#39;s copied.
-1.18. moveToLocal
-Usage: hadoop fs -moveToLocal [-crc] <src> <dst> Displays a &quot;Not implemented yet&quot; message.
-1.19. mv
-Usage: hadoop fs -mv URI [URI …] <dest> Moves files from source to destination. This command allows multiple sources as well in which case the destination needs to be a directory. Moving files across filesystems is not permitted. Example: • hadoop fs -mv /user/hadoop/file1 /user/hadoop/file2 • hadoop fs -mv hdfs://nn.example.com/file1 hdfs://nn.example.com/file2 hdfs://nn.example.com/file3 hdfs://nn.example.com/dir1 Exit Code:
+<img src="" alt=""> HDFS Architecture
+5.1. Replica Placement: The First Baby Steps
+The placement of replicas is critical to HDFS reliability and performance. Optimizing replica placement distinguishes HDFS from most other distributed file systems. This is a feature that needs lots of tuning and experience. The purpose of a rack-aware replica placement policy is to improve data reliability, availability, and network bandwidth utilization. The current implementation for the replica placement policy is a first effort in this direction. The short-term goals of implementing this policy are to validate it on production systems, learn more about its behavior, and build a foundation to test and research more sophisticated policies. Large HDFS instances run on a cluster of computers that commonly spread across many racks. Communication between two nodes in different racks has to go through switches. In most cases, network bandwidth between machines in the same rack is greater than network bandwidth between machines in different racks. The NameNode determines the rack id each DataNode belongs to via the process outlined in Rack Awareness. A simple but non-optimal policy is to place replicas on unique racks. This prevents losing data when an entire rack fails and allows use of bandwidth from multiple
 Page 7
 Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS File System Shell Guide
-Returns 0 on success and -1 on error.
-1.20. put
-Usage: hadoop fs -put <localsrc> ... <dst> Copy single src, or multiple srcs from local file system to the destination filesystem. Also reads input from stdin and writes to destination filesystem. • hadoop fs -put localfile /user/hadoop/hadoopfile • hadoop fs -put localfile1 localfile2 /user/hadoop/hadoopdir • hadoop fs -put localfile hdfs://nn.example.com/hadoop/hadoopfile • hadoop fs -put - hdfs://nn.example.com/hadoop/hadoopfile Reads the input from stdin. Exit Code: Returns 0 on success and -1 on error.
-1.21. rm
-Usage: hadoop fs -rm [-skipTrash] URI [URI …] Delete files specified as args. Only deletes non empty directory and files. If the -skipTrash option is specified, the trash, if enabled, will be bypassed and the specified file(s) deleted immediately. This can be useful when it is necessary to delete files from an over-quota directory. Refer to rmr for recursive deletes. Example: • hadoop fs -rm hdfs://nn.example.com/file /user/hadoop/emptydir Exit Code: Returns 0 on success and -1 on error.
-1.22. rmr
-Usage: hadoop fs -rmr [-skipTrash] URI [URI …] Recursive version of delete. If the -skipTrash option is specified, the trash, if enabled, will be bypassed and the specified file(s) deleted immediately. This can be useful when it is necessary to delete files from an over-quota directory.
+HDFS Architecture
+racks when reading data. This policy evenly distributes replicas in the cluster which makes it easy to balance load on component failure. However, this policy increases the cost of writes because a write needs to transfer blocks to multiple racks. For the common case, when the replication factor is three, HDFS’s placement policy is to put one replica on one node in the local rack, another on a different node in the local rack, and the last on a different node in a different rack. This policy cuts the inter-rack write traffic which generally improves write performance. The chance of rack failure is far less than that of node failure; this policy does not impact data reliability and availability guarantees. However, it does reduce the aggregate network bandwidth used when reading data since a block is placed in only two unique racks rather than three. With this policy, the replicas of a file do not evenly distribute across the racks. One third of replicas are on one node, two thirds of replicas are on one rack, and the other third are evenly distributed across the remaining racks. This policy improves write performance without compromising data reliability or read performance. The current, default replica placement policy described here is a work in progress.
+5.2. Replica Selection
+To minimize global bandwidth consumption and read latency, HDFS tries to satisfy a read request from a replica that is closest to the reader. If there exists a replica on the same rack as the reader node, then that replica is preferred to satisfy the read request. If angg/ HDFS cluster spans multiple data centers, then a replica that is resident in the local data center is preferred over any remote replica.
+5.3. Safemode
+On startup, the NameNode enters a special state called Safemode. Replication of data blocks does not occur when the NameNode is in the Safemode state. The NameNode receives Heartbeat and Blockreport messages from the DataNodes. A Blockreport contains the list of data blocks that a DataNode is hosting. Each block has a specified minimum number of replicas. A block is considered safely replicated when the minimum number of replicas of that data block has checked in with the NameNode. After a configurable percentage of safely replicated data blocks checks in with the NameNode (plus an additional 30 seconds), the NameNode exits the Safemode state. It then determines the list of data blocks (if any) that still have fewer than the specified number of replicas. The NameNode then replicates these blocks to other DataNodes.</li>
+<li>The Persistence of File System Metadata
 Page 8
 Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS File System Shell Guide
-Example: • hadoop fs -rmr /user/hadoop/dir • hadoop fs -rmr hdfs://nn.example.com/user/hadoop/dir Exit Code: Returns 0 on success and -1 on error.
-1.23. setrep
-Usage: hadoop fs -setrep [-R] <path> Changes the replication factor of a file. -R option is for recursively increasing the replication factor of files within a directory. Example: • hadoop fs -setrep -w 3 -R /user/hadoop/dir1 Exit Code: Returns 0 on success and -1 on error.
-1.24. stat
-Usage: hadoop fs -stat URI [URI …] Returns the stat information on the path. Example: • hadoop fs -stat path Exit Code: Returns 0 on success and -1 on error.
-1.25. tail
-Usage: hadoop fs -tail [-f] URI Displays last kilobyte of the file to stdout. -f option can be used as in Unix. Example: • hadoop fs -tail pathname Exit Code:
+HDFS Architecture
+The HDFS namespace is stored by the NameNode. The NameNode uses a transaction log called the EditLog to persistently record every change that occurs to file system metadata. For example, creating a new file in HDFS causes the NameNode to insert a record into the EditLog indicating this. Similarly, changing the replication factor of a file causes a new record to be inserted into the EditLog. The NameNode uses a file in its local host OS file system to store the EditLog. The entire file system namespace, including the mapping of blocks to files and file system properties, is stored in a file called the FsImage. The FsImage is stored as a file in the NameNode’s local file system too. The NameNode keeps an image of the entire file system namespace and file Blockmap in memory. This key metadata item is designed to be compact, such that a NameNode with 4 GB of RAM is plenty to support a huge number of files and directories. When the NameNode starts up, it reads the FsImage and EditLog from disk, applies all the transactions from the EditLog to the in-memory representation of the FsImage, and flushes out this new version into a new FsImage on disk. It can then truncate the old EditLog because its transactions have been applied to the persistent FsImage. This process is called a checkpoint. In the current implementation, a checkpoint only occurs when the NameNode starts up. Work is in progress to support periodic checkpointing in the near future. The DataNode stores HDFS data in files in its local file system. The DataNode has no knowledge about HDFS files. It stores each block of HDFS data in a separate file in its local file system. The DataNode does not create all files in the same directory. Instead, it uses a heuristic to determine the optimal number of files per directory and creates subdirectories appropriately. It is not optimal to create all local files in the same directory because the local file system might not be able to efficiently support a huge number of files in a single directory. When a DataNode starts up, it scans through its local file system, generates a list of all HDFS data blocks that correspond to each of these local files and sends this report to the NameNode: this is the Blockreport.</li>
+<li>The Communication Protocols
+All HDFS communication protocols are layered on top of the TCP/IP protocol. A client establishes a connection to a configurable TCP port on the NameNode machine. It talks the ClientProtocol with the NameNode. The DataNodes talk to the NameNode using the DataNode Protocol. A Remote Procedure Call (RPC) abstraction wraps both the Client Protocol and the DataNode Protocol. By design, the NameNode never initiates any RPCs. Instead, it only responds to RPC requests issued by DataNodes or clients.</li>
+<li>Robustness
+The primary objective of HDFS is to store data reliably even in the presence of failures. The
 Page 9
 Copyright © 2008 The Apache Software Foundation. All rights reserved.
-HDFS File System Shell Guide
-Returns 0 on success and -1 on error.
-1.26. test
-Usage: hadoop fs -test -[ezd] URI Options: -e check to see if the file exists. Return 0 if true. -z check to see if the file is zero length. Return 0 if true. -d check to see if the path is directory. Return 0 if true. Example: • hadoop fs -test -e filename
-1.27. text
-Usage: hadoop fs -text <src> Takes a source file and outputs the file in text format. The allowed formats are zip and TextRecordInputStream.
-1.28. touchz
-Usage: hadoop fs -touchz URI [URI …] Create a file of zero length. Example: • hadoop -touchz pathname Exit Code: Returns 0 on success and -1 on error.
+HDFS Architecture
+three common types of failures are NameNode failures, DataNode failures and network partitions.
+8.1. Data Disk Failure, Heartbeats and Re-Replication
+Each DataNode sends a Heartbeat message to the NameNode periodically. A network partition can cause a subset of DataNodes to lose connectivity with the NameNode. The NameNode detects this condition by the absence of a Heartbeat message. The NameNode marks DataNodes without recent Heartbeats as dead and does not forward any new IO requests to them. Any data that was registered to a dead DataNode is not available to HDFS any more. DataNode death may cause the replication factor of some blocks to fall below their specified value. The NameNode constantly tracks which blocks need to be replicated and initiates replication whenever necessary. The necessity for re-replication may arise due to many reasons: a DataNode may become unavailable, a replica may become corrupted, a hard disk on a DataNode may fail, or the replication factor of a file may be increased.
+8.2. Cluster Rebalancing
+The HDFS architecture is compatible with data rebalancing schemes. A scheme might automatically move data from one DataNode to another if the free space on a DataNode falls below a certain threshold. In the event of a sudden high demand for a particular file, a scheme might dynamically create additional replicas and rebalance other data in the cluster. These types of data rebalancing schemes are not yet implemented.
+8.3. Data Integrity
+It is possible that a block of data fetched from a DataNode arrives corrupted. This corruption can occur because of faults in a storage device, network faults, or buggy software. The HDFS client software implements checksum checking on the contents of HDFS files. When a client creates an HDFS file, it computes a checksum of each block of the file and stores these checksums in a separate hidden file in the same HDFS namespace. When a client retrieves file contents it verifies that the data it received from each DataNode matches the checksum stored in the associated checksum file. If not, then the client can opt to retrieve that block from another DataNode that has a replica of that block.
+8.4. Metadata Disk Failure
+The FsImage and the EditLog are central data structures of HDFS. A corruption of these files can cause the HDFS instance to be non-functional. For this reason, the NameNode can be configured to support maintaining multiple copies of the FsImage and EditLog. Any update
 Page 10
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+to either the FsImage or EditLog causes each of the FsImages and EditLogs to get updated synchronously. This synchronous updating of multiple copies of the FsImage and EditLog may degrade the rate of namespace transactions per second that a NameNode can support. However, this degradation is acceptable because even though HDFS applications are very data intensive in nature, they are not metadata intensive. When a NameNode restarts, it selects the latest consistent FsImage and EditLog to use. The NameNode machine is a single point of failure for an HDFS cluster. If the NameNode machine fails, manual intervention is necessary. Currently, automatic restart and failover of the NameNode software to another machine is not supported.
+8.5. Snapshots
+Snapshots support storing a copy of data at a particular instant of time. One usage of the snapshot feature may be to roll back a corrupted HDFS instance to a previously known good point in time. HDFS does not currently support snapshots but will in a future release.</li>
+<li>Data Organization
+9.1. Data Blocks
+HDFS is designed to support very large files. Applications that are compatible with HDFS are those that deal with large data sets. These applications write their data only once but they read it one or more times and require these reads to be satisfied at streaming speeds. HDFS supports write-once-read-many semantics on files. A typical block size used by HDFS is 64 MB. Thus, an HDFS file is chopped up into 64 MB chunks, and if possible, each chunk will reside on a different DataNode.
+9.2. Staging
+A client request to create a file does not reach the NameNode immediately. In fact, initially the HDFS client caches the file data into a temporary local file. Application writes are transparently redirected to this temporary local file. When the local file accumulates data worth over one HDFS block size, the client contacts the NameNode. The NameNode inserts the file name into the file system hierarchy and allocates a data block for it. The NameNode responds to the client request with the identity of the DataNode and the destination data block. Then the client flushes the block of data from the local temporary file to the specified DataNode. When a file is closed, the remaining un-flushed data in the temporary local file is transferred to the DataNode. The client then tells the NameNode that the file is closed. At this point, the NameNode commits the file creation operation into a persistent store. If the
+Page 11
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+NameNode dies before the file is closed, the file is lost. The above approach has been adopted after careful consideration of target applications that run on HDFS. These applications need streaming writes to files. If a client writes to a remote file directly without any client side buffering, the network speed and the congestion in the network impacts throughput considerably. This approach is not without precedent. Earlier distributed file systems, e.g. AFS, have used client side caching to improve performance. A POSIX requirement has been relaxed to achieve higher performance of data uploads.
+9.3. Replication Pipelining
+When a client is writing data to an HDFS file, its data is first written to a local file as explained in the previous section. Suppose the HDFS file has a replication factor of three. When the local file accumulates a full block of user data, the client retrieves a list of DataNodes from the NameNode. This list contains the DataNodes that will host a replica of that block. The client then flushes the data block to the first DataNode. The first DataNode starts receiving the data in small portions (4 KB), writes each portion to its local repository and transfers that portion to the second DataNode in the list. The second DataNode, in turn starts receiving each portion of the data block, writes that portion to its repository and then flushes that portion to the third DataNode. Finally, the third DataNode writes the data to its local repository. Thus, a DataNode can be receiving data from the previous one in the pipeline and at the same time forwarding data to the next one in the pipeline. Thus, the data is pipelined from one DataNode to the next.</li>
+<li>Accessibility
+HDFS can be accessed from applications in many different ways. Natively, HDFS provides a FileSystem Java API for applications to use. A C language wrapper for this Java API is also available. In addition, an HTTP browser can also be used to browse the files of an HDFS instance. Work is in progress to expose HDFS through the WebDAV protocol.
+10.1. FS Shell
+HDFS allows user data to be organized in the form of files and directories. It provides a commandline interface called FS shell that lets a user interact with the data in HDFS. The syntax of this command set is similar to other shells (e.g. bash, csh) that users are already familiar with. Here are some sample action/command pairs:
+Action Create a directory named /foodir Command bin/hadoop dfs -mkdir /foodir
+Page 12
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+Remove a directory named /foodir View the contents of a file named /foodir/myfile.txt
+bin/hadoop dfs -rmr /foodir bin/hadoop dfs -cat /foodir/myfile.txt
+FS shell is targeted for applications that need a scripting language to interact with the stored data.
+10.2. DFSAdmin
+The DFSAdmin command set is used for administering an HDFS cluster. These are commands that are used only by an HDFS administrator. Here are some sample action/command pairs:
+Action Put the cluster in Safemode Generate a list of DataNodes Recommission or decommission DataNode(s) Command bin/hadoop dfsadmin -safemode enter bin/hadoop dfsadmin -report bin/hadoop dfsadmin -refreshNodes
+10.3. Browser Interface
+A typical HDFS install configures a web server to expose the HDFS namespace through a configurable TCP port. This allows a user to navigate the HDFS namespace and view the contents of its files using a web browser.</li>
+<li>Space Reclamation
+11.1. File Deletes and Undeletes
+When a file is deleted by a user or an application, it is not immediately removed from HDFS. Instead, HDFS first renames it to a file in the /trash directory. The file can be restored quickly as long as it remains in /trash. A file remains in /trash for a configurable amount of time. After the expiry of its life in /trash, the NameNode deletes the file from the HDFS namespace. The deletion of a file causes the blocks associated with the file to be freed. Note that there could be an appreciable time delay between the time a file is deleted by a user and the time of the corresponding increase in free space in HDFS. A user can Undelete a file after deleting it as long as it remains in the /trash directory. If a user wants to undelete a file that he/she has deleted, he/she can navigate the /trash directory and retrieve the file. The /trash directory contains only the latest copy of the file
+Page 13
+Copyright © 2008 The Apache Software Foundation. All rights reserved.
+HDFS Architecture
+that was deleted. The /trash directory is just like any other directory with one special feature: HDFS applies specified policies to automatically delete files from this directory. The current default policy is to delete files from /trash that are more than 6 hours old. In the future, this policy will be configurable through a well defined interface.
+11.2. Decrease Replication Factor
+When the replication factor of a file is reduced, the NameNode selects excess replicas that can be deleted. The next Heartbeat transfers this information to the DataNode. The DataNode then removes the corresponding blocks and the corresponding free space appears in the cluster. Once again, there might be a time delay between the completion of the setReplication API call and the appearance of free space in the cluster.</li>
+<li>References
+Hadoop JavaDoc API. HDFS source code: <a href="http://hadoop.apache.org/core/version_control.html" target="_blank">http://hadoop.apache.org/core/version_control.html</a>
+Page 14
 Copyright © 2008 The Apache Software Foundation. All rights reserved.</li>
 </ol>
 
@@ -230,342 +810,7 @@ Copyright © 2008 The Apache Software Foundation. All rights reserved.</li>
     
         <footer id="post-meta">
         <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--hdfs_shell/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--hdfs_shell" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--mapreduce-osdi04/">mapreduce</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--mapreduce-osdi04/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="mapreduce-osdi04">mapreduce-osdi04</h1>
-<p>MapReduce: Simpliﬁed Data Processing on Large Clusters
-Jeffrey Dean and Sanjay Ghemawat
-jeff@google.com, sanjay@google.com
-Google, Inc.
-Abstract
-MapReduce is a programming model and an associated implementation for processing and generating large data sets. Users specify a map function that processes a key/value pair to generate a set of intermediate key/value pairs, and a reduce function that merges all intermediate values associated with the same intermediate key. Many real world tasks are expressible in this model, as shown in the paper. Programs written in this functional style are automatically parallelized and executed on a large cluster of commodity machines. The run-time system takes care of the details of partitioning the input data, scheduling the program’s execution across a set of machines, handling machine failures, and managing the required inter-machine communication. This allows programmers without any experience with parallel and distributed systems to easily utilize the resources of a large distributed system. Our implementation of MapReduce runs on a large cluster of commodity machines and is highly scalable: a typical MapReduce computation processes many terabytes of data on thousands of machines. Programmers ﬁnd the system easy to use: hundreds of MapReduce programs have been implemented and upwards of one thousand MapReduce jobs are executed on Google’s clusters every day.
-1 Introduction
-Over the past ﬁve years, the authors and many others at Google have implemented hundreds of special-purpose computations that process large amounts of raw data, such as crawled documents, web request logs, etc., to compute various kinds of derived data, such as inverted indices, various representations of the graph structure of web documents, summaries of the number of pages crawled per host, the set of most frequent queries in a To appear in OSDI 2004
-given day, etc. Most such computations are conceptually straightforward. However, the input data is usually large and the computations have to be distributed across hundreds or thousands of machines in order to ﬁnish in a reasonable amount of time. The issues of how to parallelize the computation, distribute the data, and handle failures conspire to obscure the original simple computation with large amounts of complex code to deal with these issues. As a reaction to this complexity, we designed a new abstraction that allows us to express the simple computations we were trying to perform but hides the messy details of parallelization, fault-tolerance, data distribution and load balancing in a library. Our abstraction is inspired by the map and reduce primitives present in Lisp and many other functional languages. We realized that most of our computations involved applying a map operation to each logical “record” in our input in order to compute a set of intermediate key/value pairs, and then applying a reduce operation to all the values that shared the same key, in order to combine the derived data appropriately. Our use of a functional model with userspeciﬁed map and reduce operations allows us to parallelize large computations easily and to use re-execution as the primary mechanism for fault tolerance. The major contributions of this work are a simple and powerful interface that enables automatic parallelization and distribution of large-scale computations, combined with an implementation of this interface that achieves high performance on large clusters of commodity PCs. Section 2 describes the basic programming model and gives several examples. Section 3 describes an implementation of the MapReduce interface tailored towards our cluster-based computing environment. Section 4 describes several reﬁnements of the programming model that we have found useful. Section 5 has performance measurements of our implementation for a variety of tasks. Section 6 explores the use of MapReduce within Google including our experiences in using it as the basis 1
-for a rewrite of our production indexing system. Section 7 discusses related and future work.
-2.2 Types
-Even though the previous pseudo-code is written in terms of string inputs and outputs, conceptually the map and reduce functions supplied by the user have associated types: map reduce (k1,v1) (k2,list(v2)) → list(k2,v2) → list(v2)
-2 Programming Model
-The computation takes a set of input key/value pairs, and produces a set of output key/value pairs. The user of the MapReduce library expresses the computation as two functions: Map and Reduce. Map, written by the user, takes an input pair and produces a set of intermediate key/value pairs. The MapReduce library groups together all intermediate values associated with the same intermediate key I and passes them to the Reduce function. The Reduce function, also written by the user, accepts an intermediate key I and a set of values for that key. It merges together these values to form a possibly smaller set of values. Typically just zero or one output value is produced per Reduce invocation. The intermediate values are supplied to the user’s reduce function via an iterator. This allows us to handle lists of values that are too large to ﬁt in memory.
-I.e., the input keys and values are drawn from a different domain than the output keys and values. Furthermore, the intermediate keys and values are from the same domain as the output keys and values. Our C++ implementation passes strings to and from the user-deﬁned functions and leaves it to the user code to convert between strings and appropriate types.
-2.3 More Examples
-Here are a few simple examples of interesting programs that can be easily expressed as MapReduce computations. Distributed Grep: The map function emits a line if it matches a supplied pattern. The reduce function is an identity function that just copies the supplied intermediate data to the output. Count of URL Access Frequency: The map function processes logs of web page requests and outputs URL, 1 . The reduce function adds together all values for the same URL and emits a URL, total count pair. Reverse Web-Link Graph: The map function outputs target, source pairs for each link to a target URL found in a page named source. The reduce function concatenates the list of all source URLs associated with a given target URL and emits the pair: target, list(source) Term-Vector per Host: A term vector summarizes the most important words that occur in a document or a set of documents as a list of word, f requency pairs. The map function emits a hostname, term vector pair for each input document (where the hostname is extracted from the URL of the document). The reduce function is passed all per-document term vectors for a given host. It adds these term vectors together, throwing away infrequent terms, and then emits a ﬁnal hostname, term vector pair. 2
-2.1 Example
-Consider the problem of counting the number of occurrences of each word in a large collection of documents. The user would write code similar to the following pseudo-code:
-map(String key, String value): // key: document name // value: document contents for each word w in value: EmitIntermediate(w, &quot;1&quot;); reduce(String key, Iterator values): // key: a word // values: a list of counts int result = 0; for each v in values: result += ParseInt(v); Emit(AsString(result));
-The map function emits each word plus an associated count of occurrences (just ‘1’ in this simple example). The reduce function sums together all counts emitted for a particular word. In addition, the user writes code to ﬁll in a mapreduce speciﬁcation object with the names of the input and output ﬁles, and optional tuning parameters. The user then invokes the MapReduce function, passing it the speciﬁcation object. The user’s code is linked together with the MapReduce library (implemented in C++). Appendix A contains the full program text for this example. To appear in OSDI 2004
-User Program
-(1) fork (1) fork (1) fork
-Master
-(2) assign map
-(2) assign reduce
-worker split 0 split 1 split 2 split 3 split 4 worker Input files Map phase Intermediate files (on local disks) Reduce phase Output files
-(3) read (5) remote read
-worker worker
-(6) write
-output file 0 output file 1
-worker
-(4) local write
-Figure 1: Execution overview Inverted Index: The map function parses each document, and emits a sequence of word, document ID pairs. The reduce function accepts all pairs for a given word, sorts the corresponding document IDs and emits a word, list(document ID) pair. The set of all output pairs forms a simple inverted index. It is easy to augment this computation to keep track of word positions. Distributed Sort: The map function extracts the key from each record, and emits a key, record pair. The reduce function emits all pairs unchanged. This computation depends on the partitioning facilities described in Section 4.1 and the ordering properties described in Section 4.2. large clusters of commodity PCs connected together with switched Ethernet [4]. In our environment: (1) Machines are typically dual-processor x86 processors running Linux, with 2-4 GB of memory per machine. (2) Commodity networking hardware is used – typically either 100 megabits/second or 1 gigabit/second at the machine level, but averaging considerably less in overall bisection bandwidth. (3) A cluster consists of hundreds or thousands of machines, and therefore machine failures are common. (4) Storage is provided by inexpensive IDE disks attached directly to individual machines. A distributed ﬁle system [8] developed in-house is used to manage the data stored on these disks. The ﬁle system uses replication to provide availability and reliability on top of unreliable hardware. (5) Users submit jobs to a scheduling system. Each job consists of a set of tasks, and is mapped by the scheduler to a set of available machines within a cluster.
-3 Implementation
-Many different implementations of the MapReduce interface are possible. The right choice depends on the environment. For example, one implementation may be suitable for a small shared-memory machine, another for a large NUMA multi-processor, and yet another for an even larger collection of networked machines. This section describes an implementation targeted to the computing environment in wide use at Google: To appear in OSDI 2004
-3.1 Execution Overview
-The Map invocations are distributed across multiple machines by automatically partitioning the input data 3
-into a set of M splits. The input splits can be processed in parallel by different machines. Reduce invocations are distributed by partitioning the intermediate key space into R pieces using a partitioning function (e.g., hash(key) mod R). The number of partitions (R) and the partitioning function are speciﬁed by the user. Figure 1 shows the overall ﬂow of a MapReduce operation in our implementation. When the user program calls the MapReduce function, the following sequence of actions occurs (the numbered labels in Figure 1 correspond to the numbers in the list below): 1. The MapReduce library in the user program ﬁrst splits the input ﬁles into M pieces of typically 16 megabytes to 64 megabytes (MB) per piece (controllable by the user via an optional parameter). It then starts up many copies of the program on a cluster of machines. 2. One of the copies of the program is special – the master. The rest are workers that are assigned work by the master. There are M map tasks and R reduce tasks to assign. The master picks idle workers and assigns each one a map task or a reduce task. 3. A worker who is assigned a map task reads the contents of the corresponding input split. It parses key/value pairs out of the input data and passes each pair to the user-deﬁned Map function. The intermediate key/value pairs produced by the Map function are buffered in memory. 4. Periodically, the buffered pairs are written to local disk, partitioned into R regions by the partitioning function. The locations of these buffered pairs on the local disk are passed back to the master, who is responsible for forwarding these locations to the reduce workers. 5. When a reduce worker is notiﬁed by the master about these locations, it uses remote procedure calls to read the buffered data from the local disks of the map workers. When a reduce worker has read all intermediate data, it sorts it by the intermediate keys so that all occurrences of the same key are grouped together. The sorting is needed because typically many different keys map to the same reduce task. If the amount of intermediate data is too large to ﬁt in memory, an external sort is used. 6. The reduce worker iterates over the sorted intermediate data and for each unique intermediate key encountered, it passes the key and the corresponding set of intermediate values to the user’s Reduce function. The output of the Reduce function is appended to a ﬁnal output ﬁle for this reduce partition. To appear in OSDI 2004</p>
-<ol>
-<li>When all map tasks and reduce tasks have been completed, the master wakes up the user program. At this point, the MapReduce call in the user program returns back to the user code. After successful completion, the output of the mapreduce execution is available in the R output ﬁles (one per reduce task, with ﬁle names as speciﬁed by the user). Typically, users do not need to combine these R output ﬁles into one ﬁle – they often pass these ﬁles as input to another MapReduce call, or use them from another distributed application that is able to deal with input that is partitioned into multiple ﬁles.
-3.2 Master Data Structures
-The master keeps several data structures. For each map task and reduce task, it stores the state (idle, in-progress, or completed), and the identity of the worker machine (for non-idle tasks). The master is the conduit through which the location of intermediate ﬁle regions is propagated from map tasks to reduce tasks. Therefore, for each completed map task, the master stores the locations and sizes of the R intermediate ﬁle regions produced by the map task. Updates to this location and size information are received as map tasks are completed. The information is pushed incrementally to workers that have in-progress reduce tasks.
-3.3 Fault Tolerance
-Since the MapReduce library is designed to help process very large amounts of data using hundreds or thousands of machines, the library must tolerate machine failures gracefully. Worker Failure The master pings every worker periodically. If no response is received from a worker in a certain amount of time, the master marks the worker as failed. Any map tasks completed by the worker are reset back to their initial idle state, and therefore become eligible for scheduling on other workers. Similarly, any map task or reduce task in progress on a failed worker is also reset to idle and becomes eligible for rescheduling. Completed map tasks are re-executed on a failure because their output is stored on the local disk(s) of the failed machine and is therefore inaccessible. Completed reduce tasks do not need to be re-executed since their output is stored in a global ﬁle system. When a map task is executed ﬁrst by worker A and then later executed by worker B (because A failed), all 4
-workers executing reduce tasks are notiﬁed of the reexecution. Any reduce task that has not already read the data from worker A will read the data from worker B. MapReduce is resilient to large-scale worker failures. For example, during one MapReduce operation, network maintenance on a running cluster was causing groups of 80 machines at a time to become unreachable for several minutes. The MapReduce master simply re-executed the work done by the unreachable worker machines, and continued to make forward progress, eventually completing the MapReduce operation. Master Failure It is easy to make the master write periodic checkpoints of the master data structures described above. If the master task dies, a new copy can be started from the last checkpointed state. However, given that there is only a single master, its failure is unlikely; therefore our current implementation aborts the MapReduce computation if the master fails. Clients can check for this condition and retry the MapReduce operation if they desire. Semantics in the Presence of Failures When the user-supplied map and reduce operators are deterministic functions of their input values, our distributed implementation produces the same output as would have been produced by a non-faulting sequential execution of the entire program. We rely on atomic commits of map and reduce task outputs to achieve this property. Each in-progress task writes its output to private temporary ﬁles. A reduce task produces one such ﬁle, and a map task produces R such ﬁles (one per reduce task). When a map task completes, the worker sends a message to the master and includes the names of the R temporary ﬁles in the message. If the master receives a completion message for an already completed map task, it ignores the message. Otherwise, it records the names of R ﬁles in a master data structure. When a reduce task completes, the reduce worker atomically renames its temporary output ﬁle to the ﬁnal output ﬁle. If the same reduce task is executed on multiple machines, multiple rename calls will be executed for the same ﬁnal output ﬁle. We rely on the atomic rename operation provided by the underlying ﬁle system to guarantee that the ﬁnal ﬁle system state contains just the data produced by one execution of the reduce task. The vast majority of our map and reduce operators are deterministic, and the fact that our semantics are equivalent to a sequential execution in this case makes it very To appear in OSDI 2004
-easy for programmers to reason about their program’s behavior. When the map and/or reduce operators are nondeterministic, we provide weaker but still reasonable semantics. In the presence of non-deterministic operators, the output of a particular reduce task R1 is equivalent to the output for R1 produced by a sequential execution of the non-deterministic program. However, the output for a different reduce task R2 may correspond to the output for R2 produced by a different sequential execution of the non-deterministic program. Consider map task M and reduce tasks R1 and R2 . Let e(Ri ) be the execution of Ri that committed (there is exactly one such execution). The weaker semantics arise because e(R1 ) may have read the output produced by one execution of M and e(R2 ) may have read the output produced by a different execution of M .
-3.4 Locality
-Network bandwidth is a relatively scarce resource in our computing environment. We conserve network bandwidth by taking advantage of the fact that the input data (managed by GFS [8]) is stored on the local disks of the machines that make up our cluster. GFS divides each ﬁle into 64 MB blocks, and stores several copies of each block (typically 3 copies) on different machines. The MapReduce master takes the location information of the input ﬁles into account and attempts to schedule a map task on a machine that contains a replica of the corresponding input data. Failing that, it attempts to schedule a map task near a replica of that task’s input data (e.g., on a worker machine that is on the same network switch as the machine containing the data). When running large MapReduce operations on a signiﬁcant fraction of the workers in a cluster, most input data is read locally and consumes no network bandwidth.
-3.5 Task Granularity
-We subdivide the map phase into M pieces and the reduce phase into R pieces, as described above. Ideally, M and R should be much larger than the number of worker machines. Having each worker perform many different tasks improves dynamic load balancing, and also speeds up recovery when a worker fails: the many map tasks it has completed can be spread out across all the other worker machines. There are practical bounds on how large M and R can be in our implementation, since the master must make O(M + R) scheduling decisions and keeps O(M ∗ R) state in memory as described above. (The constant factors for memory usage are small however: the O(M ∗ R) piece of the state consists of approximately one byte of data per map task/reduce task pair.) 5
-Furthermore, R is often constrained by users because the output of each reduce task ends up in a separate output ﬁle. In practice, we tend to choose M so that each individual task is roughly 16 MB to 64 MB of input data (so that the locality optimization described above is most effective), and we make R a small multiple of the number of worker machines we expect to use. We often perform MapReduce computations with M = 200, 000 and R = 5, 000, using 2,000 worker machines.
-3.6 Backup Tasks
-One of the common causes that lengthens the total time taken for a MapReduce operation is a “straggler”: a machine that takes an unusually long time to complete one of the last few map or reduce tasks in the computation. Stragglers can arise for a whole host of reasons. For example, a machine with a bad disk may experience frequent correctable errors that slow its read performance from 30 MB/s to 1 MB/s. The cluster scheduling system may have scheduled other tasks on the machine, causing it to execute the MapReduce code more slowly due to competition for CPU, memory, local disk, or network bandwidth. A recent problem we experienced was a bug in machine initialization code that caused processor caches to be disabled: computations on affected machines slowed down by over a factor of one hundred. We have a general mechanism to alleviate the problem of stragglers. When a MapReduce operation is close to completion, the master schedules backup executions of the remaining in-progress tasks. The task is marked as completed whenever either the primary or the backup execution completes. We have tuned this mechanism so that it typically increases the computational resources used by the operation by no more than a few percent. We have found that this signiﬁcantly reduces the time to complete large MapReduce operations. As an example, the sort program described in Section 5.3 takes 44% longer to complete when the backup task mechanism is disabled.
-the intermediate key. A default partitioning function is provided that uses hashing (e.g. “hash(key) mod R”). This tends to result in fairly well-balanced partitions. In some cases, however, it is useful to partition data by some other function of the key. For example, sometimes the output keys are URLs, and we want all entries for a single host to end up in the same output ﬁle. To support situations like this, the user of the MapReduce library can provide a special partitioning function. For example, using “hash(Hostname(urlkey)) mod R” as the partitioning function causes all URLs from the same host to end up in the same output ﬁle.
-4.2 Ordering Guarantees
-We guarantee that within a given partition, the intermediate key/value pairs are processed in increasing key order. This ordering guarantee makes it easy to generate a sorted output ﬁle per partition, which is useful when the output ﬁle format needs to support efﬁcient random access lookups by key, or users of the output ﬁnd it convenient to have the data sorted.
-4.3 Combiner Function
-In some cases, there is signiﬁcant repetition in the intermediate keys produced by each map task, and the userspeciﬁed Reduce function is commutative and associative. A good example of this is the word counting example in Section 2.1. Since word frequencies tend to follow a Zipf distribution, each map task will produce hundreds or thousands of records of the form <the, 1>. All of these counts will be sent over the network to a single reduce task and then added together by the Reduce function to produce one number. We allow the user to specify an optional Combiner function that does partial merging of this data before it is sent over the network. The Combiner function is executed on each machine that performs a map task. Typically the same code is used to implement both the combiner and the reduce functions. The only difference between a reduce function and a combiner function is how the MapReduce library handles the output of the function. The output of a reduce function is written to the ﬁnal output ﬁle. The output of a combiner function is written to an intermediate ﬁle that will be sent to a reduce task. Partial combining signiﬁcantly speeds up certain classes of MapReduce operations. Appendix A contains an example that uses a combiner.
-4 Reﬁnements
-Although the basic functionality provided by simply writing Map and Reduce functions is sufﬁcient for most needs, we have found a few extensions useful. These are described in this section.
-4.1 Partitioning Function
-The users of MapReduce specify the number of reduce tasks/output ﬁles that they desire (R). Data gets partitioned across these tasks using a partitioning function on To appear in OSDI 2004
-4.4 Input and Output Types
-The MapReduce library provides support for reading input data in several different formats. For example, “text” 6
-mode input treats each line as a key/value pair: the key is the offset in the ﬁle and the value is the contents of the line. Another common supported format stores a sequence of key/value pairs sorted by key. Each input type implementation knows how to split itself into meaningful ranges for processing as separate map tasks (e.g. text mode’s range splitting ensures that range splits occur only at line boundaries). Users can add support for a new input type by providing an implementation of a simple reader interface, though most users just use one of a small number of predeﬁned input types. A reader does not necessarily need to provide data read from a ﬁle. For example, it is easy to deﬁne a reader that reads records from a database, or from data structures mapped in memory. In a similar fashion, we support a set of output types for producing data in different formats and it is easy for user code to add support for new output types.
-the signal handler sends a “last gasp” UDP packet that contains the sequence number to the MapReduce master. When the master has seen more than one failure on a particular record, it indicates that the record should be skipped when it issues the next re-execution of the corresponding Map or Reduce task.
-4.7 Local Execution
-Debugging problems in Map or Reduce functions can be tricky, since the actual computation happens in a distributed system, often on several thousand machines, with work assignment decisions made dynamically by the master. To help facilitate debugging, proﬁling, and small-scale testing, we have developed an alternative implementation of the MapReduce library that sequentially executes all of the work for a MapReduce operation on the local machine. Controls are provided to the user so that the computation can be limited to particular map tasks. Users invoke their program with a special ﬂag and can then easily use any debugging or testing tools they ﬁnd useful (e.g. gdb).
-4.5 Side-effects
-In some cases, users of MapReduce have found it convenient to produce auxiliary ﬁles as additional outputs from their map and/or reduce operators. We rely on the application writer to make such side-effects atomic and idempotent. Typically the application writes to a temporary ﬁle and atomically renames this ﬁle once it has been fully generated. We do not provide support for atomic two-phase commits of multiple output ﬁles produced by a single task. Therefore, tasks that produce multiple output ﬁles with cross-ﬁle consistency requirements should be deterministic. This restriction has never been an issue in practice.
-4.8 Status Information
-The master runs an internal HTTP server and exports a set of status pages for human consumption. The status pages show the progress of the computation, such as how many tasks have been completed, how many are in progress, bytes of input, bytes of intermediate data, bytes of output, processing rates, etc. The pages also contain links to the standard error and standard output ﬁles generated by each task. The user can use this data to predict how long the computation will take, and whether or not more resources should be added to the computation. These pages can also be used to ﬁgure out when the computation is much slower than expected. In addition, the top-level status page shows which workers have failed, and which map and reduce tasks they were processing when they failed. This information is useful when attempting to diagnose bugs in the user code.
-4.6 Skipping Bad Records
-Sometimes there are bugs in user code that cause the Map or Reduce functions to crash deterministically on certain records. Such bugs prevent a MapReduce operation from completing. The usual course of action is to ﬁx the bug, but sometimes this is not feasible; perhaps the bug is in a third-party library for which source code is unavailable. Also, sometimes it is acceptable to ignore a few records, for example when doing statistical analysis on a large data set. We provide an optional mode of execution where the MapReduce library detects which records cause deterministic crashes and skips these records in order to make forward progress. Each worker process installs a signal handler that catches segmentation violations and bus errors. Before invoking a user Map or Reduce operation, the MapReduce library stores the sequence number of the argument in a global variable. If the user code generates a signal, To appear in OSDI 2004
-4.9 Counters
-The MapReduce library provides a counter facility to count occurrences of various events. For example, user code may want to count total number of words processed or the number of German documents indexed, etc. To use this facility, user code creates a named counter object and then increments the counter appropriately in the Map and/or Reduce function. For example: 7
-Input (MB/s)
-Counter/<em> uppercase; uppercase = GetCounter(&quot;uppercase&quot;); map(String name, String contents): for each word w in contents: if (IsCapitalized(w)): uppercase-&gt;Increment(); EmitIntermediate(w, &quot;1&quot;);
-30000 20000 10000 0 20 40 60 80 100
-The counter values from individual worker machines are periodically propagated to the master (piggybacked on the ping response). The master aggregates the counter values from successful map and reduce tasks and returns them to the user code when the MapReduce operation is completed. The current counter values are also displayed on the master status page so that a human can watch the progress of the live computation. When aggregating counter values, the master eliminates the effects of duplicate executions of the same map or reduce task to avoid double counting. (Duplicate executions can arise from our use of backup tasks and from re-execution of tasks due to failures.) Some counter values are automatically maintained by the MapReduce library, such as the number of input key/value pairs processed and the number of output key/value pairs produced. Users have found the counter facility useful for sanity checking the behavior of MapReduce operations. For example, in some MapReduce operations, the user code may want to ensure that the number of output pairs produced exactly equals the number of input pairs processed, or that the fraction of German documents processed is within some tolerable fraction of the total number of documents processed.
-Seconds
-Figure 2: Data transfer rate over time disks, and a gigabit Ethernet link. The machines were arranged in a two-level tree-shaped switched network with approximately 100-200 Gbps of aggregate bandwidth available at the root. All of the machines were in the same hosting facility and therefore the round-trip time between any pair of machines was less than a millisecond. Out of the 4GB of memory, approximately 1-1.5GB was reserved by other tasks running on the cluster. The programs were executed on a weekend afternoon, when the CPUs, disks, and network were mostly idle.
-5.2 Grep
-The grep program scans through 1010 100-byte records, searching for a relatively rare three-character pattern (the pattern occurs in 92,337 records). The input is split into approximately 64MB pieces (M = 15000), and the entire output is placed in one ﬁle (R = 1). Figure 2 shows the progress of the computation over time. The Y-axis shows the rate at which the input data is scanned. The rate gradually picks up as more machines are assigned to this MapReduce computation, and peaks at over 30 GB/s when 1764 workers have been assigned. As the map tasks ﬁnish, the rate starts dropping and hits zero about 80 seconds into the computation. The entire computation takes approximately 150 seconds from start to ﬁnish. This includes about a minute of startup overhead. The overhead is due to the propagation of the program to all worker machines, and delays interacting with GFS to open the set of 1000 input ﬁles and to get the information needed for the locality optimization.
-5 Performance
-In this section we measure the performance of MapReduce on two computations running on a large cluster of machines. One computation searches through approximately one terabyte of data looking for a particular pattern. The other computation sorts approximately one terabyte of data. These two programs are representative of a large subset of the real programs written by users of MapReduce – one class of programs shufﬂes data from one representation to another, and another class extracts a small amount of interesting data from a large data set.
-5.3 Sort
-The sort program sorts 1010 100-byte records (approximately 1 terabyte of data). This program is modeled after the TeraSort benchmark [10]. The sorting program consists of less than 50 lines of user code. A three-line Map function extracts a 10-byte sorting key from a text line and emits the key and the 8
-5.1 Cluster Conﬁguration
-All of the programs were executed on a cluster that consisted of approximately 1800 machines. Each machine had two 2GHz Intel Xeon processors with HyperThreading enabled, 4GB of memory, two 160GB IDE To appear in OSDI 2004
-20000
-Input (MB/s)
-Input (MB/s)
-15000 10000 5000 0 500 1000
-Input (MB/s)
-Done
-20000 15000 10000 5000 0 500 1000
-20000
-Done
-Done
-15000 10000 5000 0 500 1000
-Shuffle (MB/s)
-15000 10000 5000 0 500 1000
-Shuffle (MB/s)
-500 1000
-20000
-Shuffle (MB/s)
-20000 15000 10000 5000 0
-20000 15000 10000 5000 0 500 1000
-Output (MB/s)
-Output (MB/s)
-15000 10000 5000 0 500 1000
-15000 10000 5000 0 500 1000
-Output (MB/s)
-20000
-20000
-20000 15000 10000 5000 0 500 1000
-Seconds
-Seconds
-Seconds
-(a) Normal execution
-(b) No backup tasks
-(c) 200 tasks killed
-Figure 3: Data transfer rates over time for different executions of the sort program original text line as the intermediate key/value pair. We used a built-in Identity function as the Reduce operator. This functions passes the intermediate key/value pair unchanged as the output key/value pair. The ﬁnal sorted output is written to a set of 2-way replicated GFS ﬁles (i.e., 2 terabytes are written as the output of the program). As before, the input data is split into 64MB pieces (M = 15000). We partition the sorted output into 4000 ﬁles (R = 4000). The partitioning function uses the initial bytes of the key to segregate it into one of R pieces. Our partitioning function for this benchmark has builtin knowledge of the distribution of keys. In a general sorting program, we would add a pre-pass MapReduce operation that would collect a sample of the keys and use the distribution of the sampled keys to compute splitpoints for the ﬁnal sorting pass. Figure 3 (a) shows the progress of a normal execution of the sort program. The top-left graph shows the rate at which input is read. The rate peaks at about 13 GB/s and dies off fairly quickly since all map tasks ﬁnish before 200 seconds have elapsed. Note that the input rate is less than for grep. This is because the sort map tasks spend about half their time and I/O bandwidth writing intermediate output to their local disks. The corresponding intermediate output for grep had negligible size. The middle-left graph shows the rate at which data is sent over the network from the map tasks to the reduce tasks. This shufﬂing starts as soon as the ﬁrst map task completes. The ﬁrst hump in the graph is for To appear in OSDI 2004 the ﬁrst batch of approximately 1700 reduce tasks (the entire MapReduce was assigned about 1700 machines, and each machine executes at most one reduce task at a time). Roughly 300 seconds into the computation, some of these ﬁrst batch of reduce tasks ﬁnish and we start shufﬂing data for the remaining reduce tasks. All of the shufﬂing is done about 600 seconds into the computation. The bottom-left graph shows the rate at which sorted data is written to the ﬁnal output ﬁles by the reduce tasks. There is a delay between the end of the ﬁrst shufﬂing period and the start of the writing period because the machines are busy sorting the intermediate data. The writes continue at a rate of about 2-4 GB/s for a while. All of the writes ﬁnish about 850 seconds into the computation. Including startup overhead, the entire computation takes 891 seconds. This is similar to the current best reported result of 1057 seconds for the TeraSort benchmark [18]. A few things to note: the input rate is higher than the shufﬂe rate and the output rate because of our locality optimization – most data is read from a local disk and bypasses our relatively bandwidth constrained network. The shufﬂe rate is higher than the output rate because the output phase writes two copies of the sorted data (we make two replicas of the output for reliability and availability reasons). We write two replicas because that is the mechanism for reliability and availability provided by our underlying ﬁle system. Network bandwidth requirements for writing data would be reduced if the underlying ﬁle system used erasure coding [14] rather than replication. 9
-In Figure 3 (b), we show an execution of the sort program with backup tasks disabled. The execution ﬂow is similar to that shown in Figure 3 (a), except that there is a very long tail where hardly any write activity occurs. After 960 seconds, all except 5 of the reduce tasks are completed. However these last few stragglers don’t ﬁnish until 300 seconds later. The entire computation takes 1283 seconds, an increase of 44% in elapsed time.
-Number of instances in source tree
-5.4 Effect of Backup Tasks
-1000 800 600 400 200 0 2003/03 2003/06 2003/09 2003/12 2004/03 2004/06 2004/09
-5.5 Machine Failures
-In Figure 3 (c), we show an execution of the sort program where we intentionally killed 200 out of 1746 worker processes several minutes into the computation. The underlying cluster scheduler immediately restarted new worker processes on these machines (since only the processes were killed, the machines were still functioning properly). The worker deaths show up as a negative input rate since some previously completed map work disappears (since the corresponding map workers were killed) and needs to be redone. The re-execution of this map work happens relatively quickly. The entire computation ﬁnishes in 933 seconds including startup overhead (just an increase of 5% over the normal execution time).
-Figure 4: MapReduce instances over time
-Number of jobs Average job completion time Machine days used Input data read Intermediate data produced Output data written Average worker machines per job Average worker deaths per job Average map tasks per job Average reduce tasks per job Unique map implementations Unique reduce implementations Unique map/reduce combinations 29,423 634 secs 79,186 days 3,288 TB 758 TB 193 TB 157 1.2 3,351 55 395 269 426
-6 Experience
-We wrote the ﬁrst version of the MapReduce library in February of 2003, and made signiﬁcant enhancements to it in August of 2003, including the locality optimization, dynamic load balancing of task execution across worker machines, etc. Since that time, we have been pleasantly surprised at how broadly applicable the MapReduce library has been for the kinds of problems we work on. It has been used across a wide range of domains within Google, including: • large-scale machine learning problems, • clustering problems for the Google News and Froogle products, • extraction of data used to produce reports of popular queries (e.g. Google Zeitgeist), • extraction of properties of web pages for new experiments and products (e.g. extraction of geographical locations from a large corpus of web pages for localized search), and • large-scale graph computations. To appear in OSDI 2004
-Table 1: MapReduce jobs run in August 2004 Figure 4 shows the signiﬁcant growth in the number of separate MapReduce programs checked into our primary source code management system over time, from 0 in early 2003 to almost 900 separate instances as of late September 2004. MapReduce has been so successful because it makes it possible to write a simple program and run it efﬁciently on a thousand machines in the course of half an hour, greatly speeding up the development and prototyping cycle. Furthermore, it allows programmers who have no experience with distributed and/or parallel systems to exploit large amounts of resources easily. At the end of each job, the MapReduce library logs statistics about the computational resources used by the job. In Table 1, we show some statistics for a subset of MapReduce jobs run at Google in August 2004.
-6.1 Large-Scale Indexing
-One of our most signiﬁcant uses of MapReduce to date has been a complete rewrite of the production index10
-ing system that produces the data structures used for the Google web search service. The indexing system takes as input a large set of documents that have been retrieved by our crawling system, stored as a set of GFS ﬁles. The raw contents for these documents are more than 20 terabytes of data. The indexing process runs as a sequence of ﬁve to ten MapReduce operations. Using MapReduce (instead of the ad-hoc distributed passes in the prior version of the indexing system) has provided several beneﬁts: • The indexing code is simpler, smaller, and easier to understand, because the code that deals with fault tolerance, distribution and parallelization is hidden within the MapReduce library. For example, the size of one phase of the computation dropped from approximately 3800 lines of C++ code to approximately 700 lines when expressed using MapReduce. • The performance of the MapReduce library is good enough that we can keep conceptually unrelated computations separate, instead of mixing them together to avoid extra passes over the data. This makes it easy to change the indexing process. For example, one change that took a few months to make in our old indexing system took only a few days to implement in the new system. • The indexing process has become much easier to operate, because most of the problems caused by machine failures, slow machines, and networking hiccups are dealt with automatically by the MapReduce library without operator intervention. Furthermore, it is easy to improve the performance of the indexing process by adding new machines to the indexing cluster.
-7 Related Work
-Many systems have provided restricted programming models and used the restrictions to parallelize the computation automatically. For example, an associative function can be computed over all preﬁxes of an N element array in log N time on N processors using parallel preﬁx computations [6, 9, 13]. MapReduce can be considered a simpliﬁcation and distillation of some of these models based on our experience with large real-world computations. More signiﬁcantly, we provide a fault-tolerant implementation that scales to thousands of processors. In contrast, most of the parallel processing systems have only been implemented on smaller scales and leave the details of handling machine failures to the programmer. Bulk Synchronous Programming [17] and some MPI primitives [11] provide higher-level abstractions that To appear in OSDI 2004
-make it easier for programmers to write parallel programs. A key difference between these systems and MapReduce is that MapReduce exploits a restricted programming model to parallelize the user program automatically and to provide transparent fault-tolerance. Our locality optimization draws its inspiration from techniques such as active disks [12, 15], where computation is pushed into processing elements that are close to local disks, to reduce the amount of data sent across I/O subsystems or the network. We run on commodity processors to which a small number of disks are directly connected instead of running directly on disk controller processors, but the general approach is similar. Our backup task mechanism is similar to the eager scheduling mechanism employed in the Charlotte System [3]. One of the shortcomings of simple eager scheduling is that if a given task causes repeated failures, the entire computation fails to complete. We ﬁx some instances of this problem with our mechanism for skipping bad records. The MapReduce implementation relies on an in-house cluster management system that is responsible for distributing and running user tasks on a large collection of shared machines. Though not the focus of this paper, the cluster management system is similar in spirit to other systems such as Condor [16]. The sorting facility that is a part of the MapReduce library is similar in operation to NOW-Sort [1]. Source machines (map workers) partition the data to be sorted and send it to one of R reduce workers. Each reduce worker sorts its data locally (in memory if possible). Of course NOW-Sort does not have the user-deﬁnable Map and Reduce functions that make our library widely applicable. River [2] provides a programming model where processes communicate with each other by sending data over distributed queues. Like MapReduce, the River system tries to provide good average case performance even in the presence of non-uniformities introduced by heterogeneous hardware or system perturbations. River achieves this by careful scheduling of disk and network transfers to achieve balanced completion times. MapReduce has a different approach. By restricting the programming model, the MapReduce framework is able to partition the problem into a large number of ﬁnegrained tasks. These tasks are dynamically scheduled on available workers so that faster workers process more tasks. The restricted programming model also allows us to schedule redundant executions of tasks near the end of the job which greatly reduces completion time in the presence of non-uniformities (such as slow or stuck workers). BAD-FS [5] has a very different programming model from MapReduce, and unlike MapReduce, is targeted to 11
-the execution of jobs across a wide-area network. However, there are two fundamental similarities. (1) Both systems use redundant execution to recover from data loss caused by failures. (2) Both use locality-aware scheduling to reduce the amount of data sent across congested network links. TACC [7] is a system designed to simplify construction of highly-available networked services. Like MapReduce, it relies on re-execution as a mechanism for implementing fault-tolerance.
-8 Conclusions
-The MapReduce programming model has been successfully used at Google for many different purposes. We attribute this success to several reasons. First, the model is easy to use, even for programmers without experience with parallel and distributed systems, since it hides the details of parallelization, fault-tolerance, locality optimization, and load balancing. Second, a large variety of problems are easily expressible as MapReduce computations. For example, MapReduce is used for the generation of data for Google’s production web search service, for sorting, for data mining, for machine learning, and many other systems. Third, we have developed an implementation of MapReduce that scales to large clusters of machines comprising thousands of machines. The implementation makes efﬁcient use of these machine resources and therefore is suitable for use on many of the large computational problems encountered at Google. We have learned several things from this work. First, restricting the programming model makes it easy to parallelize and distribute computations and to make such computations fault-tolerant. Second, network bandwidth is a scarce resource. A number of optimizations in our system are therefore targeted at reducing the amount of data sent across the network: the locality optimization allows us to read data from local disks, and writing a single copy of the intermediate data to local disk saves network bandwidth. Third, redundant execution can be used to reduce the impact of slow machines, and to handle machine failures and data loss.
-David Kramer, Shun-Tak Leung, and Josh Redstone for their work in developing GFS. We would also like to thank Percy Liang and Olcan Sercinoglu for their work in developing the cluster management system used by MapReduce. Mike Burrows, Wilson Hsieh, Josh Levenberg, Sharon Perl, Rob Pike, and Debby Wallach provided helpful comments on earlier drafts of this paper. The anonymous OSDI reviewers, and our shepherd, Eric Brewer, provided many useful suggestions of areas where the paper could be improved. Finally, we thank all the users of MapReduce within Google’s engineering organization for providing helpful feedback, suggestions, and bug reports.
-References
-[1] Andrea C. Arpaci-Dusseau, Remzi H. Arpaci-Dusseau, David E. Culler, Joseph M. Hellerstein, and David A. Patterson. High-performance sorting on networks of workstations. In Proceedings of the 1997 ACM SIGMOD International Conference on Management of Data, Tucson, Arizona, May 1997. [2] Remzi H. Arpaci-Dusseau, Eric Anderson, Noah Treuhaft, David E. Culler, Joseph M. Hellerstein, David Patterson, and Kathy Yelick. Cluster I/O with River: Making the fast case common. In Proceedings of the Sixth Workshop on Input/Output in Parallel and Distributed Systems (IOPADS ’99), pages 10–22, Atlanta, Georgia, May 1999. [3] Arash Baratloo, Mehmet Karaul, Zvi Kedem, and Peter Wyckoff. Charlotte: Metacomputing on the web. In Proceedings of the 9th International Conference on Parallel and Distributed Computing Systems, 1996. [4] Luiz A. Barroso, Jeffrey Dean, and Urs H¨ lzle. Web o search for a planet: The Google cluster architecture. IEEE Micro, 23(2):22–28, April 2003. [5] John Bent, Douglas Thain, Andrea C.Arpaci-Dusseau, Remzi H. Arpaci-Dusseau, and Miron Livny. Explicit control in a batch-aware distributed ﬁle system. In Proceedings of the 1st USENIX Symposium on Networked Systems Design and Implementation NSDI, March 2004. [6] Guy E. Blelloch. Scans as primitive parallel operations. IEEE Transactions on Computers, C-38(11), November 1989. [7] Armando Fox, Steven D. Gribble, Yatin Chawathe, Eric A. Brewer, and Paul Gauthier. Cluster-based scalable network services. In Proceedings of the 16th ACM Symposium on Operating System Principles, pages 78– 91, Saint-Malo, France, 1997. [8] Sanjay Ghemawat, Howard Gobioff, and Shun-Tak Leung. The Google ﬁle system. In 19th Symposium on Operating Systems Principles, pages 29–43, Lake George, New York, 2003.
-Acknowledgements
-Josh Levenberg has been instrumental in revising and extending the user-level MapReduce API with a number of new features based on his experience with using MapReduce and other people’s suggestions for enhancements. MapReduce reads its input from and writes its output to the Google File System [8]. We would like to thank Mohit Aron, Howard Gobioff, Markus Gutschke, To appear in OSDI 2004
-12
-[9] S. Gorlatch. Systematic efﬁcient parallelization of scan and other list homomorphisms. In L. Bouge, P. Fraigniaud, A. Mignotte, and Y. Robert, editors, Euro-Par’96. Parallel Processing, Lecture Notes in Computer Science 1124, pages 401–408. Springer-Verlag, 1996. [10] Jim Gray. Sort benchmark home page. <a href="http://research.microsoft.com/barc/SortBenchmark/" target="_blank">http://research.microsoft.com/barc/SortBenchmark/</a>. [11] William Gropp, Ewing Lusk, and Anthony Skjellum. Using MPI: Portable Parallel Programming with the Message-Passing Interface. MIT Press, Cambridge, MA, 1999. [12] L. Huston, R. Sukthankar, R. Wickremesinghe, M. Satyanarayanan, G. R. Ganger, E. Riedel, and A. Ailamaki. Diamond: A storage architecture for early discard in interactive search. In Proceedings of the 2004 USENIX File and Storage Technologies FAST Conference, April 2004. [13] Richard E. Ladner and Michael J. Fischer. Parallel preﬁx computation. Journal of the ACM, 27(4):831–838, 1980. [14] Michael O. Rabin. Efﬁcient dispersal of information for security, load balancing and fault tolerance. Journal of the ACM, 36(2):335–348, 1989. [15] Erik Riedel, Christos Faloutsos, Garth A. Gibson, and David Nagle. Active disks for large-scale data processing. IEEE Computer, pages 68–74, June 2001. [16] Douglas Thain, Todd Tannenbaum, and Miron Livny. Distributed computing in practice: The Condor experience. Concurrency and Computation: Practice and Experience, 2004. [17] L. G. Valiant. A bridging model for parallel computation. Communications of the ACM, 33(8):103–111, 1997. [18] Jim Wyllie. Spsort: How to sort a terabyte quickly. <a href="http://alme1.almaden.ibm.com/cs/spsort.pdf" target="_blank">http://alme1.almaden.ibm.com/cs/spsort.pdf</a>.
-if (start &lt; i) Emit(text.substr(start,i-start),&quot;1&quot;); } } }; REGISTER_MAPPER(WordCounter); // User’s reduce function class Adder : public Reducer { virtual void Reduce(ReduceInput/</em> input) { // Iterate over all entries with the // same key and add the values int64 value = 0; while (!input-&gt;done()) { value += StringToInt(input-&gt;value()); input-&gt;NextValue(); } // Emit sum for input-&gt;key() Emit(IntToString(value)); } }; REGISTER_REDUCER(Adder); int main(int argc, char/<em>/</em> argv) { ParseCommandLineFlags(argc, argv); MapReduceSpecification spec; // Store list of input files into &quot;spec&quot; for (int i = 1; i &lt; argc; i++) { MapReduceInput/<em> input = spec.add_input(); input-&gt;set_format(&quot;text&quot;); input-&gt;set_filepattern(argv[i]); input-&gt;set_mapper_class(&quot;WordCounter&quot;); } // Specify the output files: // /gfs/test/freq-00000-of-00100 // /gfs/test/freq-00001-of-00100 // ... MapReduceOutput/</em> out = spec.output(); out-&gt;set_filebase(&quot;/gfs/test/freq&quot;); out-&gt;set_num_tasks(100); out-&gt;set_format(&quot;text&quot;); out-&gt;set_reducer_class(&quot;Adder&quot;); // Optional: do partial sums within map // tasks to save network bandwidth out-&gt;set_combiner_class(&quot;Adder&quot;); // Tuning parameters: use at most 2000 // machines and 100 MB of memory per task spec.set_machines(2000); spec.set_map_megabytes(100); spec.set_reduce_megabytes(100); // Now run it MapReduceResult result; if (!MapReduce(spec, &amp;result)) abort(); // Done: ’result’ structure contains info // about counters, time taken, number of // machines used, etc. return 0; }
-A
-Word Frequency
-This section contains a program that counts the number of occurrences of each unique word in a set of input ﬁles speciﬁed on the command line.
-/#include &quot;mapreduce/mapreduce.h&quot; // User’s map function class WordCounter : public Mapper { public: virtual void Map(const MapInput&amp; input) { const string&amp; text = input.value(); const int n = text.size(); for (int i = 0; i &lt; n; ) { // Skip past leading whitespace while ((i &lt; n) &amp;&amp; isspace(text[i])) i++; // Find word end int start = i; while ((i &lt; n) &amp;&amp; !isspace(text[i])) i++;
-To appear in OSDI 2004
-13</li>
-</ol>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--mapreduce-osdi04/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--mapreduce-osdi04" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DIV--div显示滚动条和控制滚动条属性的css代码-老吧网2/">div显示滚动条和控制滚动条属性的css代码 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-DIV--div显示滚动条和控制滚动条属性的css代码-老吧网2/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="div-css-2-">div显示滚动条和控制滚动条属性的css代码 - 老吧网 (2)</h1>
-<h2 id="-http-www-lao8-org-"><a href="http://www.lao8.org/" target="_blank">老吧</a></h2>
-<ul>
-<li>疲惫的一天，记录点滴的进步与成长，还在那个老吧，不见不散</li>
-</ul>
-<p><a href="http://www.lao8.org/" target="_blank">首页</a> <a href="http://www.lao8.org/user/8/seo/" title="seo技术 网站推广 搜索引擎优化" target="_blank">网站推广</a> <a href="http://www.lao8.org/user/8/photo/" title="摄影技术 摄影欣赏 摄影作品 原创摄影" target="_blank">摄影</a> <a href="http://www.lao8.org/user/8/design/" title="平面设计 创意作品" target="_blank">创意设计</a> <a href="http://www.lao8.org/user/8/asp/" title="asp ajax" target="_blank">网站技术</a> <a href="http://www.lao8.org/user/8/photoshop/" title="Photoshop教程 ps教程" target="_blank">Photoshop教程</a> <a href="http://www.lao8.org/user/8/20081413558/" title="营销" target="_blank">营销</a> <a href="http://www.lao8.org/user/8/200815112636/" title="艺术图库" target="_blank">艺术图库</a> <a href="http://www.lao8.org/user/8/2008214170947/" title="小游戏" target="_blank">小游戏</a> <a href="http://www.lao8.org/user/8/TradeEnglish/" title="外贸英语" target="_blank">外贸英语</a> <a href="http://www.lao8.org/user/8/2008815101140/" title="热播电影" target="_blank">热播电影</a> <a href="http://www.lao8.org/user/8/2008102493244/" title="ebay开店技巧" target="_blank">ebay开店技巧</a> <a href="http://www.lao8.org/user/8/2009719122450/" title="SQL数据库" target="_blank">SQL数据库</a> <a href="http://www.lao8.org/user/8/200986105026/" title="服务器安全" target="_blank">服务器安全</a> <a href="http://www.lao8.org/user/8/200987120553/" title="索尼 美能达 原厂定焦 广角镜头 sony minolta meinongda suoni" target="_blank">Alpha原厂定焦广角镜头</a> <a href="http://www.lao8.org/user/8/200987120644/" title="索尼 美能达 原厂定焦 标准镜头 sony minolta meinongda suoni 标头" target="_blank">Alpha原厂定焦标准镜头</a> <a href="http://www.lao8.org/user/8/200987120750/" title="索尼 美能达 原厂望远 定焦镜头 sony minolta meinongda suoni" target="_blank">Alpha原厂望远定焦镜头</a> <a href="http://www.lao8.org/user/8/200987120832/" title="索尼 美能达 原厂广角变焦镜头 sony minolta meinongda suoni" target="_blank">Alpha原厂广角变焦镜头</a> <a href="http://www.lao8.org/user/8/sony_fuchang/" title="sony 副厂镜头 索尼副厂镜头 索尼副厂变焦镜头 索尼副厂自动镜头 索尼副厂单反镜头 minolta meinongda suoni" target="_blank">索尼单反副厂变焦镜头</a> <a href="http://www.lao8.org/user/8/200981731112/" title="Godaddy(GD)美国空间" target="_blank">Godaddy(GD)美国空间</a> <a href="http://www.lao8.org/user/8/200981741553/" title="索尼副厂定焦镜头" target="_blank">索尼副厂定焦镜头</a> || <a href="http://s.lao8.org/" target="_blank">联合搜索</a> <a href="http://www.lao8.org/fanyi.asp" target="_blank">在线翻译</a> <a href="http://www.lao8.org/liuyan/" target="_blank">留言</a></p>
-<h1 id="-div-css-"><a href="">div显示滚动条和控制滚动条属性的css代码</a></h1>
-<p>分类：<a href="http://www.lao8.org/user/8/asp" target="_blank">网站技术</a> | <a href="http://www.lao8.org/user/8" target="_blank">lao8</a>发表于 2009-6-9 15:44:00</p>
-<p><strong>div显示滚动条的css代码</strong></p>
-<div style="width:260px;height:120px; overflow:scroll; border:1px solid;"> 这里是你要显示的内容 </div>
-
-<p>效果如下：</p>
-<h3 id="-">显示滚动条的代码</h3>
-<p><strong>div显示上下滚动条的css代码</strong></p>
-<p><div style="width:260px;height:120px; overflow-y:scroll; border:1px solid;"> 这里是你要显示的内容 </div></p>
-<h3 id="div-">div只显示上下滚动条</h3>
-<p>OVERFLOW-Y:scroll;这段是关键</p>
-<p><strong>修改div滚动条颜色的css代码</strong></p>
-<p><div style="width:260px;height:120px; overflow-y:scroll; scrollbar-base-color:/#ff6600; border:1px solid;"> 这里是你要显示的内容 </div>
-修改滚动条颜色的代码</p>
-<ul>
-<li>SCROLLBAR-FACE-COLOR(立体滚动条凸出部分的颜色)</li>
-<li>SCROLLBAR-HIGHLIGHT-COLOR(滚动条空白部分的颜色)</li>
-<li>SCROLLBAR-SHADOW-COLOR(立体滚动条阴影的颜色)</li>
-<li>SCROLLBAR-ARROW-COLOR(上下按钮上三角箭头的颜色)</li>
-<li>SCROLLBAR-BASE-COLOR(滚动条的基本颜色)</li>
-<li><p>SCROLLBAR-DARK-SHADOW-COLOR(立体滚动条强阴影的颜色)</p>
-</li>
-<li><p>来源：<strong>原创</strong></p>
-</li>
-<li><strong>版权声明：</strong>版权所有，转载时必须以链接形式注明作者和原始出处及本声明。</li>
-<li>原创作者：<strong><a href="http://www.lao8.org/user/8" target="_blank">lao8</a></strong></li>
-<li>本文链接地址：<a href="http://www.lao8.org/html/8/2009-6-9/div_css/" target="_blank">http://www.lao8.org/html/8/2009-6-9/div_css/</a></li>
-<li>文章名：<a href="">div显示滚动条和控制滚动条属性的css代码</a>
-标签:<a href="http://www.lao8.org/s_div.html" target="_blank">div</a> <a href="http://www.lao8.org/s_%E6%98%BE%E7%A4%BA%E6%BB%9A%E5%8A%A8%E6%9D%A1.html" target="_blank">显示滚动条</a></li>
-</ul>
-<p><a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt=""></a> <a href=""><img src="" alt="收藏到收藏夹"></a></p>
-<h3 id="-div-">相关&quot;div 显示滚动条&quot;文章</h3>
-<ul>
-<li><a href="http://www.lao8.org/html/8/2008-1-21/2008121182204.html" target="_blank">css控制DIV透明度</a></li>
-<li><a href="http://www.lao8.org/html/8/2007-12-6/2007126174458.html" target="_blank">根据dreamweaver cs3 模板布局学习网站优化</a></li>
-</ul>
-<h3 id="-">网友点评</h3>
-<p><strong><a href="http://www.lusongsong.com/" target="_blank">卢松松</a></strong> 2009-6-12 14:01:00 | <a href="http://www.lao8.org/huifu878.html" target="_blank">[回复]</a><a href=""> </a></p>
-<p>拜读了老吧的创作。受益匪浅！
-<strong><a href="http://www.gp173.com/" target="_blank">股票行情</a></strong> 2009-6-15 11:25:00 | <a href="http://www.lao8.org/huifu883.html" target="_blank">[回复]</a><a href=""> </a></p>
-<p>学一个是一个 博主好崇拜你哦
-<strong><a href="http://www.bgtieqi.cn/" target="_blank">本田摩托车</a></strong> 2009-6-15 11:26:00 | <a href="http://www.lao8.org/huifu884.html" target="_blank">[回复]</a><a href=""> </a></p>
-<p>好想认真学学
-<strong><a href="http://www.yigenangua.cn/" target="_blank">亦歌</a></strong> 2009-7-11 8:50:00 | <a href="http://www.lao8.org/huifu905.html" target="_blank">[回复]</a><a href=""> </a></p>
-<p>不错，不过好像滚动条还是默认的好看。
-<strong><a href="http://www.sknys.cn/" target="_blank">sknys</a></strong> 2009-7-16 13:51:00 | <a href="http://www.lao8.org/huifu911.html" target="_blank">[回复]</a><a href=""> </a></p>
-<p>链你一下网页编程专题网www.sknys.cn</p>
-<h3 id="-">发表见解</h3>
-<p>username(必填)
-email(必填)
-website
-提交</p>
-<h3 id="-">站内搜索</h3>
-<p>输入您的搜索字词   Web www.lao8.org 提交搜索表单</p>
-<h3 id="-">按分类归档</h3>
-<ul>
-<li><a href="http://www.lao8.org/user/8/seo/" title="seo技术 网站推广 搜索引擎优化" target="_blank">网站推广</a> （114）</li>
-<li><a href="http://www.lao8.org/user/8/photo/" title="摄影技术 摄影欣赏 摄影作品 原创摄影" target="_blank">摄影</a> （45）</li>
-<li><a href="http://www.lao8.org/user/8/feel/" title="生活体会 情感记录 原创文学" target="_blank">感悟生活</a> （11）</li>
-<li><a href="http://www.lao8.org/user/8/design/" title="平面设计 创意作品" target="_blank">创意设计</a> （9）</li>
-<li><a href="http://www.lao8.org/user/8/cg/" title="cg插画 原创插画 cg插图 插图设计" target="_blank">插画设计</a> （1）</li>
-<li><a href="http://www.lao8.org/user/8/asp/" title="asp ajax" target="_blank">网站技术</a> （42）</li>
-<li><a href="http://www.lao8.org/user/8/life/" title="生活琐碎" target="_blank">生活杂记</a> （133）</li>
-<li><a href="http://www.lao8.org/user/8/photoshop/" title="Photoshop教程 ps教程" target="_blank">Photoshop教程</a> （3）</li>
-<li><a href="http://www.lao8.org/user/8/2007123171603/" title="房产" target="_blank">房产</a> （7）</li>
-<li><a href="http://www.lao8.org/user/8/20071212164833/" title="老吧网改进进度" target="_blank">老吧网改进进度</a> （17）</li>
-<li><a href="http://www.lao8.org/user/8/20081413558/" title="营销" target="_blank">营销</a> （18）</li>
-<li><a href="http://www.lao8.org/user/8/200814112406/" title="社会评论" target="_blank">社会评论</a> （7）</li>
-<li><a href="http://www.lao8.org/user/8/200815112636/" title="艺术图库" target="_blank">艺术图库</a> （5）</li>
-<li><a href="http://www.lao8.org/user/8/200811490808/" title="网界动态" target="_blank">网界动态</a> （16）</li>
-<li><a href="http://www.lao8.org/user/8/2008125162006/" title="搞笑娱乐" target="_blank">搞笑娱乐</a> （8）</li>
-<li><a href="http://www.lao8.org/user/8/2008214170947/" title="小游戏" target="_blank">小游戏</a> （2）</li>
-<li><a href="http://www.lao8.org/user/8/200835101334/" title="实用小软件" target="_blank">实用小软件</a> （0）</li>
-<li><a href="http://www.lao8.org/user/8/TradeEnglish/" title="外贸英语" target="_blank">外贸英语</a> （6）</li>
-<li><a href="http://www.lao8.org/user/8/2008815101140/" title="热播电影" target="_blank">热播电影</a> （4）</li>
-<li><a href="http://www.lao8.org/user/8/2008102493244/" title="ebay开店技巧" target="_blank">ebay开店技巧</a> （6）</li>
-<li><a href="http://www.lao8.org/user/8/2009719122450/" title="SQL数据库" target="_blank">SQL数据库</a> （8）</li>
-<li><a href="http://www.lao8.org/user/8/200986105026/" title="服务器安全" target="_blank">服务器安全</a> （1）</li>
-<li><a href="http://www.lao8.org/user/8/200987111345/" title="索尼单反专区" target="_blank">索尼单反专区</a> （0）</li>
-<li><a href="http://www.lao8.org/user/8/200987120553/" title="索尼 美能达 原厂定焦 广角镜头 sony minolta meinongda suoni" target="_blank">Alpha原厂定焦广角镜头</a> （7）</li>
-<li><a href="http://www.lao8.org/user/8/200987120644/" title="索尼 美能达 原厂定焦 标准镜头 sony minolta meinongda suoni 标头" target="_blank">Alpha原厂定焦标准镜头</a> （4）</li>
-<li><a href="http://www.lao8.org/user/8/200987120750/" title="索尼 美能达 原厂望远 定焦镜头 sony minolta meinongda suoni" target="_blank">Alpha原厂望远定焦镜头</a> （4）</li>
-<li><a href="http://www.lao8.org/user/8/200987120832/" title="索尼 美能达 原厂广角变焦镜头 sony minolta meinongda suoni" target="_blank">Alpha原厂广角变焦镜头</a> （17）</li>
-<li><a href="http://www.lao8.org/user/8/sony_fuchang/" title="sony 副厂镜头 索尼副厂镜头 索尼副厂变焦镜头 索尼副厂自动镜头 索尼副厂单反镜头 minolta meinongda suoni" target="_blank">索尼单反副厂变焦镜头</a> （1）</li>
-<li><a href="http://www.lao8.org/user/8/200981731112/" title="Godaddy(GD)美国空间" target="_blank">Godaddy(GD)美国空间</a> （3）</li>
-<li><a href="http://www.lao8.org/user/8/200981741553/" title="索尼副厂定焦镜头" target="_blank">索尼副厂定焦镜头</a> （1）</li>
-</ul>
-<h3 id="lao8-">lao8 最新文章：</h3>
-<ul>
-<li><a href="http://www.lao8.org/html/8/2009-12-11/20091211125038.html" target="_blank">春运，又是春运，新版火车票貌似不能解决倒票吧</a></li>
-<li><a href="http://www.lao8.org/html/8/2009-12-10/suoni_shengji_gujian/" target="_blank">sony索尼 a700 怎样升级固件？</a></li>
-<li><a href="http://www.lao8.org/html/8/2009-12-10/a700/" target="_blank">怎样查看sony（索尼）a700 固件版本</a></li>
-<li><a href="http://www.lao8.org/html/8/2009-10-28/20091028114200.html" target="_blank">2009天平山红枫节的时间</a></li>
-<li><a href="http://www.lao8.org/html/8/2009-10-25/20091025100338.html" target="_blank">可恶的手机诈骗</a></li>
-<li><a href="http://www.lao8.org/html/8/2009-10-24/20091024105546.html" target="_blank">Beta 是什么意思？</a></li>
-<li><a href="http://www.lao8.org/html/8/2009-10-22/20091022234259.html" target="_blank">阿尔法、贝塔是怎么打出来的？</a></li>
-<li><a href="http://www.lao8.org/html/8/2009-10-13/2009101330617.html" target="_blank">熬夜为什么会口臭？</a></li>
-<li><a href="http://www.lao8.org/html/8/2009-10-10/2009101033225.html" target="_blank">柔光箱、反光伞、柔光伞的效果区别</a></li>
-<li><a href="http://www.lao8.org/html/8/2009-10-10/2009101030532.html" target="_blank">爱上asp.net</a></li>
-</ul>
-<p><a href="http://www.miibeian.gov.cn/" target="_blank">苏ICP备07500238号</a> | <a href="mailto:tc_show@126.com">tc_show@126.com</a> <a href="http://www.51.la/?001536816" title="51.la 专业、免费、强健的访问统计" target="_blank">网站统计</a> <img src="http://web.51.la:82/go.asp?svid=1&amp;id=1536816&amp;tpages=1&amp;ttimes=1&amp;tzone=8&amp;tcolor=32&amp;sSize=1280,1024&amp;referrer=http%3A//www.google.cn/search%3Fhl%3Dzh-CN&amp;newwindow%3D1&amp;q%3Ddiv+%E6%BB%9A%E5%8A%A8%E6%9D%A1&amp;aq%3D2g&amp;oq%3Ddiv++&amp;vpage=http%3A//www.lao8.org/html/8/2009-6-9/div_css/" alt="">
-<strong><a href="http://sitemap.cn.yahoo.com/search?p=http%3A%2F%2Fwww.lao8.org%2Fhtml%2F8%2F2009-6-9%2Fdiv_css%2F&amp;bwm=i" target="_blank">1</a></strong> 链向本页</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DIV/">DIV</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DIV/" class="label label-primary">DIV</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DIV--div显示滚动条和控制滚动条属性的css代码-老吧网2/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DIV--div显示滚动条和控制滚动条属性的css代码-老吧网2" data-count-type="comments">暂无评论</a></span>
+<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--hdfs_design/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--hdfs_design" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -846,283 +1091,563 @@ website
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-DIV--DIV滚动条的问题/">DIV滚动条的问题</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-hadoop--Hadoop121编译Eclipse插件/">Hadoop 1.2.1编译Eclipse插件</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-DIV--DIV滚动条的问题/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-hadoop--Hadoop121编译Eclipse插件/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="div-">DIV滚动条的问题</h1>
-<p><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#" target="_blank"><img src="" alt=""></a></p>
-<ul>
-<li><a href="http://www.csdn.net/" target="_blank">首页</a>|</li>
-<li><a href="http://hi.csdn.net/" target="_blank">空间</a>|</li>
-<li><a href="http://news.csdn.net/" target="_blank">新闻</a>|</li>
-<li><a href="http://bbs.csdn.net/" target="_blank">论坛</a>|</li>
-<li><a href="http://blog.csdn.net/" target="_blank">博客</a>|</li>
-<li><a href="http://download.csdn.net/" target="_blank">下载</a>|</li>
-<li><a href="http://book.csdn.net/" target="_blank">读书</a>|</li>
-<li><a href="http://wz.csdn.net/" target="_blank">网摘</a>|</li>
-<li><a href="http://live.csdn.net/" target="_blank">视频</a>|</li>
-<li><a href="http://www.dearbook.com.cn/" target="_blank">书店</a>|</li>
-<li><a href="http://www.programmer.com.cn/" target="_blank">程序员</a>|</li>
-<li><a href="http://www.itliyu.com/" target="_blank">求职招聘</a>|</li>
-<li><a href="http://prj.csdn.net/" target="_blank">项目交易</a>|</li>
-<li><a href="http://training.csdn.net/" target="_blank">培训</a>|</li>
-<li><p><a href="http://daohang.csdn.net/" target="_blank">网址</a></p>
-</li>
-<li><p>欢迎您：<a href="http://hi.csdn.net/my.html" target="_blank">游客</a>|<a href="http://forum.csdn.net/User/LoginOut.aspx" target="_blank">退出</a>|<a href="http://passport.csdn.net/UserLogin.aspx?from=http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html" target="_blank">登录</a><a href="http://passport.csdn.net/CSDNUserRegister.aspx" target="_blank">注册</a>|<a href="http://community.csdn.net/Help/HelpCenter.htm" target="_blank">帮助</a>  <a href=""></a> <a href=""></a></p>
-</li>
-</ul>
-<p><a href="http://www.csdn.net/" target="_blank">CSDN</a>-<a href="http://community.csdn.net/" target="_blank">CSDN社区</a>-<a href="http://forum.csdn.net/BList/DotNET/" target="_blank">.NET技术</a>-<a href="http://forum.csdn.net/SList/ASPDotNET//" target="_blank">ASP.NET</a></p>
-<ul>
-<li><p><a href="">管理菜单</a></p>
-</li>
-<li><p><a href="http://forum.csdn.net/PointForum/BuildTopic.aspx?topicId=400863e7-3adf-4a41-adaf-0d790e6a3115&amp;postDate=2007-05-25+13%3a10%3a00&amp;return=http%3A%2F%2Ftopic.csdn.net%2Fu%2F20070525%2F13%2F400863e7-3adf-4a41-adaf-0d790e6a3115.html" target="_blank">生成帖子</a></p>
-</li>
-<li><a href="">置顶</a></li>
-<li><a href="">推荐</a></li>
-<li><a href="">取消推荐</a></li>
-<li><a href="">锁定</a></li>
-<li><a href="">解锁</a></li>
-<li><a href="">移动</a></li>
-<li><a href="">编辑</a></li>
-<li><a href="">删除</a></li>
-<li><a href="">帖子加分</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Manage/TopicManageView.aspx?forumID=3036657c-277c-476c-982d-75f154e09050&amp;topicID=400863e7-3adf-4a41-adaf-0d790e6a3115&amp;date=2007-05-25+13%3a10%3a00&amp;v=13" target="_blank">结  帖</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Forum/PostTopic.aspx?forumID=3036657c-277c-476c-982d-75f154e09050" target="_blank">发  帖</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#r_achor" target="_blank">回  复</a></li>
-</ul>
-<h1 id="-div-50-megshin-"><a href="">收藏</a> 不显示删除回复显示所有回复显示星级回复显示得分回复  <a href=""></a>DIV滚动条的问题<em>[问题点数:50分，结帖人:megshin]</em></h1>
-<ul>
-<li><a href="http://hi.csdn.net/megshin" target="_blank"><img src="" alt=""></a></li>
-<li><a href="http://hi.csdn.net/megshin" target="_blank">megshin</a></li>
-<li>(上帝的废品)
-*</li>
-<li>等　级：<img src="" alt=""></li>
-<li>结帖率：57.14%</li>
-<li><em>楼主</em>发表于：2007-05-25 13:10:00 我在DataList里套了一个DataGrid
-循环显示的时候，有些DataGrid里只有一条记录，但是有一些里面很多
-我想在条数多的时候加上滚动条
-在DataGrid外面加了一个DIV，设置了高度（115px），但是只有一条记录的后面就有一片空白
-怎么样才能使高度没达到115px的时候，有多高显示多高
-超过115px加上滚动条。
-谢谢。。 * <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>
-回复次数：13    * <a href="http://hi.csdn.net/bwangel" target="_blank"><img src="&quot;bwangel用户自定义头像&quot;" alt="bwangel用户头像"></a></li>
-<li><a href="http://hi.csdn.net/bwangel" target="_blank">bwangel</a></li>
-<li>(我的回复只代表我个人的看法)
-*</li>
-<li>等　级：<img src="" alt="">
-<em>/#1楼 得分：10回复于：2007-05-25 13:29:43 <a href=""></a> 好象在FF里可以设一个最大高度,在IE里不行.</em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>
-精华推荐：<a href="http://topic.csdn.net/u/20090427/16/031d9b1a-2abe-4825-8ac2-82ae9d25bc24.html" target="_blank">来讲WPF的编程经验吧！</a>  * <a href="http://hi.csdn.net/ckpckphaha" target="_blank"><img src="&quot;ckpckphaha用户自定义头像&quot;" alt="ckpckphaha用户头像"></a></li>
-<li><a href="http://hi.csdn.net/ckpckphaha" target="_blank">ckpckphaha</a></li>
-<li>(翅膀卷起风暴 心生呼啸)
-*</li>
-<li>等　级：<img src="" alt="">
-<em>/#2楼 得分：20回复于：2007-05-25 13:30:37 <a href=""></a> 办法1：
-看你页面用什么规范了。
-用要实现你的要求
-页面html头中加入规范
-&lt;!DOCTYPE   html   PUBLIC   &quot;-//W3C//DTD   XHTML   1.0   Strict//EN &quot;   &quot;<a href="http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd" target="_blank">http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd</a> &quot;&gt;
-<html   xmlns= "http://www.w3.org/1999/xhtml ">
-然后设置div   style＝“height:125px;scroll:auto &quot;
-即可。
-因为： <html   xmlns= "http://www.w3.org/1999/xhtml "> 规范，当容器内内容小于规定容器高度时，容器会自己缩小，无视容器高度设置。
-办法2：
-加js。判断div.width大于115时。div.style.scroll=auto;</em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>
-精华推荐：<a href="http://topic.csdn.net/u/20091027/21/1a2d7c9b-be56-4aca-85d3-4a3ac05a0b15.html" target="_blank">版主帮忙推荐一下.招募文本编辑器测试志愿者</a>  * <a href="http://hi.csdn.net/bwangel" target="_blank"><img src="&quot;bwangel用户自定义头像&quot;" alt="bwangel用户头像"></a></li>
-<li><a href="http://hi.csdn.net/bwangel" target="_blank">bwangel</a></li>
-<li>(我的回复只代表我个人的看法)
-*</li>
-<li>等　级：<img src="" alt="">
-<em>/#3楼 得分：0回复于：2007-05-25 13:32:15 <a href=""></a> 如果是我,就干脆把DIV高度设置为一个定值,滚动条auto.   这样带给用户一个大小一致的界面也没什么不好吧.</em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>
-精华推荐：<a href="http://topic.csdn.net/u/20090714/15/fd56e7eb-fc0b-4d92-8836-392287425b70.html" target="_blank">【向everyone提问】很想知道asp.net的一个关于生命周期的问题</a>  * <a href="http://hi.csdn.net/ckpckphaha" target="_blank"><img src="&quot;ckpckphaha用户自定义头像&quot;" alt="ckpckphaha用户头像"></a></li>
-<li><a href="http://hi.csdn.net/ckpckphaha" target="_blank">ckpckphaha</a></li>
-<li>(翅膀卷起风暴 心生呼啸)
-*</li>
-<li>等　级：<img src="" alt="">
-<em>/#4楼 得分：0回复于：2007-05-25 13:33:32 <a href=""></a> 更正一下
-style里面是：height:115px;overflow:auto
-第二个方法是：
-div不设高度。
-然后
-js是document.getElementById( &quot;div &quot;).style.overflow=auto;</em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>
-精华推荐：<a href="http://topic.csdn.net/u/20090504/11/e47d344c-5000-49e4-92e3-f85c02013b2b.html" target="_blank">ASP.NET C/# + SQL 如何向数据库插入当前时间？</a>  * <a href="http://hi.csdn.net/wsj1983920" target="_blank"><img src="&quot;wsj1983920用户自定义头像&quot;" alt="wsj1983920用户头像"></a></li>
-<li><a href="http://hi.csdn.net/wsj1983920" target="_blank">wsj1983920</a></li>
-<li>(斯文)
-*</li>
-<li>等　级：<img src="" alt="">
-<em>/#5楼 得分：0回复于：2007-05-25 13:36:05 <a href=""></a> 楼上正解</em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>
-精华推荐：<a href="http://topic.csdn.net/u/20090905/09/85f03475-1801-42a1-b7ba-fd7c5c4987ae.html" target="_blank">如何获得一个class类型类量的指针</a>  * <a href="http://hi.csdn.net/boylee83" target="_blank"><img src="&quot;boylee83用户自定义头像&quot;" alt="boylee83用户头像"></a></li>
-<li><a href="http://hi.csdn.net/boylee83" target="_blank">boylee83</a></li>
-<li>({卡西莫多})
-*</li>
-<li>等　级：<img src="" alt="">
-<em>/#6楼 得分：10回复于：2007-05-25 13:40:38 <a href=""></a> overflow:auto</em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/boylee83" target="_blank"><img src="&quot;boylee83用户自定义头像&quot;" alt="boylee83用户头像"></a></li>
-<li><a href="http://hi.csdn.net/boylee83" target="_blank">boylee83</a></li>
-<li>({卡西莫多})
-*</li>
-<li>等　级：<img src="" alt="">
-<em>/#7楼 得分：10回复于：2007-05-25 13:41:05 <a href=""></a> 晕,有人先了啊.我手写html相当NB.先学做网页,后学.net的</em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/megshin" target="_blank"><img src="&quot;megshin用户自定义头像&quot;" alt="megshin用户头像"></a></li>
-<li><a href="http://hi.csdn.net/megshin" target="_blank">megshin</a></li>
-<li>(上帝的废品)
-*</li>
-<li>等　级：<img src="" alt="">
-<em>/#8楼 得分：0回复于：2007-05-25 14:14:31 <a href=""></a> 如果是我,就干脆把DIV高度设置为一个定值,滚动条auto.   这样带给用户一个大小一致的界面也没什么不好吧.
-程序员都是些民工啊，人家叫我们这样做我们就得这样做
-要是自己用，又何苦这样呢</em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/megshin" target="_blank"><img src="&quot;megshin用户自定义头像&quot;" alt="megshin用户头像"></a></li>
-<li><a href="http://hi.csdn.net/megshin" target="_blank">megshin</a></li>
-<li>(上帝的废品)
-*</li>
-<li>等　级：<img src="" alt="">
-<em>/#9楼 得分：0回复于：2007-05-25 14:16:35 <a href=""></a> ckpckphaha(赫尔墨斯神杖)<br>我用你的第二个方法，div是动态加载的
-这个js方法用在那个地方呢
-<div   id= "module "   on.....?= "jsFunc() "></em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/megshin" target="_blank"><img src="&quot;megshin用户自定义头像&quot;" alt="megshin用户头像"></a></li>
-<li><a href="http://hi.csdn.net/megshin" target="_blank">megshin</a></li>
-<li>(上帝的废品)
-*</li>
-<li>等　级：<img src="" alt="">
-*/#10楼 得分：0回复于：2007-05-25 14:44:44 <a href=""></a> 呵呵解决了~~
-在后台DataList的ItemDataBound写了点代码
-Dim   dg   As   DataGrid
-Dim   dv   As   HtmlGenericControl
-dg   =   e.Item.FindControl( &quot;dgModule &quot;)
-dv   =   New   HtmlGenericControl( &quot;div &quot;)
-dv   =   e.Item.FindControl( &quot;module_div &quot;)
-If   dg.Items.Count   &gt;   6   Then<pre><code>dv.Style.Add( &quot;overflow &quot;,   &quot;auto &quot;)
-dv.Style.Add( &quot;height &quot;,   &quot;115px &quot;)
-</code></pre>End   If
-谢谢几位兄弟了~* <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/ckpckphaha" target="_blank"><img src="&quot;ckpckphaha用户自定义头像&quot;" alt="ckpckphaha用户头像"></a></li>
-<li><a href="http://hi.csdn.net/ckpckphaha" target="_blank">ckpckphaha</a></li>
-<li>(翅膀卷起风暴 心生呼啸)
-*</li>
-<li>等　级：<img src="" alt="">
-<em>/#11楼 得分：0回复于：2007-05-25 14:51:47 <a href=""></a> 你的DataList里嵌套DataGrid，并且div是动态加载的。
-那就别用第二个方法了吧。前后太不断交互，也太麻烦了啊。
-建议你老人家用第一个方法，你动态生成div的时候，div的高度设置成115px。
-什么都不用改，只需把你的aspx页面的html头：
-&lt;!DOCTYPE   HTML   PUBLIC   &quot;-//W3C//DTD   HTML   4.0   Transitional//EN &quot;   &gt;
-<HTML>
-改为：
-&lt;!DOCTYPE   html   PUBLIC   &quot;-//W3C//DTD   XHTML   1.0   Strict//EN &quot;   &quot;<a href="http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd" target="_blank">http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd</a> &quot;&gt;
-<html   xmlns= "http://www.w3.org/1999/xhtml ">
-就ok了。</em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/Neetgo" target="_blank"><img src="&quot;Neetgo用户自定义头像&quot;" alt="Neetgo用户头像"></a></li>
-<li><a href="http://hi.csdn.net/Neetgo" target="_blank">Neetgo</a>
-<em>
-</em></li>
-<li>等　级：<img src="" alt="">
-<em>/#12楼 得分：0回复于：2008-06-16 09:50:57 <a href=""></a> 呵呵,学习了,谢谢</em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a>  * <a href="http://hi.csdn.net/vivianke" target="_blank"><img src="&quot;vivianke用户自定义头像&quot;" alt="vivianke用户头像"></a></li>
-<li><a href="http://hi.csdn.net/vivianke" target="_blank">vivianke</a>
-<em>
-</em></li>
-<li>等　级：<img src="" alt="">
-<em>/#13楼 得分：0回复于：2008-12-26 14:24:34 <a href=""></a> 学习中……</em> <a href="">对我有用</a>[0]</li>
-<li><a href="">丢个板砖</a>[0]</li>
-<li><a href="">引用</a></li>
-<li><a href="">举报</a></li>
-<li><a href="">管理</a></li>
-<li><p><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#top" target="_blank">TOP</a></p>
-</li>
-<li><p><a href="">管理菜单</a></p>
-</li>
-<li><p><a href="http://forum.csdn.net/PointForum/BuildTopic.aspx?topicId=400863e7-3adf-4a41-adaf-0d790e6a3115&amp;postDate=2007-05-25+13%3a10%3a00&amp;return=http%3A%2F%2Ftopic.csdn.net%2Fu%2F20070525%2F13%2F400863e7-3adf-4a41-adaf-0d790e6a3115.html" target="_blank">生成帖子</a></p>
-</li>
-<li><a href="">置顶</a></li>
-<li><a href="">推荐</a></li>
-<li><a href="">取消推荐</a></li>
-<li><a href="">锁定</a></li>
-<li><a href="">解锁</a></li>
-<li><a href="">移动</a></li>
-<li><a href="">编辑</a></li>
-<li><a href="">删除</a></li>
-<li><a href="">帖子加分</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Manage/TopicManageView.aspx?forumID=3036657c-277c-476c-982d-75f154e09050&amp;topicID=400863e7-3adf-4a41-adaf-0d790e6a3115&amp;date=2007-05-25+13%3a10%3a00&amp;v=13" target="_blank">结  帖</a></li>
-<li><a href="http://forum.csdn.net/PointForum/Forum/PostTopic.aspx?forumID=3036657c-277c-476c-982d-75f154e09050" target="_blank">发  帖</a></li>
-<li><a href="http://topic.csdn.net/u/20070525/13/400863e7-3adf-4a41-adaf-0d790e6a3115.html#r_achor" target="_blank">回  复</a>
-相关问题 <a href="http://topic.csdn.net/u/20090316/12/03f59ed8-3c00-4754-b199-4faedc4f92e5.html" target="_blank">div 滚动条问题。。。。。</a> <a href="http://topic.csdn.net/t/20051222/10/4474194.html" target="_blank">一个div滚动条的问题Web 开发/ JavaScript - CSDN社区community.csdn.net</a> <a href="http://topic.csdn.net/t/20050603/13/4056694.html" target="_blank">控制div的滚动条问题Web 开发/ JavaScript - CSDN社区community.csdn.net</a> <a href="http://topic.csdn.net/t/20050115/12/3727893.html" target="_blank">&lt;div&gt;滚动条的问题,请帮忙看看Web 开发/ ASP - CSDN社区community.csdn.net</a> <a href="http://topic.csdn.net/t/20050922/11/4286308.html" target="_blank">怎样使得div的滚动条保持位置.NET技术/ ASP.NET - CSDN社区community ...</a> <a href="http://topic.csdn.net/t/20050115/21/3728815.html" target="_blank">请问如何控制javascript中&lt;div&gt;横行滚动条的位置总是在具中的位置Web ...</a></li>
-</ul>
-<p><a href="http://www.csdn.net/company/about.html" target="_blank">公司简介</a>|<a href="http://www.csdn.net/company/marketing.html" target="_blank">广告服务</a>|<a href="http://www.csdn.net/company/account.html" target="_blank">银行汇款帐号</a>|<a href="http://www.csdn.net/company/contact.html" target="_blank">联系方式</a>|<a href="http://www.csdn.net/company/statement.html" target="_blank">版权声明</a>|<a href="http://www.csdn.net/company/layer.html" target="_blank">法律顾问</a>|<a href="mailto:webmaster@csdn.net">问题报告</a>北京创新乐知广告有限公司 版权所有, 京 ICP 证 070598 号世纪乐知(北京)网络技术有限公司 提供技术支持<img src="" alt="">Copyright © 1999-2009, CSDN.NET, All Rights Reserved<a href="http://www.hd315.gov.cn/beian/view.asp?bianhao=010202001032100010" target="_blank"><img src="" alt="GongshangLogo"></a>
-<img src="" alt=""></p>
-<p><img src="" alt="">
-<a href="http://hi.csdn.net/ckpckphaha" title="进入个人空间" target="_blank"><img src="" alt=""></a>
-<a href="http://hi.csdn.net/ckpckphaha" title="进入个人空间" target="_blank">个人空间</a>
-<a href="http://webim.csdn.net/AddFriends/ckpckphaha.ashx" title="加为好友" target="_blank"><img src="" alt=""></a>
-<a href="http://blog.csdn.net/ckpckphaha" title="浏览博客" target="_blank"><img src="" alt=""></a>帐号：<a href="http://hi.csdn.net/ckpckphaha" target="_blank">ckpckphaha</a>
-昵称：<a href="http://hi.csdn.net/ckpckphaha" target="_blank">翅膀卷起风暴   心生呼啸</a>
-最新帖子：</p>
-<ol>
-<li><a href="http://topic.csdn.net/u/20090629/10/33ed73ab-aa78-4d94-87ed-bd84d93bac8a.html" title="100分求助：是否可以实现不同Exe下的单例" target="_blank">100分求助：是否可以实…</a></li>
-<li><a href="http://topic.csdn.net/u/20090616/09/bd12a272-5fa1-42ed-adfb-f90a36367cf5.html" title="终于发现了这个惊天大咪咪" target="_blank">终于发现了这个惊天大咪咪…</a></li>
-<li><a href="http://topic.csdn.net/u/20090615/13/a882cb84-5a03-49e8-a027-f3941b22d71d.html" title="五个裤衩了，小散200分" target="_blank">五个裤衩了，小散200分…</a>
-<a href="http://forum.csdn.net/PointForum/Forum/UserTopicList.aspx?user=ckpckphaha" title="浏览更多发帖" target="_blank">更多帖子...</a></li>
-</ol>
+        <h1 id="hadoop-1-2-1-eclipse-">Hadoop 1.2.1编译Eclipse插件</h1>
+<h2 id="-src-contrib-eclipse-plugin-build-xml">/src/contrib/eclipse-plugin/build.xml</h2>
+<h3 id="1-ivy-download-">1）取消ivy-download：</h3>
+<p><a href="http://static.oschina.net/uploads/space/2013/0520/194613_IBLw_256028.png" target="_blank"><img src="" alt=""></a></p>
+<h3 id="2-plugin-jar-">2）添加将要打包到plugin中的第三方jar包列表：</h3>
+<p>01</p>
+<!-- Override jar target to specify manifest -->
+
+
+<p>02</p>
+<p>&lt;</p>
+<p>target</p>
+<p>name</p>
+<p>=</p>
+<p>&quot;jar&quot;</p>
+<p>depends</p>
+<p>=</p>
+<p>&quot;compile&quot;</p>
+<p>unless</p>
+<p>=</p>
+<p>&quot;skip.contrib&quot;</p>
+<p>&gt;
+03</p>
+<p>&lt;</p>
+<p>mkdir</p>
+<p>dir</p>
+<p>=</p>
+<p>&quot;${build.dir}/lib&quot;</p>
+<p>/&gt; </p>
+<p>04</p>
+<p>05</p>
+<!-- 自定义的修改内容：begin -->
+
+
+<p>06</p>
+<!--
+07
+
+<copy file="${hadoop.root}/build/hadoop-core-${version}.jar"
+
+08
+
+
+
+tofile="${build.dir}/lib/hadoop-core.jar" verbose="true"/>
+09
+
+<copy file="${hadoop.root}/build/ivy/lib/Hadoop/common/commons-cli-${commons-cli.version}.jar" 
+
+10
+
+
+
+todir="${build.dir}/lib" verbose="true"/> 
+11
+
+-->
+
+
+<p>12</p>
+<p>&lt;</p>
+<p>copy</p>
+<p>file</p>
+<p>=</p>
+<p>&quot;${hadoop.root}/hadoop-core-${version}.jar&quot;</p>
+<p>tofile</p>
+<p>=</p>
+<p>&quot;${build.dir}/lib/hadoop-core.jar&quot;</p>
+<p>verbose</p>
+<p>=</p>
+<p>&quot;true&quot;</p>
+<p>/&gt;
+13</p>
+<p>&lt;</p>
+<p>copy</p>
+<p>file</p>
+<p>=</p>
+<p>&quot;${hadoop.root}/lib/commons-cli-1.2.jar&quot;</p>
+<p>todir</p>
+<p>=</p>
+<p>&quot;${build.dir}/lib&quot;</p>
+<p>verbose</p>
+<p>=</p>
+<p>&quot;true&quot;</p>
+<p>/&gt; </p>
+<p>14</p>
+<p>&lt;</p>
+<p>copy</p>
+<p>file</p>
+<p>=</p>
+<p>&quot;${hadoop.root}/lib/commons-configuration-1.6.jar&quot;</p>
+<p>todir</p>
+<p>=</p>
+<p>&quot;${build.dir}/lib&quot;</p>
+<p>verbose</p>
+<p>=</p>
+<p>&quot;true&quot;</p>
+<p>/&gt; 
+15</p>
+<p>&lt;</p>
+<p>copy</p>
+<p>file</p>
+<p>=</p>
+<p>&quot;${hadoop.root}/lib/commons-httpclient-3.0.1.jar&quot;</p>
+<p>todir</p>
+<p>=</p>
+<p>&quot;${build.dir}/lib&quot;</p>
+<p>verbose</p>
+<p>=</p>
+<p>&quot;true&quot;</p>
+<p>/&gt; </p>
+<p>16</p>
+<p>&lt;</p>
+<p>copy</p>
+<p>file</p>
+<p>=</p>
+<p>&quot;${hadoop.root}/lib/commons-lang-2.4.jar&quot;</p>
+<p>todir</p>
+<p>=</p>
+<p>&quot;${build.dir}/lib&quot;</p>
+<p>verbose</p>
+<p>=</p>
+<p>&quot;true&quot;</p>
+<p>/&gt;<br>17</p>
+<p>&lt;</p>
+<p>copy</p>
+<p>file</p>
+<p>=</p>
+<p>&quot;${hadoop.root}/lib/jackson-core-asl-1.8.8.jar&quot;</p>
+<p>todir</p>
+<p>=</p>
+<p>&quot;${build.dir}/lib&quot;</p>
+<p>verbose</p>
+<p>=</p>
+<p>&quot;true&quot;</p>
+<p>/&gt;</p>
+<p>18</p>
+<p>&lt;</p>
+<p>copy</p>
+<p>file</p>
+<p>=</p>
+<p>&quot;${hadoop.root}/lib/jackson-mapper-asl-1.8.8.jar&quot;</p>
+<p>todir</p>
+<p>=</p>
+<p>&quot;${build.dir}/lib&quot;</p>
+<p>verbose</p>
+<p>=</p>
+<p>&quot;true&quot;</p>
+<p>/&gt;<br>19</p>
+<!-- 自定义的修改内容：end -->
+
+
+<p>20</p>
+<p>&lt;</p>
+<p>jar
+21</p>
+<p>jarfile</p>
+<p>=</p>
+<p>&quot;${build.dir}/hadoop-${name}-${version}.jar&quot;</p>
+<p>22</p>
+<p>manifest</p>
+<p>=</p>
+<p>&quot;${root}/META-INF/MANIFEST.MF&quot;</p>
+<blockquote>
+<p>23</p>
+</blockquote>
+<p>&lt;</p>
+<p>fileset</p>
+<p>dir</p>
+<p>=</p>
+<p>&quot;${build.dir}&quot;</p>
+<p>includes</p>
+<p>=</p>
+<p>&quot;classes/ lib/&quot;</p>
+<p>/&gt; </p>
+<p>24</p>
+<p>&lt;</p>
+<p>fileset</p>
+<p>dir</p>
+<p>=</p>
+<p>&quot;${root}&quot;</p>
+<p>includes</p>
+<p>=</p>
+<p>&quot;resources/ plugin.xml&quot;</p>
+<p>/&gt; 
+25</p>
+<p>&lt;/</p>
+<p>jar</p>
+<blockquote>
+</blockquote>
+<p>26</p>
+<p>&lt;/</p>
+<p>target</p>
+<blockquote>
+<p>&lt;</p>
+</blockquote>
+<p>span</p>
+<p>style</p>
+<p>=</p>
+<p>&quot;font-size:10pt;line-height:1.5;font-family:&#39;sans serif&#39;, tahoma, verdana, helvetica;&quot;</p>
+<blockquote>
+<p> &lt;/</p>
+</blockquote>
+<p>span</p>
+<p>&gt;</p>
+<p><a href="http://static.oschina.net/uploads/space/2013/0520/194752_bBaX_256028.png" target="_blank"><img src="" alt=""></a> </p>
+<h2 id="3-hadoop-src-contrib-build-contrib-xml-">3.%hadoop%/src/contrib/build-contrib.xml ：</h2>
+<h3 id="1-hadoop-version-eclipse-eclipse-home-">1）添加hadoop的version和eclipse的eclipse.home属性：</h3>
+<p>1</p>
+<p>&lt;?</p>
+<p>xml</p>
+<p>version</p>
+<p>=</p>
+<p>&quot;1.0&quot;</p>
+<p>?&gt;</p>
+<p>2</p>
+<!-- Imported by contrib//*/build.xml files to share generic targets. -->
+3
+
+&lt;
+
+project
+
+
+name
+
+=
+
+&quot;hadoopbuildcontrib&quot;
+
+
+xmlns:ivy
+
+=
+
+&quot;antlib:org.apache.ivy.ant&quot;
+
+&gt;
+
+4
+
+&lt;
+
+property
+
+
+name
+
+=
+
+&quot;name&quot;
+
+
+value
+
+=
+
+&quot;${ant.project.name}&quot;
+
+/&gt;
+5
+
+&lt;
+
+property
+
+
+name
+
+=
+
+&quot;root&quot;
+
+
+value
+
+=
+
+&quot;${basedir}&quot;
+
+/&gt;
+
+6
+
+&lt;
+
+property
+
+
+name
+
+=
+
+&quot;hadoop.root&quot;
+
+
+location
+
+=
+
+&quot;${root}/../../../&quot;
+
+/&gt;
+7
+
+<!-- hadoop版本、eclipse安装路径 -->
+
+<p>8</p>
+<p>&lt;</p>
+<p>property</p>
+<p>name</p>
+<p>=</p>
+<p>&quot;version&quot;</p>
+<p>value</p>
+<p>=</p>
+<p>&quot;1.1.2&quot;</p>
+<p>/&gt;
+9</p>
+<p>&lt;</p>
+<p>property</p>
+<p>name</p>
+<p>=</p>
+<p>&quot;eclipse.home&quot;</p>
+<p>location</p>
+<p>=</p>
+<p>&quot;%eclipse%&quot;</p>
+<p>/&gt;</p>
+<p><a href="http://static.oschina.net/uploads/space/2013/0520/194838_mpUD_256028.png" target="_blank"><img src="" alt=""></a>  </p>
+<h3 id="2-ivy-download-">2）取消ivy-download：</h3>
+<p><a href="http://static.oschina.net/uploads/space/2013/0520/194859_Cc5J_256028.png" target="_blank"><img src="" alt=""></a> 
+来源： <a href="[http://my.oschina.net/vigiles/blog/132238](http://my.oschina.net/vigiles/blog/132238)">[http://my.oschina.net/vigiles/blog/132238](http://my.oschina.net/vigiles/blog/132238)</a></p>
+<p>配置/${hadoop-home}/src/contrib/eclipse-plugins/build.xml</p>
+<p>找到</p>
+<path id=”classpath”>
+
+<p>然后添加</p>
+<fileset dir=”${hadoop.root}/”>
+      <include name=”/*.jar”/>
+</fileset>
+
+<p><strong>这一步很重要，如果不添加的话会出现找不到相应的程序包，错误如下（给出部分）</strong> ：</p>
+<p>[javac]      Counters.Group group = counters.getGroup(groupName);
+    [javac]              ^
+    [javac] /home/summerdg/hadoop_src/hadoop-1.2.1/src/contrib/eclipse-plugin/src/java/org/apache/hadoop/eclipse/server/HadoopJob.java:305: 错误: 程序包Counters不存在
+    [javac]      for (Counters.Counter counter : group) {
+    [javac]                    ^
+    [javac] /home/summerdg/hadoop_src/hadoop-1.2.1/src/contrib/eclipse-plugin/src/java/org/apache/hadoop/eclipse/dfs/DFSFile.java:74: 错误: 找不到符号
+    [javac]      FileStatus fs = getDFS().getFileStatus(path);
+    [javac]      ^
+    [javac]  符号:  类 FileStatus
+    [javac]  位置: 类 DFSFile
+    [javac] 注: 某些输入文件使用或覆盖了已过时的 API。
+    [javac] 注: 有关详细信息, 请使用 -Xlint:deprecation 重新编译。
+    [javac] 注: 某些输入文件使用了未经检查或不安全的操作。
+    [javac] 注: 有关详细信息, 请使用 -Xlint:unchecked 重新编译。
+    [javac] 100 个错误</p>
+<p>当然，出现这个错误还有个原因，就是你已经设置了这句，但你依然出现这个错误，那就是你eclipse版本的问题了。</p>
+<p>找到
+来源： <a href="[http://www.kankanews.com/ICkengine/archives/63441.shtml](http://www.kankanews.com/ICkengine/archives/63441.shtml)">[http://www.kankanews.com/ICkengine/archives/63441.shtml](http://www.kankanews.com/ICkengine/archives/63441.shtml)</a> </p>
+<h2 id="4-hadoop_home-build-xml-">4.编辑%HADOOP_HOME%/build.xml：</h2>
+<h3 id="1-hadoop-">1）修改hadoop版本号：</h3>
+<p><a href="http://static.oschina.net/uploads/space/2013/0520/194950_g5cw_256028.png" target="_blank"><img src="" alt=""></a></p>
+<h3 id="2-ivy-download-">2）取消ivy-download：</h3>
+<p><a href="http://static.oschina.net/uploads/space/2013/0520/195011_l8BK_256028.png" target="_blank"><img src="" alt=""></a> </p>
+<h2 id="5-hadoop-src-contrib-eclipse-plugin-meta-inf-manifest-mf-">5.修改%hadoop%/src/contrib/eclipse-plugin/META-INF/MANIFEST.MF：</h2>
+<p>修改${HADOOP_HOME}/src/contrib/eclipse-plugin/META-INF/MANIFEST.MF的Bundle-ClassPath：
+1</p>
+<p>Bundle-ClassPath: classes/,</p>
+<p>2</p>
+<p>lib/hadoop-core.jar,
+3</p>
+<p>lib/commons-cli-1.2.jar,</p>
+<p>4</p>
+<p>lib/commons-configuration-1.6.jar,
+5</p>
+<p>lib/commons-httpclient-3.0.1.jar,</p>
+<p>6</p>
+<p>lib/commons-lang-2.4.jar,
+7</p>
+<p>lib/jackson-core-asl-1.8.8.jar,</p>
+<p>8</p>
+<p>lib/jackson-mapper-asl-1.8.8.jar</p>
+<p><a href="http://static.oschina.net/uploads/space/2013/0520/195106_mqwV_256028.png" target="_blank"><img src="" alt=""></a> </p>
+<h2 id="-build-contrib-eclipse-plugin-ant-jar-">进入到 /build/contrib/eclipse-plugin/执行 ant jar ：</h2>
+<p>01</p>
+<p>hep@hep-ubuntu:~$ </p>
+<p>cd</p>
+<p>~/hadoop/src/contrib/eclipse-plugin</p>
+<p>02</p>
+<p>hep@hep-ubuntu:~/hadoop/src/contrib/eclipse-plugin$ ant jar
+03</p>
+<p>Buildfile: /home/hep/hadoop/src/contrib/eclipse-plugin/build.xml</p>
+<p>04</p>
+<p>05</p>
+<p>check-contrib:</p>
+<p>06</p>
+<p>07</p>
+<p>init:</p>
+<p>08</p>
+<p>[</p>
+<p>echo</p>
+<p>] contrib: eclipse-plugin
+09</p>
+<p>10</p>
+<p>init-contrib:
+11</p>
+<p>12</p>
+<p>ivy-probe-antlib:
+13</p>
+<p>14</p>
+<p>ivy-init-antlib:
+15</p>
+<p>16</p>
+<p>ivy-init:
+17</p>
+<p>[ivy:configure] :: Ivy 2.1.0 - 20090925235825 :: <a href="http://ant.apache.org/ivy/" target="_blank">http://ant.apache.org/ivy/</a> ::</p>
+<p>18</p>
+<p>[ivy:configure] :: loading settings :: </p>
+<p>file</p>
+<p>= /home/hep/hadoop/ivy/ivysettings.xml
+19</p>
+<p>20</p>
+<p>ivy-resolve-common:
+21</p>
+<p>[ivy:resolve] :: resolving dependencies :: org.apache.hadoop</p>
+<p>/#eclipse-plugin;working@hep-ubuntu</p>
+<p>22</p>
+<p>[ivy:resolve]   confs: [common]
+23</p>
+<p>[ivy:resolve]   found commons-logging</p>
+<p>/#commons-logging;1.0.4 in maven2</p>
+<p>24</p>
+<p>[ivy:resolve]   found log4j</p>
+<p>/#log4j;1.2.15 in maven2
+25</p>
+<p>[ivy:resolve] :: resolution report :: resolve 171ms :: artifacts dl 4ms</p>
+<p>26</p>
+<hr>
+<p>27</p>
+<p>|                  |            modules            ||   artifacts   |</p>
+<p>28</p>
+<p>|       conf       | number| search|dwnlded|evicted|| number|dwnlded|
+29</p>
+<hr>
+<p>30</p>
+<p>|      common      |   2   |   0   |   0   |   0   ||   2   |   0   |
+31</p>
+<hr>
+<p>32</p>
+<p>33</p>
+<p>ivy-retrieve-common:</p>
+<p>34</p>
+<p>[ivy:retrieve] :: retrieving :: org.apache.hadoop</p>
+<p>/#eclipse-plugin [sync]
+35</p>
+<p>[ivy:retrieve]  confs: [common]</p>
+<p>36</p>
+<p>[ivy:retrieve]  0 artifacts copied, 2 already retrieved (0kB/6ms)
+37</p>
+<p>[ivy:cachepath] DEPRECATED: </p>
+<p>&#39;ivy.conf.file&#39;</p>
+<p>is deprecated, use </p>
+<p>&#39;ivy.settings.file&#39;</p>
+<p>instead</p>
+<p>38</p>
+<p>[ivy:cachepath] :: loading settings :: </p>
+<p>file</p>
+<p>= /home/hep/hadoop/ivy/ivysettings.xml
+39</p>
+<p>40</p>
+<p>compile:
+41</p>
+<p>[</p>
+<p>echo</p>
+<p>] contrib: eclipse-plugin</p>
+<p>42</p>
+<p>[javac] /home/hep/hadoop/src/contrib/eclipse-plugin/build.xml:61: warning: </p>
+<p>&#39;includeantruntime&#39;</p>
+<p>was not </p>
+<p>set</p>
+<p>, defaulting to build.sysclasspath=last; </p>
+<p>set</p>
+<p>to </p>
+<p>false</p>
+<p>for</p>
+<p>repeatable builds
+43</p>
+<p>44</p>
+<p>jar:
+45</p>
+<p>[</p>
+<p>mkdir</p>
+<p>] Created </p>
+<p>dir</p>
+<p>: /home/hep/hadoop/build/contrib/eclipse-plugin/lib</p>
+<p>46</p>
+<p>[copy] Copying 1 </p>
+<p>file</p>
+<p>to /home/hep/hadoop/build/contrib/eclipse-plugin/lib
+47</p>
+<p>[copy] Copying /home/hep/hadoop/hadoop-core-1.1.2.jar to /home/hep/hadoop/build/contrib/eclipse-plugin/lib/hadoop-core.jar</p>
+<p>48</p>
+<p>[copy] Copying 1 </p>
+<p>file</p>
+<p>to /home/hep/hadoop/build/contrib/eclipse-plugin/lib
+49</p>
+<p>[copy] Copying /home/hep/hadoop/lib/commons-cli-1.2.jar to /home/hep/hadoop/build/contrib/eclipse-plugin/lib/commons-cli-1.2.jar</p>
+<p>50</p>
+<p>[copy] Copying 1 </p>
+<p>file</p>
+<p>to /home/hep/hadoop/build/contrib/eclipse-plugin/lib
+51</p>
+<p>[copy] Copying /home/hep/hadoop/lib/commons-configuration-1.6.jar to /home/hep/hadoop/build/contrib/eclipse-plugin/lib/commons-configuration-1.6.jar</p>
+<p>52</p>
+<p>[copy] Copying 1 </p>
+<p>file</p>
+<p>to /home/hep/hadoop/build/contrib/eclipse-plugin/lib
+53</p>
+<p>[copy] Copying /home/hep/hadoop/lib/commons-httpclient-3.0.1.jar to /home/hep/hadoop/build/contrib/eclipse-plugin/lib/commons-httpclient-3.0.1.jar</p>
+<p>54</p>
+<p>[copy] Copying 1 </p>
+<p>file</p>
+<p>to /home/hep/hadoop/build/contrib/eclipse-plugin/lib
+55</p>
+<p>[copy] Copying /home/hep/hadoop/lib/commons-lang-2.4.jar to /home/hep/hadoop/build/contrib/eclipse-plugin/lib/commons-lang-2.4.jar</p>
+<p>56</p>
+<p>[copy] Copying 1 </p>
+<p>file</p>
+<p>to /home/hep/hadoop/build/contrib/eclipse-plugin/lib
+57</p>
+<p>[copy] Copying /home/hep/hadoop/lib/jackson-core-asl-1.8.8.jar to /home/hep/hadoop/build/contrib/eclipse-plugin/lib/jackson-core-asl-1.8.8.jar</p>
+<p>58</p>
+<p>[copy] Copying 1 </p>
+<p>file</p>
+<p>to /home/hep/hadoop/build/contrib/eclipse-plugin/lib
+59</p>
+<p>[copy] Copying /home/hep/hadoop/lib/jackson-mapper-asl-1.8.8.jar to /home/hep/hadoop/build/contrib/eclipse-plugin/lib/jackson-mapper-asl-1.8.8.jar</p>
+<p>60</p>
+<p>[jar] Building jar: /home/hep/hadoop/build/contrib/eclipse-plugin/hadoop-eclipse-plugin-1.1.2.jar
+61</p>
+<p>62</p>
+<p>BUILD SUCCESSFUL
+63</p>
+<p>Total </p>
+<p>time</p>
+<p>: 3 seconds</p>
+<p>生成的插件jar就在本目录中。</p>
+<p>把编译好的插件放入 $eclipse_home/dropins/hadoop/plugins/ (mkdir -p 创建)</p>
+<p>启动eclipse 新建mapreduce project， 配置好map/reduce location, 就可以看到hdfs中的文件了</p>
 
       
     </div>
@@ -1132,8 +1657,94 @@ dv.Style.Add( &quot;height &quot;,   &quot;115px &quot;)
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/DIV/">DIV</a></li></span></span> | <span class="tags">Tagged <a href="/tags/DIV/" class="label label-primary">DIV</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-DIV--DIV滚动条的问题/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-DIV--DIV滚动条的问题" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/hadoop/">hadoop</a></li></span></span> | <span class="tags">Tagged <a href="/tags/hadoop/" class="label label-primary">hadoop</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-hadoop--Hadoop121编译Eclipse插件/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-hadoop--Hadoop121编译Eclipse插件" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-linux-redhat--centoslibxml2/">centos libxml2</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T01:54:36.000Z"> <a href="/2014/02/02/2014-02-02-linux-redhat--centoslibxml2/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="centos-libxml2">centos libxml2</h1>
+<h2 id="introduction-to-libx-ml2">Introduction to libx‍ml2</h2>
+<p>The libxml2 package contains          libraries and utilities used for parsing XML files.</p>
+<p>This package is known to build and work properly using an LFS-7.4          platform.</p>
+<h3 id="package-information">Package Information</h3>
+<ul>
+<li>Download (HTTP): <a href="http://xmlsoft.org/sources/libxml2-2.9.1.tar.gz" target="_blank"><a href="http://xmlsoft.org/sources/libxml2-2.9.1.tar.gz">http://xmlsoft.org/sources/libxml2-2.9.1.tar.gz</a></a></li>
+<li>Download (FTP): <a href="ftp://xmlsoft.org/libxml2/libxml2-2.9.1.tar.gz">ftp://xmlsoft.org/libxml2/libxml2-2.9.1.tar.gz</a></li>
+<li>Download MD5 sum: 9c0cfef285d5c4a5c80d00904ddab380</li>
+<li>Download size: 5.0 MB</li>
+<li>Estimated disk space required: 100 MB</li>
+<li>Estimated build time: 0.6 SBU</li>
+</ul>
+<h3 id="additional-downloads">Additional Downloads</h3>
+<ul>
+<li>Optional Testsuite: <a href="http://www.w3.org/XML/Test/xmlts20130923.tar.gz" target="_blank"><a href="http://www.w3.org/XML/Test/xmlts20130923.tar.gz">http://www.w3.org/XML/Test/xmlts20130923.tar.gz</a></a>                - This enables <strong>make                check</strong> to do complete testing.</li>
+</ul>
+<h3 id="libxml2-dependencies">libxml2 Dependencies</h3>
+<h3 id="recommended">Recommended</h3>
+<p><a href="http://www.linuxfromscratch.org/blfs/view/svn/general/python2.html" title="Python-2.7.6" target="_blank">Python-2.7.6</a> (to build and install a          Python library module,          additionally it is required to run the full suite of tests)</p>
+<p><img src="http://www.linuxfromscratch.org/blfs/view/svn/images/note.png" alt="[Note]">          </p>
+<h3 id="note">Note</h3>
+<p>Some packages which utilize libxml2 (such as GNOME Doc Utils) need the Python module installed to function properly            and some packages (such as MesaLib) will not build properly if            the Python module is not            available.</p>
+<p>User Notes: <a href="http://wiki.linuxfromscratch.org/blfs/wiki/libxml2" target="_blank"><a href="http://wiki.linuxfromscratch.org/blfs/wiki/libxml2">http://wiki.linuxfromscratch.org/blfs/wiki/libxml2</a></a>        </p>
+<h2 id="installation-of-libxml2">Installation of libxml2</h2>
+<p>If you downloaded the testsuite, issue the following command:
+tar xf ../xmlts20130923.tar.gz</p>
+<p>Install libxml2 by running the          following commands:
+./configure --prefix=/usr --disable-static --with-history &amp;&amp; make</p>
+<p>To test the results, issue: <strong>make          check</strong>.</p>
+<p>Now, as the</p>
+<p>root
+user:
+make install</p>
+<h2 id="command-explanations">Command Explanations</h2>
+<p><em>
+--disable-static
+</em>: This          switch prevents installation of static versions of the libraries.</p>
+<p>--with-history
+: This switch enables          Readline support when running          <strong>xmlcatalog</strong> or          <strong>xmllint</strong> in shell          mode.</p>
+<h2 id="contents">Contents</h2>
+<p><strong>Installed Programs:</strong>              xml2-config, xmlcatalog and              xmllint            </p>
+<p><strong>Installed Libraries:</strong>              libxml2.so and optionally, the              libxml2mod.so Python              module            </p>
+<p><strong>Installed Directories:</strong>              /usr/include/libxml2,              /usr/share/doc/libxml2-2.9.1,              /usr/share/doc/libxml2-python-2.9.1 and              /usr/share/gtk-doc/html/libxml2            </p>
+<h3 id="short-descriptions">Short Descriptions</h3>
+<p><a href=""></a><strong>xml2-config</strong>                  </p>
+<p>determines the compile and linker flags that should be                    used to compile and link programs that use</p>
+<p>libxml2
+.<a href=""></a><strong>xmlcatalog</strong>                  </p>
+<p>is used to monitor and manipulate XML and SGML catalogs.<a href=""></a><strong>xmllint</strong>                  </p>
+<p>parses XML files and outputs reports (based upon options)                    to detect errors in XML coding.<a href=""></a></p>
+<p>libxml2.so</p>
+<p>provides functions for programs to parse files that use                    the XML format.                   </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/linux/">linux</a></li></span><span class="breadcrumb"><li><a href="/categories/linux/">linux</a></li><li><a href="/categories/linux/redhat/">redhat</a></li></span></span> | <span class="tags">Tagged <a href="/tags/linux/" class="label label-primary">linux</a><a href="/tags/redhat/" class="label label-success">redhat</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:36"datetime="2014-03-07 09:54:36"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-linux-redhat--centoslibxml2/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-linux-redhat--centoslibxml2" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1213,7 +1824,7 @@ var _hmt = _hmt || [];
 _js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
 </script>
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 17:26:53</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 17:30:37</em></span></div>
 </div>
 <div class="clearfix"></div>
 
