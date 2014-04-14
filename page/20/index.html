@@ -110,1054 +110,138 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/">haproxy 解决 多主机session共享问题 的三种方法</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--EightQueen/">EightQueen</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T09:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--EightQueen/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="haproxy-session-">haproxy 解决 多主机session共享问题 的三种方法</h1>
-<p>haproxy 解决 多主机session共享问题 的三种方法</p>
-<p>1 session知识储备
-2 haproxy三种方法保持客户端session一致
-3 实验环境及结构
-4 安装配置及管理
-5 本实验中使用到相同的index.php代码
-6 联系方法及扩展阅读
-感谢 不就是要我命 QQ 47034839 提供测试主机 
-1 session知识储备
-Session是由应用服务器维持的一个服务器端的存储空间，用户在连接服务器时，会由服务器生成一个唯一的SessionID,用该SessionID 为标识符来存取服务器端的Session存储空间。
-而SessionID这一数据则是保存到客户端，用Cookie保存的，用户提交页面时，会将这一 SessionID提交到服务器端，来存取Session数据。
-服务器也通过URL重写的方式来传递SessionID的值，因此不是完全依赖Cookie。如果客户端Cookie禁用，则服务器可以自动通过重写URL的方式来保存Session的值，并且这个过程对程序员透明。
-php.ini 里几个session相关值的 其它的值请参考《PHP与Mysql5程序设计》
-session.use_cookies = 1  /#表示 服务端和客户端交互session是通过cookie的方式 默认值
-session.name = 9ai9     /#默认值是PHPSESSID 我这里改成9ai9是为了和默认值区别
-session.cache_limiter = nocache /#此设置确保对每个请求，在可能提供缓存的版本前，先请求发送到最初的服务器。这个值联系到下文中 cookie识别中的相关参数
-2 haproxy三种方法保持客户端session一致
-  2.1 用户IP 识别 </p>
-<p>haroxy 将用户IP经过hash计算后 指定到固定的真实服务器上（类似于nginx 的IP hash 指令）
-配置指令        balance source
-实例访问<a href="http://sourceip.9ai9.net:8080/" target="_blank"><a href="http://sourceip.9ai9.net:8080">http://sourceip.9ai9.net:8080</a></a>
-  2.2 cookie 识别<br>haproxy 将WEB服务端发送给客户端的cookie中插入(或添加加前缀)haproxy定义的后端的服务器COOKIE ID。
-配置指令例举  cookie  SESSION_COOKIE  insert indirect nocache
-<a href="http://cookie.9ai9.net:8080/" target="_blank"><a href="http://cookie.9ai9.net:8080">http://cookie.9ai9.net:8080</a></a>
-用firebug可以观察到用户的请求头的cookie里 有类似&quot; Cookie 9ai9=0bc588656ca05ecf7588c65f9be214f5; SESSION_COOKIE=12&quot; SESSION_COOKIE=12就是haproxy添加的内容
-  2.3 session 识别<br>haproxy 将后端服务器产生的session和后端服务器标识存在haproxy中的一张表里。客户端请求时先查询这张表。
-配置指令例举 appsession 9ai9 len 64 timeout 5h request-learn 
-注意 9ai9 这个值替换成 你的php.ini 里session.name的值。
-实例访问 <a href="http://appsession.9ai9.net:8080/" target="_blank"><a href="http://appsession.9ai9.net:8080">http://appsession.9ai9.net:8080</a></a>
-  2.4 只做简单轮询对比 
-实例访问 <a href="http://nosession.9ai9.net:8080/" target="_blank"><a href="http://nosession.9ai9.net:8080">http://nosession.9ai9.net:8080</a></a>
-3 实验环境及结构
-CentOS 5.3 64
-haproxy  113.106.185.245
-WEB1 REALsrv_70  184.82.239.70
-WEB2  REALsrv_120 220.162.237.120<br>4 安装配置及管理
-useradd -M -s /sbin/nologin haproxy
-wget <a href="http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz" target="_blank"><a href="http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz">http://haproxy.1wt.eu/download/1.4/src/haproxy-1.4.13.tar.gz</a></a>
-tar zxvf haproxy-1.4.13.tar.gz 
-cd haproxy-1.4.13
-make TARGET=linux26 PREFIX=/usr/local/haproxy install
-mkdir /usr/local/haproxy/conf
-vim /usr/local/haproxy/conf/haproxy.cfg</p>
-<ol>
-<li>global</li>
-<li>log     127.0.0.1 local0 info </li>
-<li>maxconn 4096</li>
-<li>user    haproxy</li>
-<li>group   haproxy</li>
-<li>daemon</li>
-<li>nbproc  1</li>
-<li>pidfile /var/run/haproxy.pid</li>
-<li>defaults</li>
-<li>mode    http</li>
-<li>maxconn         2000</li>
-<li>contimeout      5000</li>
-<li>clitimeout      30000</li>
-<li>srvtimeout      30000</li>
-<li>option          httplog</li>
-<li>option          redispatch</li>
-<li>option          abortonclose</li>
-<li>retries         3</li>
-<li>listen admin_stats</li>
-<li>bind 113.106.185.245:443</li>
-<li>mode http</li>
-<li>log 127.0.0.1 local0 err</li>
-<li>stats   uri     /qhappy_stats</li>
-<li>stats   realm   9ai9.net\ Qhappy</li>
-<li>stats   auth    qhappy:qhappy</li>
-<li>stats   refresh   5s </li>
-<li>listen site_status</li>
-<li>bind 113.106.185.245:445</li>
-<li>mode http</li>
-<li>log  127.0.0.1 local0 err</li>
-<li>monitor-uri     /site_status</li>
-<li>frontend  WEB_SITE</li>
-<li>bind    0.0.0.0:8080</li>
-<li>mode    http</li>
-<li>log     global</li>
-<li>option  httplog</li>
-<li>option  httpclose</li>
-<li>option  forwardfor</li>
-<li>acl     COOKIE          hdr_reg(host)   -i ^(cookie.9ai9.net)</li>
-<li>acl     SOURCE          hdr_reg(host)   -i ^(sourceip.9ai9.net)</li>
-<li>acl     APPSESSION      hdr_reg(host)   -i ^(appsession.9ai9.net)</li>
-<li>acl     NOSESSION       hdr_reg(host)   -i ^(nosession.9ai9.net)</li>
-<li>use_backend COOKIE_srv          if COOKIE</li>
-<li>use_backend SOURCE_srv          if SOURCE</li>
-<li>use_backend APPSESSION_srv      if APPSESSION</li>
-<li>use_backend NOSESSION_srv       if NOSESSION</li>
-<li>/#        default_backend ai_server</li>
-<li>backend COOKIE_srv</li>
-<li>mode    http</li>
-<li>cookie  SESSION_COOKIE  insert indirect nocache</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend SOURCE_srv</li>
-<li>mode    http</li>
-<li>balance source</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend APPSESSION_srv</li>
-<li>mode    http</li>
-<li>appsession 9ai9 len 64 timeout 5h request-learn</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1
-1.</li>
-<li>backend NOSESSION_srv</li>
-<li>mode    http</li>
-<li>balance roundrobin</li>
-<li>server REALsrv_70       184.82.239.70:80 cookie 11 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120      220.162.237.120:80 cookie 12 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>backend ai_server</li>
-<li>mode    http</li>
-<li>balance roundrobin</li>
-<li>cookie  SERVERID</li>
-<li>server REALsrv_70 184.82.239.70:80 cookie 2 check inter 1500 rise 3 fall 3 weight 1</li>
-<li>server REALsrv_120 220.162.237.120:80 cookie 1 check inter 1500 rise 3 fall 3 weight 1
-<em>复制代码</em>
-haproxy 启动重启等管理脚本
-cd /etc/init.d/
-wget <a href="http://www.9ai9.net/download/shell/haproxy" target="_blank"><a href="http://www.9ai9.net/download/shell/haproxy">http://www.9ai9.net/download/shell/haproxy</a></a>
-chmod 755 haproxy
-chkconfig --add haproxy
-使用方法 你懂的
-/etc/init.d/haproxy {start|stop|status|checkconfig|restart|try-restart|reload|force-reload}
-5 本实验中使用到相同的index.php代码 如下</li>
-<li>&lt;?php</li>
-<li>session_start();</li>
-<li>$_SESSION[&#39;time&#39;] =date(&quot;Y:m:d:H:s&quot;,time());</li>
-<li>echo &quot;本次访问时间&quot;.&quot;<font color=red>&quot;.$_SESSION[&#39;time&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;访问的服务器地址是&quot;.&quot;<font color=red>&quot;.$_SERVER[&#39;SERVER_ADDR&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;访问的服务器域名是&quot;.&quot;<font color=red>&quot;.$_SERVER[&#39;SERVER_NAME&#39;].&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;SESSIONNAME是&quot;.&quot;<font color=red>&quot;.session_name().&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>echo &quot;SESSIONID是&quot;.&quot;<font color=red>&quot;.session_id().&quot;</font>&quot;.&quot;<br>&quot;;</li>
-<li>?&gt;
-<em>复制代码</em>6 联系方法及扩展阅读
-笔者 水煮鱼@溢  微博 <a href="http://t.qq.com/cllxy1234" target="_blank"><a href="http://t.qq.com/cllxy1234">http://t.qq.com/cllxy1234</a></a> 欢迎收听
-haproxy 官网 <a href="http://haproxy.1wt.eu/download/1.4/doc/configuration.txt" target="_blank"><a href="http://haproxy.1wt.eu/download/1.4/doc/configuration.txt">http://haproxy.1wt.eu/download/1.4/doc/configuration.txt</a></a>
-董旗宇  <a href="http://www.9ai9.net/download/art/HAProxy" target="_blank"><a href="http://www.9ai9.net/download/art/HAProxy">http://www.9ai9.net/download/art/HAProxy</a></a>配置使用说明.pdf<br>刘天斯  <a href="http://blog.liuts.com/post/223/" target="_blank"><a href="http://blog.liuts.com/post/223/">http://blog.liuts.com/post/223/</a></a>
-linuxtone <a href="http://bbs.linuxtone.org/thread-73-1-1.html" target="_blank"><a href="http://bbs.linuxtone.org/thread-73-1-1.html">http://bbs.linuxtone.org/thread-73-1-1.html</a></a></li>
-</ol>
-<p>来源： <a href="[http://bbs.linuxtone.org/thread-9526-1-1.html](http://bbs.linuxtone.org/thread-9526-1-1.html)">[http://bbs.linuxtone.org/thread-9526-1-1.html](http://bbs.linuxtone.org/thread-9526-1-1.html)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--haproxy解决多主机session共享问题的三种方法" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxykeepalived实现高可用负载均衡/">haproxy+keepalived实现高可用负载均衡</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-haproxy--haproxykeepalived实现高可用负载均衡/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="haproxy-keepalived-">haproxy+keepalived实现高可用负载均衡</h1>
-<p>软件负载均衡一般通过两种方式来实现：基于操作系统的软负载实现和基于第三方应用的软负载实现。LVS就是基于Linux操作系统实现的一种软负载，HAProxy就是开源的并且基于第三应用实现的软负载。</p>
-<p>HAProxy相比LVS的使用要简单很多，功能方面也很丰富。当 前，HAProxy支持两种主要的代理模式:&quot;tcp&quot;也即4层（大多用于邮件服务器、内部协议通信服务器等），和7层（HTTP）。在4层模式 下，HAProxy仅在客户端和服务器之间转发双向流量。7层模式下，HAProxy会分析协议，并且能通过允许、拒绝、交换、增加、修改或者删除请求 (request)或者回应(response)里指定内容来控制协议，这种操作要基于特定规则。</p>
-<p>我现在用HAProxy主要在于它有以下优点，这里我总结下：</p>
-<p><strong>一、</strong>免费开源，稳定性也是非常好，这个可通过我做的一些小项目可以看出来，单Haproxy也跑得不错，稳定性可以与LVS相媲美；</p>
-<p><strong>二、</strong>根据官方文档，HAProxy可以跑满10Gbps-New benchmark of HAProxy at 10 Gbps using Myricom&#39;s 10GbE NICs (Myri-10G PCI-Express)，这个作为软件级负载均衡，也是比较惊人的；</p>
-<p><strong>三、</strong>HAProxy可以作为MySQL、邮件或其它的非web的负载均衡，我们常用于它作为MySQL(读)负载均衡；</p>
-<p>四<strong>、</strong>自带强大的监控服务器状态的页面，实际环境中我们结合Nagios进行邮件或短信报警，这个也是我非常喜欢它的原因之一；</p>
-<p>五<strong>、</strong>HAProxy支持虚拟主机。</p>
-<p>===================================================================================</p>
-<p>在做反向代理服务器的负载均衡时，我们通常会使用nginx的均衡配置。其实，haproxy的负载均衡也是属于这一类的。那么关于这方面的配置过程我们现在来进行一下讲解。首先，对haproxy进行一个简单的介绍，之后就是安装和配置环节了。</p>
-<p><strong>HAProxy介绍</strong></p>
-<p>反向代理服务器,支持双机热备支持虚拟主机,但其配置简单,拥有非常不错的服务器健康检查功能,当其代理的后端服务器出现故障, HAProxy会自动将该服务器摘除,故障恢复后再自动将该服务器加入｡新的1.3引入了frontend,backend；frontend根据任意 HTTP请求头内容做规则匹配,然后把请求定向到相关的backend.</p>
-<p><a href="http://blog.liuts.com/post/223/" target="_blank"><a href="http://blog.liuts.com/post/223/">http://blog.liuts.com/post/223/</a></a> （搭建四层负载均衡器）</p>
-<p><a href="http://rfyimcool.blog.51cto.com/1030776/413187" target="_blank"><a href="http://rfyimcool.blog.51cto.com/1030776/413187">http://rfyimcool.blog.51cto.com/1030776/413187</a></a> （搭建七层负载均衡器）</p>
-<p>===================================================================================</p>
-<p>keepalived简介　　</p>
-<p><a href="http://www.keepalived.org/" target="_blank"><a href="http://www.keepalived.org">http://www.keepalived.org</a></a></p>
-<p>keepalived是一个类似于layer3, 4 &amp; 5交换机制的软件，也就是我们平时说的第3层、第4层和第5层交换。Keepalived的作用是检测web服务器的状态，如果有一台web服务器死机，或工作出现故障，Keepalived将检测到，并将有故障的web服务器从系统中剔除，当web服务器工作正常后Keepalived自动将web服务器加入到服务器群中，这些工作全部自动完成，不需要人工干涉，需要人工做的只是修复故障的web服务器。</p>
-<p>类似的HA工具还有heatbeat、drbd等，heatbeat、drbd配置都较为复杂。</p>
-<h2 id="keepalived-">keepalived理论工作原理</h2>
-<p>keepalived可提供vrrp以及health-check功能，可以只用它提供双机浮动的vip（vrrp虚拟路由功能），这样可以简单实现一个双机热备高可用功能。</p>
-<p>keepalived是一个类似于layer3, 4 &amp; 5交换机制的软件，也就是我们平时说的第3层、第4层和第5层交换。Keepalived的作用是检测web 服务器的状态。 Layer3,4&amp;5工作在IP/TCP协议栈的IP层，TCP层，及应用层,原理分别如下：</p>
-<p>Layer3：Keepalived使用Layer3的方式工作式时，Keepalived会定期向服务器群中的服务器</p>
-<p>发送一个ICMP的数据包（既我们平时用的Ping程序）,如果发现某台服务的IP地址没有激活，Keepalived便报告这台服务器失效，并将它从服务器群中剔除，这种情况的典型例子是某台服务器被非法关机。Layer3的方式是以服务器的IP地址是否有效作为服务器工作正常与否的标准。在本文中将采用这种方式。</p>
-<p>Layer4:如果您理解了Layer3的方式，Layer4就容易了。Layer4主要以TCP端口的状态来决定服务器工作正常与否。如web server的服务端口一般是80，如果Keepalived检测到80端口没有启动，则Keepalived将把这台服务器从服务器群中剔除。</p>
-<p>Layer5：Layer5就是工作在具体的应用层了，比Layer3,Layer4要复杂一点，在网络上占用的带宽也要大一些。Keepalived将根据用户的设定检查服务器程序的运行是否正常，如果与用户的设定不相符，则Keepalived将把服务器从服务器群中剔除。</p>
-<p>vip即虚拟ip，是附在主机网卡上的，即对主机网卡进行虚拟，此IP仍然是占用了此网段的某个IP。</p>
-<h2 id="keepalived-">keepalived作用</h2>
-<p>随着你的网站业务量的增长你网站的服务器压力越来越大？需要负载均衡方案！商业的硬件如F5又太贵，你们又是创业型互联公司如何有效节约成本，节省不必要的浪费？同时实现商业硬件一样的高性能高可用的功能？有什么好的负载均衡可伸张可扩展的方案吗？答案是肯定的！有！我们利用 LVS+Keepalived基于完整开源软件的架构可以为你提供一个负载均衡及高可用的服务器。</p>
-<p>LVS+Keepalived 介绍</p>
-<p>LVS</p>
-<p>LVS是Linux Virtual Server的简写，意即Linux虚拟服务器，是一个虚拟的服务器集群系统。本项目在1998年5月由章文嵩博士成立，是中国国内最早出现的自由软件项目之一.目前有三种IP负载均衡技术（VS/NAT、VS/TUN和VS/DR）八种调度算法（rr,wrr,lc,wlc,lblc,lblcr,dh,sh）。</p>
-<p>Keepalvied</p>
-<p>Keepalived在这里主要用作RealServer的健康状态检查以及LoadBalance主机和BackUP主机之间failover的实现。keepalived简介　　keepalived是一个类似于layer3, 4 &amp; 5交换机制的软件，也就是我们平时说的第3层、第4层和第5层交换。Keepalived的作用是检测web服务器的状态，如果有一台web服务器死机，或工作出现故障，Keepalived将检测到，并将有故障的web服务器从系统中剔除，当web服务器工作正常后Keepalived自动将web服务器加入到服务器群中，这些工作全部自动完成，不需要人工干涉，需要人工做的只是修复故障的web服务器。</p>
-<p>===================================================================================</p>
-<p><strong>**</strong>Keepalived<strong>介绍**</strong></p>
-<p>Keepalived是一个基于VRRP协议来实现的WEB 服务高可用方案，可以利用其来避免单点故障。一个WEB服务至少会有2台服务器运行Keepalived，一台为主服务器（MASTER），一台为备份服务器（BACKUP），但是对外表现为一个虚拟IP，主服务器会发送特定的消息给备份服务器，当备份服务器收不到这个消息的时候，即主服务器宕机的时候，备份服务器就会接管虚拟IP，继续提供服务，从而保证了高可用性。
-1 +-------------VIP(192.168.0.7)------------------+</p>
-<p>2 | | |
-3 | | |</p>
-<p>4 server(MASTER) &lt;----keepalived----&gt; server(BACKUP)
-5 (192.168.0.1) (192.168.0.2)</p>
-<p>keepalived是VRRP的完美实现，因此在介绍keepalived之前，先介绍一下VRRP的原理。</p>
-<p><strong>VRRP**</strong>协议简介**</p>
-<p>在现实的网络环境中，两台需要通信的主机大多数情况下并没有直接的物理连接。对于这样的情况，它们之间路由怎样选择？主机如何选定到达目的主机的下一跳路由，这个问题通常的解决方法有二种：</p>
-<p>· 在主机上使用动态路由协议(RIP、OSPF等)</p>
-<p>· 在主机上配置静态路由</p>
-<p>很明显，在主机上配置路态路由是非常不切实际的，因为管理、维护成本以及是否支持等诸多问题。配置静态路由就变得十分流行，但路由器(或者说默认网关default gateway)却经常成为单点。</p>
-<p>VRRP的目的就是为了解决静态路由单点故障问题。</p>
-<p>VRRP通过一竞选(election)协议来动态的将路由任务交给LAN中虚拟路由器中的某台VRRP路由器。</p>
-<p><strong>工作机制</strong></p>
-<p>在一个VRRP虚拟路由器中，有多台物理的VRRP路由器，但是这多台的物理的机器并不能同时工作，而是由一台称为MASTER的负责路由工作，其它的都是BACKUP，MASTER并非一成不变，VRRP让每个VRRP路由器参与竞选，最终获胜的就是MASTER。MASTER拥有一些特权，比如 拥有虚拟路由器的IP地址，我们的主机就是用这个IP地址作为静态路由的。拥有特权的MASTER要负责转发发送给网关地址的包和响应ARP请求。</p>
-<p>VRRP通过竞选协议来实现虚拟路由器的功能，所有的协议报文都是通过IP多播(multicast)包(多播地址 224.0.0.18)形式发送的。虚拟路由器由VRID(范围0-255)和一组IP地址组成，对外表现为一个周知的MAC地址。所以，在一个虚拟路由 器中，不管谁是MASTER，对外都是相同的MAC和IP(称之为VIP)。客户端主机并不需要因为MASTER的改变而修改自己的路由配置，对他们来 说，这种主从的切换是透明的。</p>
-<p>在一个虚拟路由器中，只有作为MASTER的VRRP路由器会一直发送VRRP广告包(VRRPAdvertisement message)，BACKUP不会抢占MASTER，除非它的优先级(priority)更高。当MASTER不可用时(BACKUP收不到广告包)， 多台BACKUP中优先级最高的这台会被抢占为MASTER。这种抢占是非常快速的(&lt;1s)，以保证服务的连续性。</p>
-<p>由于安全性考虑，VRRP包使用了加密协议进行加密。</p>
-<p>==========================================</p>
-<p><strong>vrrp简介</strong>
-随着Internet的迅猛发展，基于网络的应用逐渐增多。这就对网络的可靠性提出了越来越高的要求。斥资对所有网络设备进行更新当然是一种很好的可靠性解决方案；但本着保护现有投资的角度考虑，可以采用廉价冗余的思路，在可靠性和经济性方面找到平衡点。
-虚拟路由冗余协议就是一种很好的解决方案。在该协议中，对共享多存取访问介质（如以太网）上终端IP设备的默认网关(Default Gateway)进行冗余备份，从而在其中一台路由设备宕机时，备份路由设备及时接管转发工作，向用户提供透明的切换，提高了网络服务质量。
-一、协议概述
-在基于TCP/IP协议的网络中，为了保证不直接物理连接的设备之间的通信，必须指定路由。目前常用的指定路由的方法有两种：一种是通过路由协议（比如：内部路由协议RIP和OSPF）动态学习；另一种是静态配置。在每一个终端都运行动态路由协议是不现实的，大多客户端操作系统平台都不支持动态路由协议，即使支持也受到管理开销、收敛度、安全性等许多问题的限制。因此普遍采用对终端IP设备静态路由配置，一般是给终端设备指定一个或者多个默认网关(Default Gateway)。静态路由的方法简化了网络管理的复杂度和减轻了终端设备的通信开销，但是它仍然有一个缺点：如果作为默认网关的路由器损坏，所有使用该网关为下一跳主机的通信必然要中断。即便配置了多个默认网关，如不重新启动终端设备，也不能切换到新的网关。采用虚拟路由冗余协议 (Virtual Router Redundancy Protocol，简称VRRP)可以很好的避免静态指定网关的缺陷。
-在VRRP协议中，有两组重要的概念：VRRP路由器和虚拟路由器，主控路由器和备份路由器。VRRP路由器是指运行VRRP的路由器，是物理实体，虚拟路由器是指VRRP协议创建的，是逻辑概念。一组VRRP路由器协同工作，共同构成一台虚拟路由器。该虚拟路由器对外表现为一个具有唯一固定IP地址和MAC地址的逻辑路由器。处于同一个VRRP组中的路由器具有两种互斥的角色：主控路由器和备份路由器，一个VRRP组中有且只有一台处于主控角色的路由器，可以有一个或者多个处于备份角色的路由器。VRRP协议使用选择策略从路由器组中选出一台作为主控，负责ARP相应和转发IP数据包，组中的其它路由器作为备份的角色处于待命状态。当由于某种原因主控路由器发生故障时，备份路由器能在几秒钟的时延后升级为主路由器。由于此切换非常迅速而且不用改变IP地址和MAC地址，故对终端使用者系统是透明的。
-二、工作原理
-一个VRRP路由器有唯一的标识：VRID，范围为0—255。该路由器对外表现为唯一的虚拟MAC地址，地址的格式为00-00-5E-00-01-[VRID]。主控路由器负责对ARP请求用该MAC地址做应答。这样，无论如何切换，保证给终端设备的是唯一一致的IP和MAC地址，减少了切换对终端设备的影响。
-VRRP控制报文只有一种：VRRP通告(advertisement)。它使用IP多播数据包进行封装，组地址为224.0.0.18，发布范围只限于同一局域网内。这保证了VRID在不同网络中可以重复使用。为了减少网络带宽消耗只有主控路由器才可以周期性的发送VRRP通告报文。备份路由器在连续三个通告间隔内收不到VRRP或收到优先级为0的通告后启动新的一轮VRRP选举。
-在VRRP路由器组中，按优先级选举主控路由器，VRRP协议中优先级范围是0—255。若VRRP路由器的IP地址和虚拟路由器的接口IP地址相同，则称该虚拟路由器作VRRP组中的IP地址所有者；IP地址所有者自动具有最高优先级：255。优先级0一般用在IP地址所有者主动放弃主控者角色时使用。可配置的优先级范围为1—254。优先级的配置原则可以依据链路的速度和成本、路由器性能和可靠性以及其它管理策略设定。主控路由器的选举中，高优先级的虚拟路由器获胜，因此，如果在VRRP组中有IP地址所有者，则它总是作为主控路由的角色出现。对于相同优先级的候选路由器，按照IP地址大小顺序选举。VRRP还提供了优先级抢占策略，如果配置了该策略，高优先级的备份路由器便会剥夺当前低优先级的主控路由器而成为新的主控路由器。
-为了保证VRRP协议的安全性，提供了两种安全认证措施：明文认证和IP头认证。明文认证方式要求：在加入一个VRRP路由器组时，必须同时提供相同的VRID和明文密码。适合于避免在局域网内的配置错误，但不能防止通过网络监听方式获得密码。IP头认证的方式提供了更高的安全性，能够防止报文重放和修改等攻击。
-三、 应用实例
-最典型的VRRP应用：RTA、RTB组成一个VRRP路由器组，假设RTB的处理能力高于RTA，则将RTB配置成IP地址所有者，H1、H2、H3的默认网关设定为RTB。则RTB成为主控路由器，负责ICMP重定向、ARP应答和IP报文的转发；一旦RTB失败，RTA立即启动切换，成为主控，从而保证了对客户透明的安全切换。
-在VRRP应用中，RTA在线时RTB只是作为后备，不参与转发工作，闲置了路由器RTA和链路L1。通过合理的网络设计，可以到达备份和负载分担双重效果。让RTA、RTB同时属于互为备份的两个VRRP组：在组1中RTA为IP地址所有者；组2中RTB为IP地址所有者。将H1的默认网关设定为RTA；H2、H3的默认网关设定为RTB。这样，既分担了设备负载和网络流量，又提高了网络可靠性。
-VRRP协议的工作机理与CISCO公司的HSRP（Hot Standby Routing Protocol）有许多相似之处。但二者主要的区别是在CISCO的HSRP中，需要单独配置一个IP地址作为虚拟路由器对外体现的地址，这个地址不能是组中任何一个成员的接口地址。</p>
-<h1 id="-vrrp-">使用VRRP协议，不用改造目前的网络结构，最大限度保护了当前投资，只需最少的管理费用，却大大提升了网络性能，具有重大的应用价值。</h1>
-<h1 id="keepalive-vip-">keepalive的简单应用——管理VIP的飘动</h1>
-<p>from:<a href="http://www.cnblogs.com/killkill/archive/2010/12/31/1922360.html" target="_blank">http://www.cnblogs.com/killkill/archive/2010/12/31/1922360.html</a></p>
-<p>VIP的飘动可以为我们解决很多问题，以前我试过使用ifup/ifdown的方式控制网卡的up/down来实现，这种方式有个小问题，就是每次VIP 飘动之后都要等上几十秒才能生效，感觉时间比较长，而且还要配合一些逻辑脚本才能很好地工作，有没有更好的方法呢？当然有，这就是本文的主角—— keepalived。</p>
-<p>安装很简单：
-1</p>
-<p>tar zxvf keepalived-1.1.20.tar.gz</p>
-<p>2</p>
-<p>cd keepalived-1.1.20
-3</p>
-<p>./configure --prefix=/</p>
-<p>4</p>
-<p>make
-5</p>
-<p>make install</p>
-<p>修改一下 /etc/keepalived/keepalived.conf 这个配置文件就可以用了，以下是我的环境，192.168.10.141和192.168.10.142是两个VIP，可以在两台服务器之间飘动：</p>
-<p><img src="" alt=""></p>
-<p>主机的配置：
-01</p>
-<p>global_defs {</p>
-<p>02</p>
-<p>notification_email {
-03</p>
-<p>failover@firewall.loc</p>
-<p>04</p>
-<p>}
-05</p>
-<p>notification_email_from Alexandre.Cassen@firewall.loc</p>
-<p>06</p>
-<p>smtp_server 192.168.0.48
-07</p>
-<p>smtp_connect_timeout 10</p>
-<p>08</p>
-<p>router_id nginx
-09</p>
-<p>}</p>
-<p>10
-11</p>
-<p>vrrp_instance VI_141 {</p>
-<p>12</p>
-<p>state BACKUP
-13</p>
-<p>interface eth0</p>
-<p>14</p>
-<p>virtual_router_id 141
-15</p>
-<p>priority 50</p>
-<p>16</p>
-<p>advert_int 1
-17</p>
-<p>authentication {</p>
-<p>18</p>
-<p>auth_type PASS
-19</p>
-<p>auth_pass 141</p>
-<p>20</p>
-<p>}
-21</p>
-<p>virtual_ipaddress {</p>
-<p>22</p>
-<p>192.168.10.141/26 dev eth0
-23</p>
-<p>}</p>
-<p>24</p>
-<p>}
-25</p>
-<p>26</p>
-<p>vrrp_instance VI_142 {
-27</p>
-<p>state BACKUP</p>
-<p>28</p>
-<p>interface eth0
-29</p>
-<p>virtual_router_id 142</p>
-<p>30</p>
-<p>priority 100
-31</p>
-<p>advert_int 1</p>
-<p>32</p>
-<p>authentication {
-33</p>
-<p>auth_type PASS</p>
-<p>34</p>
-<p>auth_pass 142
-35</p>
-<p>}</p>
-<p>36</p>
-<p>virtual_ipaddress {
-37</p>
-<p>192.168.10.142/26 dev eth0</p>
-<p>38</p>
-<p>}
-39</p>
-<p>}</p>
-<p>备机的配置：</p>
-<p>01</p>
-<p>global_defs {</p>
-<p>02</p>
-<p>notification_email {
-03</p>
-<p>failover@firewall.loc</p>
-<p>04</p>
-<p>}
-05</p>
-<p>notification_email_from Alexandre.Cassen@firewall.loc</p>
-<p>06</p>
-<p>smtp_server 10.168.0.48
-07</p>
-<p>smtp_connect_timeout 10</p>
-<p>08</p>
-<p>router_id nginx
-09</p>
-<p>}</p>
-<p>10
-11</p>
-<p>vrrp_instance VI_141 {</p>
-<p>12</p>
-<p>state BACKUP
-13</p>
-<p>interface eth0</p>
-<p>14</p>
-<p>virtual_router_id 141
-15</p>
-<p>priority 100</p>
-<p>16</p>
-<p>advert_int 1
-17</p>
-<p>authentication {</p>
-<p>18</p>
-<p>auth_type PASS
-19</p>
-<p>auth_pass 141</p>
-<p>20</p>
-<p>}
-21</p>
-<p>virtual_ipaddress {</p>
-<p>22</p>
-<p>192.168.10.141/26 dev eth0
-23</p>
-<p>}</p>
-<p>24</p>
-<p>}
-25</p>
-<p>26</p>
-<p>vrrp_instance VI_142 {
-27</p>
-<p>state BACKUP</p>
-<p>28</p>
-<p>interface eth0
-29</p>
-<p>virtual_router_id 142</p>
-<p>30</p>
-<p>priority 50
-31</p>
-<p>advert_int 1</p>
-<p>32</p>
-<p>authentication {
-33</p>
-<p>auth_type PASS</p>
-<p>34</p>
-<p>auth_pass 142
-35</p>
-<p>}</p>
-<p>36</p>
-<p>virtual_ipaddress {
-37</p>
-<p>192.168.10.142/26 dev eth0</p>
-<p>38</p>
-<p>}
-39</p>
-<p>}</p>
-<p>乍一看，主机和备机的配置文件是一样的，仔细看一下priority的值，使用以下命令即可将keepalived加入linux的服务中：</p>
-<p>1</p>
-<p>chkconfig --add keepalived ;</p>
-<p>通过启、停keepalived这个服务即可观察到VIP的飘动，至于为什么VIP飘动后可以很快地生效，还有待研究。</p>
-<p>===================================================================================</p>
-<h2 id="haproxy-keepalived-">haproxy+keepalived实现高可用负载均衡</h2>
-<p><img src="http://www.cnblogs.cc2/2054285_112154067_files/11207101_1.gif" alt="" title="此博文包含图片"> 我的环境：
-haproxy keepalived 主：192.168.1.192
-haproxy keepalived 备：192.168.1.193
-vip：192.168.1.200
-web：192.168.1.187:80 192.168.1.187:8000
-<img src="" alt="">
-一：安装过程，在192.168.1.192上：
-keepalived的安装:
-/#tar -zxvf keepalived-1.1.17.tar.gz
-/#ln -s /usr/src/kernels/2.6.18-128.el5-i686/ /usr/src/linux
-/#cd keepalived-1.1.17
-/#./configure --prefix=/ --mandir=/usr/local/share/man/ --with-kernel-dir=/usr/src/kernels/2.6.18-128.el5-i686/
-/#make &amp;&amp; make install
-/#cd /etc/keepalived/
-/#mv keepalived.conf keepalived.conf.default
-/#vi keepalived.conf
-! Configuration File for keepalived
-vrrp_script chk_http_port {
-script &quot;/etc/keepalived/check_haproxy.sh&quot;
-interval 2
-weight 2
-global_defs {
-router_id LVS_DEVEL
-}
-vrrp_instance VI_1 {
-state MASTER /#192.168.1.193上改为BACKUP
-interface eth0
-virtual_router_id 51
-priority 150 /#192.168.1.193上改为120
-advert_int 1
-authentication {
-auth_type PASS
-auth_pass 1111
-}
-track_script {
-chk_http_port
-}
-virtual_ipaddress {
-192.168.1.200
-}
-}
-}
-/#vi /etc/keepalived/check_haproxy.sh
-/#!/bin/bash
-A=<code>ps -C haproxy --no-header |wc -l</code>
-if [ $A -eq 0 ];then
-/usr/local/haproxy/sbin/haproxy -f /usr/local/haproxy/conf/haproxy.cfg
-sleep 3
-if [ <code>ps -C haproxy --no-header |wc -l</code> -eq 0 ];then
-/etc/init.d/keepalived stop
-fi
-fi
-/#chmod 755 /etc/keepalived/check_haproxy.sh
-haproxy的安装(主备都一样)：
-/#tar -zxvf haproxy-1.4.9.tar.gz
-/#cd haproxy-1.4.9
-/#make TARGET=linux26 PREFIX=/usr/local/haproxy install
-/#cd /usr/local/haproxy/
-/#mkdir conf logs
-/#cd conf
-/#vi haproxy.cfg
-global
-log 127.0.0.1 local3 info
-maxconn 4096
-user nobody
-group nobody
-daemon
-nbproc 1
-pidfile /usr/local/haproxy/logs/haproxy.pid
-defaults
-maxconn 2000
-contimeout 5000
-clitimeout 30000
-srvtimeout 30000
-mode http
-log global
-log 127.0.0.1 local3 info
-stats uri /admin?stats
-option forwardfor
-frontend http_server
-bind :80
-log global
-default_backend info_cache
-acl test hdr_dom(host) -i test.domain.com
-use_backend cache_test if test
-backend info_cache
-/#balance roundrobin
-balance source
-option httpchk HEAD /haproxy.txt HTTP/1.1\r\nHost:192.168.1.187
-server inst2 192.168.1.187:80 check inter 5000 fall 3
-backend cache_test
-balance roundrobin
-/#balance source
-option httpchk HEAD /haproxy.txt HTTP/1.1\r\nHost:test.domain.com
-server inst1 192.168.1.187:8000 check inter 5000 fall 3
-二：再两台机器上都分别启动：
-/etc/init.d/keepalived start （这条命令会自动把haproxy启动）
-三：测试：
-1.再两台机器上分别执行ip add
-主: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast qlen 1000
-link/ether 00:0c:29:98:cd:c0 brd ff:ff:ff:ff:ff:ff
-inet 192.168.1.192/24 brd 192.168.1.255 scope global eth0
-inet 192.168.1.200/32 scope global eth0
-inet6 fe80::20c:29ff:fe98:cdc0/64 scope link
-valid_lft forever preferred_lft forever
-备: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast qlen 1000
-link/ether 00:0c:29:a6:0c:7e brd ff:ff:ff:ff:ff:ff
-inet 192.168.1.193/24 brd 255.255.255.254 scope global eth0
-inet6 fe80::20c:29ff:fea6:c7e/64 scope link
-valid_lft forever preferred_lft forever
-2.停掉主上的haproxy，3秒后keepalived会自动将其再次启动
-3.停掉主的keepalived，备机马上接管服务
-备: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast qlen 1000
-link/ether 00:0c:29:a6:0c:7e brd ff:ff:ff:ff:ff:ff
-inet 192.168.1.193/24 brd 255.255.255.254 scope global eth0
-inet 192.168.1.200/32 scope global eth0
-inet6 fe80::20c:29ff:fea6:c7e/64 scope link
-valid_lft forever preferred_lft forever
-4.更改hosts
-192.168.1.200 test.com
-192.168.1.200 test.domain.com
-通过IE测试，可以发现
-test.com的请求发向了192.168.1.187:80
-test.domain.com的请求发向了192.168.1.187:8000
-<img src="" alt=""></p>
-<p><img src="" alt="">
-from:<a href="http://www.360doc.com/content/11/0425/11/2054285_112154067.shtml" target="_blank"><a href="http://www.360doc.com/content/11/0425/11/2054285_112154067.shtml">http://www.360doc.com/content/11/0425/11/2054285_112154067.shtml</a></a></p>
-<p>来源： &lt;<a href="http://www.cnblogs.com/dkblog/archive/2011/07/06/2098949.html" target="_blank">haproxy+keepalived实现高可用负载均衡 - dkcndk - 博客园</a>&gt;</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/haproxy/">haproxy</a></li></span></span> | <span class="tags">Tagged <a href="/tags/haproxy/" class="label label-primary">haproxy</a><a href="/tags/服务器/" class="label label-success">服务器</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-haproxy--haproxykeepalived实现高可用负载均衡/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-haproxy--haproxykeepalived实现高可用负载均衡" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-服务器-集群--ApacheTomcat2集群负载平衡Linux环境/">Apache + Tomcat 2集群 负载平衡(Linux环境) </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-服务器-集群--ApacheTomcat2集群负载平衡Linux环境/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="apache-tomcat-2-linux-derek-guo-blog-blogjava">Apache + Tomcat 2集群 负载平衡(Linux环境) - Derek.Guo BLOG - BlogJava</h1>
-<p><a href="http://www.blogjava.net/envoydada/" target="_blank"><strong>Derek.Guo BLOG</strong></a></p>
-<p><a href="http://www.blogjava.net/" target="_blank">BlogJava</a>   <a href="http://www.blogjava.net/envoydada/" target="_blank">首页</a>   <a href="http://www.blogjava.net/envoydada/admin/EditPosts.aspx?opt=1" target="_blank">新随笔</a> <a href="http://www.blogjava.net/envoydada/contact.aspx?id=1" target="_blank">联系</a>   <a href="http://www.blogjava.net/envoydada/rss" target="_blank">聚合</a><a href="http://www.blogjava.net/envoydada/rss" target="_blank"><img src="" alt=""></a>   <a href="http://www.blogjava.net/envoydada/admin/EditPosts.aspx" target="_blank">管理</a></p>
-<p>随笔-82  评论-31  文章-0  trackbacks-0
-<a href="">Apache + Tomcat/*2集群 负载平衡(Linux环境)</a></p>
-<p>Apache + Tomcat/*2集群 负载平衡（Linux环境）</p>
-<p>说明：一台apache主机，两台tomcat主机</p>
-<p>安装JDK、安装Apache、安装Tomcat、配置Apache代理、配置Tomcat集群</p>
-<p>一、安装JDK（所有运行Tomcat主机，即web服务器）
-  1.下载JDK的bin包，如jdk-1_5_0_02-linux-i586.rpm.bin ，给其添加执行权限，执行/#./jdk-1_5_0_02-linux-i586.rpm.bin , 在</p>
-<p>当前目录生成rpm安装包，同样给其添加执行权限。 再执行 /#rpm -ivh jdk-1_5_0_02-linux-i586.rpm 出现安装协议 按<Enter>接受</p>
-<p>即可。
-  2.设置环境变量 /#vi /etc/profile  在其最后加入
-        JAVA_HOME =/ usr / java / jdk1. 5 .0_02
-        CLASSPATH = .:$JAVA_HOME / lib:$JAVA_HOME / jre / lib
-        PATH = $PATH:$JAVA_HOME / bin:$JAVA_HOME / jre / bin
-        export JAVA_HOME CLASSPATH PATH</p>
-<pre><code> 保存退出
-</code></pre><p>  3.要使JDK在所有的用户中使用，可以这样：vi /etc/profile.d/java.sh在新的java.sh中输入以下内容：
-        /#set java environment
-        JAVA_HOME=/usr/java/jdk1.5.0_02
-        CLASSPATH=.:$JAVA_HOME/lib:$JAVA_HOME/jre/lib
-        PATH=$PATH:$JAVA_HOME/bin:$JAVA_HOME/jre/bin
-        export JAVA_HOME CLASSPATH PATH
-     保存退出，然后给java.sh分配权限：chmod 755 /etc/profile.d/java.sh</p>
-<p>二、安装Apache（访问代理主机）
-  1.下载apache源代码 <a href="http://archive.apache.org/dist/httpd/httpd-2.2.2.tar.gz" target="_blank"><a href="http://archive.apache.org/dist/httpd/httpd-2.2.2.tar.gz">http://archive.apache.org/dist/httpd/httpd-2.2.2.tar.gz</a></a></p>
-<p> 解压缩 tar fvxz httpd-2.2.2.tar.gz</p>
-<p>  2.进入解压后的目录。进行配置：
-. / configure  -- prefix =/ usr / apache  -- enable - module = most  -- enable - proxy  -- enable - proxy - ajp  -- enable - forward  -- enable - proxy - connect  -- enable - proxy - http  -- enable - so  -- enable - deflate  -- enable - headers  -- enable - include</p>
-<p>上面的配置，用到了其他一些模块，说不定以后会用到，如支持ssi的include模块。</p>
-<p>  3.编译（编译如果不成功，确认一下你的linux是否安装有编译所需要的c环境和其他需要的类库）
-    make</p>
-<p>  4.安装 make install</p>
-<p>  5.进入/usr/apache目录，运行apache  ./apachectl -k start</p>
-<pre><code>  运行apache后，浏览一下是否运行正常。
-
-关闭apache ./apachectl -k stop
-</code></pre><p>   6.把apache作为linux的启动就运行服务程序
-     执行如下操作：cp /usr/apache/bin/apachectl /etc/rc.d/init.d/httpd
-     确认linux以前安装的httpd（apache）不需要了，你可覆盖掉以前apache的httpd文件。
-     chkconfig --add httpd
-     运行linux的setup，把httpd服务默认设定为自动运行。
-     到现在，你就可用另一种方式来启动、关闭apache了。如service httpd start</p>
-<p>三、安装tomcat（Web服务器）
-    1.下载jakarta-tomcat-5.5.20.tar.gz
-      tar zxf jakarta-tomcat-5.5.20.tar.gz 解压文件 （如解压到/usr/local/）
-    2.设置环境变量 /#vi /etc/profile  添加
-  CATALINA_HOME=/usr/local/jakarta-tomcat-5.5.30
-  export CATALINA_HOME
-      保存退出</p>
-<pre><code>3.修改JVM内存：/bin/catalina.sh 文件
-    在下/# ----- Execute The Requested Command -----------------
-        /# Bugzilla 37848: only output this if we have a TTY
-          if [ $have_tty -eq 1 ]; then
-             echo &quot;Using CATALINA_BASE:   $CATALINA_BASE&quot;
-             echo &quot;Using CATALINA_HOME:   $CATALINA_HOME&quot;
-             echo &quot;Using CATALINA_TMPDIR: $CATALINA_TMPDIR&quot;
-            if [ &quot;$1&quot; = &quot;debug&quot; -o &quot;$1&quot; = &quot;javac&quot; ] ; then
-                echo &quot;Using JAVA_HOME:       $JAVA_HOME&quot;
-            else
-               echo &quot;Using JRE_HOME:       $JRE_HOME&quot;
-            fi
-           fi
-        添加以下内容：
-            CATALINA_OPTS = &quot; $CATALINA_OPTS -Xms256m -Xmx512m -XX:PermSize=32m  -XX:MaxPermSize=128m $JPDA_OPTS &quot;
-            JAVA_OPTS = &quot; $JAVA_OPTS -Djava.awt.headless=true &quot;
-            echo  &quot; Using CATALINA_OPTS: $CATALINA_OPTS &quot;
-            echo  &quot; Using JAVA_OPTS: $JAVA_OPTS &quot;
-
-4.运行/usr/local/jakarta-tomcat-5.5.30/bin/startup.sh 启动tomcat服务器 测试是否正常
-</code></pre><p>四、配置apache代理(适用mod_proxy_ajp.so)
-    编辑apache配置文件 /#vi /usr/apache/conf/httpd.conf
-    1.配置proxy_ajp
- /#加载解析模块（windows下，或linux采用动态加载模式下需配置。前面我们的linux编译时把下面的模块嵌入到了apache中 </p>
-<pre><code>   ，所以不用再加载）
-</code></pre><p> LoadModule proxy_module modules/mod_proxy.so
- LoadModule proxy_ajp_module modules/mod_proxy_ajp.so
-    2.配置文件添加
- ProxyPass  /  balancer: // tomcatcluster/ lbmethod=byrequests stickysession=JSESSIONID nofailover=on timeout=5  maxattempts = 3
- ProxyPassReverse  /  balancer: // tomcatcluster/
-  &lt; Proxy balancer: // tomcatcluster &gt;
-    BalancerMember ajp: // 192.168.40.15:8009 smax=2 loadfactor=1  route=tomca t1
-    BalancerMember ajp: // 192.168.71.106:8009 smax=2 loadfactor=2  route=tomc at2
-  &lt;/ Proxy &gt;</p>
-<pre><code>    以上说明请参见mod_proxy中文手册 [http://www.6bee.com/tech/ApacheMenu/mod/mod_proxy.html](http://www.6bee.com/tech/ApacheMenu/mod/mod_proxy.html)
-3.其他说明
-</code></pre><p> 1、apache对tomcat的支持历史：apache第2.1版本后，内置了proxy_ajp，而jk2已经没人开发了，jk则支持到apache的</p>
-<p>2.0.58版本。
-proxy_ajp配置较简单，但可配置性还不如jk2，主要表现在proxy_ajp目前只支持配置到目录，还不支持对文件名称的pattern模式匹</p>
-<p>配（即还不能定义到只对jsp文件起作用）。</p>
-<p> 2、因为proxy_ajp的配置，还不支持对文件名称的pattern模式匹配，所以你要特别注意：
-——尽量把jsp和静态文件和图片路径分不同的目录来管理；
-——对于静态文件和图片路径，如/images，你可用“ProxyPass /images !”来禁止ProxyPass，从而来让apache来直接处理图片的请</p>
-<p>求。
-——关于apache的ssi（即shtml，include）与tomcat的集成时，shtml文件不能处于ProxyPass的控制下（即不能在ProxyPass目录）</p>
-<p>，而shtml调用的jsp须在ProxyPass有效控制下；</p>
-<p>五、配置Tomcat负载均衡、集群
-    1.修改tomcat 的 conf/server.xml 的<Engine><br>    去掉注释<Engine name="Standalone" defaultHost="localhost" jvmRoute="tomcat1">
-        jvmRoute是tomcat路由标示，由此区分两台tomcat主机，那么第二台就改为
-            <Engine name="Standalone" defaultHost="localhost" jvmRoute="tomcat2">
-    加上注释<Engine name="Catalina" defaultHost="localhost"></p>
-<pre><code>2.修改tomcat 的 conf/server.xml 的&lt;Connector&gt; 
-去掉注释&lt;Connector port=&quot;8009&quot;
-           enableLookups=&quot;false&quot; redirectPort=&quot;8443&quot; debug=&quot;0&quot;
-           protocol=&quot;AJP/1.3&quot; /&gt;   
-
-3.修改tomcat 的 conf/server.xml 的&lt;Cluster&gt;   
-&lt;!--  
-     &lt; Cluster className = &quot; org.apache.catalina.cluster.tcp.SimpleTcpCluster &quot;
-             managerClassName = &quot; org.apache.catalina.cluster.session.DeltaManager &quot;
-             expireSessionsOnShutdown = &quot; false &quot;
-             useDirtyFlag = &quot; true &quot;
-             notifyListenersOnReplication = &quot; true &quot; &gt;
-         &lt; Membership 
-            className = &quot; org.apache.catalina.cluster.mcast.McastService &quot;
-            mcastAddr = &quot; 228.0.0.4 &quot;
-            mcastPort = &quot; 45564 &quot;
-            mcastFrequency = &quot; 500 &quot;
-            mcastDropTime = &quot; 3000 &quot; /&gt;
-         &lt; Receiver 
-            className = &quot; org.apache.catalina.cluster.tcp.ReplicationListener &quot;
-            tcpListenAddress = &quot; auto &quot;
-            tcpListenPort = &quot; 4001 &quot;
-            tcpSelectorTimeout = &quot; 100 &quot;
-            tcpThreadCount = &quot; 6 &quot; /&gt;
-         &lt; Sender
-            className = &quot; org.apache.catalina.cluster.tcp.ReplicationTransmitter &quot;
-            replicationMode = &quot; pooled &quot;
-            ackTimeout = &quot; 5000 &quot; /&gt;
-         &lt; Valve className = &quot; org.apache.catalina.cluster.tcp.ReplicationValve &quot;
-               filter = &quot; ./*\.gif;./*\.js;./*\.jpg;./*\.png;./*\.htm;./*\.html;./*\.css;./*\.txt; &quot; /&gt;
-
-         &lt; Deployer className = &quot; org.apache.catalina.cluster.deploy.FarmWarDeployer &quot;
-                  tempDir = &quot; /tmp/war-temp/ &quot;
-                  deployDir = &quot; /tmp/war-deploy/ &quot;
-                  watchDir = &quot; /tmp/war-listen/ &quot;
-                  watchEnabled = &quot; false &quot; /&gt;
-
-         &lt; ClusterListener className = &quot; org.apache.catalina.cluster.session.ClusterSessionListener &quot; /&gt;
-     &lt;/ Cluster &gt;
-     --&gt;
-</code></pre><p>把上面的注释拿掉 就ok 了！</p>
-<p>4.在每个webapps应用中,修改web.xml文件 添加元素<distributable/>
-最后完工，重启tomcat,apahce测试平衡负载，新建jsp页面
-&lt;%
-Runtime lRuntime = Runtime.getRuntime();
-out.println(&quot;/<em>/</em>/<em> BEGIN MEMORY STATISTICS /</em>/<em>/</em><br/>&quot;);
-out.println(&quot;Free  Memory: &quot;+lRuntime.freeMemory()/1024/1024+&quot;M<br/>&quot;);
-out.println(&quot;Max   Memory: &quot;+lRuntime.maxMemory()/1024/1024+&quot;M<br/>&quot;);
-out.println(&quot;Total Memory: &quot;+lRuntime.totalMemory()/1024/1024+&quot;M<br/>&quot;);
-out.println(&quot;Available Processors : &quot;+lRuntime.availableProcessors()+&quot;<br/>&quot;);
-out.println(&quot;/<em>/</em>/<em> END MEMORY STATISTICS /</em>/<em>/</em>&quot;);
-%&gt;
-<br>
-&lt;%= request.getSession().getId() %&gt;
-放入到两台tomcat的ROOT目录中测试
-再测试集群(session复制)
-posted on 2006-11-15 11:06 <a href="http://www.blogjava.net/envoydada/" target="_blank">Derek.Guo</a> 阅读(3196) <a href="http://www.blogjava.net/envoydada/archive/2006/11/15/81196.html#Post" target="_blank">评论(0)</a>  <a href="http://www.blogjava.net/envoydada/admin/EditPosts.aspx?postid=81196" target="_blank">编辑</a>  <a href="http://www.blogjava.net/envoydada/AddToFavorite.aspx?id=81196" target="_blank">收藏</a> 所属分类: <a href="http://www.blogjava.net/envoydada/category/32100.html" target="_blank">Linux/Unix</a> <img src="" alt=""></p>
-<p><a href="http://www.blogjava.net/RequireRegister.aspx" target="_blank">新用户注册</a>  <a href="">刷新评论列表</a>  </p>
-<p><a href=""></a> <a href="http://job.cnblogs.com/">找优秀程序员，就在博客园</a>
-IT新闻：
-· <a href="http://news.cnblogs.com/n/128015/" target="_blank">开源Tizen系统视频泄露 外观似诺基亚MeeGo</a>
-· <a href="http://news.cnblogs.com/n/128014/" target="_blank">Opera推出电视应用商店 提供HTML5应用</a>
-· <a href="http://news.cnblogs.com/n/128013/" target="_blank">CES 2012 开展前演讲：电子设备消费将达 1 万亿美元</a>
-· <a href="http://news.cnblogs.com/n/128012/" target="_blank">分析师称苹果借转售NAND闪存获数十亿美元利润</a>
-· <a href="http://news.cnblogs.com/n/128011/" target="_blank">爱创会：火花，火焰，火光</a>   <a href="http://www.cnblogs.com/" target="_blank">博客园</a>  <a href="http://q.cnblogs.com/" target="_blank">博问</a>  <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>  <a href="http://job.cnblogs.com/cate-java_programmer/" target="_blank">Java程序员招聘</a> 标题  请输入标题 姓名  请输入你的姓名 主页 请输入验证码 验证码 /*  <img src="" alt=""> 内容(请不要发表任何与政治相关的内容) 请输入评论内容 Remember Me?   <a href="http://www.blogjava.net/login.aspx?ReturnURL=http://www.blogjava.net/envoydada/archive/2006/11/15/81196.html&amp;SourceURL=/envoydada/archive/2006/11/15/81196.html" target="_blank">登录</a>       [使用Ctrl+Enter键可以直接提交]    推荐职位：
-· <a href="http://job.cnblogs.com/Offer/18582/" target="_blank">北京C++游戏服务端研发工程师(武神世纪网络)</a>
-· <a href="http://job.cnblogs.com/offer/16502/" target="_blank">知识库技术编辑(博客园)</a>
-· <a href="http://job.cnblogs.com/offer/18594/" target="_blank">北京Web系统工程师(嘉康利中国)</a>
-· <a href="http://job.cnblogs.com/offer/13272/" target="_blank">.NET 高级软件开发工程师(5173.com)</a>
-· <a href="http://job.cnblogs.com/offer/10223/" target="_blank">中高级.NET程序员(沪江网)</a>
-· <a href="http://job.cnblogs.com/Offer/13754/" target="_blank">石家庄高级.NET工程师（月薪6K-8K）(盛安德科技)</a></p>
-<p>博客园首页随笔：
-· <a href="http://www.cnblogs.com/ralphjzhang/archive/2012/01/09/2317463.html" target="_blank">再论 Time stamp counter</a>
-· <a href="http://www.cnblogs.com/default/archive/2012/01/09/2317506.html" target="_blank">我在ZZ这八年</a>
-· <a href="http://www.cnblogs.com/phphuaibei/archive/2012/01/09/2317484.html" target="_blank">写在2012里的2011总结</a>
-· <a href="http://www.cnblogs.com/west-link/archive/2012/01/09/2317477.html" target="_blank">高效程序员秘籍（8）：养成使用网络笔记本、网络文件同步工具的习惯</a>
-· <a href="http://www.cnblogs.com/judgelee/archive/2012/01/09/2317474.html" target="_blank">Ext.get()与Ext.fly()之区别</a>
-知识库：
-· <a href="http://kb.cnblogs.com/page/127846/" target="_blank">持续集成之“Everything is code”</a>
-· <a href="http://kb.cnblogs.com/page/127845/" target="_blank">持续集成之“软件自我识别”</a>
-· <a href="http://kb.cnblogs.com/page/127843/" target="_blank">持续集成之戏说Check-in Dance</a>
-· <a href="http://kb.cnblogs.com/page/111014/" target="_blank">什么是闭包，我的理解</a>
-· <a href="http://kb.cnblogs.com/page/111780/" target="_blank">什么是闭包(Closure)？</a>  网站导航:</p>
-<p><a href="http://www.cnblogs.com/" title="程序员的网上家园" target="_blank">博客园</a>   <a href="http://news.cnblogs.com/" target="_blank">IT新闻</a>   <a href="http://kb.cnblogs.com/" target="_blank">知识库</a>   <a href="http://www.cppblog.com/" target="_blank">C++博客</a>   <a href="http://job.cnblogs.com/" target="_blank">程序员招聘</a>   <a href="http://www.blogjava.net/envoydada/archive/2006/11/15/81196.html?opt=admin" target="_blank">管理</a> 相关文章:</p>
-<ul>
-<li><a href="http://www.blogjava.net/envoydada/archive/2011/12/29/367529.html" target="_blank">使用 sendfile() 提升网络文件发送性能</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2011/03/15/346300.html" target="_blank">Web服务器性能/压力测试工具http_load、webbench、ab、Siege(转)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/08/317711.html" target="_blank">liunx下安装Subversion</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/07/29/218323.html" target="_blank">Window下配置SVN服务器与客户端(转)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/11/207028.html" target="_blank">Solaris系统进程的查看和管理</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/09/29/149640.html" target="_blank">Solaris 操作系统的动态跟踪工具Dtrace</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/08/01/133838.html" target="_blank">Linux自启Tomcat,Solaris自启glassfish</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/30/133285.html" target="_blank">JProfiler远程监控Tomcat</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/24/132080.html" target="_blank">Glassfish的安装</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/10/129316.html" target="_blank">启动Solaris10-webmin</a>  </li>
-</ul>
-<p><a href="&quot;Go to the previous month&quot;">&lt;</a>2006年11月<a href="&quot;Go to the next month&quot;">&gt;</a>日一二三四五六293031123456<a href="http://www.blogjava.net/envoydada/archive/2006/11/07.html" target="_blank">7</a><a href="http://www.blogjava.net/envoydada/archive/2006/11/08.html" target="_blank">8</a>9<a href="http://www.blogjava.net/envoydada/archive/2006/11/10.html" target="_blank">10</a>11121314<a href="http://www.blogjava.net/envoydada/archive/2006/11/15.html" target="_blank">15</a><a href="http://www.blogjava.net/envoydada/archive/2006/11/16.html" target="_blank">16</a>1718192021222324252627282930123456789</p>
-<h3 id="-7-">留言簿(7)</h3>
-<ul>
-<li><a href="http://www.blogjava.net/envoydada/Contact.aspx?id=1" target="_blank">给我留言</a></li>
-<li><a href="http://www.blogjava.net/envoydada/default.aspx?opt=msg" target="_blank">查看公开留言</a></li>
-<li><a href="http://www.blogjava.net/envoydada/admin/MyMessages.aspx" target="_blank">查看私人留言</a></li>
-</ul>
-<h1 id="-80-">随笔分类(80)</h1>
-<ul>
-<li><a href="http://www.blogjava.net/envoydada/category/45572.html" target="_blank">Cache(2)</a><a href="http://www.blogjava.net/envoydada/category/45572.html/rss" title="Subscribe to Cache(2)" target="_blank"><img src="&quot;Subscribe to Cache(2" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/category/32101.html" target="_blank">Database(9)</a><a href="http://www.blogjava.net/envoydada/category/32101.html/rss" title="Subscribe to Database(9)" target="_blank"><img src="&quot;Subscribe to Database(9" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/category/32099.html" target="_blank">Java(51)</a><a href="http://www.blogjava.net/envoydada/category/32099.html/rss" title="Subscribe to Java(51)" target="_blank"><img src="&quot;Subscribe to Java(51" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/category/32100.html" target="_blank">Linux/Unix(14)</a><a href="http://www.blogjava.net/envoydada/category/32100.html/rss" title="Subscribe to Linux/Unix(14)" target="_blank"><img src="&quot;Subscribe to Linux/Unix(14" alt="">&quot;)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/category/45571.html" target="_blank">NoSqlDB(4)</a><a href="http://www.blogjava.net/envoydada/category/45571.html/rss" title="Subscribe to NoSqlDB(4)" target="_blank"><img src="&quot;Subscribe to NoSqlDB(4" alt="">&quot;)</a></li>
-</ul>
-<h1 id="-">技术网站</h1>
-<ul>
-<li><a href="http://www.54chen.com/" target="_blank">54chen</a></li>
-<li><a href="http://www.coreseek.com/" target="_blank">Coreseek中文全文检索</a></li>
-<li><a href="http://dominic.blog.chinaunix.net/" target="_blank">Dominic-Blog</a></li>
-<li><a href="http://code.google.com/p/gflot/" target="_blank">GFlot</a></li>
-<li>GWT charting library <a href="http://repository.jboss.org/maven2/ca/nanometrics/gflot/1.0.0/" target="_blank">http://repository.jboss.org/maven2/ca/nanometrics/gflot/1.0.0/</a></li>
-<li><a href="http://gwt.google.com/samples/Showcase/Showcase.html" target="_blank">GWT Showcase</a></li>
-<li><a href="http://www.ibm.com/developerworks/cn/xml/x-javacc/part1/" target="_blank">JavaCC、解析树和 XQuery 语法</a></li>
-<li><a href="http://www.mongodb.org/display/DOCS/Manual" target="_blank">Mongodb手册</a></li>
-<li><a href="http://doc.mysql.cn/mysql5/refman-5.1-zh.html-chapter/" target="_blank">MySQL 5.1参考手册</a></li>
-<li><a href="http://www.mysqlsystems.com/" target="_blank">Mysql部落</a></li>
-<li><a href="http://wiki.nginx.org/NginxChs" target="_blank">Nginx 的中文维基</a></li>
-<li><a href="http://redis.io/" target="_blank">Redis</a></li>
-<li><a href="http://sphinxsearch.com/" target="_blank">Sphinxsearch</a></li>
-<li><a href="http://code.google.com/p/spymemcached/" target="_blank">spymemcached</a></li>
-<li>A simple, asynchronous, single-threaded memcached client written in java.</li>
-<li><a href="http://code.google.com/p/spymemcached/" target="_blank">Spymemcached</a></li>
-<li><a href="http://www.tigase.org/" target="_blank">Tigase</a></li>
-<li>轻量高性能JABBER/XMPP服务器，带GWT开发的客户端</li>
-<li><a href="http://www.ibm.com/developerworks/cn/java/j-lo-tomcat1/index.html" target="_blank">Tomcat 系统架构与设计模式</a></li>
-<li><a href="http://code.google.com/p/xmemcached/" target="_blank">xmemcached</a></li>
-<li>Extreme performance modern memcached client for java</li>
-<li><a href="http://www.boobooke.com/bbs/index.php" target="_blank">播布客</a></li>
-<li><a href="http://blog.csdn.net/chinull/archive/2010/03/17/5390830.aspx" target="_blank">百度文库浏览器分析及实现</a></li>
-<li><a href="http://www.linuxdiyf.com/" target="_blank">红联Linux</a></li>
-</ul>
-<h3 id="-">积分与排名</h3>
-<ul>
-<li>积分 - 107622</li>
-<li>排名 - 186</li>
-</ul>
-<h3 id="-">最新随笔</h3>
-<ul>
-<li><a href="http://www.blogjava.net/envoydada/archive/2011/12/29/367529.html" target="_blank">1. 使用 sendfile() 提升网络文件发送性能</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2011/03/15/346300.html" target="_blank">2. Web服务器性能/压力测试工具http_load、webbench、ab、Siege(转)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/07/13/325947.html" target="_blank">3. Magent：Memcached集群代理</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/07/05/325305.html" target="_blank">4. Mongodb Import Export Tools</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/07/05/325266.html" target="_blank">5. Mongodb dbshell Reference</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/06/23/324266.html" target="_blank">6. 转mongodb入门</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/06/23/324255.html" target="_blank">7. Mongodb Dynamic querys select</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/08/317718.html" target="_blank">8. mysql常用的hint</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/08/317716.html" target="_blank">9. Mysql innodb引擎优化</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/08/317713.html" target="_blank">10. J2SE6 分析工具</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/08/317711.html" target="_blank">11. liunx下安装Subversion</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2009/02/07/253698.html" target="_blank">12. ORACLE 中dbms_stats的使用</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/09/28/231708.html" target="_blank">13. Memcached 剖析(转)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/07/29/218323.html" target="_blank">14. Window下配置SVN服务器与客户端(转)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/18/208808.html" target="_blank">15. Oracle 10g Recycle Bin</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/16/208221.html" target="_blank">16. Oracle中分区表的使用</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/12/207472.html" target="_blank">17. ORACLE CTXCAT-CATSEARCH</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/12/207288.html" target="_blank">18. ORACLE JOBS</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/11/207090.html" target="_blank">19. Oracle 分区表(Partition)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/11/207028.html" target="_blank">20. Solaris系统进程的查看和管理</a></li>
-</ul>
-<h3 id="-http-www-blogjava-net-envoydada-commentsrss-aspx-">最新评论 <a href="http://www.blogjava.net/envoydada/CommentsRSS.aspx" target="_blank"><img src="" alt=""></a></h3>
-<ul>
-<li><a href="http://www.blogjava.net/envoydada/archive/2011/07/13/106322.html#354291" target="_blank">1. re: Hibernate 本地SQL查询SQLQuery</a></li>
-<li>不错,很受用</li>
-<li>--happytjn</li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/05/21/46964.html#321538" target="_blank">2. re: DES加密</a></li>
-<li>评论内容较长,点击标题查看</li>
-<li>--woxiangbo</li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2010/04/07/138549.html#317660" target="_blank">3. re: JAVA缩放图片（转贴）</a></li>
-<li>希望能用</li>
-<li>--moguji</li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2009/10/20/106322.html#299083" target="_blank">4. re: Hibernate 本地SQL查询SQLQuery[未登录]</a></li>
-<li>很好，谢谢啦</li>
-<li>--xx</li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2009/09/30/106322.html#296990" target="_blank">5. re: Hibernate 本地SQL查询SQLQuery</a></li>
-<li>很不错啊， 谢谢。。</li>
-<li>--carvin</li>
-</ul>
-<h3 id="-">阅读排行榜</h3>
-<ul>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/03/26/106322.html" target="_blank">1. Hibernate 本地SQL查询SQLQuery(11576)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2005/09/13/12894.html" target="_blank">2. Hibernate批量更新和批量删除(8941)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/05/10/45438.html" target="_blank">3. Spring+Hibernate+Struts(4960)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/30/133285.html" target="_blank">4. JProfiler远程监控Tomcat(4646)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/11/07/79516.html" target="_blank">5. Spring DataSource注入(3902)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/03/06/102152.html" target="_blank">6. Spring+hibernate分页查询(3677)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/08/28/66182.html" target="_blank">7. Spring Hibernate 模板实现分页(3500)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/05/08/115877.html" target="_blank">8. Java调用Linux命令(3496)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/09/07/68308.html" target="_blank">9. Hibernate one-to-many学习笔记(3431)</a></li>
-<li><a href="">10. Apache + Tomcat/*2集群 负载平衡(Linux环境)(3196)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2009/02/07/253698.html" target="_blank">11. ORACLE 中dbms_stats的使用(3084)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/23/131803.html" target="_blank">12. java虚拟机参数详解(3009)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/04/26/43355.html" target="_blank">13. WEB定时器-Timer(2151)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/30/133329.html" target="_blank">14. 工具分析GC日志(2014)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2005/09/11/12654.html" target="_blank">15. Struts中logic:iterate标记的使用(1871)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/11/10/80309.html" target="_blank">16. Tomcat内存配置(1823)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/05/09/116195.html" target="_blank">17. JAVA访问LDAP(1709)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2005/09/11/12655.html" target="_blank">18. Tomcat5.0连接池(1697)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2005/09/11/12679.html" target="_blank">19. Hibernate-Extension和Middlegen-Hibernate(1692)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/20/131410.html" target="_blank">20. Spring配置总结(1663)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/08/30/66559.html" target="_blank">21. EL表达式(1341)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/08/22/138549.html" target="_blank">22. JAVA缩放图片（转贴）(1326)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/04/20/42153.html" target="_blank">23. Hibernate主键生成方式(1285)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/08/15/63743.html" target="_blank">24. JAVA的RSS阅读器(1276)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/11/07/79585.html" target="_blank">25. Tomcat 通过数据库验证的配置方法(BASIC,FORM).(1274)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/12/15/87862.html" target="_blank">26. hibernate二级缓存攻略 Ehcache(转贴)(1224)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/16/208221.html" target="_blank">27. Oracle中分区表的使用(1180)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/03/15/35434.html" target="_blank">28. Hibernate3.0批量更新和批量删除(1175)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/20/131433.html" target="_blank">29. GC调优(1162)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/09/20/146797.html" target="_blank">30. Hibernate属性延迟加载(1122)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/03/28/37791.html" target="_blank">31. Struts常用标签(1120)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/10/12/74758.html" target="_blank">32. RedHat终端中文乱码解决(1077)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/12/27/170920.html" target="_blank">33. 数据库性能 常用SQL(1070)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/06/05/50423.html" target="_blank">34. Spring 定时器(927)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/05/19/46964.html" target="_blank">35. DES加密(869)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/01/18/28446.html" target="_blank">36. Log4j配置(849)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/07/24/132080.html" target="_blank">37. Glassfish的安装(785)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2006/05/11/45645.html" target="_blank">38. Java调用windows程序(747)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2007/06/08/122881.html" target="_blank">39. Hibernate3支持DetachedCriteria(转贴)(718)</a></li>
-<li><a href="http://www.blogjava.net/envoydada/archive/2008/06/11/207090.html" target="_blank">40. Oracle 分区表(Partition)(705)</a>
-Powered by: <a href="http://www.cnblogs.com/" target="_blank">博客园</a> 模板提供：<a href="http://blog.hjenglish.com/" target="_blank">沪江博客</a> Copyright ©2012 Derek.Guo</li>
-</ul>
-<p>MSN:envoydada@hotmail.com QQ:34935442</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/服务器/">服务器</a></li></span><span class="breadcrumb"><li><a href="/categories/服务器/">服务器</a></li><li><a href="/categories/服务器/集群/">集群</a></li></span></span> | <span class="tags">Tagged <a href="/tags/服务器/" class="label label-primary">服务器</a><a href="/tags/集群/" class="label label-success">集群</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-服务器-集群--ApacheTomcat2集群负载平衡Linux环境/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-服务器-集群--ApacheTomcat2集群负载平衡Linux环境" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/">JosephusProblem</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="josephusproblem">JosephusProblem</h1>
-<h1 id="-algorithm-gossip-josephus-problem-"><a href="">Algorithm Gossip: 约瑟夫问题（Josephus Problem）</a></h1>
+        <h1 id="eightqueen">EightQueen</h1>
+<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 八个皇后</a></h1>
 <h2 id="-">说明</h2>
-<p>据说著名犹太历史学家 Josephus有过以下的故事：在罗马人占领乔塔帕特后，39 个犹太人与Josephus及他的朋友躲到一个洞中，39个犹太人决定宁愿死也不要被敌人到，于是决定了一个自杀方式，41个人排成一个圆圈，由第1个人 开始报数，每报数到第3人该人就必须自杀，然后再由下一个重新报数，直到所有人都自杀身亡为止。
-然而Josephus 和他的朋友并不想遵从，Josephus要他的朋友先假装遵从，他将朋友与自己安排在第16个与第31个位置，于是逃过了这场死亡游戏。</p>
+<p>西洋棋中的皇后可以直线前进，吃掉遇到的所有棋子，如果棋盘上有八个皇后，则这八个皇后如何相安无事的放置在棋盘上，1970年与1971年， E.W.Dijkstra与N.Wirth曾经用这个问题来讲解程式设计之技巧。</p>
 <h2 id="-">解法</h2>
-<p>约瑟夫问题可用代数分析来求解，将这个问题扩大好了，假设现在您与m个朋友不幸参与了这个游戏，您要如何保护您与您的朋友？只要画两个圆圈就可以让自己与朋友免于死亡游戏，这两个圆圈内圈是排列顺序，而外圈是自杀顺序，如下图所示：
-<img src="&quot;约瑟夫问题&quot;" alt="约瑟夫问题"> 使用程式来求解的话，只要将阵列当作环状来处理就可以了，在阵列中由计数1开始，每找到三个无资料区就填入一个计数，直而计数达41为止，然后将阵列由索引1开始列出，就可以得知每个位置的自杀顺序，这就是约瑟夫排列，41个人而报数3的约琴夫排列如下所示：
-14 36 1 38 15 2 24 30 3 16 34 4 25 17 5 40 31 6 18 26 7 37 19 8 35 27 9 20 32 10 41 21 11 28 39 12 22 33 13 29 23
-由上可知，最后一个自杀的是在第31个位置，而倒数第二个自杀的要排在第16个位置，之前的人都死光了，所以他们也就不知道约琴夫与他的朋友并没有遵守游戏规则了。</p>
+<p>关于棋盘的问题，都可以用递回求解，然而如何减少递回的次数？在八个皇后的问题中，不必要所有的格子都检查过，例如若某列检查过，该该列的其它格子就不用再检查了，这个方法称为分支修剪。
+<img src="&quot;八个皇后&quot;" alt="八个皇后">
+所以检查时，先判断是否在已放置皇后的可行进方向上，如果没有再行放置下一个皇后，如此就可大大减少递回的次数，例如以下为修剪过后的递回检查行进路径：
+<img src="&quot;八个皇后&quot;" alt="八个皇后">
+八个皇后的话，会有92个解答，如果考虑棋盘的旋转，则旋转后扣去对称的，会有12组基本解。 </p>
 <h2 id="-">实作</h2>
 <ul>
 <li><p>C
 /#include <stdio.h>
 /#include <stdlib.h>
-/#define N 41
-/#define M 3
+/#define N 8
+int column[N+1]; // 同栏是否有皇后，1表示有
+int rup[2/<em>N+1]; // 右上至左下是否有皇后
+int lup[2/</em>N+1]; // 左上至右下是否有皇后
+int queen[N+1] = {0};
+int num; // 解答编号
+void backtrack(int); // 递回求解
 int main(void) {
-int man[N] = {0};
-int count = 1;
-int i = 0, pos = -1;
-int alive = 0;
-while(count &lt;= N) {
-do {
-pos = (pos+1) % N; // 环状处理
-if(man[pos] == 0)
-i++;
-if(i == M) { // 报数为3了
-i = 0;
-break;
+int i;
+num = 0;
+for(i = 1; i &lt;= N; i++)
+column[i] = 1;
+for(i = 1; i &lt;= 2/*N; i++)
+rup[i] = lup[i] = 1;
+backtrack(1);
+return 0;
 }
-} while(1);
-man[pos] = count;
-count++;
+void showAnswer() {
+int x, y;
+printf(&quot;\n解答 %d\n&quot;, ++num);
+for(y = 1; y &lt;= N; y++) {
+for(x = 1; x &lt;= N; x++) {
+if(queen[y] == x) {
+printf(&quot; Q&quot;);
 }
-printf(&quot;\n约琴夫排列：&quot;);
-for(i = 0; i &lt; N; i++)
-printf(&quot;%d &quot;, man[i]);
-printf(&quot;\n\n您想要救多少人？&quot;);
-scanf(&quot;%d&quot;, &amp;alive);
-printf(&quot;\nL表示这%d人要放的位置：\n&quot;, alive);
-for(i = 0; i &lt; N; i++) {
-if(man[i] &gt; alive)
-printf(&quot;D&quot;);
-else
-printf(&quot;L&quot;);
-if((i+1) % 5 == 0)
-printf(&quot; &quot;);
+else {
+printf(&quot; .&quot;);
+}
 }
 printf(&quot;\n&quot;);
-return 0;
+}
+}
+void backtrack(int i) {
+int j;
+if(i &gt; N) {
+showAnswer();
+}
+else {
+for(j = 1; j &lt;= N; j++) {
+if(column[j] == 1 &amp;&amp;
+rup[i+j] == 1 &amp;&amp; lup[i-j+N] == 1) {
+queen[i] = j;
+// 设定为占用
+column[j] = rup[i+j] = lup[i-j+N] = 0;
+backtrack(i+1);
+column[j] = rup[i+j] = lup[i-j+N] = 1;
+}
+}
+}
 }</p>
 </li>
 <li><p>Java
-public class Josephus {
-public static int[] arrayOfJosephus(
-int number, int per) {
-int[] man = new int[number];
-for(int count = 1, i = 0, pos = -1;
-count &lt;= number; count++) {
-do {
-pos = (pos+1) % number; // 环状处理
-if(man[pos] == 0)
-i++;
-if(i == per) { // 报数为3了
-i = 0;
-break;
+public class Queen {
+// 同栏是否有皇后，1表示有
+private int[] column;
+// 右上至左下是否有皇后
+private int[] rup;
+// 左上至右下是否有皇后
+private int[] lup;
+// 解答
+private int[] queen;
+// 解答编号
+private int num;
+public Queen() {
+column = new int[8+1];
+rup = new int[2/<em>8+1];
+lup = new int[2/</em>8+1];
+for(int i = 1; i &lt;= 8; i++)
+column[i] = 1;
+for(int i = 1; i &lt;= 2/*8; i++)
+rup[i] = lup[i] = 1;
+queen = new int[8+1];
 }
-} while(true);
-man[pos] = count;
+public void backtrack(int i) {
+if(i &gt; 8) {
+showAnswer();
 }
-return man;
+else {
+for(int j = 1; j &lt;= 8; j++) {
+if(column[j] == 1 &amp;&amp;
+rup[i+j] == 1 &amp;&amp;
+lup[i-j+8] == 1) {
+queen[i] = j;
+// 设定为占用
+column[j] = rup[i+j] = lup[i-j+8] = 0;
+backtrack(i+1);
+column[j] = rup[i+j] = lup[i-j+8] = 1;
 }
-public static void main(String[] args) {
-int[] man = Josephus.arrayOfJosephus(41, 3);
-int alive = 3;
-System.out.println(&quot;约琴夫排列：&quot;);
-for(int i = 0; i &lt; 41; i++)
-System.out.print(man[i] + &quot; &quot;);
-System.out.println(&quot;\nL表示3个存活的人要放的位置：&quot;);
-for(int i = 0; i &lt; 41; i++) {
-if(man[i] &gt; alive)
-System.out.print(&quot;D&quot;);
-else
-System.out.print(&quot;L&quot;);
-if((i+1) % 5 == 0)
-System.out.print(&quot; &quot;);
+}
+}
+}
+protected void showAnswer() {
+num++;
+System.out.println(&quot;\n解答 &quot; + num);
+for(int y = 1; y &lt;= 8; y++) {
+for(int x = 1; x &lt;= 8; x++) {
+if(queen[y] == x) {
+System.out.print(&quot; Q&quot;);
+}
+else {
+System.out.print(&quot; .&quot;);
+}
 }
 System.out.println();
+}
+}
+public static void main(String[] args) {
+Queen queen = new Queen();
+queen.backtrack(1);
 }
 }</p>
 </li>
@@ -1171,8 +255,8 @@ System.out.println();
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:37:19"datetime="2014-03-07 10:37:19"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--JosephusProblem" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 02:38:11"datetime="2014-03-07 02:38:11"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--EightQueen/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--EightQueen" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1187,124 +271,399 @@ System.out.println();
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--InterpolationSearch/">InterpolationSearch</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题/">使用XStream序列化、反序列化XML数据时遇到的各种问题</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--InterpolationSearch/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T09:54:44.000Z"> <a href="/2014/02/02/2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="interpolationsearch">InterpolationSearch</h1>
-<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 插补搜寻法</a></h1>
-<h2 id="-">说明</h2>
-<p>如果却搜寻的资料分布平均的话，可以使用插补（Interpolation）搜寻法来进行搜寻，在搜寻的对象大于500时，插补搜寻法会比 二分搜寻法 来的快速。</p>
-<h2 id="-">解法</h2>
-<p>插补搜寻法是以资料分布的近似直线来作比例运算，以求出中间的索引并进行资料比对，如果取出的值小于要寻找的值，则提高下界，如果取出的值大于要寻找的 值，则降低下界，如此不断的减少搜寻的范围，所以其本原则与二分搜寻法是相同的，至于中间值的寻找是透过比例运算，如下所示，其中K是指定要寻找的对象， 而m则是可能的索引值：
-<img src="&quot;插补搜寻&quot;" alt="插补搜寻"></p>
-<h2 id="-">实作</h2>
-<ul>
-<li>C
-/#include <stdio.h>
-/#include <stdlib.h>
-/#include <time.h>
-/#define MAX 10
-/#define SWAP(x,y) {int t; t = x; x = y; y = t;}
-void quicksort(int[], int, int);
-int intsrch(int[], int);
-int main(void) {
-int number[MAX] = {0};
-int i, find;
-srand(time(NULL));
-for(i = 0; i &lt; MAX; i++) {
-number[i] = rand() % 100;
+        <h1 id="-xstream-xml-">使用XStream序列化、反序列化XML数据时遇到的各种问题</h1>
+<p>现在参与的项目是一个纯Application Server，整个Server都是自己搭建的，使用JMS消息实现客户端和服务器的交互，交互的数据格式采用XML。说来惭愧，开始为了赶进度，所有XML消息都是使用字符串拼接的，而XML的解析则是使用DOM方式查找的。我很早就看这些代码不爽了，可惜一直没有时间去重构，最近项目加了几个人，而且美国那边也开始渐渐的把这个项目开发的控制权交给我们了，所以我开始有一些按自己的方式开发的机会了。因而最近动手开始重构这些字符串拼接的代码。</p>
+<p>对XML到Java Bean的解析框架，熟悉一点的只有Digester和XStream，Digester貌似只能从XML文件解析成Java Bean对象，所以只能选择XStream来做了，而且同组的其他项目也有在用XStream。一直听说XStream的使用比较简单，而且我对ThoughtWorks这家公司一直比较有好感，所以还以为引入XStream不会花太多时间，然而使用以后才发现XStream并没有想象的你那么简单。不过这个也有可能是因为我不想改变原来的XML数据格式，而之前的XML数据格式的设计自然不会考虑到如何便利的使用XStream。因而记录在使用过程中遇到的问题，供后来人参考，也为自己以后如果打算开其源码提供参考。废话就到这里了，接下来步入正题。</p>
+<p>首先对于简单的引用，XStream使用起来确实比较简单，比如自定义标签的属性、使用属性和使用子标签的定义等：
+@XStreamAlias(&quot;request&quot;)
+public class XmlRequest1 {
+    private static XStream xstream;
+    static {
+        xstream = new XStream();
+        xstream.autodetectAnnotations(true);
+    }</p>
+<pre><code>@XStreamAsAttribute
+private String from;
+
+@XStreamAsAttribute
+@XStreamAlias(&quot;calculate-method&quot;)
+private String calculateMethod;
+
+@XStreamAlias(&quot;request-time&quot;)
+private Date requestTime;
+
+@XStreamAlias(&quot;input-files&quot;)
+private List&lt;InputFileInfo&gt; inputFiles;
+
+public static String toXml(XmlRequest1 request) {
+    StringWriter writer = new StringWriter();
+    writer.append(Constants.XML_HEADER);
+    xstream.toXML(request, writer);
+    return writer.toString();
 }
-quicksort(number, 0, MAX-1);
-printf(&quot;数列：&quot;);
-for(i = 0; i &lt; MAX; i++)
-printf(&quot;%d &quot;, number[i]);
-printf(&quot;\n输入寻找对象：&quot;);
-scanf(&quot;%d&quot;, &amp;find);
-if((i = intsrch(number, find)) &gt;= 0)
-printf(&quot;找到数字于索引 %d &quot;, i);
-else
-printf(&quot;\n找不到指定数&quot;);
-printf(&quot;\n&quot;);
-return 0;
+public static XmlRequest1 toInstance(String xmlContent) {
+    return (XmlRequest1)xstream.fromXML(xmlContent);
+</code></pre><p>}
+<img src="" alt="">
+    @XStreamAlias(&quot;input-file&quot;)
+    public static class InputFileInfo {
+        private String type;
+        private String fileName;
+        <img src="" alt="">
+    }
+    public static void main(String[] args) {
+        XmlRequest1 request = buildXmlRequest();
+        System.out.println(XmlRequest1.toXml(request));
+    }
+    private static XmlRequest1 buildXmlRequest() {
+        <img src="" alt="">
+    }
+}</p>
+<p> 对以上Request定义，我们可以得到如下结果：</p>
+<p>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;</p>
+<request from="levin@host" calculate-method="advanced">
+ <request-time>2012-11-28 17:11:54.664 UTC</request-time>
+ <input-files>
+    <input-file>
+      <type>DATA</type>
+      <fileName>data.2012.11.29.dat</fileName>
+    </input-file>
+    <input-file>
+      <type>CALENDAR</type>
+      <fileName>calendar.2012.11.29.dat</fileName>
+    </input-file>
+ </input-files>
+</request>
+
+<p>可惜这个世界不会那么清净，这个格式有些时候貌似并不符合要求，比如request-time的格式、input-files的格式，我们实际需要的格式是这样的：</p>
+<p>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;</p>
+<request from="levin@host" calculate-method="advanced">
+ <request-time>20121128T17:51:05</request-time>
+ <input-file type="DATA">data.2012.11.29.dat</input-file>
+ <input-file type="CALENDAR">calendar.2012.11.29.dat</input-file>
+</request>
+
+<p>对不同Date格式的支持可以是用Converter实现，在XStream中默认使用自己实现的DateConverter，它支持的格式是：yyyy-MM-dd HH:mm:ss.S &#39;UTC&#39;，然而我们现在需要的格式是yyyy-MM-dd’T’HH:mm:ss，如果使用XStream直接注册DateConverter，可以使用配置自己的DateConverter，但是由于DateConverter的构造函数的定义以及@XStreamConverter的构造函数参数的支持方式的限制，貌似DateConverter不能很好的支持注解方式的注册，因而我时间了一个自己的DateConverter以支持注解：</p>
+<p>public class LevinDateConverter extends DateConverter {
+    public LevinDateConverter(String dateFormat) {
+        super(dateFormat, new String[] { dateFormat });
+    }
+}</p>
+<p>在requestTime字段中需要加入以下注解定义：</p>
+<p>@XStreamConverter(value=LevinDateConverter.class, strings={&quot;yyyyMMdd&#39;T&#39;HH:mm:ss&quot;})
+@XStreamAlias(&quot;request-time&quot;)
+private Date requestTime;</p>
+<p>对集合类，XStream提供了@XStreamImplicit注解，以将集合中的内容摊平到上一层XML元素中，其中itemFieldName的值为其使用的标签名，此时InputFileInfo类中不需要@XStreamAlias标签的定义：</p>
+<p>@XStreamImplicit(itemFieldName=&quot;input-file&quot;)
+private List<InputFileInfo> inputFiles;</p>
+<p>对InputFileInfo中的字段，type作为属性很容易，只要为它加上@XStreamAsAttribute注解即可，而将fileName作为input-file标签的一个内容字符串，则需要使用ToAttributedValueConverter，其中Converter的参数为需要作为字符串内容的字段名：</p>
+<p>@XStreamConverter(value=ToAttributedValueConverter.class, strings={&quot;fileName&quot;})
+public static class InputFileInfo {
+    @XStreamAsAttribute
+    private String type;
+private String fileName;
+<img src="" alt="">
+}</p>
+<p>XStream对枚举类型的支持貌似不怎么好，默认注册的EnumSingleValueConverter只是使用了Enum提供的name()和静态的valueOf()方法将enum转换成String或将String转换回enum。然而有些时候XML的字符串和类定义的enum值并不完全匹配，最常见的就是大小写的不匹配，此时需要写自己的Converter。在这种情况下，我一般会在enum中定义一个name属性，这样就可以自定义enum的字符串表示。比如有TimePeriod的enum：</p>
+<p>public enum TimePeriod {
+    MONTHLY(&quot;monthly&quot;), WEEKLY(&quot;weekly&quot;), DAILY(&quot;daily&quot;);</p>
+<pre><code>private String name;
+
+public String getName() {
+    return name;
 }
-int intsrch(int number[], int find) {
-int low, mid, upper;
-low = 0;
-upper = MAX - 1;
-while(low &lt;= upper) {
-mid = (upper-low)/*
-(find-number[low])/(number[upper]-number[low])</li>
-</ul>
-<ul>
-<li>low;
-if(mid &lt; low || mid &gt; upper)
-return -1;
-if(find &lt; number[mid])
-upper = mid - 1;
-else if(find &gt; number[mid])
-low = mid + 1;
-else
-return mid;
+
+private TimePeriod(String name) {
+    this.name = name;
 }
-return -1;
+
+public static TimePeriod toEnum(String timePeriod) {
+    try {
+        return Enum.valueOf(TimePeriod.class, timePeriod);
+    } catch(Exception ex) {
+        for(TimePeriod period : TimePeriod.values()) {
+            if(period.getName().equalsIgnoreCase(timePeriod)) {
+                return period;
+            }
+        }
+        throw new IllegalArgumentException(&quot;Cannot convert &lt;&quot; + timePeriod + &quot;&gt; to TimePeriod enum&quot;);
+    }
 }
-void quicksort(int number[], int left, int right) {
-int i, j, k, s;
-if(left &lt; right) {
-s = number[(left+right)/2];
-i = left - 1;
-j = right + 1;
-while(1) {
-while(number[++i] &lt; s) ; // 向右找
-while(number[--j] &gt; s) ; // 向左找
-if(i &gt;= j)
-break;
-SWAP(number[i], number[j]);
+</code></pre><p>}</p>
+<p>我们可以编写以下Converter以实现对枚举类型的更宽的容错性：</p>
+<p>public class LevinEnumSingleNameConverter extends EnumSingleValueConverter {
+    private static final String CUSTOM_ENUM_NAME_METHOD = &quot;getName&quot;;
+    private static final String CUSTOM_ENUM_VALUE_OF_METHOD = &quot;toEnum&quot;;</p>
+<pre><code>private Class&lt;? extends Enum&lt;?&gt;&gt; enumType;
+
+public LevinEnumSingleNameConverter(Class&lt;? extends Enum&lt;?&gt;&gt; type) {
+    super(type);
+    this.enumType = type;
 }
-quicksort(number, left, i-1); // 对左边进行递回
-quicksort(number, j+1, right); // 对右边进行递回
+
+@Override
+public String toString(Object obj) {
+    Method method = getCustomEnumNameMethod();
+    if(method == null) {
+        return super.toString(obj);
+    } else {
+        try {
+            return (String)method.invoke(obj, (Object[])null);
+        } catch(Exception ex) {
+            return super.toString(obj);
+        }
+    }
 }
-}</li>
-</ul>
-<ul>
-<li>Java
-public class InterpolationSearch {
-public static int search(int[] number, int des) {
-int low = 0;
-int upper = number.length - 1;
-while(low &lt;= upper) {
-int mid = (upper-low)/*
-(des-number[low])/(number[upper]-number[low])</li>
-</ul>
-<ul>
-<li>low;
-if(mid &lt; low || mid &gt; upper)
-return -1;
-if(des &lt; number[mid])
-upper = mid - 1;
-else if(des &gt; number[mid])
-low = mid + 1;
-else
-return mid;
+
+@Override
+public Object fromString(String str) {
+    Method method = getCustomEnumStaticValueOfMethod();
+    if(method == null) {
+        return enhancedFromString(str);
+    }
+    try {
+        return method.invoke(null, str);
+    } catch(Exception ex) {
+        return enhancedFromString(str);
+    }
 }
-return -1;
+
+private Method getCustomEnumNameMethod() {
+    try {
+        return enumType.getMethod(CUSTOM_ENUM_NAME_METHOD, (Class&lt;?&gt;[])null);
+    } catch(Exception ex) {
+        return null;
+    }
 }
-public static void main(String[] args) {
-int[] number = {1, 4, 2, 6, 7, 3, 9, 8};
-QuickSort.sort(number);
-int find = InterpolationSearch.search(number, 3);
-if(find != -1)
-System.out.println(&quot;找到数值于索引&quot; + find);
-else
-System.out.println(&quot;找不到数值&quot;);
+
+private Method getCustomEnumStaticValueOfMethod() {
+    try {
+        Method method = enumType.getMethod(CUSTOM_ENUM_VALUE_OF_METHOD, (Class&lt;?&gt;[])null);
+        if(method.getModifiers() == Modifier.STATIC) {
+            return method;
+        }
+        return null;
+    } catch(Exception ex) {
+        return null;
+    }
 }
-}</li>
-</ul>
+
+private Object enhancedFromString(String str) {
+    try {
+        return super.fromString(str);
+    } catch(Exception ex) {
+        for(Enum&lt;?&gt; item : enumType.getEnumConstants()) {
+            if(item.name().equalsIgnoreCase(str)) {
+                return item;
+            }
+        }
+        throw new IllegalStateException(&quot;Cannot converter &lt;&quot; + str + &quot;&gt; to enum &lt;&quot; + enumType + &quot;&gt;&quot;);
+    }
+}
+</code></pre><p>}</p>
+<p>如下方式使用即可：</p>
+<p>@XStreamAsAttribute
+@XStreamAlias(&quot;time-period&quot;)
+@XStreamConverter(value=LevinEnumSingleNameConverter.class)
+private TimePeriod timePeriod;</p>
+<p>对double类型，貌似默认的DoubleConverter实现依然不给力，它不支持自定义的格式，比如我们想在序列化的时候用一下格式：” /#/#/#,/#/#0.0/#/#/#/#/#/#/#/#”，此时又需要编写自己的Converter：</p>
+<p>public class FormatableDoubleConverter extends DoubleConverter {
+    private String pattern;
+    private DecimalFormat formatter;</p>
+<pre><code>public FormatableDoubleConverter(String pattern) {
+    this.pattern = pattern;
+    this.formatter = new DecimalFormat(pattern);
+}
+
+@Override
+public String toString(Object obj) {
+    if(formatter == null) {
+        return super.toString(obj);
+    } else {
+        return formatter.format(obj);
+    }
+}
+
+@Override
+public Object fromString(String str) {
+    try {
+        return super.fromString(str);
+    } catch(Exception ex) {
+        if(formatter != null) {
+            try {
+                return formatter.parse(str);
+            } catch(Exception e) {
+                throw new IllegalArgumentException(&quot;Cannot parse &lt;&quot; + str + &quot;&gt; to double value&quot;, e);
+            }
+        }
+        throw new IllegalArgumentException(&quot;Cannot parse &lt;&quot; + str + &quot;&gt; to double value&quot;, ex);
+    }
+}
+
+public String getPattern() {
+    return pattern;
+}
+</code></pre><p>}</p>
+<p>使用方式和之前的Converter类似：</p>
+<p>@XStreamAsAttribute
+@XStreamConverter(value=FormatableDoubleConverter.class, strings={&quot;/#/#/#,/#/#0.0/#/#/#/#/#/#/#/#&quot;})
+private double value;</p>
+<p>最后，还有两个XStream没法实现的，或者说我没有找到一个更好的实现方式的场景。<strong>第一种场景是**</strong>XStream<strong>**不能很好的处理对象组合问题：</strong></p>
+<p>在面向对象编程中，一般尽量的倾向于抽取相同的数据成一个类，而通过组合的方式构建整个数据结构。比如Student类中有name、address，Address是一个类，它包含city、code、street等信息，此时如果要对Student对象做如下格式序列化：</p>
+<student name=”Levin”>
+ <city>shanghai</city>
+ <street>zhangjiang</street>
+ <code>201203</code>
+</student>
+
+<p>貌似我没有找到可以实现的方式，XStream能做是在中间加一层address标签。对这种场景的解决方案，一种是将Address中的属性平摊到Student类中，另一种是让Student继承自Address类。不过貌似这两种都不是比较理想的办法。</p>
+<p><strong>第二种场景是XStream**</strong>不能很好的处理多态问题：**</p>
+<p>比如我们有一个Trade类，它可能表示不同的产品：
+public class Trade {
+    private String tradeId;
+    private Product product;
+<img src="" alt="">
+}
+abstract class Product {
+    private String name;
+    public Product(String name) {
+        this.name = name;
+}
+<img src="" alt="">
+}
+class FX extends Product {
+    private double ratio;
+    public FX() {
+        super(&quot;fx&quot;);
+    }
+    <img src="" alt="">
+}
+class Future extends Product {
+    private double maturity;
+    public Future() {
+        super(&quot;future&quot;);
+    }
+    <img src="" alt="">
+}</p>
+<p>通过一些简单的设置，我们能得到如下XML格式：</p>
+<trades>
+ <trade trade-id="001">
+    <product class="levin.xstream.blog.FX" name="fx" ratio="0.59"/>
+ </trade>
+ <trade trade-id="002">
+    <product class="levin.xstream.blog.Future" name="future" maturity="2.123"/>
+ </trade>
+</trades>
+
+<p>作为数据文件，对Java类的定义显然是不合理的，因而简单一些，我们可以编写自己的Converter将class属性从product中去除：</p>
+<p>xstream.registerConverter(new ProductConverter(
+        xstream.getMapper(), xstream.getReflectionProvider()));</p>
+<pre><code>public ProductConverter(Mapper mapper, ReflectionProvider reflectionProvider) {
+    super(mapper, reflectionProvider);
+}
+
+@Override
+public boolean canConvert(@SuppressWarnings(&quot;rawtypes&quot;) Class type) {
+    return Product.class.isAssignableFrom(type);
+}
+
+@Override
+protected Object instantiateNewInstance(HierarchicalStreamReader reader, UnmarshallingContext context) {
+    Object currentObject = context.currentObject();
+    if(currentObject != null) {
+        return currentObject;
+    }
+
+    String name = reader.getAttribute(&quot;name&quot;);
+    if(&quot;fx&quot;.equals(name)) {
+        return reflectionProvider.newInstance(FX.class);
+    } else if(&quot;future&quot;.equals(name)) {
+        return reflectionProvider.newInstance(Future.class);
+    }
+    throw new IllegalStateException(&quot;Cannot convert &lt;&quot; + name + &quot;&gt; product&quot;);
+}
+</code></pre><p>}</p>
+<p>在所有Production上定义@XStreamAlias(“product”)注解。这时的XML输出结果为：</p>
+<trades>
+ <trade trade-id="001">
+    <product name="fx" ratio="0.59"/>
+ </trade>
+ <trade trade-id="002">
+    <product name="future" maturity="2.123"/>
+ </trade>
+</trades>
+
+<p>然而如果有人希望XML的输出结果如下呢?</p>
+<trades>
+ <trade trade-id="001">
+    <fx ratio="0.59"/>
+ </trade>
+ <trade trade-id="002">
+    <future maturity="2.123"/>
+ </trade>
+</trades>
+
+<p>大概找了一下，可能可以定义自己的Mapper来解决，不过XStream的源码貌似比较复杂，没有时间深究这个问题，留着以后慢慢解决吧。</p>
+<p><strong>补充：</strong></p>
+<p>对Map类型数据，XStream默认使用以下格式显示：</p>
+<map class="linked-hash-map">
+    <entry>
+      <string>key1</string>
+      <string>value1</string>
+    </entry>
+    <entry>
+      <string>key2</string>
+      <string>value2</string>
+    </entry>
+ </map>
+
+
+
+<p>但是对一些简单的Map，我们希望如下显示：
+ <map>
+    <entry key="key1" value="value1"/>
+    <entry key="key2" value="value2"/>
+ </map></p>
+<p>对这种需求需要通过编写Converter解决，继承自MapConverter，覆盖以下函数，这里的Map默认key和value都是String类型，如果他们不是String类型，需要另外添加逻辑：
+@SuppressWarnings(&quot;rawtypes&quot;)
+@Override
+public void marshal(Object source, HierarchicalStreamWriter writer,
+        MarshallingContext context) {
+    Map map = (Map) source;
+    for (Iterator iterator = map.entrySet().iterator(); iterator.hasNext();) {
+        Entry entry = (Entry) iterator.next();
+        ExtendedHierarchicalStreamWriterHelper.startNode(writer, mapper()
+                .serializedClass(Map.Entry.class), entry.getClass());</p>
+<pre><code>    writer.addAttribute(&quot;key&quot;, entry.getKey().toString());
+    writer.addAttribute(&quot;value&quot;, entry.getValue().toString());
+    writer.endNode();
+}
+</code></pre><p>}</p>
+<p>@Override
+@SuppressWarnings({ &quot;unchecked&quot;, &quot;rawtypes&quot; })
+protected void putCurrentEntryIntoMap(HierarchicalStreamReader reader,
+        UnmarshallingContext context, Map map, Map target) {
+    Object key = reader.getAttribute(&quot;key&quot;);
+    Object value = reader.getAttribute(&quot;value&quot;);</p>
+<pre><code>target.put(key, value);
+</code></pre><p>}</p>
+<p>但是只是使用Converter，得到的结果多了一个class属性：
+ <map class="linked-hash-map">
+    <entry key="key1" value="value1"/>
+    <entry key="key2" value="value2"/>
+ </map></p>
+<p>在XStream中，如果定义的字段是一个父类或接口，在序列化是会默认加入class属性以确定反序列化时用的类，为了去掉这个class属性，可以定义默认的实现类来解决（虽然感觉这种解决方案不太好，但是目前还没有找到更好的解决方案）。</p>
+<p><em>*
+</em>xstream.addDefaultImplementation(LinkedHashMap.class, Map.class);*</p>
+<p>来源： <a href="[http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html](http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html)">[http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html](http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html)</a></p>
 
       
     </div>
@@ -1314,8 +673,1635 @@ System.out.println(&quot;找不到数值&quot;);
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 10:37:24"datetime="2014-03-07 10:37:24"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--InterpolationSearch/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--InterpolationSearch" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/xml/">xml</a></li></span><span class="breadcrumb"><li><a href="/categories/xml/">xml</a></li><li><a href="/categories/xml/xstream/">xstream</a></li></span></span> | <span class="tags">Tagged <a href="/tags/xml/" class="label label-primary">xml</a><a href="/tags/xstream/" class="label label-success">xstream</a></span> | <span class="time">recent updated:<time title="2014-03-07 01:54:44"datetime="2014-03-07 01:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-Flex--wmode属性的Opaque参数/">wmode属性的Opaque参数</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T09:54:44.000Z"> <a href="/2014/02/02/2014-02-02-Flex--wmode属性的Opaque参数/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="wmode-opaque-">wmode属性的Opaque参数</h1>
+<h1 id="-http-blog-csdn-net-accp_2008123456-"><a href="http://blog.csdn.net/ACCP_2008123456" target="_blank">低调的华丽 专栏</a></h1>
+<h1 id="-">#</h1>
+<ul>
+<li><a href="http://hi.csdn.net/space-notice.html" target="_blank">条新通知</a></li>
+<li><a href="http://passport.csdn.net/UserLogin.aspx" target="_blank">登录</a></li>
+<li><a href="http://passport.csdn.net/CSDNUserRegister.aspx" target="_blank">注册</a></li>
+<li><a href="http://hi.csdn.net/" target="_blank">欢迎</a></li>
+<li><a href="http://writeblog.csdn.net/Signout.aspx" target="_blank">退出</a></li>
+<li><a href="http://blog.csdn.net/" target="_blank">我的博客</a></li>
+<li><a href="http://writeblog.csdn.net/configure.aspx" target="_blank">配置</a></li>
+<li><a href="http://writeblog.csdn.net/PostEdit.aspx" target="_blank">写文章</a></li>
+<li><a href="http://writeblog.csdn.net/PostList.aspx" target="_blank">文章管理</a></li>
+<li><a href="http://blog.csdn.net/" target="_blank">博客首页</a></li>
+</ul>
+<p>*</p>
+<ul>
+<li><p>全站 当前博客
+*</p>
+</li>
+<li><p><a href="http://hi.csdn.net/ACCP_2008123456" target="_blank">空间</a></p>
+</li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456" target="_blank">博客</a></li>
+<li><a href="http://hi.csdn.net/!s/friend/list/ACCP_2008123456" target="_blank">好友</a></li>
+<li><a href="http://hi.csdn.net/!s/album/list/ACCP_2008123456" target="_blank">相册</a></li>
+<li><a href="http://hi.csdn.net/!s/wall/to/ACCP_2008123456" target="_blank">留言</a></li>
+</ul>
+<p>用户操作<a href="http://hi.csdn.net/!s/wall/to/ACCP_2008123456" target="_blank">[留言]</a>  <a href="http://hi.csdn.net/!s/msg/to/ACCP_2008123456" target="_blank">[发消息]</a>  <a href="http://hi.csdn.net/!s/friend/add/ACCP_2008123456" target="_blank">[加为好友]</a> 订阅我的博客<a href="http://feeds.feedsky.com/csdn.net/ACCP_2008123456" target="_blank"><img src="" alt="XML聚合"></a>   <a href="http://feeds.feedsky.com/csdn.net/ACCP_2008123456" target="_blank"><img src="" alt="FeedSky"></a><a href="http://www.xianguo.com/subscribe.php?url=http://feeds.feedsky.com/csdn.net/ACCP_2008123456" target="_blank"><img src="" alt="订阅到鲜果"></a><a href="http://fusion.google.com/add?feedurl=http://feeds.feedsky.com/csdn.net/ACCP_2008123456" target="_blank"><img src="" alt="订阅到Google"></a><a href="http://www.zhuaxia.com/add_channel.php?url=http://feeds.feedsky.com/csdn.net/ACCP_2008123456" target="_blank"><img src="" alt="订阅到抓虾"></a><a href="http://writeblog.csdn.net/configure.aspx" target="_blank">[编辑]</a>ACCP_2008123456的公告<a href="http://writeblog.csdn.net/EditCategories.aspx?catID=1" target="_blank">[编辑]</a>文章分类* <a href="http://blog.csdn.net/ACCP_2008123456/category/655568.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/655568.aspx" target="_blank">C/C++</a></p>
+<ul>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/605837.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/605837.aspx" target="_blank">Cairngorm flex</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/630978.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/630978.aspx" target="_blank">css</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/633297.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/633297.aspx" target="_blank">eclipse</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/609296.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/609296.aspx" target="_blank">ewebeditor</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/605416.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/605416.aspx" target="_blank">flex</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/605832.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/605832.aspx" target="_blank">hibernate</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/630977.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/630977.aspx" target="_blank">html</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/605831.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/605831.aspx" target="_blank">java</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/605829.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/605829.aspx" target="_blank">js</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/625849.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/625849.aspx" target="_blank">jsp</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/632290.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/632290.aspx" target="_blank">mysql</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/690178.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/690178.aspx" target="_blank">Qt 嵌入式开发</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/605833.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/605833.aspx" target="_blank">spring</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/category/633426.aspx/rss" target="_blank"><img src="" alt="(RSS)"></a><a href="http://blog.csdn.net/ACCP_2008123456/category/633426.aspx" target="_blank">文章 感悟 生活</a>存档* <a href="http://blog.csdn.net/ACCP_2008123456/archive/2010/08.aspx" target="_blank">2010年08月(2)</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/archive/2010/07.aspx" target="_blank">2010年07月(1)</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/archive/2010/05.aspx" target="_blank">2010年05月(4)</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/archive/2010/04.aspx" target="_blank">2010年04月(2)</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/archive/2010/03.aspx" target="_blank">2010年03月(2)</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/archive/2010/02.aspx" target="_blank">2010年02月(13)</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/archive/2010/01.aspx" target="_blank">2010年01月(4)</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/12.aspx" target="_blank">2009年12月(12)</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/11.aspx" target="_blank">2009年11月(2)</a></li>
+<li><a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10.aspx" target="_blank">2009年10月(8)</a><h3 id="-http-forum-csdn-net-slist-blogsupport-http-blog-csdn-net-blogdevteam-">公告： <a href="http://forum.csdn.net/SList/blogSupport" target="_blank">[意见反馈]</a><a href="http://blog.csdn.net/blogdevteam" target="_blank">[官方博客]</a></h3>
+</li>
+</ul>
+<h1 id="-wmode-opaque-"><img src="" alt="转载">  wmode属性的Opaque参数 <a href="&quot;收藏到我的网摘中，并分享给我的朋友&quot;">收藏</a></h1>
+<p>在制作Chat Union系统时，有一个功能暂时不打算使用Flash实现，但这个功能又必须出现在Flash中。因此考虑使用一个 <div>，让其漂浮在Flash动画上方，提供这个暂时不用Flash实现的功能。</p>
+<p>但是默认情况下，Flash影片是处于最上层的，无法将 <div>置于其上。查阅Flash的帮助文件，发现这样一段描述：
+wmode 属性/参数
+值
+Window | Opaque | Transparent</p>
+<p>模板变量：$WM</p>
+<p>说明
+（可选）使您可以使用 Internet Explorer 4.0 中的透明 Flash 内容、绝对定位和分层显示的功能。此标记/属性仅在带有 Flash Player ActiveX 控件的 Windows 中有效。</p>
+<p>“Window”在 Web 页上用影片自己的矩形窗口来播放应用程序。“Window”表明 Flash 应用程序与 HTML 层没有任何交互，并且始终位于最顶层。</p>
+<p>“Opaque” 使应用程序隐藏页面上位于它后面的所有内容。</p>
+<p>“Transparent”使 HTML 页的背景可以透过应用程序的所有透明部分进行显示，这样可能会降低动画性能。</p>
+<p>“Opaque windowless”和“Transparent windowless” 都可与 HTML 层交互，并允许 SWF 文件上方的层遮蔽应用程序。这两种选项之间的差异在于“Transparent”允许透明，因此，如果 SWF 文件的某一部分是透明的，则 SWF 文件下方的 HTML 层可以透过该部分显示出来。</p>
+<p>如果忽略此属性，默认值为 Window。仅适用于 object。</p>
+<p>因此，在HTML中将 <object> 的wmode参数设成这样：</p>
+<param name="wmode" value="Opaque">
+
+<p>然后将一个HTML的 <div>置于Flash影片之上，测试成功。</p>
+<p>但是，问题随之出现。许多客人在聊天室中打字的时候发现，输入法的选字框会跑到页面的左上角，而且会影响网页的排版，将Flash影片挤到下面。有时甚至无法将文字输入到Flash中。为了还原错误，我使用了多款输入法，发现微软的所有输入法都有这个问题。因为微软输入法在选字的时候都有一个虚线选择，我怀疑是这个虚线选择功能出现问题所致。</p>
+<p>可是，不能单单怀疑微软输入法的兼容性不好。因为，同样的程序，在昨天就没有出现这个情况。和开发伙伴测试了其他输入法，发现智能ABC输入法也存在这个问题，只是在我的计算机上没有出现。</p>
+<p>开始怀疑加入的 <div>，将其屏蔽，问题仍然存在。</p>
+<p>继续怀疑到<strong>wmode</strong>属性的头上。删除 &lt; param name=”wmode” value=”Opaque” &gt; 语句，问题消失。</p>
+<p>仔细思考，因为<strong>“Opaque” 使应用程序隐藏页面上位于它后面的所有内容</strong>，也就是说使用了这个参数之后，在网页中不是Flash位于最上而是<div>位于最上了，某些输入法会将焦点设定为网页中位于最上的对象（也就是 <div>中）。而这个 <div>又是使用绝对定位“漂浮”在网页上的，这就造成了输入法的选字框定位不准确，也就发生了刚才的问题了。</p>
+<p>从帮助文件中看来，使用“Opaque windowless”参数应该会好一些，不过，我们实在不愿意再试</p>
+<p>转载<a href="http://www.zengrong.net/" target="_blank">zrong&#39;s Blog</a></p>
+<p>发表于 @ 2009年10月16日　09:45:00 | <a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678642.aspx#FeedBack" title="评论" target="_blank">评论( loading...  )</a>| <a href="http://writeblog.csdn.net/PostEdit.aspx?entryId=4678642" title="编辑" target="_blank">编辑</a>| <a href="mailto:webmaster@csdn.net?subject=Article Report!!!&amp;body=Author:ACCP_2008123456URL:http://blog.csdn.net/ArticleContent.aspx?UserName=ACCP_2008123456&amp;Entryid=4678642">举报</a>| <a href="&quot;收藏到我的网摘中，并分享给我的朋友&quot;">收藏</a></p>
+<h3 id="-flex-iframe-html-http-blog-csdn-net-accp_2008123456-archive-2009-10-16-4678665-aspx-"><a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678665.aspx" target="_blank">新一篇:在Flex中用Iframe嵌入HTML网页</a></h3>
+<p><a href="http://blog.csdn.net/" target="_blank">查看最新精华文章 请访问博客首页</a>相关文章<a href=""></a></p>
+<ul>
+<li><p>发表评论</p>
+</li>
+<li><p>表 情：</p>
+</li>
+<li><p><a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678642.aspx#" target="_blank"><img src="&quot;顶&quot;" alt="顶"></a> <a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678642.aspx#" target="_blank"><img src="&quot;砸&quot;" alt="砸"></a> <a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678642.aspx#" target="_blank"><img src="&quot;棒&quot;" alt="棒"></a> <a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678642.aspx#" target="_blank"><img src="&quot;大笑&quot;" alt="大笑"></a> <a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678642.aspx#" target="_blank"><img src="&quot;愤怒&quot;" alt="愤怒"></a> <a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678642.aspx#" target="_blank"><img src="&quot;大哭&quot;" alt="大哭"></a> <a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678642.aspx#" target="_blank"><img src="&quot;疑问&quot;" alt="疑问"></a> <a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678642.aspx#" target="_blank"><img src="&quot;汗&quot;" alt="汗"></a> <a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678642.aspx#" target="_blank"><img src="&quot;呕吐&quot;" alt="呕吐"></a> <a href="http://blog.csdn.net/ACCP_2008123456/archive/2009/10/16/4678642.aspx#" target="_blank"><img src="&quot;送花&quot;" alt="送花"></a></p>
+</li>
+<li><p>评论内容：
+*</p>
+</li>
+<li>用 户 名：</li>
+<li><p><a href="">登录</a> <a href="http://passport.csdn.net/CSDNUserRegister.aspx" target="_blank">注册</a> 匿名评论</p>
+</li>
+<li><p>验 证 码：</p>
+</li>
+<li><a href=""><img src="" alt="验证码"></a> <a href="">重新获得验证码</a></li>
+</ul>
+<p><em>
+</em></p>
+<h3 id="-">热门招聘职位<img src="" alt=""></h3>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Flex/">Flex</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Flex/" class="label label-primary">Flex</a></span> | <span class="time">recent updated:<time title="2014-03-07 01:54:44"datetime="2014-03-07 01:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-Flex--wmode属性的Opaque参数/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-Flex--wmode属性的Opaque参数" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-xml-xstream--xStream完美转换XML、JSON/">xStream完美转换XML、JSON</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T09:54:44.000Z"> <a href="/2014/02/02/2014-02-02-xml-xstream--xStream完美转换XML、JSON/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="xstream-xml-json">xStream完美转换XML、JSON</h1>
+<p><strong>xStream**</strong>框架<strong>**</strong></p>
+<p>xStream可以轻易的将Java对象和xml文档相互转换，而且可以修改某个特定的属性和节点名称，而且也支持json的转换；</p>
+<p>前面有介绍过json-lib这个框架，在线博文：<a href="http://www.cnblogs.com/hoojo/archive/2011/04/21/2023805.html" target="_blank"><a href="http://www.cnblogs.com/hoojo/archive/2011/04/21/2023805.html">http://www.cnblogs.com/hoojo/archive/2011/04/21/2023805.html</a></a></p>
+<p>以及Jackson这个框架，在线博文：<a href="http://www.cnblogs.com/hoojo/archive/2011/04/22/2024628.html" target="_blank"><a href="http://www.cnblogs.com/hoojo/archive/2011/04/22/2024628.html">http://www.cnblogs.com/hoojo/archive/2011/04/22/2024628.html</a></a></p>
+<p>它们都完美支持JSON，但是对xml的支持还不是很好。一定程度上限制了对Java对象的描述，不能让xml完全体现到对Java对象的描述。这里将会介绍xStream对JSON、XML的完美支持。xStream不仅对XML的转换非常友好，而且提供annotation注解，可以在JavaBean中完成对xml节点、属性的描述。以及对JSON也支持，只需要提供相关的JSONDriver就可以完成转换。</p>
+<p><strong>一、**</strong>准备工作<strong>**</strong></p>
+<p>1、 下载jar包、及官方资源</p>
+<p>xStream的jar下载地址：</p>
+<p><a href="https://nexus.codehaus.org/content/repositories/releases/com/thoughtworks/xstream/xstream-distribution/1.3.1/xstream-distribution-1.3.1-bin.zip" target="_blank"><a href="https://nexus.codehaus.org/content/repositories/releases/com/thoughtworks/xstream/xstream-distribution/1.3.1/xstream-distribution-1.3.1-bin.zip">https://nexus.codehaus.org/content/repositories/releases/com/thoughtworks/xstream/xstream-distribution/1.3.1/xstream-distribution-1.3.1-bin.zip</a></a></p>
+<p>官方的示例很全，官方参考示例：<a href="http://xstream.codehaus.org/tutorial.html" target="_blank"><a href="http://xstream.codehaus.org/tutorial.html">http://xstream.codehaus.org/tutorial.html</a></a></p>
+<p>添加xstream-1.3.1.jar文件到工程中，就可以开始下面的工作；需要的jar如下：</p>
+<p><a href="http://images.cnblogs.com/cnblogs_com/hoojo/201104/201104221846024160.jpg" target="_blank"><img src="&quot;clip_image002&quot;" alt="clip_image002"></a></p>
+<p>2、 测试用例代码
+package com.hoo.test;</p>
+<p>import java.io.IOException;
+import java.io.ObjectInputStream;</p>
+<p>import java.io.ObjectOutputStream;
+import java.io.StringReader;</p>
+<p>import java.io.Writer;
+import java.util.ArrayList;</p>
+<p>import java.util.HashMap;
+import java.util.Iterator;</p>
+<p>import java.util.List;
+import java.util.Map;</p>
+<p>import java.util.Set;
+import org.codehaus.jettison.json.JSONException;</p>
+<p>import org.junit.After;
+import org.junit.Before;</p>
+<p>import org.junit.Test;
+import com.hoo.entity.Birthday;</p>
+<p>import com.hoo.entity.Classes;
+import com.hoo.entity.ListBean;</p>
+<p>import com.hoo.entity.Student;
+import com.thoughtworks.xstream.XStream;</p>
+<p>import com.thoughtworks.xstream.io.HierarchicalStreamWriter;
+import com.thoughtworks.xstream.io.json.JettisonMappedXmlDriver;</p>
+<p>import com.thoughtworks.xstream.io.json.JsonHierarchicalStreamDriver;
+import com.thoughtworks.xstream.io.json.JsonWriter;</p>
+<p>//<em>/</em>
+/* <b>function:</b>Java对象和XML字符串的相互转换</p>
+<p>/<em> jar-lib-version: xstream-1.3.1
+/</em> @author hoojo</p>
+<p>/<em> @createDate Nov 27, 2010 12:15:15 PM
+/</em> @file XStreamTest.java</p>
+<p>/<em> @package com.hoo.test
+/</em> @project WebHttpUtils</p>
+<p>/<em> @blog <a href="http://blog.csdn.net/IBM_hoojo" target="_blank">http://blog.csdn.net/IBM_hoojo</a>
+/</em> @email hoojo_@126.com</p>
+<p>/<em> @version 1.0
+/</em>/</p>
+<p>@SuppressWarnings(&quot;unchecked&quot;)
+public class XStreamTest {</p>
+<p>private XStream xstream = null;
+private ObjectOutputStream out = null;</p>
+<p>private ObjectInputStream in = null;
+private Student bean = null;</p>
+<p>//<em>/</em>
+/* <b>function:</b>初始化资源准备</p>
+<p>/<em> @author hoojo
+/</em> @createDate Nov 27, 2010 12:16:28 PM</p>
+<p>/*/
+@Before</p>
+<p>public void init() {
+try {</p>
+<p>xstream = new XStream();
+//xstream = new XStream(new DomDriver()); // 需要xpp3 jar</p>
+<p>} catch (Exception e) {
+e.printStackTrace();</p>
+<p>}
+bean = new Student();</p>
+<p>bean.setAddress(&quot;china&quot;);
+bean.setEmail(&quot;jack@email.com&quot;);</p>
+<p>bean.setId(1);
+bean.setName(&quot;jack&quot;);</p>
+<p>Birthday day = new Birthday();
+day.setBirthday(&quot;2010-11-22&quot;);</p>
+<p>bean.setBirthday(day);
+}</p>
+<p>//<em>/</em>
+/* <b>function:</b>释放对象资源</p>
+<p>/<em> @author hoojo
+/</em> @createDate Nov 27, 2010 12:16:38 PM</p>
+<p>/*/
+@After</p>
+<p>public void destory() {
+xstream = null;</p>
+<p>bean = null;
+try {</p>
+<p>if (out != null) {
+out.flush();</p>
+<p>out.close();
+}</p>
+<p>if (in != null) {
+in.close();</p>
+<p>}
+} catch (IOException e) {</p>
+<p>e.printStackTrace();
+}</p>
+<p>System.gc();
+}</p>
+<p>public final void fail(String string) {
+System.out.println(string);</p>
+<p>}
+public final void failRed(String string) {</p>
+<p>System.err.println(string);
+}</p>
+<p>}</p>
+<p>通过XStream对象的toXML方法就可以完成Java对象到XML的转换，toXML方法还有2个相同签名的方法，需要传递一个流。然后通过流来完成xml信息的输出。</p>
+<p>3、 需要的JavaBean
+package com.hoo.entity;</p>
+<p>public class Student {
+private int id;</p>
+<p>private String name;
+private String email;</p>
+<p>private String address;
+private Birthday birthday;</p>
+<p>//getter、setter
+public String toString() {</p>
+<p>return this.name + &quot;/#&quot; + this.id + &quot;/#&quot; + this.address + &quot;/#&quot; + this.birthday + &quot;/#&quot; + this.email;
+}</p>
+<p>}</p>
+<hr>
+<p><strong>二、**</strong>Java<strong><strong>转换成</strong></strong>XML**</p>
+<p>1、 JavaBean转换XM
+//<em>/</em></p>
+<p>/<em> <b>function:</b>Java对象转换成XML字符串
+/</em> @author hoojo</p>
+<p>/<em> @createDate Nov 27, 2010 12:19:01 PM
+/</em>/</p>
+<p>@Test
+public void writeBean2XML() {</p>
+<p>try {
+fail(&quot;------------Bean-&gt;XML------------&quot;);</p>
+<p>fail(xstream.toXML(bean));
+fail(&quot;重命名后的XML&quot;);</p>
+<p>//类重命名
+//xstream.alias(&quot;account&quot;, Student.class);</p>
+<p>//xstream.alias(&quot;生日&quot;, Birthday.class);
+//xstream.aliasField(&quot;生日&quot;, Student.class, &quot;birthday&quot;);</p>
+<p>//xstream.aliasField(&quot;生日&quot;, Birthday.class, &quot;birthday&quot;);
+//fail(xstream.toXML(bean));</p>
+<p>//属性重命名
+xstream.aliasField(&quot;邮件&quot;, Student.class, &quot;email&quot;);</p>
+<p>//包重命名
+xstream.aliasPackage(&quot;hoo&quot;, &quot;com.hoo.entity&quot;);</p>
+<p>fail(xstream.toXML(bean));
+} catch (Exception e) {</p>
+<p>e.printStackTrace();
+}</p>
+<p>}</p>
+<p>看结果中的第一份xml内容，是没有经过然后修改或重命名的文档，按照原样输出。文档中的第二份文档的package经过重命名，email属性也经过重命名以及类名也可以进行重命名的。</p>
+<p>运行后结果如下：
+------------Bean-&gt;XML------------</p>
+<p><com.hoo.entity.Student></p>
+<id>1</id>
+
+<name>jack</name>
+<email>jack@email.com</email>
+
+<address>china</address>
+<birthday>
+
+<birthday>2010-11-22</birthday>
+</birthday>
+
+</com.hoo.entity.Student>
+重命名后的XML
+
+<hoo.Student>
+<id>1</id>
+
+<name>jack</name>
+&lt;邮件&gt;jack@email.com&lt;/邮件&gt;
+
+<address>china</address>
+<birthday>
+
+<birthday>2010-11-22</birthday>
+</birthday>
+
+</hoo.Student>
+
+2、 将List集合转换成xml文档
+
+//<em>/</em>
+
+/<em> <b>function:</b>将Java的List集合转换成XML对象
+/</em> @author hoojo
+
+/<em> @createDate Nov 27, 2010 12:20:07 PM
+/</em>/
+
+@Test
+public void writeList2XML() {
+
+try {
+//修改元素名称
+
+xstream.alias(&quot;beans&quot;, ListBean.class);
+xstream.alias(&quot;student&quot;, Student.class);
+
+fail(&quot;----------List--&gt;XML----------&quot;);
+ListBean listBean = new ListBean();
+
+listBean.setName(&quot;this is a List Collection&quot;);
+List<Object> list = new ArrayList<Object>();
+
+list.add(bean);
+list.add(bean);//引用bean
+
+//list.add(listBean);//引用listBean，父元素
+bean = new Student();
+
+bean.setAddress(&quot;china&quot;);
+bean.setEmail(&quot;tom@125.com&quot;);
+
+bean.setId(2);
+bean.setName(&quot;tom&quot;);
+
+Birthday day = new Birthday(&quot;2010-11-22&quot;);
+bean.setBirthday(day);
+
+list.add(bean);
+listBean.setList(list);
+
+//将ListBean中的集合设置空元素，即不显示集合元素标签
+//xstream.addImplicitCollection(ListBean.class, &quot;list&quot;);
+
+//设置reference模型
+//xstream.setMode(XStream.NO_REFERENCES);//不引用
+
+xstream.setMode(XStream.ID_REFERENCES);//id引用
+//xstream.setMode(XStream.XPATH_ABSOLUTE_REFERENCES);//绝对路径引用
+
+//将name设置为父类（Student）的元素的属性
+xstream.useAttributeFor(Student.class, &quot;name&quot;);
+
+xstream.useAttributeFor(Birthday.class, &quot;birthday&quot;);
+//修改属性的name
+
+xstream.aliasAttribute(&quot;姓名&quot;, &quot;name&quot;);
+xstream.aliasField(&quot;生日&quot;, Birthday.class, &quot;birthday&quot;);
+
+fail(xstream.toXML(listBean));
+} catch (Exception e) {
+
+e.printStackTrace();
+}
+
+}
+
+上面的代码运行后，结果如下：
+
+----------List--&gt;XML----------
+
+<beans id="1">
+<name>this is a List Collection</name>
+
+<p><list id="2"></p>
+<student id="3" 姓名="jack">
+
+<id>1</id>
+<email>jack@email.com</email>
+
+<address>china</address>
+<birthday id="4" 生日="2010-11-22"/>
+
+</student>
+<student reference="3"/>
+
+<student id="5" 姓名="tom">
+<id>2</id>
+
+<email>tom@125.com</email>
+<address>china</address>
+
+<birthday id="6" 生日="2010-11-22"/>
+</student>
+
+<p></list>
+</beans></p>
+<p>如果不加xstream.addImplicitCollection(ListBean.<strong>class</strong>, &quot;list&quot;);</p>
+<p>这个设置的话，会出现一个List节点包裹着Student节点元素。添加addImplicitCollection可以忽略这个list节点元素。那么上面的list节点就不存在，只会在beans元素中出现name、student这2个xml元素标签；</p>
+<p>setMode是设置相同的对象的引用方式，如果设置XStream.NO_REFERENCES就是不引用，会输出2分相同的Student元素。如果是XStream.ID_REFERENCES会引用相同的那个对象的id属性，如果是XStream.XPATH_ABSOLUTE_REFERENCES引用，那么它将显示xpath路径。上面采用的id引用，<student reference="3"/>这个引用了id=3的那个student标签元素；</p>
+<p>useAttributeFor是设置某个节点显示到父节点的属性中，也就是将指定class中的指定属性，在这个class元素节点的属性中显示。</p>
+<p>如：<student><name>hoojo</name></student></p>
+<p>设置好后就是这样的结果：<student name=”hoojo”></student></p>
+<p>aliasAttribute是修改属性名称。</p>
+<p>3、 在JavaBean中添加Annotation注解进行重命名设置</p>
+<p>先看看JavaBean的代码
+package com.hoo.entity;</p>
+<p>import java.util.Arrays;
+import java.util.Calendar;</p>
+<p>import java.util.GregorianCalendar;
+import java.util.List;</p>
+<p>import com.thoughtworks.xstream.annotations.XStreamAlias;
+import com.thoughtworks.xstream.annotations.XStreamAsAttribute;</p>
+<p>import com.thoughtworks.xstream.annotations.XStreamConverter;
+import com.thoughtworks.xstream.annotations.XStreamImplicit;</p>
+<p>import com.thoughtworks.xstream.annotations.XStreamOmitField;
+@XStreamAlias(&quot;class&quot;)</p>
+<p>public class Classes {
+//*</p>
+<p>/<em> 设置属性显示
+/</em>/</p>
+<p>@XStreamAsAttribute
+@XStreamAlias(&quot;名称&quot;)</p>
+<p>private String name;
+//*</p>
+<p>/<em> 忽略
+/</em>/</p>
+<p>@XStreamOmitField
+private int number;</p>
+<p>@XStreamImplicit(itemFieldName = &quot;Students&quot;)
+private List<Student> students;</p>
+<p>@SuppressWarnings(&quot;unused&quot;)
+@XStreamConverter(SingleValueCalendarConverter.class)</p>
+<p>private Calendar created = new GregorianCalendar();
+public Classes(){}</p>
+<p>public Classes(String name, Student... stu) {
+this.name = name;</p>
+<p>this.students = Arrays.asList(stu);
+}</p>
+<p>//getter、setter
+}</p>
+<p>SingleValueCalendarConverter.java这个是一个类型转换器</p>
+<p>package com.hoo.entity;</p>
+<p>import java.util.Calendar;
+import java.util.Date;</p>
+<p>import java.util.GregorianCalendar;
+import com.thoughtworks.xstream.converters.Converter;</p>
+<p>import com.thoughtworks.xstream.converters.MarshallingContext;
+import com.thoughtworks.xstream.converters.UnmarshallingContext;</p>
+<p>import com.thoughtworks.xstream.io.HierarchicalStreamReader;
+import com.thoughtworks.xstream.io.HierarchicalStreamWriter;</p>
+<p>public class SingleValueCalendarConverter implements Converter {
+public void marshal(Object source, HierarchicalStreamWriter writer,</p>
+<p>MarshallingContext context) {
+Calendar calendar = (Calendar) source;</p>
+<p>writer.setValue(String.valueOf(calendar.getTime().getTime()));
+}</p>
+<p>public Object unmarshal(HierarchicalStreamReader reader,
+UnmarshallingContext context) {</p>
+<p>GregorianCalendar calendar = new GregorianCalendar();
+calendar.setTime(new Date(Long.parseLong(reader.getValue())));</p>
+<p>return calendar;
+}</p>
+<p>@SuppressWarnings(&quot;unchecked&quot;)
+public boolean canConvert(Class type) {</p>
+<p>return type.equals(GregorianCalendar.class);
+}</p>
+<p>}</p>
+<p>再看看测试用例代码</p>
+<p>@Test</p>
+<p>public void writeList2XML4Annotation() {
+try {</p>
+<p>failRed(&quot;---------annotation Bean --&gt; XML---------&quot;);
+Student stu = new Student();</p>
+<p>stu.setName(&quot;jack&quot;);
+Classes c = new Classes(&quot;一班&quot;, bean, stu);</p>
+<p>c.setNumber(2);
+//对指定的类使用Annotation</p>
+<p>//xstream.processAnnotations(Classes.class);
+//启用Annotation</p>
+<p>//xstream.autodetectAnnotations(true);
+xstream.alias(&quot;student&quot;, Student.class);</p>
+<p>fail(xstream.toXML(c));
+} catch (Exception e) {</p>
+<p>e.printStackTrace();
+}</p>
+<p>}</p>
+<p>当启用annotation或是对某个特定的类启用annotation时，上面的classes这个类才有效果。如果不启用annotation，运行后结果如下：</p>
+<p>---------annotation Bean --&gt; XML---------</p>
+<p><com.hoo.entity.Classes></p>
+<name>一班</name>
+
+<p><number>2</number></p>
+<students class="java.util.Arrays$ArrayList">
+
+<a class="student-array">
+<student>
+
+<id>1</id>
+<name>jack</name>
+
+<email>jack@email.com</email>
+<address>china</address>
+
+<birthday>
+<birthday>2010-11-22</birthday>
+
+</birthday>
+</student>
+
+<student>
+<id>0</id>
+
+<name>jack</name>
+</student>
+
+</a>
+</students>
+
+<created>
+<time>1303292056718</time>
+
+<timezone>Asia/Shanghai</timezone>
+</created>
+
+<p></com.hoo.entity.Classes></p>
+<p>当启用annotation后xstream.processAnnotations(Classes.class)，结果如下：</p>
+<p>---------annotation Bean --&gt; XML---------</p>
+<class 名称="一班">
+<Students>
+
+<id>1</id>
+<name>jack</name>
+
+<email>jack@email.com</email>
+<address>china</address>
+
+<birthday>
+<birthday>2010-11-22</birthday>
+
+</birthday>
+</Students>
+
+<Students>
+<id>0</id>
+
+<name>jack</name>
+</Students>
+
+<created>1303292242937</created>
+</class>
+
+<p>4、 Map集合转换xml文档</p>
+<p>//<em>/</em></p>
+<p>/<em> <b>function:</b>Java Map集合转XML
+/</em> @author hoojo</p>
+<p>/<em> @createDate Nov 27, 2010 1:13:26 PM
+/</em>/</p>
+<p>@Test
+public void writeMap2XML() {</p>
+<p>try {
+failRed(&quot;---------Map --&gt; XML---------&quot;);</p>
+<p>Map<String, Student> map = new HashMap<String, Student>();
+map.put(&quot;No.1&quot;, bean);//put</p>
+<p>bean = new Student();
+bean.setAddress(&quot;china&quot;);</p>
+<p>bean.setEmail(&quot;tom@125.com&quot;);
+bean.setId(2);</p>
+<p>bean.setName(&quot;tom&quot;);
+Birthday day = new Birthday(&quot;2010-11-22&quot;);</p>
+<p>bean.setBirthday(day);
+map.put(&quot;No.2&quot;, bean);//put</p>
+<p>bean = new Student();
+bean.setName(&quot;jack&quot;);</p>
+<p>map.put(&quot;No.3&quot;, bean);//put
+xstream.alias(&quot;student&quot;, Student.class);</p>
+<p>xstream.alias(&quot;key&quot;, String.class);
+xstream.useAttributeFor(Student.class, &quot;id&quot;);</p>
+<p>xstream.useAttributeFor(&quot;birthday&quot;, String.class);
+fail(xstream.toXML(map));</p>
+<p>} catch (Exception e) {
+e.printStackTrace();</p>
+<p>}
+}</p>
+<p>运行后结果如下：</p>
+<p>---------Map --&gt; XML---------</p>
+<map>
+<entry>
+
+<key>No.3</key>
+<student id="0">
+
+<name>jack</name>
+</student>
+
+</entry>
+<entry>
+
+<key>No.1</key>
+<student id="1">
+
+<name>jack</name>
+<email>jack@email.com</email>
+
+<address>china</address>
+<birthday birthday="2010-11-22"/>
+
+</student>
+</entry>
+
+<entry>
+<key>No.2</key>
+
+<student id="2">
+<name>tom</name>
+
+<email>tom@125.com</email>
+<address>china</address>
+
+<birthday birthday="2010-11-22"/>
+</student>
+
+</entry>
+</map>
+
+<p>5、 用OutStream输出流写XML</p>
+<p>//<em>/</em></p>
+<p>/<em> <b>function:</b>用OutStream输出流写XML
+/</em> @author hoojo</p>
+<p>/<em> @createDate Nov 27, 2010 1:13:48 PM
+/</em>/</p>
+<p>@Test
+public void writeXML4OutStream() {</p>
+<p>try {
+out = xstream.createObjectOutputStream(System.out);</p>
+<p>Student stu = new Student();
+stu.setName(&quot;jack&quot;);</p>
+<p>Classes c = new Classes(&quot;一班&quot;, bean, stu);
+c.setNumber(2);</p>
+<p>failRed(&quot;---------ObjectOutputStream /# JavaObject--&gt; XML---------&quot;);
+out.writeObject(stu);</p>
+<p>out.writeObject(new Birthday(&quot;2010-05-33&quot;));
+out.write(22);//byte</p>
+<p>out.writeBoolean(true);
+out.writeFloat(22.f);</p>
+<p>out.writeUTF(&quot;hello&quot;);
+} catch (Exception e) {</p>
+<p>e.printStackTrace();
+}</p>
+<p>}</p>
+<p>使用输出流后，可以通过流对象完成xml的构建，即使没有JavaBean对象，你可以用流来构建一个复杂的xml文档，运行后结果如下：</p>
+<p>---------ObjectOutputStream /# JavaObject--&gt; XML---------</p>
+<p><object-stream></p>
+<com.hoo.entity.Student>
+
+<p><id>0</id></p>
+<name>jack</name>
+
+<p></com.hoo.entity.Student></p>
+<com.hoo.entity.Birthday>
+
+<p><birthday>2010-05-33</birthday>
+</com.hoo.entity.Birthday></p>
+<p><byte>22</byte></p>
+<boolean>true</boolean>
+
+<p><float>22.0</float></p>
+<string>hello</string>
+
+<p></object-stream></p>
+<hr>
+<p><strong>三、**</strong>XML<strong><strong>内容转换</strong></strong>Java<strong><strong>对象**</strong></strong></p>
+<p>1、 用InputStream将XML文档转换成java对象
+//<em>/</em></p>
+<p>/<em> <b>function:</b>用InputStream将XML文档转换成java对象
+/</em> 需要额外的jar xpp3-main.jar</p>
+<p>/<em> @author hoojo
+/</em> @createDate Nov 27, 2010 1:14:52 PM</p>
+<p>/*/
+@Test</p>
+<p>public void readXML4InputStream() {
+try {</p>
+<p>String s = &quot;<object-stream><com.hoo.entity.Student><id>0</id><name>jack</name>&quot; +
+&quot;</com.hoo.entity.Student><com.hoo.entity.Birthday><birthday>2010-05-33</birthday>&quot; +</p>
+<p>&quot;</com.hoo.entity.Birthday><byte>22</byte><boolean>true</boolean><float>22.0</float>&quot; +
+&quot;<string>hello</string></object-stream>&quot;;</p>
+<p>failRed(&quot;---------ObjectInputStream/#/# XML --&gt; javaObject---------&quot;);
+StringReader reader = new StringReader(s);</p>
+<p>in = xstream.createObjectInputStream(reader);
+Student stu = (Student) in.readObject();</p>
+<p>Birthday b = (Birthday) in.readObject();
+byte i = in.readByte();</p>
+<p>boolean bo = in.readBoolean();
+float f = in.readFloat();</p>
+<p>String str = in.readUTF();
+System.out.println(stu);</p>
+<p>System.out.println(b);
+System.out.println(i);</p>
+<p>System.out.println(bo);
+System.out.println(f);</p>
+<p>System.out.println(str);
+} catch (Exception e) {</p>
+<p>e.printStackTrace();
+}</p>
+<p>}</p>
+<p>读取后，转换的Java对象，结果如下：</p>
+<p>---------ObjectInputStream/#/# XML --&gt; javaObject---------</p>
+<p>jack/#0/#null/#null/#null
+2010-05-33</p>
+<p>22
+true</p>
+<p>22.0
+hello</p>
+<p>2、 将xml文档转换成Java对象</p>
+<p>//<em>/</em></p>
+<p>/<em> <b>function:</b>将XML字符串转换成Java对象
+/</em> @author hoojo</p>
+<p>/<em> @createDate Nov 27, 2010 2:39:06 PM
+/</em>/</p>
+<p>@Test
+public void readXml2Object() {</p>
+<p>try {
+failRed(&quot;-----------Xml &gt;&gt;&gt; Bean--------------&quot;);</p>
+<p>Student stu = (Student) xstream.fromXML(xstream.toXML(bean));
+fail(stu.toString());</p>
+<p>List<Student> list = new ArrayList<Student>();
+list.add(bean);//add</p>
+<p>Map<String, Student> map = new HashMap<String, Student>();
+map.put(&quot;No.1&quot;, bean);//put</p>
+<p>bean = new Student();
+bean.setAddress(&quot;china&quot;);</p>
+<p>bean.setEmail(&quot;tom@125.com&quot;);
+bean.setId(2);</p>
+<p>bean.setName(&quot;tom&quot;);
+Birthday day = new Birthday(&quot;2010-11-22&quot;);</p>
+<p>bean.setBirthday(day);
+list.add(bean);//add</p>
+<p>map.put(&quot;No.2&quot;, bean);//put
+bean = new Student();</p>
+<p>bean.setName(&quot;jack&quot;);
+list.add(bean);//add</p>
+<p>map.put(&quot;No.3&quot;, bean);//put
+failRed(&quot;==========XML &gt;&gt;&gt; List===========&quot;);</p>
+<p>List<Student> studetns = (List<Student>) xstream.fromXML(xstream.toXML(list));
+fail(&quot;size:&quot; + studetns.size());//3</p>
+<p>for (Student s : studetns) {
+fail(s.toString());</p>
+<p>}
+failRed(&quot;==========XML &gt;&gt;&gt; Map===========&quot;);</p>
+<p>Map<String, Student> maps = (Map<String, Student>) xstream.fromXML(xstream.toXML(map));
+fail(&quot;size:&quot; + maps.size());//3</p>
+<p>Set<String> key = maps.keySet();
+Iterator<String> iter = key.iterator();</p>
+<p>while (iter.hasNext()) {
+String k = iter.next();</p>
+<p>fail(k + &quot;:&quot; + map.get(k));
+}</p>
+<p>} catch (Exception e) {
+e.printStackTrace();</p>
+<p>}
+}</p>
+<p>运行后结果如下：</p>
+<p>-----------Xml &gt;&gt;&gt; Bean--------------</p>
+<p>jack/#1/#china/#2010-11-22/#jack@email.com
+==========XML &gt;&gt;&gt; List===========</p>
+<p>size:3
+jack/#1/#china/#2010-11-22/#jack@email.com</p>
+<p>tom/#2/#china/#2010-11-22/#tom@125.com
+jack/#0/#null/#null/#null</p>
+<p>==========XML &gt;&gt;&gt; Map===========
+size:3</p>
+<p>No.3:jack/#0/#null/#null/#null
+No.1:jack/#1/#china/#2010-11-22/#jack@email.com</p>
+<p>No.2:tom/#2/#china/#2010-11-22/#tom@125.com</p>
+<p>怎么样，成功的完成XML到JavaBean、List、Map的转换，更多对象转换还需要大家一一尝试。用法类似~这里就不一样赘述。</p>
+<p><strong>四、**</strong>XStream<strong><strong>对</strong></strong>JSON<strong><strong>的支持**</strong></strong></p>
+<p>xStream对JSON也有非常好的支持，它提供了2个模型驱动。用这2个驱动可以完成Java对象到JSON的相互转换。使用JettisonMappedXmlDriver驱动，将Java对象转换成json，需要添加jettison.jar</p>
+<p>1、 用JettisonMappedXmlDriver完成Java对象到JSON的转换
+//<em>/</em></p>
+<p>/<em> <b>function:</b>XStream结合JettisonMappedXmlDriver驱动，转换Java对象到JSON
+/</em> 需要添加jettison jar</p>
+<p>/<em> @author hoojo
+/</em> @createDate Nov 27, 2010 1:23:18 PM</p>
+<p>/*/
+@Test</p>
+<p>public void writeEntity2JETTSON() {
+failRed(&quot;=======JettisonMappedXmlDriver===JavaObject &gt;&gt;&gt;&gt; JaonString=========&quot;);</p>
+<p>xstream = new XStream(new JettisonMappedXmlDriver());
+xstream.setMode(XStream.NO_REFERENCES);</p>
+<p>xstream.alias(&quot;student&quot;, Student.class);
+fail(xstream.toXML(bean));</p>
+<p>}</p>
+<p>运行后结果如下：</p>
+<p>=======JettisonMappedXmlDriver===JavaObject &gt;&gt;&gt;&gt; JaonString=========</p>
+<p>{&quot;student&quot;:{&quot;id&quot;:1,&quot;name&quot;:&quot;jack&quot;,&quot;email&quot;:&quot;jack@email.com&quot;,&quot;address&quot;:&quot;china&quot;,&quot;birthday&quot;:[{},&quot;2010-11-22&quot;]}}</p>
+<p>JSON的转换和XML的转换用法一样，只是创建XStream需要传递一个参数，这个参数就是xml到JSON映射转换的驱动。这里会降到两个驱动，分别是JettisonMappedXmlDriver、JsonHierarchicalStreamDriver。</p>
+<p>2、 JsonHierarchicalStreamDriver完成Java对象到JSON的转换
+//<em>/</em></p>
+<p>/<em> <b>function:</b>用XStream结合JsonHierarchicalStreamDriver驱动
+/</em> 转换java对象为JSON字符串</p>
+<p>/<em> @author hoojo
+/</em> @createDate Nov 27, 2010 1:16:46 PM</p>
+<p>/*/
+@Test</p>
+<p>public void writeEntiry2JSON() {
+failRed(&quot;======JsonHierarchicalStreamDriver====JavaObject &gt;&gt;&gt;&gt; JaonString=========&quot;);</p>
+<p>xstream = new XStream(new JsonHierarchicalStreamDriver());
+//xstream.setMode(XStream.NO_REFERENCES);</p>
+<p>xstream.alias(&quot;student&quot;, Student.class);
+failRed(&quot;-------Object &gt;&gt;&gt;&gt; JSON---------&quot;);</p>
+<p>fail(xstream.toXML(bean));
+//failRed(&quot;========JsonHierarchicalStreamDriver==删除根节点=========&quot;);</p>
+<p>//删除根节点
+xstream = new XStream(new JsonHierarchicalStreamDriver() {</p>
+<p>public HierarchicalStreamWriter createWriter(Writer out) {
+return new JsonWriter(out, JsonWriter.DROP_ROOT_MODE);</p>
+<p>}
+});</p>
+<p>//xstream.setMode(XStream.NO_REFERENCES);
+xstream.alias(&quot;student&quot;, Student.class);</p>
+<p>fail(xstream.toXML(bean));
+}</p>
+<p>运行后结果如下：</p>
+<p>======JsonHierarchicalStreamDriver====JavaObject &gt;&gt;&gt;&gt; JaonString=========</p>
+<p>-------Object &gt;&gt;&gt;&gt; JSON---------
+{&quot;student&quot;: {</p>
+<p>&quot;id&quot;: 1,
+&quot;name&quot;: &quot;jack&quot;,</p>
+<p>&quot;email&quot;: &quot;jack@email.com&quot;,
+&quot;address&quot;: &quot;china&quot;,</p>
+<p>&quot;birthday&quot;: {
+&quot;birthday&quot;: &quot;2010-11-22&quot;</p>
+<p>}
+}}</p>
+<p>{
+&quot;id&quot;: 1,</p>
+<p>&quot;name&quot;: &quot;jack&quot;,
+&quot;email&quot;: &quot;jack@email.com&quot;,</p>
+<p>&quot;address&quot;: &quot;china&quot;,
+&quot;birthday&quot;: {</p>
+<p>&quot;birthday&quot;: &quot;2010-11-22&quot;
+}</p>
+<p>}</p>
+<p>使用JsonHierarchicalStreamDriver转换默认会给转换后的对象添加一个根节点，但是在构建JsonHierarchicalStreamDriver驱动的时候，你可以重写createWriter方法，删掉根节点。</p>
+<p>看上面的结果，一个是默认带根节点的JSON对象，它只是将类名作为一个属性，将对象作为该属性的一个值。而另一个没有带根属性的JSON就是通过重写createWriter方法完成的。</p>
+<p>3、 将List集合转换成JSON字符串
+@Test</p>
+<p>public void writeList2JSON() {
+failRed(&quot;======JsonHierarchicalStreamDriver====JavaObject &gt;&gt;&gt;&gt; JaonString=========&quot;);</p>
+<p>JsonHierarchicalStreamDriver driver = new JsonHierarchicalStreamDriver();
+xstream = new XStream(driver);</p>
+<p>//xstream = new XStream(new JettisonMappedXmlDriver());//转换错误
+//xstream.setMode(XStream.NO_REFERENCES);</p>
+<p>xstream.alias(&quot;student&quot;, Student.class);
+List<Student> list = new ArrayList<Student>();</p>
+<p>list.add(bean);//add
+bean = new Student();</p>
+<p>bean.setAddress(&quot;china&quot;);
+bean.setEmail(&quot;tom@125.com&quot;);</p>
+<p>bean.setId(2);
+bean.setName(&quot;tom&quot;);</p>
+<p>Birthday day = new Birthday(&quot;2010-11-22&quot;);
+bean.setBirthday(day);</p>
+<p>list.add(bean);//add
+bean = new Student();</p>
+<p>bean.setName(&quot;jack&quot;);
+list.add(bean);//add</p>
+<p>fail(xstream.toXML(list));
+//failRed(&quot;========JsonHierarchicalStreamDriver==删除根节点=========&quot;);</p>
+<p>//删除根节点
+xstream = new XStream(new JsonHierarchicalStreamDriver() {</p>
+<p>public HierarchicalStreamWriter createWriter(Writer out) {
+return new JsonWriter(out, JsonWriter.DROP_ROOT_MODE);</p>
+<p>}
+});</p>
+<p>xstream.alias(&quot;student&quot;, Student.class);
+fail(xstream.toXML(list));</p>
+<p>}</p>
+<p>运行后结果如下</p>
+<p>======JsonHierarchicalStreamDriver====JavaObject &gt;&gt;&gt;&gt; JaonString=========</p>
+<p>/#/#{&quot;list&quot;: [
+{</p>
+<p>&quot;id&quot;: 1,
+&quot;name&quot;: &quot;jack&quot;,</p>
+<p>&quot;email&quot;: &quot;jack@email.com&quot;,
+&quot;address&quot;: &quot;china&quot;,</p>
+<p>&quot;birthday&quot;: {
+&quot;birthday&quot;: &quot;2010-11-22&quot;</p>
+<p>}
+},</p>
+<p>{
+&quot;id&quot;: 2,</p>
+<p>&quot;name&quot;: &quot;tom&quot;,
+&quot;email&quot;: &quot;tom@125.com&quot;,</p>
+<p>&quot;address&quot;: &quot;china&quot;,
+&quot;birthday&quot;: {</p>
+<p>&quot;birthday&quot;: &quot;2010-11-22&quot;
+}</p>
+<p>},
+{</p>
+<p>&quot;id&quot;: 0,
+&quot;name&quot;: &quot;jack&quot;</p>
+<p>}
+]}</p>
+<p>/#[
+{</p>
+<p>&quot;id&quot;: 1,
+&quot;name&quot;: &quot;jack&quot;,</p>
+<p>&quot;email&quot;: &quot;jack@email.com&quot;,
+&quot;address&quot;: &quot;china&quot;,</p>
+<p>&quot;birthday&quot;: {
+&quot;birthday&quot;: &quot;2010-11-22&quot;</p>
+<p>}
+},</p>
+<p>{
+&quot;id&quot;: 2,</p>
+<p>&quot;name&quot;: &quot;tom&quot;,
+&quot;email&quot;: &quot;tom@125.com&quot;,</p>
+<p>&quot;address&quot;: &quot;china&quot;,
+&quot;birthday&quot;: {</p>
+<p>&quot;birthday&quot;: &quot;2010-11-22&quot;
+}</p>
+<p>},
+{</p>
+<p>&quot;id&quot;: 0,
+&quot;name&quot;: &quot;jack&quot;</p>
+<p>}
+]</p>
+<p>上面的list1是使用JsonHierarchicalStreamDriver 转换的，当然你也可以使用JettisonMappedXmlDriver驱动进行转换；用JettisonMappedXmlDriver转换后，你会发现格式不同而且没有根属性。</p>
+<p>4、 Map转换json
+@Test</p>
+<p>public void writeMap2JSON() {
+failRed(&quot;======JsonHierarchicalStreamDriver==== Map &gt;&gt;&gt;&gt; JaonString=========&quot;);</p>
+<p>xstream = new XStream(new JsonHierarchicalStreamDriver());
+//xstream = new XStream(new JettisonMappedXmlDriver());</p>
+<p>xstream.alias(&quot;student&quot;, Student.class);
+Map<String, Student> map = new HashMap<String, Student>();</p>
+<p>map.put(&quot;No.1&quot;, bean);//put
+bean = new Student();</p>
+<p>bean.setAddress(&quot;china&quot;);
+bean.setEmail(&quot;tom@125.com&quot;);</p>
+<p>bean.setId(2);
+bean.setName(&quot;tom&quot;);</p>
+<p>bean.setBirthday(new Birthday(&quot;2010-11-21&quot;));
+map.put(&quot;No.2&quot;, bean);//put</p>
+<p>bean = new Student();
+bean.setName(&quot;jack&quot;);</p>
+<p>map.put(&quot;No.3&quot;, bean);//put
+fail(xstream.toXML(map));</p>
+<p>//failRed(&quot;========JsonHierarchicalStreamDriver==删除根节点=========&quot;);
+//删除根节点</p>
+<p>xstream = new XStream(new JsonHierarchicalStreamDriver() {
+public HierarchicalStreamWriter createWriter(Writer out) {</p>
+<p>return new JsonWriter(out, JsonWriter.DROP_ROOT_MODE);
+}</p>
+<p>});
+xstream.alias(&quot;student&quot;, Student.class);</p>
+<p>fail(xstream.toXML(map));
+}</p>
+<p>运行后结果如下：</p>
+<p>======JsonHierarchicalStreamDriver==== Map &gt;&gt;&gt;&gt; JaonString=========</p>
+<p>{&quot;map&quot;: [
+[</p>
+<p>&quot;No.3&quot;,
+{</p>
+<p>&quot;id&quot;: 0,
+&quot;name&quot;: &quot;jack&quot;</p>
+<p>}
+],</p>
+<p>[
+&quot;No.1&quot;,</p>
+<p>{
+&quot;id&quot;: 1,</p>
+<p>&quot;name&quot;: &quot;jack&quot;,
+&quot;email&quot;: &quot;jack@email.com&quot;,</p>
+<p>&quot;address&quot;: &quot;china&quot;,
+&quot;birthday&quot;: {</p>
+<p>&quot;birthday&quot;: &quot;2010-11-22&quot;
+}</p>
+<p>}
+],</p>
+<p>[
+&quot;No.2&quot;,</p>
+<p>{
+&quot;id&quot;: 2,</p>
+<p>&quot;name&quot;: &quot;tom&quot;,
+&quot;email&quot;: &quot;tom@125.com&quot;,</p>
+<p>&quot;address&quot;: &quot;china&quot;,
+&quot;birthday&quot;: {</p>
+<p>&quot;birthday&quot;: &quot;2010-11-21&quot;
+}</p>
+<p>}
+]</p>
+<p>]}
+[</p>
+<p>[
+&quot;No.3&quot;,</p>
+<p>{
+&quot;id&quot;: 0,</p>
+<p>&quot;name&quot;: &quot;jack&quot;
+}</p>
+<p>],
+[</p>
+<p>&quot;No.1&quot;,
+{</p>
+<p>&quot;id&quot;: 1,
+&quot;name&quot;: &quot;jack&quot;,</p>
+<p>&quot;email&quot;: &quot;jack@email.com&quot;,
+&quot;address&quot;: &quot;china&quot;,</p>
+<p>&quot;birthday&quot;: {
+&quot;birthday&quot;: &quot;2010-11-22&quot;</p>
+<p>}
+}</p>
+<p>],
+[</p>
+<p>&quot;No.2&quot;,
+{</p>
+<p>&quot;id&quot;: 2,
+&quot;name&quot;: &quot;tom&quot;,</p>
+<p>&quot;email&quot;: &quot;tom@125.com&quot;,
+&quot;address&quot;: &quot;china&quot;,</p>
+<p>&quot;birthday&quot;: {
+&quot;birthday&quot;: &quot;2010-11-21&quot;</p>
+<p>}
+}</p>
+<p>]
+]</p>
+<p>5、 将JSON转换java对象</p>
+<p>//<em>/</em></p>
+<p>/<em> <b>function:</b>JsonHierarchicalStreamDriver可以将简单的json字符串转换成java对象，list、map转换不成功；
+/</em> JsonHierarchicalStreamDriver读取JSON字符串到java对象出错</p>
+<p>/<em> @author hoojo
+/</em> @createDate Nov 27, 2010 1:22:26 PM</p>
+<p>/<em> @throws JSONException
+/</em>/</p>
+<p>@Test
+public void readJSON2Object() throws JSONException {</p>
+<p>String json = &quot;{\&quot;student\&quot;: {&quot; +
+&quot;\&quot;id\&quot;: 1,&quot; +</p>
+<p>&quot;\&quot;name\&quot;: \&quot;haha\&quot;,&quot; +
+&quot;\&quot;email\&quot;: \&quot;email\&quot;,&quot; +</p>
+<p>&quot;\&quot;address\&quot;: \&quot;address\&quot;,&quot; +
+&quot;\&quot;birthday\&quot;: {&quot; +</p>
+<p>&quot;\&quot;birthday\&quot;: \&quot;2010-11-22\&quot;&quot; +
+&quot;}&quot; +</p>
+<p>&quot;}}&quot;;
+//JsonHierarchicalStreamDriver读取JSON字符串到java对象出错，但JettisonMappedXmlDriver可以</p>
+<p>xstream = new XStream(new JettisonMappedXmlDriver());
+xstream.alias(&quot;student&quot;, Student.class);</p>
+<p>fail(xstream.fromXML(json).toString());
+//JettisonMappedXmlDriver转换List集合出错，但JsonHierarchicalStreamDriver可以转换正确</p>
+<p>//JettisonMappedXmlDriver 转换的字符串 {&quot;list&quot;:{&quot;student&quot;:[{&quot;id&quot;:1,&quot;name&quot;:&quot;haha&quot;,&quot;email&quot;:&quot;email&quot;,&quot;address&quot;:&quot;address&quot;,&quot;birthday&quot;:[{},&quot;2010-11-22&quot;]}]},&quot;student&quot;:{&quot;id&quot;:2,&quot;name&quot;:&quot;tom&quot;,&quot;email&quot;:&quot;tom@125.com&quot;,&quot;address&quot;:&quot;china&quot;,&quot;birthday&quot;:[{},&quot;2010-11-22&quot;]}}
+json = &quot;{\&quot;list\&quot;: [{&quot; +</p>
+<p>&quot;\&quot;id\&quot;: 1,&quot; +
+&quot;\&quot;name\&quot;: \&quot;haha\&quot;,&quot; +</p>
+<p>&quot;\&quot;email\&quot;: \&quot;email\&quot;,&quot; +
+&quot;\&quot;address\&quot;: \&quot;address\&quot;,&quot; +</p>
+<p>&quot;\&quot;birthday\&quot;: {&quot; +
+&quot;\&quot;birthday\&quot;: \&quot;2010-11-22\&quot;&quot; +</p>
+<p>&quot;}&quot; +
+&quot;},{&quot; +</p>
+<p>&quot;\&quot;id\&quot;: 2,&quot; +
+&quot;\&quot;name\&quot;: \&quot;tom\&quot;,&quot; +</p>
+<p>&quot;\&quot;email\&quot;: \&quot;tom@125.com\&quot;,&quot; +
+&quot;\&quot;address\&quot;: \&quot;china\&quot;,&quot; +</p>
+<p>&quot;\&quot;birthday\&quot;: {&quot; +
+&quot;\&quot;birthday\&quot;: \&quot;2010-11-22\&quot;&quot; +</p>
+<p>&quot;}&quot; +
+&quot;}]}&quot;;</p>
+<p>System.out.println(json);//用js转换成功
+List list = (List) xstream.fromXML(json);</p>
+<p>System.out.println(list.size());//0好像转换失败
+}</p>
+<p>运行后结果如下：</p>
+<p>haha/#1/#address/#2010-11-22/#email</p>
+<p>{&quot;list&quot;: [{&quot;id&quot;: 1,&quot;name&quot;: &quot;haha&quot;,&quot;email&quot;: &quot;email&quot;,&quot;address&quot;: &quot;address&quot;,&quot;birthday&quot;: {&quot;birthday&quot;: &quot;2010-11-22&quot;}},
+{&quot;id&quot;: 2,&quot;name&quot;: &quot;tom&quot;,&quot;email&quot;: &quot;tom@125.com&quot;,&quot;address&quot;: &quot;china&quot;,&quot;birthday&quot;: {&quot;birthday&quot;: &quot;2010-11-22&quot;}}]}</p>
+<p>0</p>
+<p>JSON到Java的转换是fromXML方法。</p>
+<p>作者：<a href="http://hoojo.cnblogs.com/" target="_blank">hoojo</a></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/xml/">xml</a></li></span><span class="breadcrumb"><li><a href="/categories/xml/">xml</a></li><li><a href="/categories/xml/xstream/">xstream</a></li></span></span> | <span class="tags">Tagged <a href="/tags/xml/" class="label label-primary">xml</a><a href="/tags/xstream/" class="label label-success">xstream</a></span> | <span class="time">recent updated:<time title="2014-04-07 08:47:11"datetime="2014-04-07 08:47:11"> abr. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-xml-xstream--xStream完美转换XML、JSON/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-xml-xstream--xStream完美转换XML、JSON" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-xml-xstream--XStream学习笔记-枫情的Blog-BlogJava/">XStream 学习笔记</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T09:54:44.000Z"> <a href="/2014/02/02/2014-02-02-xml-xstream--XStream学习笔记-枫情的Blog-BlogJava/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="xstream-">XStream 学习笔记</h1>
+<p>  <a href="http://www.blogjava.net/zlkn2005/" target="_blank">枫情的Blog</a></p>
+<p><strong>XStream</strong></p>
+<p><strong>使用XStream**</strong>的初衷**</p>
+<p>研究和使用XStream的原因是我在项目中的一个预研。在项目中需要应用到对XML文件的管理和配置，因此需要一个能够将对象保存为XML的工具库，在这里有多种方法实现，我也研究并进行了比对，比如与Zeus工具的比对，与Java自身的XML工具库的比对等。在这里，我就描述下我的XStream学习过程和研究结果。</p>
+<p><strong>XStream**</strong>简单介绍**</p>
+<p>XStream是一个开源项目，一套简单实用的类库，用于序列化对象与XML对象之间的相互转换。将XML文件内容解析为一个对象或将一个对象序列化为XML文件。</p>
+<p>XStream可以用于JDK1.3以上的版本使用，我是在JDK1.5下使用它的。</p>
+<p>XStream的相关信息可以到<a href="http://xstream.codehaus.org/下查看，它有专门的JavaDoc，可以方便的阅读Xstream的函数及方法。" target="_blank">http://xstream.codehaus.org/下查看，它有专门的JavaDoc，可以方便的阅读Xstream的函数及方法。</a></p>
+<p>XStream中主要的类为XStream，它用于序列化对象与XML 对象之间的相互转换。简单的使用它就可以解决很多问题。</p>
+<p>XStream中主要的方法也是我用的比较多的是fromXML()和toXML()。</p>
+<p>fromXML用于从XML中将对象解析出来。</p>
+<p>toXML用于将对象序列化为XML文件。</p>
+<p>在XStream中我还使用HierarchicalStreamWriter，HierarchicalStreamReader，createObjectInputStream()，createObjectOutputStream()，主要是用于对象的输入输出。</p>
+<p>下面我们来研究下XStream的工作方式。</p>
+<p><strong>XStream**</strong>的实例——将一个序列化对象转化为XML<strong>**对象。</strong></p>
+<p>一，创建XStream对象。</p>
+<p>XStream xstream=new XStream();</p>
+<p>用默认构造器构造了一个名为xstream的XStream的对象。默认构造器所使用XML解析库为Xpp3库，XPP3是一种运行效率非常高的XML全解析实现。</p>
+<p>二，创建需要序列化的对象。</p>
+<p>比如这个类就叫PrintUnit。</p>
+<p>构造也比较简单，一个简单的JavaBean</p>
+<pre><code>   public class PrintUnit
+
+   {
+
+          Private String a;
+
+          Private String b;
+
+          Private String c;
+
+
+
+          Public PrintUnit(){}
+
+
+
+          Public setA(String a)
+
+          {
+
+                 this.a=a;
+
+          }
+
+
+
+          Public getA()
+
+          {
+
+                 return a;
+
+          }
+
+
+
+          Public setB(String b)
+
+          {
+
+                 this.b=b;
+
+          }
+
+
+
+          Public getB()
+
+          {
+
+                 return b;
+
+          }
+
+
+
+          Public setC(String c)
+
+          {
+
+                 This.c=c;
+
+          }
+
+
+
+          Public getC()
+
+          {
+
+                 Return c;
+
+          }
+
+   }
+</code></pre><p>在例子中使用这个JavaBean。</p>
+<p>创建并初始化PrintUnit。</p>
+<p>PrintUnit pu=new PrintUnit();</p>
+<p>pu.setA(&quot;A11&quot;);</p>
+<p>pu.setB(&quot;B22&quot;);</p>
+<p>pu.setC(&quot;C33&quot;);</p>
+<p>三，创建Writer。</p>
+<p>创建一个输出流，至于怎么输出我发现可以使用多种方法，其实原理是一样的。</p>
+<p>在这里就不得不提到HierarchicalStreamWriter,HierarchicalStreamWriter是一个接口，从字面上意思来说它是有等级的输入流。同样在XStream中也有不少这个接口的实现类用于输出。我现在所用过的有CompactWriter和PrettyPrintWriter这2个。</p>
+<p>我是这样做的：</p>
+<p>String str=&quot;stream.xml&quot;; //本目录下的一个名为stream的XML文件</p>
+<p>PrintWriter pw=new PrintWriter(str);//创建一个PrintWriter对象，用于输出。</p>
+<p>之后选用一个HierarchicalStreamWriter的实现类来创建输出。</p>
+<p>选用CompactWriter创建：</p>
+<p>CompactWriter cw=new CompactWriter(pw);</p>
+<p>选用PrettyPrintWriter创建：</p>
+<p>PrettyPrintWriter ppw=new PrettyPrintWriter(pw);</p>
+<p>两者所使用的方法都是很简单的。</p>
+<p>CompactWriter与PrettyPrintWriter的区别在于，以CompactWriter方法输出的为连续的没有分隔的XML文件，而用PrettyPrintWriter方法输出的为有分隔有一定格式的XML文件。</p>
+<p>以CompactWriter方式生成的XML文件：</p>
+<object-stream><PrintUnit><a>A11</a><b>B22</b><c>C33</c></PrintUnit></object-stream>
+
+
+
+以PrettyPrintWriter方式生成的XML文件：
+
+       <object-stream>
+
+             <PrintUnit>
+
+                  <a>A11</a>
+
+                  <b>B22</b>
+
+                  <c>C33</c>
+
+             </PrintUnit>
+
+       </object-stream>
+
+
+
+       我想大家能很容易的分辨出它们的差异。
+
+
+
+       四，输出操作<br>
+以上步骤完成后就可以做输出操作了，XStream的输出方式有多种：toXML方式，ObjectOutputStream方式，marshal方式以及一些我尚未发现的一些其它方式。
+
+先说下我所使用的方式它们各自的不同点，从工作原理上说它们是相似的，但是做法各不相同。
+
+toXML()方法，本身toXML的方法就有2种：
+
+第一种:java.lang.String toXML(java.lang.Object obj)
+
+将对象序列化为XML格式并保存到一个String对象中。
+
+第二种:void toXML(java.lang.Object obj, java.io.Writer out)
+
+将对象序列化为XML格式后以Writer输出到某个地方存储。
+
+我所使用的是第二种方式，使用前面已经做好的Pw就可以实现输出，它其实很简单不需要再去做其它定义，只需要一个PrintWriter对象和需要序列化的Object即可。
+
+直接调用xstream.toXML(printUnit,pw);就能输出XML文件,在这里是输出到该目录下的stream.xml中。这里的输出都是覆盖性的，不是末尾添加形式。
+
+使用ObjectOutputStream方式，简单说它就是生成一个对象输出流。
+
+ObjectOutputStream obj<em>out = xstream.createObjectOutputStream(ppw);
+
+使用XStream的createObjectOutputStream方法创建一个ObjectOutputStream对象，用于XML的输出。这里使用的是PrettyPrintWriter的方式。   之后调用writerObject方法既可，使用方法与其它输出流类似。
+
+obj_out.writeObject(pu);
+
+obj_out.close();
+
+使用marshal方式，其实marshal方法和toXML方法是相同的。在调用toXML方法进行输出时，在XStream内部是需要调用marshal方法的，然后它再去调用对象marshallingStrategy的marshal方法。所以做toXML其实和marshal是相同的，在这里只是想更加说明它的工作方式。
+
+
+
+使用 void marshal(java.lang.Object obj, HierarchicalStreamWriter writer)方法。
+
+延续上面的例子，在这里可以这样写：xstream.marshal(pu,ppw);
+
+
+
+需要注意的是，和toXML不同的是参数，一个是PrintWriter对象一个则是PrettyPrintWriter对象。因为marshal中需要
+
+HierarchicalStreamWriter，而PrettyPrintWriter则是实现了HierarchicalStreamWriter接口的实现类。
+
+
+
+结果和toXML是相同的。
+
+
+
+五，结果：
+
+       <object-stream>
+
+             <PrintUnit>
+
+                  <a>A11</a>
+
+                  <b>B22</b>
+
+                  <c>C33</c>
+
+             </PrintUnit>
+
+       </object-stream>
+
+
+
+经过以上5步的操作既可将一个序列化对象转化为XML对象。
+
+
+
+
+
+<strong>toXML**</strong>内部调用图：<strong>
+
+</strong> <strong>
+
+<img src="" alt="XStream.gif">toXML操作时的内部调用图，自己随意画的。有些没有详细说明。
+
+
+
+
+
+</strong>XStream<strong><strong>的实例——将XML</strong></strong>文件转化为一个对象<strong>
+
+
+
+通过上面的一个例子不难看出XStream简便性，既然有了输出就一定会有输入。
+
+输入方我们将会使用ObjectInputStream。
+
+与输出相同我们需要有一个XStream对象，暂且名为xstream。之后需要读取的XML文件地址目录信息。沿用上面的例子。
+
+String inputStr=&quot;xstream.xml&quot;;
+
+XStream xstream=new XStream();
+
+我们需要通过对象流进行输入操作，所以需要FileReader和BufferedReader。
+
+FileReader fr=new FileReader(inputStr);
+
+BufferedReader br=new BufferedReader(fr);
+
+创建对象输入流
+
+ObjectInputStream obj_input=xstream.createObjectInputStream(br);
+
+创建对象，还是使用PrintUnit这个对象。
+
+PrintUnit pu2;
+
+通过ObjectInputStream中的readObject()方法将对象从XML文件中读取出来。
+
+pu2=(PrintUnit)obj_input.readObject();
+
+获取值：
+
+System.out.println(pu2.getB());
+
+控制台：
+
+B22 
+
+
+
+从整个输入的过程来看，是一个文件的读取，将其中的对象数据取出来，然后再对这个对象数据进行操作。内容也比较简单通过ObjectInputStream输入对象。
+
+通过以上的输入输出例子，我想大家应该很容易就能理解XStream是如何实现的。
+
+
+
+</strong>FomXML<strong>
+
+
+
+上面使用的是以ObjectInputStream的方式进行XML与对象之间进行转换的。下面我将使用XStream中的fromXML（）方法进行转换。
+
+首先在使用fromXML我发现一个问题，它必须使用正确的解析方式或输出方式对应的输入方式才可以正常解析读取文件，这个问题有点怪，不过确实存在，当我使用前面ObjectOutputStream方式输出的XML文件,用fromXML（）解析读取时，它会报错。
+
+错误信息：
+
+Exception in thread &quot;main&quot; com.thoughtworks.xstream.alias.CannotResolveClassException: object$stream : object$stream
+
+信息内容为：不能解析这个文件。我认为它和输出方式有关，因为上面例子中使用的是ObjectOutputStream，当我反过来做了一个实验后也证明了这一点。
+
+实验大致内容：使用toXML()方法输出XML文件，使用ObjectInputStream解析，发现会在读取的时候抛出CannotResolveClassException异常。
+
+错误信息：
+
+Exception in thread &quot;main&quot; com.thoughtworks.xstream.alias.CannotResolveClassException:
+
+a : a
+
+       因此我认为在解析文件的时候必须先要确定这个文件是由什么方式生成的，然后在解析它，对于使用Dom,Dom4j,XPP等不同方式解析尚未尝试。以上测试是在默认的基础上实验的，默认为XPP3的解析器。
+
+
+
+       使用fromXML的方法。
+
+
+
+       public java.lang.Object fromXML(java.lang.String xml)
+
+       public java.lang.Object fromXML(java.io.Reader xml)
+
+public java.lang.Object fromXML(java.lang.String xml,java.lang.Object root)
+
+public java.lang.Object fromXML(java.io.Reader xml,java.lang.Object root)
+
+
+
+例子：
+
+       PrintUnit puTwo=(PrintUnit)xstream.fromXML(xml);
+
+
+
+这里的xml必须是使用toXML()生成出来的。对于Reader没有太多的要求。
+
+
+
+
+
+</strong>XStream<strong><strong>与</strong></strong>Java.Bean<strong><strong>中</strong></strong>XML<strong><strong>工具的比较**</strong></strong>
+
+
+
+       XStream主要作用是将序列化的对象转化为一个XML文件或将XML文件解析为一个对象。当然并非只有它可以做到，很多其它工具一样可以，在Java中存在这样两个类XMLDecoder和XMLEncoder，它们是在Java.Bean包下的，它们的作用是将JavaBean转化为XML或将XML文件转化为一个Java Bean。
+
+       XMLDecoder是通过一个输入流将对象从输入流中取出并转化为一个实例的方法。它所需要的就是一个输入流及一个转化过程。
+
+
+
+       XMLDecoder的实例：
+
+
+
+       String fileStr=”xstream.xml”;//XML文件，在本目录下，延用上次使用文件。
+
+       ObjectInputStream in=new ObjectInputStream(new FileInputStream(fileStr));//创建一个ObjectInputStream用于输入。
+
+       XMLDecoder xmld=new XMLDecoder(in);//创建一个XMLDecoder对象。
+
+       延用前面所使用PrintUnit这个Bean。
+
+       PrintUnit pu=(PrintUnit)xmld.readObject();//通过XMLDecoder中的readObject方法获得PrintUnit对象。
+
+如果获取到了这个对象那么pu中将有它的值a=A11,b=B22,c=C33。整个过程最好放try
+
+…catch中去，能够捕获一些如：文件不存在等异常。
+
+       从操作方式上看XMLDecoder似乎不比XStream差多少，同样是可以通过ObjectInputStream获取XML文件中的对象。它们的差异就是解析的方式不同，XMLDecoder是使用Java自带的XML解析方式，而XStream则是可以自定义的，它可以使用多中方式进行解析。这些是我个人所发现的一些不同点。
+
+
+
+       XMLEncoder是通过一个输出流将对象序列化并输出为XML文件。它所需要的是一个输出流及一个输出方式。
+
+
+
+       XMLEncoder的实例：
+
+
+
+       String fileStr=”xstream.xml”;//定义一个输入的目标文件。
+
+       ObjectOutputStream out=new ObjectOutputStream(new FileOutputStream(fileStr));//创建一个对象输出流。
+
+       XMLEncoder xmle=new XMLEncoder(out);//创建一个XMLEncoder对象。
+
+       延用前面所使用PrintUnit这个Bean。
+
+//创建并初始化PrintUnit对象。
+
+PrintUnit pu=new PrintUnit();
+
+pu.setA(“AAA”);
+
+pu.setB(“BBB”);
+
+pu.setC(“CCC”);
+
+
+
+       xmle.writeObject(pu);//使用XMLEncode的writeObject方法输出pu
+
+       xmle.flush();//刷新
+
+       xmle.close();//关闭输出流
+
+
+
+       从上面的代码不难看出，使用XMLEncode方式将对象序列化并输出也是很方便的，简单调用writeObject方法能将普通Bean输出为XML文件。
+
+
+
+       XML文件的内容：
+
+
+
+�</em> &lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+
+<java version="1.5.0" class="java.beans.XMLDecoder">
+
+ <object class="test.PrintUnit">
+
+  <void property="a">
+
+   <string>AAA</string>
+
+  </void>
+
+  <void property="b">
+
+   <string>BBB</string>
+
+  </void>
+
+  <void property="c">
+
+   <string>CCC</string>
+
+  </void>
+
+ </object>
+
+<p>w   </java></p>
+<pre><code>   不知道是我哪里没有处理，还是实际并不是像我想象的哪么简单，使用XMLEncoder所输出的XML文件中有一定的问题，虽然它很详细，比起XStream所生成的更多，包括了XML和Java的版本看上去更像是个完整的XML文件，不过再细看它们两生成的XML格式内容，完全不同，这个我想就是它们最大的区别。这让我想到了很多内容：工作方式，解析器，转换方式等。大家有没发现在开始和结束都存在一些乱码数据，难道在XMLEncoder输出过程中或数据转换中内容已经存在“脏”数据了？还是我所使用的输出方式存在问题？哎…一个又一个问题出现了。我想我需要再进一步的研究和学习才能得到答案。
+
+   不过尽管有这个那个的问题，使用Java本身自带的XML工具还是一样很实用的，读取和输出一样可用，操作也很灵活。因此我觉得在某些场合使用特定的工具可能会更好，利用XMLEncoder和XMLDecoder同样可以解决一些问题。
+</code></pre><p>我的这个使用XMLDecoder和XMLEncoder的序列化格式输出暂研究到这里。
+枫情·太子爷
+2005年12月16日</p>
+<p>发表于 2005-12-16 16:22 <a href="http://www.blogjava.net/zlkn2005/" target="_blank">枫情·太子爷</a> 阅读(3625) <a href="http://www.blogjava.net/zlkn2005/archive/2005/12/16/24240.html#Post" target="_blank">评论(4)</a>  <a href="http://www.blogjava.net/zlkn2005/admin/EditPosts.aspx?postid=24240" target="_blank">编辑</a>  <a href="http://www.blogjava.net/zlkn2005/AddToFavorite.aspx?id=24240" target="_blank">收藏</a></p>
+<p><img src="" alt=""></p>
+<p><a href=""></a></p>
+<p><a href=""></a></p>
+<p><a href="">评论</a></p>
+<p><a href=""></a></p>
+<p><a href=""></a></p>
+<p><a href=""></a><a href="http://www.blogjava.net/zlkn2005/archive/2005/12/16/24240.html#24242" title="permalink: re: XStream 学习笔记">/#</a> <a href=""></a>re: XStream 学习笔记  <a href="http://www.blogjava.net/zlkn2005/archive/2005/12/16/24240.html#post">回复</a>  <a href="http://www.blogjava.net/comment?author=fanta" title="查看该作者发表过的评论" target="_blank">更多评论</a>  <a href=""></a>  <a href=""></a>
+好</p>
+<p><a href="http://www.blogjava.net/fanscial/" target="_blank">fanta</a> 评论于 2005-12-16 16:45
+<a href="http://www.blogjava.net/zlkn2005/archive/2005/12/16/24240.html#24616" title="permalink: re: XStream 学习笔记" target="_blank">/#</a> <a href=""></a>re: XStream 学习笔记  <a href="http://www.blogjava.net/zlkn2005/archive/2005/12/16/24240.html#post">回复</a>  <a href="http://www.blogjava.net/comment?author=xmlspy2004" title="查看该作者发表过的评论" target="_blank">更多评论</a>  <a href=""></a>  <a href=""></a></p>
+<p>还有很多问题，比如：
+当bean的字段为int类型，如果这个字段没有值，它默认输出是0
+而实际应用中我们需要的是<intField></intField>.
+类似的问题还很多，都需要你去处理。
+但处理来处理去，你会发现，自己做的修改很多，还不如自己手动写xml的String。
+<a href="">xmlspy2004</a> 评论于 2005-12-19 12:42</p>
+<p><a href="http://www.blogjava.net/zlkn2005/archive/2005/12/16/24240.html#183462" title="permalink: re: XStream 学习笔记" target="_blank">/#</a> <a href=""></a>re: XStream 学习笔记  <a href="http://www.blogjava.net/zlkn2005/archive/2005/12/16/24240.html#post">回复</a>  <a href="http://www.blogjava.net/comment?author=%e5%bf%83%e6%97%a0%e7%97%95" title="查看该作者发表过的评论" target="_blank">更多评论</a>  <a href=""></a>  <a href=""></a></p>
+<p>呵呵.在JAVA里面,INT类型的变量本来默认值就是0,你没有给它值,它也会默认将0作为这个变量的初始值....@xmlspy2004
+<a href="http://www.blogjava.net/xinwuhen/" target="_blank">心无痕</a> 评论于 2008-03-03 14:39
+<a href="http://www.blogjava.net/zlkn2005/archive/2005/12/16/24240.html#200051" title="permalink: re: XStream 学习笔记" target="_blank">/#</a> <a href=""></a>re: XStream 学习笔记<a href=""></a>  <a href="http://www.blogjava.net/zlkn2005/archive/2005/12/16/24240.html#post" target="_blank">回复</a>  <a href="http://www.blogjava.net/comment?author=jadar" title="查看该作者发表过的评论" target="_blank">更多评论</a>  <a href=""></a>  <a href=""></a></p>
+<p>出现：Exception in thread &quot;main&quot; com.thoughtworks.xstream.alias.CannotResolveClassException:
+的可能原因是:调用xStream.alias(&quot;PrintUnit &quot;,PrintUnit.class) 时写错了，
+尤其是第一个参数，要跟xml中的大小写一致！
+good Luck！
+<a href="">jadar</a> 评论于 2008-05-12 16:52</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/xml/">xml</a></li></span><span class="breadcrumb"><li><a href="/categories/xml/">xml</a></li><li><a href="/categories/xml/xstream/">xstream</a></li></span></span> | <span class="tags">Tagged <a href="/tags/xml/" class="label label-primary">xml</a><a href="/tags/xstream/" class="label label-success">xstream</a></span> | <span class="time">recent updated:<time title="2014-04-07 08:47:00"datetime="2014-04-07 08:47:00"> abr. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-xml-xstream--XStream学习笔记-枫情的Blog-BlogJava/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-xml-xstream--XStream学习笔记-枫情的Blog-BlogJava" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1392,10 +2378,12 @@ System.out.println(&quot;找不到数值&quot;);
 </span><span id='analytics-baidu'>
 <script>
 var _hmt = _hmt || [];
-_js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
+_js2load.push({src:"//hm.baidu.com/hm.js?eaa92c12166944fd3a160103e6c4a8cf"});
 </script>
+
+
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:25:39</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-14 12:45:07</em></span></div>
 </div>
 <div class="clearfix"></div>
 

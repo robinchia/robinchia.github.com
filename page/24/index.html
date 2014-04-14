@@ -110,539 +110,374 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题/">使用XStream序列化、反序列化XML数据时遇到的各种问题</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShellSort/">ShellSort</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T09:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShellSort/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-xstream-xml-">使用XStream序列化、反序列化XML数据时遇到的各种问题</h1>
-<p>现在参与的项目是一个纯Application Server，整个Server都是自己搭建的，使用JMS消息实现客户端和服务器的交互，交互的数据格式采用XML。说来惭愧，开始为了赶进度，所有XML消息都是使用字符串拼接的，而XML的解析则是使用DOM方式查找的。我很早就看这些代码不爽了，可惜一直没有时间去重构，最近项目加了几个人，而且美国那边也开始渐渐的把这个项目开发的控制权交给我们了，所以我开始有一些按自己的方式开发的机会了。因而最近动手开始重构这些字符串拼接的代码。</p>
-<p>对XML到Java Bean的解析框架，熟悉一点的只有Digester和XStream，Digester貌似只能从XML文件解析成Java Bean对象，所以只能选择XStream来做了，而且同组的其他项目也有在用XStream。一直听说XStream的使用比较简单，而且我对ThoughtWorks这家公司一直比较有好感，所以还以为引入XStream不会花太多时间，然而使用以后才发现XStream并没有想象的你那么简单。不过这个也有可能是因为我不想改变原来的XML数据格式，而之前的XML数据格式的设计自然不会考虑到如何便利的使用XStream。因而记录在使用过程中遇到的问题，供后来人参考，也为自己以后如果打算开其源码提供参考。废话就到这里了，接下来步入正题。</p>
-<p>首先对于简单的引用，XStream使用起来确实比较简单，比如自定义标签的属性、使用属性和使用子标签的定义等：
-@XStreamAlias(&quot;request&quot;)
-public class XmlRequest1 {
-    private static XStream xstream;
-    static {
-        xstream = new XStream();
-        xstream.autodetectAnnotations(true);
-    }</p>
-<pre><code>@XStreamAsAttribute
-private String from;
-
-@XStreamAsAttribute
-@XStreamAlias(&quot;calculate-method&quot;)
-private String calculateMethod;
-
-@XStreamAlias(&quot;request-time&quot;)
-private Date requestTime;
-
-@XStreamAlias(&quot;input-files&quot;)
-private List&lt;InputFileInfo&gt; inputFiles;
-
-public static String toXml(XmlRequest1 request) {
-    StringWriter writer = new StringWriter();
-    writer.append(Constants.XML_HEADER);
-    xstream.toXML(request, writer);
-    return writer.toString();
-}
-public static XmlRequest1 toInstance(String xmlContent) {
-    return (XmlRequest1)xstream.fromXML(xmlContent);
-</code></pre><p>}
-<img src="" alt="">
-    @XStreamAlias(&quot;input-file&quot;)
-    public static class InputFileInfo {
-        private String type;
-        private String fileName;
-        <img src="" alt="">
-    }
-    public static void main(String[] args) {
-        XmlRequest1 request = buildXmlRequest();
-        System.out.println(XmlRequest1.toXml(request));
-    }
-    private static XmlRequest1 buildXmlRequest() {
-        <img src="" alt="">
-    }
-}</p>
-<p> 对以上Request定义，我们可以得到如下结果：</p>
-<p>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;</p>
-<request from="levin@host" calculate-method="advanced">
- <request-time>2012-11-28 17:11:54.664 UTC</request-time>
- <input-files>
-    <input-file>
-      <type>DATA</type>
-      <fileName>data.2012.11.29.dat</fileName>
-    </input-file>
-    <input-file>
-      <type>CALENDAR</type>
-      <fileName>calendar.2012.11.29.dat</fileName>
-    </input-file>
- </input-files>
-</request>
-
-<p>可惜这个世界不会那么清净，这个格式有些时候貌似并不符合要求，比如request-time的格式、input-files的格式，我们实际需要的格式是这样的：</p>
-<p>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;</p>
-<request from="levin@host" calculate-method="advanced">
- <request-time>20121128T17:51:05</request-time>
- <input-file type="DATA">data.2012.11.29.dat</input-file>
- <input-file type="CALENDAR">calendar.2012.11.29.dat</input-file>
-</request>
-
-<p>对不同Date格式的支持可以是用Converter实现，在XStream中默认使用自己实现的DateConverter，它支持的格式是：yyyy-MM-dd HH:mm:ss.S &#39;UTC&#39;，然而我们现在需要的格式是yyyy-MM-dd’T’HH:mm:ss，如果使用XStream直接注册DateConverter，可以使用配置自己的DateConverter，但是由于DateConverter的构造函数的定义以及@XStreamConverter的构造函数参数的支持方式的限制，貌似DateConverter不能很好的支持注解方式的注册，因而我时间了一个自己的DateConverter以支持注解：</p>
-<p>public class LevinDateConverter extends DateConverter {
-    public LevinDateConverter(String dateFormat) {
-        super(dateFormat, new String[] { dateFormat });
-    }
-}</p>
-<p>在requestTime字段中需要加入以下注解定义：</p>
-<p>@XStreamConverter(value=LevinDateConverter.class, strings={&quot;yyyyMMdd&#39;T&#39;HH:mm:ss&quot;})
-@XStreamAlias(&quot;request-time&quot;)
-private Date requestTime;</p>
-<p>对集合类，XStream提供了@XStreamImplicit注解，以将集合中的内容摊平到上一层XML元素中，其中itemFieldName的值为其使用的标签名，此时InputFileInfo类中不需要@XStreamAlias标签的定义：</p>
-<p>@XStreamImplicit(itemFieldName=&quot;input-file&quot;)
-private List<InputFileInfo> inputFiles;</p>
-<p>对InputFileInfo中的字段，type作为属性很容易，只要为它加上@XStreamAsAttribute注解即可，而将fileName作为input-file标签的一个内容字符串，则需要使用ToAttributedValueConverter，其中Converter的参数为需要作为字符串内容的字段名：</p>
-<p>@XStreamConverter(value=ToAttributedValueConverter.class, strings={&quot;fileName&quot;})
-public static class InputFileInfo {
-    @XStreamAsAttribute
-    private String type;
-private String fileName;
-<img src="" alt="">
-}</p>
-<p>XStream对枚举类型的支持貌似不怎么好，默认注册的EnumSingleValueConverter只是使用了Enum提供的name()和静态的valueOf()方法将enum转换成String或将String转换回enum。然而有些时候XML的字符串和类定义的enum值并不完全匹配，最常见的就是大小写的不匹配，此时需要写自己的Converter。在这种情况下，我一般会在enum中定义一个name属性，这样就可以自定义enum的字符串表示。比如有TimePeriod的enum：</p>
-<p>public enum TimePeriod {
-    MONTHLY(&quot;monthly&quot;), WEEKLY(&quot;weekly&quot;), DAILY(&quot;daily&quot;);</p>
-<pre><code>private String name;
-
-public String getName() {
-    return name;
-}
-
-private TimePeriod(String name) {
-    this.name = name;
-}
-
-public static TimePeriod toEnum(String timePeriod) {
-    try {
-        return Enum.valueOf(TimePeriod.class, timePeriod);
-    } catch(Exception ex) {
-        for(TimePeriod period : TimePeriod.values()) {
-            if(period.getName().equalsIgnoreCase(timePeriod)) {
-                return period;
-            }
-        }
-        throw new IllegalArgumentException(&quot;Cannot convert &lt;&quot; + timePeriod + &quot;&gt; to TimePeriod enum&quot;);
-    }
-}
-</code></pre><p>}</p>
-<p>我们可以编写以下Converter以实现对枚举类型的更宽的容错性：</p>
-<p>public class LevinEnumSingleNameConverter extends EnumSingleValueConverter {
-    private static final String CUSTOM_ENUM_NAME_METHOD = &quot;getName&quot;;
-    private static final String CUSTOM_ENUM_VALUE_OF_METHOD = &quot;toEnum&quot;;</p>
-<pre><code>private Class&lt;? extends Enum&lt;?&gt;&gt; enumType;
-
-public LevinEnumSingleNameConverter(Class&lt;? extends Enum&lt;?&gt;&gt; type) {
-    super(type);
-    this.enumType = type;
-}
-
-@Override
-public String toString(Object obj) {
-    Method method = getCustomEnumNameMethod();
-    if(method == null) {
-        return super.toString(obj);
-    } else {
-        try {
-            return (String)method.invoke(obj, (Object[])null);
-        } catch(Exception ex) {
-            return super.toString(obj);
-        }
-    }
-}
-
-@Override
-public Object fromString(String str) {
-    Method method = getCustomEnumStaticValueOfMethod();
-    if(method == null) {
-        return enhancedFromString(str);
-    }
-    try {
-        return method.invoke(null, str);
-    } catch(Exception ex) {
-        return enhancedFromString(str);
-    }
-}
-
-private Method getCustomEnumNameMethod() {
-    try {
-        return enumType.getMethod(CUSTOM_ENUM_NAME_METHOD, (Class&lt;?&gt;[])null);
-    } catch(Exception ex) {
-        return null;
-    }
-}
-
-private Method getCustomEnumStaticValueOfMethod() {
-    try {
-        Method method = enumType.getMethod(CUSTOM_ENUM_VALUE_OF_METHOD, (Class&lt;?&gt;[])null);
-        if(method.getModifiers() == Modifier.STATIC) {
-            return method;
-        }
-        return null;
-    } catch(Exception ex) {
-        return null;
-    }
-}
-
-private Object enhancedFromString(String str) {
-    try {
-        return super.fromString(str);
-    } catch(Exception ex) {
-        for(Enum&lt;?&gt; item : enumType.getEnumConstants()) {
-            if(item.name().equalsIgnoreCase(str)) {
-                return item;
-            }
-        }
-        throw new IllegalStateException(&quot;Cannot converter &lt;&quot; + str + &quot;&gt; to enum &lt;&quot; + enumType + &quot;&gt;&quot;);
-    }
-}
-</code></pre><p>}</p>
-<p>如下方式使用即可：</p>
-<p>@XStreamAsAttribute
-@XStreamAlias(&quot;time-period&quot;)
-@XStreamConverter(value=LevinEnumSingleNameConverter.class)
-private TimePeriod timePeriod;</p>
-<p>对double类型，貌似默认的DoubleConverter实现依然不给力，它不支持自定义的格式，比如我们想在序列化的时候用一下格式：” /#/#/#,/#/#0.0/#/#/#/#/#/#/#/#”，此时又需要编写自己的Converter：</p>
-<p>public class FormatableDoubleConverter extends DoubleConverter {
-    private String pattern;
-    private DecimalFormat formatter;</p>
-<pre><code>public FormatableDoubleConverter(String pattern) {
-    this.pattern = pattern;
-    this.formatter = new DecimalFormat(pattern);
-}
-
-@Override
-public String toString(Object obj) {
-    if(formatter == null) {
-        return super.toString(obj);
-    } else {
-        return formatter.format(obj);
-    }
-}
-
-@Override
-public Object fromString(String str) {
-    try {
-        return super.fromString(str);
-    } catch(Exception ex) {
-        if(formatter != null) {
-            try {
-                return formatter.parse(str);
-            } catch(Exception e) {
-                throw new IllegalArgumentException(&quot;Cannot parse &lt;&quot; + str + &quot;&gt; to double value&quot;, e);
-            }
-        }
-        throw new IllegalArgumentException(&quot;Cannot parse &lt;&quot; + str + &quot;&gt; to double value&quot;, ex);
-    }
-}
-
-public String getPattern() {
-    return pattern;
-}
-</code></pre><p>}</p>
-<p>使用方式和之前的Converter类似：</p>
-<p>@XStreamAsAttribute
-@XStreamConverter(value=FormatableDoubleConverter.class, strings={&quot;/#/#/#,/#/#0.0/#/#/#/#/#/#/#/#&quot;})
-private double value;</p>
-<p>最后，还有两个XStream没法实现的，或者说我没有找到一个更好的实现方式的场景。<strong>第一种场景是**</strong>XStream<strong>**不能很好的处理对象组合问题：</strong></p>
-<p>在面向对象编程中，一般尽量的倾向于抽取相同的数据成一个类，而通过组合的方式构建整个数据结构。比如Student类中有name、address，Address是一个类，它包含city、code、street等信息，此时如果要对Student对象做如下格式序列化：</p>
-<student name=”Levin”>
- <city>shanghai</city>
- <street>zhangjiang</street>
- <code>201203</code>
-</student>
-
-<p>貌似我没有找到可以实现的方式，XStream能做是在中间加一层address标签。对这种场景的解决方案，一种是将Address中的属性平摊到Student类中，另一种是让Student继承自Address类。不过貌似这两种都不是比较理想的办法。</p>
-<p><strong>第二种场景是XStream**</strong>不能很好的处理多态问题：**</p>
-<p>比如我们有一个Trade类，它可能表示不同的产品：
-public class Trade {
-    private String tradeId;
-    private Product product;
-<img src="" alt="">
-}
-abstract class Product {
-    private String name;
-    public Product(String name) {
-        this.name = name;
-}
-<img src="" alt="">
-}
-class FX extends Product {
-    private double ratio;
-    public FX() {
-        super(&quot;fx&quot;);
-    }
-    <img src="" alt="">
-}
-class Future extends Product {
-    private double maturity;
-    public Future() {
-        super(&quot;future&quot;);
-    }
-    <img src="" alt="">
-}</p>
-<p>通过一些简单的设置，我们能得到如下XML格式：</p>
-<trades>
- <trade trade-id="001">
-    <product class="levin.xstream.blog.FX" name="fx" ratio="0.59"/>
- </trade>
- <trade trade-id="002">
-    <product class="levin.xstream.blog.Future" name="future" maturity="2.123"/>
- </trade>
-</trades>
-
-<p>作为数据文件，对Java类的定义显然是不合理的，因而简单一些，我们可以编写自己的Converter将class属性从product中去除：</p>
-<p>xstream.registerConverter(new ProductConverter(
-        xstream.getMapper(), xstream.getReflectionProvider()));</p>
-<pre><code>public ProductConverter(Mapper mapper, ReflectionProvider reflectionProvider) {
-    super(mapper, reflectionProvider);
-}
-
-@Override
-public boolean canConvert(@SuppressWarnings(&quot;rawtypes&quot;) Class type) {
-    return Product.class.isAssignableFrom(type);
-}
-
-@Override
-protected Object instantiateNewInstance(HierarchicalStreamReader reader, UnmarshallingContext context) {
-    Object currentObject = context.currentObject();
-    if(currentObject != null) {
-        return currentObject;
-    }
-
-    String name = reader.getAttribute(&quot;name&quot;);
-    if(&quot;fx&quot;.equals(name)) {
-        return reflectionProvider.newInstance(FX.class);
-    } else if(&quot;future&quot;.equals(name)) {
-        return reflectionProvider.newInstance(Future.class);
-    }
-    throw new IllegalStateException(&quot;Cannot convert &lt;&quot; + name + &quot;&gt; product&quot;);
-}
-</code></pre><p>}</p>
-<p>在所有Production上定义@XStreamAlias(“product”)注解。这时的XML输出结果为：</p>
-<trades>
- <trade trade-id="001">
-    <product name="fx" ratio="0.59"/>
- </trade>
- <trade trade-id="002">
-    <product name="future" maturity="2.123"/>
- </trade>
-</trades>
-
-<p>然而如果有人希望XML的输出结果如下呢?</p>
-<trades>
- <trade trade-id="001">
-    <fx ratio="0.59"/>
- </trade>
- <trade trade-id="002">
-    <future maturity="2.123"/>
- </trade>
-</trades>
-
-<p>大概找了一下，可能可以定义自己的Mapper来解决，不过XStream的源码貌似比较复杂，没有时间深究这个问题，留着以后慢慢解决吧。</p>
-<p><strong>补充：</strong></p>
-<p>对Map类型数据，XStream默认使用以下格式显示：</p>
-<map class="linked-hash-map">
-    <entry>
-      <string>key1</string>
-      <string>value1</string>
-    </entry>
-    <entry>
-      <string>key2</string>
-      <string>value2</string>
-    </entry>
- </map>
-
-
-
-<p>但是对一些简单的Map，我们希望如下显示：
- <map>
-    <entry key="key1" value="value1"/>
-    <entry key="key2" value="value2"/>
- </map></p>
-<p>对这种需求需要通过编写Converter解决，继承自MapConverter，覆盖以下函数，这里的Map默认key和value都是String类型，如果他们不是String类型，需要另外添加逻辑：
-@SuppressWarnings(&quot;rawtypes&quot;)
-@Override
-public void marshal(Object source, HierarchicalStreamWriter writer,
-        MarshallingContext context) {
-    Map map = (Map) source;
-    for (Iterator iterator = map.entrySet().iterator(); iterator.hasNext();) {
-        Entry entry = (Entry) iterator.next();
-        ExtendedHierarchicalStreamWriterHelper.startNode(writer, mapper()
-                .serializedClass(Map.Entry.class), entry.getClass());</p>
-<pre><code>    writer.addAttribute(&quot;key&quot;, entry.getKey().toString());
-    writer.addAttribute(&quot;value&quot;, entry.getValue().toString());
-    writer.endNode();
-}
-</code></pre><p>}</p>
-<p>@Override
-@SuppressWarnings({ &quot;unchecked&quot;, &quot;rawtypes&quot; })
-protected void putCurrentEntryIntoMap(HierarchicalStreamReader reader,
-        UnmarshallingContext context, Map map, Map target) {
-    Object key = reader.getAttribute(&quot;key&quot;);
-    Object value = reader.getAttribute(&quot;value&quot;);</p>
-<pre><code>target.put(key, value);
-</code></pre><p>}</p>
-<p>但是只是使用Converter，得到的结果多了一个class属性：
- <map class="linked-hash-map">
-    <entry key="key1" value="value1"/>
-    <entry key="key2" value="value2"/>
- </map></p>
-<p>在XStream中，如果定义的字段是一个父类或接口，在序列化是会默认加入class属性以确定反序列化时用的类，为了去掉这个class属性，可以定义默认的实现类来解决（虽然感觉这种解决方案不太好，但是目前还没有找到更好的解决方案）。</p>
-<p><em>*
-</em>xstream.addDefaultImplementation(LinkedHashMap.class, Map.class);*</p>
-<p>来源： <a href="[http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html](http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html)">[http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html](http://www.blogjava.net/DLevin/archive/2012/11/30/392240.html)</a></p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/xml/">xml</a></li></span><span class="breadcrumb"><li><a href="/categories/xml/">xml</a></li><li><a href="/categories/xml/xstream/">xstream</a></li></span></span> | <span class="tags">Tagged <a href="/tags/xml/" class="label label-primary">xml</a><a href="/tags/xstream/" class="label label-success">xstream</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-xml-xstream--使用XStream序列化、反序列化XML数据时遇到的各种问题" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-xml--java中四种操作（DOM、SAX、JDOM、DOM4J）xml方式详解与比较-Java-J/">java中四种操作（DOM、SAX、JDOM、DOM4J）xml方式详解与比较 </a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-xml--java中四种操作（DOM、SAX、JDOM、DOM4J）xml方式详解与比较-Java-J/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="java-dom-sax-jdom-dom4j-xml-java-javaeye-">java中四种操作（DOM、SAX、JDOM、DOM4J）xml方式详解与比较 - Java - JavaEye论坛</h1>
-<p><a href="http://www.javaeye.com/login" title="登录" target="_blank">您还未登录 !</a> <a href="http://www.javaeye.com/all" target="_blank">我的应用</a> <a href="http://www.javaeye.com/login" target="_blank">登录</a> <a href="http://www.javaeye.com/signup" target="_blank">注册</a></p>
-<p><a href="http://www.javaeye.com/" target="_blank"><img src="&quot;JavaEye-最棒的软件开发交流社区&quot;" alt="JavaEye-最棒的软件开发交流社区"></a></p>
-<p><img src="" alt=""></p>
-<p><a href="http://www.javaeye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.javaeye.com/forums/board/Java" target="_blank">Java编程和Java企业应用版</a> →</p>
-<h1 id="java-dom-sax-jdom-dom4j-xml-">java中四种操作（DOM、SAX、JDOM、DOM4J）xml方式详解与比较</h1>
-<p><a href="http://www.javaeye.com/forums/board/Java" target="_blank">全部</a> <a href="http://www.javaeye.com/forums/tag/Hibernate" target="_blank">Hibernate</a> <a href="http://www.javaeye.com/forums/tag/Spring" target="_blank">Spring</a> <a href="http://www.javaeye.com/forums/tag/Struts" target="_blank">Struts</a> <a href="http://www.javaeye.com/forums/tag/iBATIS" target="_blank">iBATIS</a> <a href="http://www.javaeye.com/forums/tag/J2EE" target="_blank">企业应用</a> <a href="http://www.javaeye.com/forums/tag/Design-Pattern" target="_blank">设计模式</a> <a href="http://www.javaeye.com/forums/tag/DAO" target="_blank">DAO</a> <a href="http://www.javaeye.com/forums/tag/Object-Domain" target="_blank">领域模型</a> <a href="http://www.javaeye.com/forums/tag/OO" target="_blank">OO</a> <a href="http://www.javaeye.com/forums/tag/Tomcat" target="_blank">Tomcat</a> <a href="http://www.javaeye.com/forums/tag/SOA" target="_blank">SOA</a> <a href="http://www.javaeye.com/forums/tag/JBoss" target="_blank">JBoss</a> <a href="http://www.javaeye.com/forums/tag/Swing" target="_blank">Swing</a> <a href="http://www.javaeye.com/forums/tag/Java" target="_blank">Java综合</a>
-浏览 3115 次 锁定老贴子 <a href="http://www.javaeye.com/topic/181865" target="_blank">主题：java中四种操作（DOM、SAX、JDOM、DOM4J）xml方式详解与比较</a></p>
-<p><strong>该帖已经被评为隐藏帖</strong> 作者 正文 * weidewei</p>
+        <h1 id="shellsort">ShellSort</h1>
+<h1 id="-algorithm-gossip-shell-"><a href="">Algorithm Gossip: Shell 排序法 - 改良的插入排序</a></h1>
+<h2 id="-">说明</h2>
+<p>插入排序法由未排序的后半部前端取出一个值，插入已排序前半部的适当位置，概念简单但速度不快。
+排序要加快的基本原则之一，是让后一次的排序进行时，尽量利用前一次排序后的结果，以加快排序的速度，Shell排序法即是基于此一概念来改良插入排序法。</p>
+<h2 id="-">解法</h2>
+<p>Shell排序法最初是D.L Shell于1959所提出，假设要排序的元素有n个，则每次进行插入排序时并不是所有的元素同时进行时，而是取一段间隔。
+Shell首先将间隔设定为n/2，然后跳跃进行插入排序，再来将间隔n/4，跳跃进行排序动作，再来间隔设定为n/8、n/16，直到间隔为1之后的最 后一次排序终止，由于上一次的排序动作都会将固定间隔内的元素排序好，所以当间隔越来越小时，某些元素位于正确位置的机率越高，因此最后几次的排序动作将 可以大幅减低。
+举个例子来说，假设有一未排序的数字如右：89 12 65 97 61 81 27 2 61 98
+数字的总数共有10个，所以第一次我们将间隔设定为10 / 2 = 5，此时我们对间隔为5的数字进行排序，如下所示：
+<img src="&quot;Shell 排序&quot;" alt="Shell 排序">
+画线连结的部份表示 要一起进行排序的部份，再来将间隔设定为5 / 2的商，也就是2，则第二次的插入排序对象如下所示：
+<img src="&quot;Shell 排序&quot;" alt="Shell 排序">
+再来间隔设定为2 / 2 = 1，此时就是单纯的插入排序了，由于大部份的元素都已大致排序过了，所以最后一次的插入排序几乎没作什么排序动作了：
+<img src="&quot;Shell 排序&quot;" alt="Shell 排序">
+ 将间隔设定为n / 2是D.L Shell最初所提出，在教科书中使用这个间隔比较好说明，然而Shell排序法的关键在于间隔的选定，例如Sedgewick证明选用以下的间隔可以加 快Shell排序法的速度：
+<img src="&quot;Shell 排序&quot;" alt="Shell 排序">
+ 其中4/<em>(2j)2 + 3/</em>(2j) + 1不可超过元素总数n值，使用上式找出j后代入4/<em>(2j)2 + 3/</em>(2j) + 1求得第一个间隔，然后将2j除以2代入求得第二个间隔，再来依此类推。
+后来还有人证明有其它的间隔选定法可以将Shell排序法的速度再加快；另外Shell排序法的概念也可以用来改良气泡排序法。</p>
+<h2 id="-">实作</h2>
 <ul>
-<li>等级: 初级会员</li>
-<li><a href="http://wishlife.javaeye.com/" target="_blank"><img src="&quot;weidewei的博客: flying&quot;" alt="weidewei的博客"></a></li>
-<li>文章: 25</li>
-<li>积分: 30</li>
-<li>来自: 杭州</li>
-<li><img src="" alt="">
-发表时间：2008-04-11 关键字: <strong>操作xml（dom、sax、jdom、dom4j）方式 详解 比较</strong></li>
-</ul>
-<p>相关文章: <a href="http://www.javaeye.com/topic/181865#" title="关闭" target="_blank"> </a></p>
-<ul>
-<li><a href="http://www.javaeye.com/topic/365576" title="J2EE复习(二)XML(下)--xml解析" target="_blank">J2EE复习(二)XML(下)--xml解析</a></li>
-<li><a href="http://www.javaeye.com/topic/39068" title="Dom4j递归解析XML实现JS的getElementsByName类似方法 " target="_blank">Dom4j递归解析XML实现JS的getElementsByName类似方法</a></li>
-<li><a href="http://www.javaeye.com/topic/75" title="Java XML API 漫谈" target="_blank">Java XML API 漫谈</a></li>
-<li><p><a href="http://www.javaeye.com/topic/213350" title="大容量XML文件解析辅助--xml批量分解" target="_blank">大容量XML文件解析辅助--xml批量分解</a>
-推荐圈子: <a href="http://eclipsercpforum.group.javaeye.com/" target="_blank">Eclipse PlugIns&amp;RCP&amp;OSGI</a>
-<a href="http://www.javaeye.com/wiki/topic/181865" target="_blank">更多相关推荐</a><br>  1.详解
-  1）DOM（JAXP Crimson解析器）
-  DOM是用与平台和语言无关的方式表示XML文档的官方W3C标准。DOM是以层次结构组织的节点或信息片断的集合。这个层次结构允许开发人员在树中寻找特定信息。分析该结构通常需要加载整个文档和构造层次结构，然后才能做任何工作。由于它是基于信息层次的，因而DOM被认为是基于树或基于对象的。DOM以及广义的基于树的处理具有几个优点。首先，由于树在内存中是持久的，因此可以修改它以便应用程序能对数据和结构作出更改。它还可以在任何时候在树中上下导航，而不是像SAX那样是一次性的处理。DOM使用起来也要简单得多。
-  2）SAX
-  SAX处理的优点非常类似于流媒体的优点。分析能够立即开始，而不是等待所有的数据被处理。而且，由于应用程序只是在读取数据时检查数据，因此不需要将数据存储在内存中。这对于大型文档来说是个巨大的优点。事实上，应用程序甚至不必解析整个文档；它可以在某个条件得到满足时停止解析。一般来说，SAX还比它的替代者DOM快许多。
-  选择DOM还是选择SAX？ 对于需要自己编写代码来处理XML文档的开发人员来说， 选择DOM还是SAX解析模型是一个非常重要的设计决策。 DOM采用建立树形结构的方式访问XML文档，而SAX采用的事件模型。
-  DOM解析器把XML文档转化为一个包含其内容的树，并可以对树进行遍历。用DOM解析模型的优点是编程容易，开发人员只需要调用建树的指令，然后利用navigation APIs访问所需的树节点来完成任务。可以很容易的添加和修改树中的元素。然而由于使用DOM解析器的时候需要处理整个XML文档，所以对性能和内存的要求比较高，尤其是遇到很大的XML文件的时候。由于它的遍历能力，DOM解析器常用于XML文档需要频繁的改变的服务中。
-  SAX解析器采用了基于事件的模型，它在解析XML文档的时候可以触发一系列的事件，当发现给定的tag的时候，它可以激活一个回调方法，告诉该方法制定的标签已经找到。SAX对内存的要求通常会比较低，因为它让开发人员自己来决定所要处理的tag.特别是当开发人员只需要处理文档中所包含的部分数据时，SAX这种扩展能力得到了更好的体现。但用SAX解析器的时候编码工作会比较困难，而且很难同时访问同一个文档中的多处不同数据。
-  3）JDOM <a href="http://www.jdom.org" target="_blank">http://www.jdom.org</a>
-  JDOM的目的是成为Java特定文档模型，它简化与XML的交互并且比使用DOM实现更快。由于是第一个Java特定模型，JDOM一直得到大力推广和促进。正在考虑通过“Java规范请求JSR-102”将它最终用作“Java标准扩展”。从2000年初就已经开始了JDOM开发。
-  JDOM与DOM主要有两方面不同。首先，JDOM仅使用具体类而不使用接口。这在某些方面简化了API，但是也限制了灵活性。第二，API大量使用了Collections类，简化了那些已经熟悉这些类的Java开发者的使用。
-  JDOM文档声明其目的是“使用20%（或更少）的精力解决80%（或更多）Java/XML问题”（根据学习曲线假定为20%）。JDOM对于大多数Java/XML应用程序来说当然是有用的，并且大多数开发者发现API比DOM容易理解得多。JDOM还包括对程序行为的相当广泛检查以防止用户做任何在XML中无意义的事。然而，它仍需要您充分理解XML以便做一些超出基本的工作（或者甚至理解某些情况下的错误）。这也许是比学习DOM或JDOM接口都更有意义的工作。
-  JDOM自身不包含解析器。它通常使用SAX2解析器来解析和验证输入XML文档（尽管它还可以将以前构造的DOM表示作为输入）。它包含一些转换器以将JDOM表示输出成SAX2事件流、DOM模型或XML文本文档。JDOM是在Apache许可证变体下发布的开放源码。
-  4）DOM4J <a href="http://dom4j.sourceforge.net" target="_blank">http://dom4j.sourceforge.net</a>
-  虽然DOM4J代表了完全独立的开发结果，但最初，它是JDOM的一种智能分支。它合并了许多超出基本XML文档表示的功能，包括集成的XPath支持、XML Schema支持以及用于大文档或流化文档的基于事件的处理。它还提供了构建文档表示的选项，它通过DOM4J API和标准DOM接口具有并行访问功能。从2000下半年开始，它就一直处于开发之中。
-  为支持所有这些功能，DOM4J使用接口和抽象基本类方法。DOM4J大量使用了API中的Collections类，但是在许多情况下，它还提供一些替代方法以允许更好的性能或更直接的编码方法。直接好处是，虽然DOM4J付出了更复杂的API的代价，但是它提供了比JDOM大得多的灵活性。
-  在添加灵活性、XPath集成和对大文档处理的目标时，DOM4J的目标与JDOM是一样的：针对Java开发者的易用性和直观操作。它还致力于成为比JDOM更完整的解决方案，实现在本质上处理所有Java/XML问题的目标。在完成该目标时，它比JDOM更少强调防止不正确的应用程序行为。
-  DOM4J是一个非常非常优秀的Java XML API，具有性能优异、功能强大和极端易用使用的特点，同时它也是一个开放源代码的软件。如今你可以看到越来越多的Java软件都在使用DOM4J来读写XML，特别值得一提的是连Sun的JAXM也在用DOM4J.
-  2。比较
-  1）DOM4J性能最好，连Sun的JAXM也在用DOM4J.目前许多开源项目中大量采用DOM4J，例如大名鼎鼎的Hibernate也用DOM4J来读取XML配置文件。如果不考虑可移植性，那就采用DOM4J.
-  2）JDOM和DOM在性能测试时表现不佳，在测试10M文档时内存溢出。在小文档情况下还值得考虑使用DOM和JDOM.虽然JDOM的开发者已经说明他们期望在正式发行版前专注性能问题，但是从性能观点来看，它确实没有值得推荐之处。另外，DOM仍是一个非常好的选择。DOM实现广泛应用于多种编程语言。它还是许多其它与XML相关的标准的基础，因为它正式获得W3C推荐（与基于非标准的Java模型相对），所以在某些类型的项目中可能也需要它（如在JavaScript中使用DOM）。
-  3）SAX表现较好，这要依赖于它特定的解析方式－事件驱动。一个SAX检测即将到来的XML流，但并没有载入到内存（当然当XML流被读入时，会有部分文档暂时隐藏在内存中）。</p>
-<ol>
-<li><p>四种xml操作方式的基本使用方法
-xml文件：&lt;?xml version=&quot;1.0&quot; encoding=&quot;gbk&quot;?&gt;<list><node><name>weidewei</name><space><a href="http://wishlife.javaeye.com" target="_blank">http://wishlife.javaeye.com</a></space></node><node><name>flying</name><space><a href="http://user.qzone.qq.com/94611981" target="_blank">http://user.qzone.qq.com/94611981</a></space></node></list></p>
-<p>程序代码:
-import java.io.File; import java.util.Iterator; import java.util.List; import javax.xml.parsers.DocumentBuilder; import javax.xml.parsers.DocumentBuilderFactory; import javax.xml.parsers.SAXParser; import javax.xml.parsers.SAXParserFactory; import org.dom4j.io.SAXReader; import org.jdom.Element; import org.jdom.input.SAXBuilder; import org.w3c.dom.Document; import org.w3c.dom.NodeList; import org.xml.sax.Attributes; import org.xml.sax.InputSource; import org.xml.sax.SAXException; import org.xml.sax.helpers.DefaultHandler; public class MyXMLReader extends DefaultHandler { java.util.Stack tags = new java.util.Stack(); public MyXMLReader() { super(); } //<em>/</em> /<em> DOM方式 /</em> @since V2.0 /<em> @author David.Wei /</em> @date 2008-4-11 /<em> @return void /</em>/ public void DOM() { long lasting = System.currentTimeMillis(); try { File f = new File(&quot;F:/xmltest.xml&quot;); DocumentBuilderFactory factory = DocumentBuilderFactory .newInstance(); DocumentBuilder builder = factory.newDocumentBuilder(); Document doc = builder.parse(f); NodeList nl = doc.getElementsByTagName(&quot;node&quot;); for (int i = 0; i &lt; nl.getLength(); i++) { System.out.println(&quot;|| Name: |&quot; + doc.getElementsByTagName(&quot;name&quot;).item(i) .getFirstChild().getNodeValue()); System.out.println(&quot;||Space: |&quot; + doc.getElementsByTagName(&quot;space&quot;).item(i) .getFirstChild().getNodeValue()); System.out.println(&quot;-------------------------------------------------&quot;); } } catch (Exception e) { e.printStackTrace(); } System.out.println(&quot;DOM RUNTIME：&quot; + (System.currentTimeMillis() - lasting) + &quot; MS&quot;); } //<em>/</em> /<em> SAX方式 /</em> @since V2.0 /<em> @author David.Wei /</em> @date 2008-4-11 /<em> @return void /</em>/ public void SAX() { long lasting = System.currentTimeMillis(); try { SAXParserFactory sf = SAXParserFactory.newInstance(); SAXParser sp = sf.newSAXParser(); MyXMLReader reader = new MyXMLReader(); sp.parse(new InputSource(&quot;F:/xmltest.xml&quot;), reader); } catch (Exception e) { e.printStackTrace(); } System.out.println(&quot;SAX RUNTIME：&quot; + (System.currentTimeMillis() - lasting) + &quot; MS&quot;); } public void startElement(String uri, String localName, String qName, Attributes attrs) { tags.push(qName); } public void characters(char ch[], int start, int length) throws SAXException { String tag = (String) tags.peek(); if (tag.equals(&quot;name&quot;)) { System.out.println(&quot;|| Name: |&quot; + new String(ch, start, length)); } if (tag.equals(&quot;space&quot;)) { System.out.println(&quot;||Space: |&quot; + new String(ch, start, length)); } System.out.println(&quot;-------------------------------------------------&quot;); } //<em>/</em> /<em> JDOM方式 /</em> @since V2.0 /<em> @author David.Wei /</em> @date 2008-4-11 /<em> @return void /</em>/ public void JDOM() { long lasting = System.currentTimeMillis(); try { SAXBuilder builder = new SAXBuilder(); org.jdom.Document doc = builder.build(new File(&quot;F:/xmltest.xml&quot;)); Element foo = doc.getRootElement(); List allChildren = foo.getChildren(); for (int i = 0; i &lt; allChildren.size(); i++) { System.out.println(&quot;|| Name: |&quot; + ((Element) allChildren.get(i)).getChild(&quot;name&quot;) .getText()); System.out.println(&quot;||Space: |&quot; + ((Element) allChildren.get(i)).getChild(&quot;space&quot;) .getText()); System.out.println(&quot;-------------------------------------------------&quot;); } } catch (Exception e) { e.printStackTrace(); } System.out.println(&quot;JDOM RUNTIME：&quot; + (System.currentTimeMillis() - lasting) + &quot; MS&quot;); } //<em>/</em> /<em> DOM4J方式 /</em> @since V2.0 /<em> @author David.Wei /</em> @date 2008-4-11 /<em> @return void /</em>/ public void DOM4J() { long lasting = System.currentTimeMillis(); try { File f = new File(&quot;F:/xmltest.xml&quot;); SAXReader reader = new SAXReader(); org.dom4j.Document doc = reader.read(f); org.dom4j.Element root = doc.getRootElement(); org.dom4j.Element foo; for (Iterator i = root.elementIterator(&quot;node&quot;); i.hasNext();) { foo = (org.dom4j.Element) i.next(); System.out.println(&quot;|| Name: |&quot; + foo.elementText(&quot;name&quot;)); System.out.println(&quot;||Space: |&quot; + foo.elementText(&quot;space&quot;)); System.out.println(&quot;-------------------------------------------------&quot;); } } catch (Exception e) { e.printStackTrace(); } System.out.println(&quot;DOM4J RUNTIME：&quot; + (System.currentTimeMillis() - lasting) + &quot; MS&quot;); } public static void main(String arge[]) { MyXMLReader myXML = new MyXMLReader(); System.out.println(&quot;=====================DOM=========================&quot;); myXML.DOM(); System.out.println(&quot;=====================SAX=========================&quot;); myXML.SAX(); System.out.println(&quot;=====================JDOM========================&quot;); myXML.JDOM(); System.out.println(&quot;=====================DOM4J=======================&quot;); myXML.DOM4J(); System.out.println(&quot;=================================================&quot;); } }
-运行结果:
-=====================DOM========================= || Name: |weidewei ||Space: |<a href="http://wishlife.javaeye.com" target="_blank">http://wishlife.javaeye.com</a> ------------------------------------------------- || Name: |flying ||Space: |<a href="http://user.qzone.qq.com/94611981" target="_blank">http://user.qzone.qq.com/94611981</a> ------------------------------------------------- DOM RUNTIME：62 MS =====================SAX========================= || Name: |weidewei ------------------------------------------------- ||Space: |<a href="http://wishlife.javaeye.com" target="_blank">http://wishlife.javaeye.com</a> ------------------------------------------------- || Name: |flying ------------------------------------------------- ||Space: |<a href="http://user.qzone.qq.com/94611981" target="_blank">http://user.qzone.qq.com/94611981</a> ------------------------------------------------- SAX RUNTIME：16 MS =====================JDOM======================== || Name: |weidewei ||Space: |<a href="http://wishlife.javaeye.com" target="_blank">http://wishlife.javaeye.com</a> ------------------------------------------------- || Name: |flying ||Space: |<a href="http://user.qzone.qq.com/94611981" target="_blank">http://user.qzone.qq.com/94611981</a> ------------------------------------------------- JDOM RUNTIME：78 MS =====================DOM4J======================= || Name: |weidewei ||Space: |<a href="http://wishlife.javaeye.com" target="_blank">http://wishlife.javaeye.com</a> ------------------------------------------------- || Name: |flying ||Space: |<a href="http://user.qzone.qq.com/94611981" target="_blank">http://user.qzone.qq.com/94611981</a> ------------------------------------------------- DOM4J RUNTIME：78 MS =================================================
-运行时如果有错误可能原因(我碰到的就这两个,解决了就OK了):
-1.错误现象: Caused by: org.xml.sax.SAXParseException: Content is not allowed in prolog.
-解决办法:xml文件换行问题,编写xml文件时不要换行就可以了.
-2.dom4j
-错误现象: org.dom4j.DocumentException: Error on line 1 of document  : Content is not allowed in prolog.
-解决方法:dom4j的jar包使用dom4j1.6就可以了.
-声明：JavaEye文章版权属于作者，受法律保护。没有作者书面许可不得转载。</p>
+<li><p>C
+/#include <stdio.h>
+/#include <stdlib.h>
+/#include <time.h>
+/#define MAX 10
+/#define SWAP(x,y) {int t; t = x; x = y; y = t;}
+void shellsort(int[]);
+int main(void) {
+int number[MAX] = {0};
+int i;
+srand(time(NULL));
+printf(&quot;排序前：&quot;);
+for(i = 0; i &lt; MAX; i++) {
+number[i] = rand() % 100;
+printf(&quot;%d &quot;, number[i]);
+}
+shellsort(number);
+return 0;
+}
+void shellsort(int number[]) {
+int i, j, k, gap, t;
+gap = MAX / 2;
+while(gap &gt; 0) {
+for(k = 0; k &lt; gap; k++) {
+for(i = k+gap; i &lt; MAX; i+=gap) {
+for(j = i - gap; j &gt;= k; j-=gap) {
+if(number[j] &gt; number[j+gap]) {
+SWAP(number[j], number[j+gap]);
+}
+else
+break;
+}
+}
+}
+printf(&quot;\ngap = %d：&quot;, gap);
+for(i = 0; i &lt; MAX; i++)
+printf(&quot;%d &quot;, number[i]);
+printf(&quot;\n&quot;);
+gap /= 2;
+}
+}</p>
 </li>
-</ol>
+<li><p>Java
+public class ShellSort {
+public static void sort(int[] number) {
+int gap = number.length / 2;
+while(gap &gt; 0) {
+for(int k = 0; k &lt; gap; k++) {
+for(int i = k+gap; i &lt; number.length; i+=gap) {
+for(int j = i - gap; j &gt;= k; j-=gap) {
+if(number[j] &gt; number[j+gap]) {
+swap(number, j, j+gap);
+}
+else
+break;
+}
+}
+}
+gap /= 2;
+}
+}
+private static void swap(int[] number, int i, int j) {
+int t;
+t = number[i];
+number[i] = number[j];
+number[j] = t;
+}
+}</p>
 </li>
 </ul>
-<p>推荐链接 <a href="http://www.javaeye.com/topic/181865#" target="_blank">返回顶楼</a> <a href="http://wishlife.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://wishlife.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=weidewei" title="发送站内短信" target="_blank"> </a> <a href="http://wishlife.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a>  * guo_david_wei</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 02:35:02"datetime="2014-03-07 02:35:02"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShellSort/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--ShellSort" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByArray/">StackByArray</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T09:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByArray/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="stackbyarray">StackByArray</h1>
+<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 堆叠 - 使用阵列实作</a></h1>
+<h2 id="-">说明</h2>
+<p>堆叠是一种先进后出的资料结构，就如同您将书本放入箱子，最先放进的书本在最后才能拿出来，所有资料的加入与删除都在堆叠顶端完成。堆叠的使用很广，递回 就是一种堆叠，在之前介绍中序式转后序式时，也使用到堆叠的结构。
+堆叠可以使用多种方式实作，其中使用阵列是最简单的方法，也最不受使用的程式语言所限制。</p>
+<h2 id="-">解法</h2>
+<p>堆叠最重要的就是记录顶端的位置，尤其是在堆叠空间固定的情况下，必须注意堆叠已满或已空的判断，当使用阵列实作堆叠时尤其重要。
+堆叠的基本操作有五项：建立堆叠、传回顶端元素、加入元素至堆叠、删除元素至堆叠、显示堆叠所有内容。为了方便，加入一个测试堆叠是否为空的方法，详 细的演算并不难，直接列出程式实作。</p>
+<h2 id="-">实作</h2>
 <ul>
-<li>等级: 初级会员</li>
-<li><a href="http://guo-david-wei.javaeye.com/" target="_blank"><img src="&quot;guo_david_wei的博客: guo_david_wei&quot;" alt="guo_david_wei的博客"></a></li>
-<li>文章: 24</li>
-<li>积分: 30</li>
-<li>来自: 武汉</li>
-<li><img src="" alt="">
-发表时间：2008-07-04</li>
+<li>C
+/#include <stdio.h>
+/#include <stdlib.h>
+/#define MAX 10
+int creates(int[]); // 建立堆叠
+int isEmpty(int); // 堆叠已空
+int stacktop(int[], int); // 传回顶端元素
+int add(int[], int, int); // 插入元素
+int delete(int[], int); // 删除元素
+void list(int[], int); // 显示所有内容
+int main(void) {
+int stack[MAX];
+int top;
+int input, select;
+top = creates(stack);
+while(1) {
+printf(&quot;\n\n请输入选项(-1结束)：&quot;);
+printf(&quot;\n(1)插入值至堆叠&quot;);
+printf(&quot;\n(2)显示堆叠顶端&quot;);
+printf(&quot;\n(3)删除顶端值&quot;);
+printf(&quot;\n(4)显示所有内容&quot;);
+printf(&quot;\n$c&gt;&quot;);
+scanf(&quot;%d&quot;, &amp;select);
+if(select == -1)
+break;
+switch(select) {
+case 1:
+printf(&quot;\n输入值：&quot;);
+scanf(&quot;%d&quot;, &amp;input);
+top = add(stack, top, input);
+break;
+case 2:
+printf(&quot;\n顶端值：%d&quot;, stacktop(stack, top));
+break;
+case 3:
+top = delete(stack, top);
+break;
+case 4:
+list(stack, top);
+break;
+default:
+printf(&quot;\n选项错误！&quot;);
+}
+}
+printf(&quot;\n&quot;);
+return 0;
+}
+// 以下为堆叠操作的实作
+int creates(int stack[]) {
+int i;
+for(i = 0; i &lt; MAX; i++)
+stack[i] = 0;
+return -1;
+}
+int isEmpty(int top) {
+return (top == -1);
+}
+int stacktop(int stack[], int top) {
+return stack[top];
+}
+int add(int stack[], int top, int item) {
+int t = top;
+if(t &gt;= MAX-1) {
+printf(&quot;\n堆叠已满！&quot;);
+return t;
+}
+stack[++t] = item;
+return t;
+}
+int delete(int stack[], int top) {
+int t = top;
+if(isEmpty(t)) {
+printf(&quot;\n堆叠已空！&quot;);
+return t;
+}
+return --t;
+}
+void list(int stack[], int top) {
+int t = top;
+printf(&quot;\n堆叠内容：&quot;);
+while(!isEmpty(t)) {
+printf(&quot;%d &quot;, stack[t]);
+t--;
+}
+}</li>
 </ul>
-<p>做的不错嘛。。
-挺有用的东西。 <a href="http://www.javaeye.com/topic/181865#" target="_blank">返回顶楼</a> <a href="http://guo-david-wei.javaeye.com/" title="浏览作者的博客" target="_blank"> </a> <a href="http://guo-david-wei.javaeye.com/blog/profile" title="浏览作者资料" target="_blank"> </a> <a href="http://app.javaeye.com/messages/new?message%5Breceiver_name%5D=guo_david_wei" title="发送站内短信" target="_blank"> </a> <a href="http://guo-david-wei.javaeye.com/blog/guest_book" title="给作者留言" target="_blank"> </a> <a href="http://www.javaeye.com/topic/181865#592006" title="guo_david_wei回帖:java中四种操作（DOM、SAX、JDOM、DOM4J）xml方式详解与比较" target="_blank">回帖地址</a></p>
-<p><a href="http://www.javaeye.com/topic/181865#" title="好" target="_blank">1</a> <a href="http://www.javaeye.com/topic/181865#" title="差" target="_blank">0</a> 请登录后投票</p>
-<p><a href="http://www.javaeye.com/forums" target="_blank">论坛首页</a> → <a href="http://www.javaeye.com/forums/board/Java" target="_blank">Java编程和Java企业应用版</a>
-跳转论坛:Java编程和Java企业应用 Web前端技术 移动编程和手机应用开发 C/C++编程 Ruby编程 Python编程 PHP编程 Flash编程和RIA Microsoft .Net 综合技术 软件开发和项目管理 行业应用 入门讨论 招聘求职 海阔天空</p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 02:35:12"datetime="2014-03-07 02:35:12"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByArray/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByArray" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShuffleCard/">ShuffleCard</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T09:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShuffleCard/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="shufflecard">ShuffleCard</h1>
+<h1 id="-algorithm-gossip-"><a href="">Algorithm Gossip: 洗扑克牌（乱数排列）</a></h1>
+<h2 id="-">说明</h2>
+<p>洗扑克牌的原理其实与乱数排列是相同的，都是将一组数字（例如1～N）打乱重新排列，只不过洗扑克牌多了一个花色判断的动作而已。</p>
+<h2 id="-">解法</h2>
+<p>初学者通常会直接想到，随机产生1～N的乱数并将之存入阵列中，后来产生的乱数存入阵列前必须先检查阵列中是否已有重复的数字，如果有这个数就不存入，再重新产生下一个数，运气不好的话，重复的次数就会很多，程式的执行速度就很慢了，这不是一个好方法。
+以1～52的乱数排列为例好了，可以将阵列先依序由1到52填入，然后使用一个回圈走访阵列，并随机产生1～52的乱数，将产生的乱数当作索引取出阵列值，并与目前阵列走访到的值相交换，如此就不用担心乱数重复的问题了，阵列走访完毕后，所有的数字也就重新排列了。
+至于如何判断花色？这只是除法的问题而已，取商数判断花色，取余数判断数字，您可以直接看程式比较清楚。</p>
+<h2 id="-">实作</h2>
 <ul>
-<li><a href="http://www.javaeye.com/" target="_blank">首页</a></li>
-<li><a href="http://www.javaeye.com/news" target="_blank">新闻</a></li>
-<li><a href="http://www.javaeye.com/ask" target="_blank">问答</a></li>
-<li><a href="http://www.javaeye.com/wiki" target="_blank">知识库</a></li>
-<li><a href="http://www.javaeye.com/blogs" target="_blank">博客</a></li>
-<li><a href="http://www.javaeye.com/groups" target="_blank">圈子</a></li>
-<li><a href="http://www.javaeye.com/job" target="_blank">招聘</a></li>
-<li><a href="http://www.javaeye.com/index/service" target="_blank">服务</a></li>
-<li><a href="http://www.javaeye.com/google_search" target="_blank">搜索</a></li>
-<li><a href="http://java.javaeye.com/" target="_blank">Java</a></li>
-<li><a href="http://webapp.javaeye.com/" target="_blank">Web</a></li>
-<li><a href="http://ruby.javaeye.com/" target="_blank">Ruby</a></li>
-<li><a href="http://python.javaeye.com/" target="_blank">Python</a></li>
-<li><a href="http://agile.javaeye.com/" target="_blank">敏捷</a></li>
-<li><a href="http://mysql.javaeye.com/" target="_blank">MySQL</a></li>
-<li><a href="http://primeton.javaeye.com/" target="_blank">普元</a></li>
-<li><a href="http://dorado.javaeye.com/" target="_blank">Dorado</a></li>
-<li><a href="http://kingdee.javaeye.com/" target="_blank">金蝶中间件</a></li>
-<li><a href="http://book.javaeye.com/" target="_blank">图书</a></li>
-<li><a href="http://www.javaeye.com/index/service" target="_blank">广告服务</a></li>
-<li><a href="http://webmaster.javaeye.com/" target="_blank">JavaEye黑板报</a></li>
-<li><a href="http://www.javaeye.com/index/aboutus" target="_blank">关于我们</a></li>
-<li><a href="http://www.javaeye.com/index/contactus" target="_blank">联系我们</a></li>
-<li><a href="http://www.javaeye.com/index/friend_links" target="_blank">友情链接</a></li>
+<li><p>C
+/#include <stdio.h>
+/#include <stdlib.h>
+/#include <time.h>
+/#define N 52
+int main(void) {
+int poker[N + 1];
+int i, j, tmp, remain;
+// 初始化阵列
+for(i = 1; i &lt;= N; i++)
+poker[i] = i;
+srand(time(0));
+// 洗牌
+for(i = 1; i &lt;= N; i++) {
+j = rand() % 52 + 1;
+tmp = poker[i];
+poker[i] = poker[j];
+poker[j] = tmp;
+}
+for(i = 1; i &lt;= N; i++) {
+// 判断花色
+switch((poker[i]-1) / 13) {
+case 0:
+printf(&quot;桃&quot;); break;
+case 1:
+printf(&quot;心&quot;); break;
+case 2:
+printf(&quot;砖&quot;); break;
+case 3:
+printf(&quot;梅&quot;); break;
+}
+// 扑克牌数字
+remain = poker[i] % 13;
+switch(remain) {
+case 0:
+printf(&quot;K &quot;); break;
+case 12:
+printf(&quot;Q &quot;); break;
+case 11:
+printf(&quot;J &quot;); break;
+default:
+printf(&quot;%d &quot;, remain); break;
+}
+if(i % 13 == 0)
+printf(&quot;\n&quot;);
+}
+return 0;
+}</p>
+</li>
+<li><p>Java
+public class ShuffleCard {
+public static void main(String args[]) {
+final int N = 52;
+int[] poker = new int[N + 1];
+// 初始化阵列
+for(int i = 1; i &lt;= N; i++)
+poker[i] = i;
+// 洗牌
+for(int i = 1; i &lt;= N; i++) {
+int j = (int) (Math.random() /* N);
+if(j == 0)
+j = 1;
+int tmp = poker[i];
+poker[i] = poker[j];
+poker[j] = tmp;
+}
+for(int i = 1; i &lt;= N; i++) {
+// 判断花色
+switch((poker[i]-1) / 13) {
+case 0:
+System.out.print(&quot;桃&quot;); break;
+case 1:
+System.out.print(&quot;心&quot;); break;
+case 2:
+System.out.print(&quot;砖&quot;); break;
+case 3:
+System.out.print(&quot;梅&quot;); break;
+}
+// 扑克牌数字
+int remain = poker[i] % 13;
+switch(remain) {
+case 0:
+System.out.print(&quot;K &quot;); break;
+case 12:
+System.out.print(&quot;Q &quot;); break;
+case 11:
+System.out.print(&quot;J &quot;); break;
+default:
+System.out.print(remain + &quot; &quot;); break;
+}
+if(i % 13 == 0)
+System.out.println(&quot;&quot;);
+}
+}
+}</p>
+</li>
 </ul>
-<p>© 2003-2010 JavaEye.com. 上海炯耐计算机软件有限公司版权所有 [ <a href="http://www.miibeian.gov.cn/" target="_blank">沪ICP备05023328号</a> ]</p>
 
       
     </div>
@@ -652,8 +487,8 @@ import java.io.File; import java.util.Iterator; import java.util.List; import ja
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/xml/">xml</a></li></span></span> | <span class="tags">Tagged <a href="/tags/xml/" class="label label-primary">xml</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-xml--java中四种操作（DOM、SAX、JDOM、DOM4J）xml方式详解与比较-Java-J/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-xml--java中四种操作（DOM、SAX、JDOM、DOM4J）xml方式详解与比较-Java-J" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 02:35:07"datetime="2014-03-07 02:35:07"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--ShuffleCard/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--ShuffleCard" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -668,979 +503,122 @@ import java.io.File; import java.util.Iterator; import java.util.List; import ja
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-xml-xstream--xStream完美转换XML、JSON/">xStream完美转换XML、JSON</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByLink/">StackByLink</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-xml-xstream--xStream完美转换XML、JSON/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T09:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByLink/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="xstream-xml-json">xStream完美转换XML、JSON</h1>
-<p><strong>xStream**</strong>框架<strong>**</strong></p>
-<p>xStream可以轻易的将Java对象和xml文档相互转换，而且可以修改某个特定的属性和节点名称，而且也支持json的转换；</p>
-<p>前面有介绍过json-lib这个框架，在线博文：<a href="http://www.cnblogs.com/hoojo/archive/2011/04/21/2023805.html" target="_blank"><a href="http://www.cnblogs.com/hoojo/archive/2011/04/21/2023805.html">http://www.cnblogs.com/hoojo/archive/2011/04/21/2023805.html</a></a></p>
-<p>以及Jackson这个框架，在线博文：<a href="http://www.cnblogs.com/hoojo/archive/2011/04/22/2024628.html" target="_blank"><a href="http://www.cnblogs.com/hoojo/archive/2011/04/22/2024628.html">http://www.cnblogs.com/hoojo/archive/2011/04/22/2024628.html</a></a></p>
-<p>它们都完美支持JSON，但是对xml的支持还不是很好。一定程度上限制了对Java对象的描述，不能让xml完全体现到对Java对象的描述。这里将会介绍xStream对JSON、XML的完美支持。xStream不仅对XML的转换非常友好，而且提供annotation注解，可以在JavaBean中完成对xml节点、属性的描述。以及对JSON也支持，只需要提供相关的JSONDriver就可以完成转换。</p>
-<p><strong>一、**</strong>准备工作<strong>**</strong></p>
-<p>1、 下载jar包、及官方资源</p>
-<p>xStream的jar下载地址：</p>
-<p><a href="https://nexus.codehaus.org/content/repositories/releases/com/thoughtworks/xstream/xstream-distribution/1.3.1/xstream-distribution-1.3.1-bin.zip" target="_blank"><a href="https://nexus.codehaus.org/content/repositories/releases/com/thoughtworks/xstream/xstream-distribution/1.3.1/xstream-distribution-1.3.1-bin.zip">https://nexus.codehaus.org/content/repositories/releases/com/thoughtworks/xstream/xstream-distribution/1.3.1/xstream-distribution-1.3.1-bin.zip</a></a></p>
-<p>官方的示例很全，官方参考示例：<a href="http://xstream.codehaus.org/tutorial.html" target="_blank"><a href="http://xstream.codehaus.org/tutorial.html">http://xstream.codehaus.org/tutorial.html</a></a></p>
-<p>添加xstream-1.3.1.jar文件到工程中，就可以开始下面的工作；需要的jar如下：</p>
-<p><a href="http://images.cnblogs.com/cnblogs_com/hoojo/201104/201104221846024160.jpg" target="_blank"><img src="&quot;clip_image002&quot;" alt="clip_image002"></a></p>
-<p>2、 测试用例代码
-package com.hoo.test;</p>
-<p>import java.io.IOException;
-import java.io.ObjectInputStream;</p>
-<p>import java.io.ObjectOutputStream;
-import java.io.StringReader;</p>
-<p>import java.io.Writer;
-import java.util.ArrayList;</p>
-<p>import java.util.HashMap;
-import java.util.Iterator;</p>
-<p>import java.util.List;
-import java.util.Map;</p>
-<p>import java.util.Set;
-import org.codehaus.jettison.json.JSONException;</p>
-<p>import org.junit.After;
-import org.junit.Before;</p>
-<p>import org.junit.Test;
-import com.hoo.entity.Birthday;</p>
-<p>import com.hoo.entity.Classes;
-import com.hoo.entity.ListBean;</p>
-<p>import com.hoo.entity.Student;
-import com.thoughtworks.xstream.XStream;</p>
-<p>import com.thoughtworks.xstream.io.HierarchicalStreamWriter;
-import com.thoughtworks.xstream.io.json.JettisonMappedXmlDriver;</p>
-<p>import com.thoughtworks.xstream.io.json.JsonHierarchicalStreamDriver;
-import com.thoughtworks.xstream.io.json.JsonWriter;</p>
-<p>//<em>/</em>
-/* <b>function:</b>Java对象和XML字符串的相互转换</p>
-<p>/<em> jar-lib-version: xstream-1.3.1
-/</em> @author hoojo</p>
-<p>/<em> @createDate Nov 27, 2010 12:15:15 PM
-/</em> @file XStreamTest.java</p>
-<p>/<em> @package com.hoo.test
-/</em> @project WebHttpUtils</p>
-<p>/<em> @blog <a href="http://blog.csdn.net/IBM_hoojo" target="_blank">http://blog.csdn.net/IBM_hoojo</a>
-/</em> @email hoojo_@126.com</p>
-<p>/<em> @version 1.0
-/</em>/</p>
-<p>@SuppressWarnings(&quot;unchecked&quot;)
-public class XStreamTest {</p>
-<p>private XStream xstream = null;
-private ObjectOutputStream out = null;</p>
-<p>private ObjectInputStream in = null;
-private Student bean = null;</p>
-<p>//<em>/</em>
-/* <b>function:</b>初始化资源准备</p>
-<p>/<em> @author hoojo
-/</em> @createDate Nov 27, 2010 12:16:28 PM</p>
-<p>/*/
-@Before</p>
-<p>public void init() {
-try {</p>
-<p>xstream = new XStream();
-//xstream = new XStream(new DomDriver()); // 需要xpp3 jar</p>
-<p>} catch (Exception e) {
-e.printStackTrace();</p>
-<p>}
-bean = new Student();</p>
-<p>bean.setAddress(&quot;china&quot;);
-bean.setEmail(&quot;jack@email.com&quot;);</p>
-<p>bean.setId(1);
-bean.setName(&quot;jack&quot;);</p>
-<p>Birthday day = new Birthday();
-day.setBirthday(&quot;2010-11-22&quot;);</p>
-<p>bean.setBirthday(day);
-}</p>
-<p>//<em>/</em>
-/* <b>function:</b>释放对象资源</p>
-<p>/<em> @author hoojo
-/</em> @createDate Nov 27, 2010 12:16:38 PM</p>
-<p>/*/
-@After</p>
-<p>public void destory() {
-xstream = null;</p>
-<p>bean = null;
-try {</p>
-<p>if (out != null) {
-out.flush();</p>
-<p>out.close();
-}</p>
-<p>if (in != null) {
-in.close();</p>
-<p>}
-} catch (IOException e) {</p>
-<p>e.printStackTrace();
-}</p>
-<p>System.gc();
-}</p>
-<p>public final void fail(String string) {
-System.out.println(string);</p>
-<p>}
-public final void failRed(String string) {</p>
-<p>System.err.println(string);
-}</p>
-<p>}</p>
-<p>通过XStream对象的toXML方法就可以完成Java对象到XML的转换，toXML方法还有2个相同签名的方法，需要传递一个流。然后通过流来完成xml信息的输出。</p>
-<p>3、 需要的JavaBean
-package com.hoo.entity;</p>
-<p>public class Student {
-private int id;</p>
-<p>private String name;
-private String email;</p>
-<p>private String address;
-private Birthday birthday;</p>
-<p>//getter、setter
-public String toString() {</p>
-<p>return this.name + &quot;/#&quot; + this.id + &quot;/#&quot; + this.address + &quot;/#&quot; + this.birthday + &quot;/#&quot; + this.email;
-}</p>
-<p>}</p>
-<hr>
-<p><strong>二、**</strong>Java<strong><strong>转换成</strong></strong>XML**</p>
-<p>1、 JavaBean转换XM
-//<em>/</em></p>
-<p>/<em> <b>function:</b>Java对象转换成XML字符串
-/</em> @author hoojo</p>
-<p>/<em> @createDate Nov 27, 2010 12:19:01 PM
-/</em>/</p>
-<p>@Test
-public void writeBean2XML() {</p>
-<p>try {
-fail(&quot;------------Bean-&gt;XML------------&quot;);</p>
-<p>fail(xstream.toXML(bean));
-fail(&quot;重命名后的XML&quot;);</p>
-<p>//类重命名
-//xstream.alias(&quot;account&quot;, Student.class);</p>
-<p>//xstream.alias(&quot;生日&quot;, Birthday.class);
-//xstream.aliasField(&quot;生日&quot;, Student.class, &quot;birthday&quot;);</p>
-<p>//xstream.aliasField(&quot;生日&quot;, Birthday.class, &quot;birthday&quot;);
-//fail(xstream.toXML(bean));</p>
-<p>//属性重命名
-xstream.aliasField(&quot;邮件&quot;, Student.class, &quot;email&quot;);</p>
-<p>//包重命名
-xstream.aliasPackage(&quot;hoo&quot;, &quot;com.hoo.entity&quot;);</p>
-<p>fail(xstream.toXML(bean));
-} catch (Exception e) {</p>
-<p>e.printStackTrace();
-}</p>
-<p>}</p>
-<p>看结果中的第一份xml内容，是没有经过然后修改或重命名的文档，按照原样输出。文档中的第二份文档的package经过重命名，email属性也经过重命名以及类名也可以进行重命名的。</p>
-<p>运行后结果如下：
-------------Bean-&gt;XML------------</p>
-<p><com.hoo.entity.Student></p>
-<id>1</id>
-
-<name>jack</name>
-<email>jack@email.com</email>
-
-<address>china</address>
-<birthday>
-
-<birthday>2010-11-22</birthday>
-</birthday>
-
-</com.hoo.entity.Student>
-重命名后的XML
-
-<hoo.Student>
-<id>1</id>
-
-<name>jack</name>
-&lt;邮件&gt;jack@email.com&lt;/邮件&gt;
-
-<address>china</address>
-<birthday>
-
-<birthday>2010-11-22</birthday>
-</birthday>
-
-</hoo.Student>
-
-2、 将List集合转换成xml文档
-
-//<em>/</em>
-
-/<em> <b>function:</b>将Java的List集合转换成XML对象
-/</em> @author hoojo
-
-/<em> @createDate Nov 27, 2010 12:20:07 PM
-/</em>/
-
-@Test
-public void writeList2XML() {
-
-try {
-//修改元素名称
-
-xstream.alias(&quot;beans&quot;, ListBean.class);
-xstream.alias(&quot;student&quot;, Student.class);
-
-fail(&quot;----------List--&gt;XML----------&quot;);
-ListBean listBean = new ListBean();
-
-listBean.setName(&quot;this is a List Collection&quot;);
-List<Object> list = new ArrayList<Object>();
-
-list.add(bean);
-list.add(bean);//引用bean
-
-//list.add(listBean);//引用listBean，父元素
-bean = new Student();
-
-bean.setAddress(&quot;china&quot;);
-bean.setEmail(&quot;tom@125.com&quot;);
-
-bean.setId(2);
-bean.setName(&quot;tom&quot;);
-
-Birthday day = new Birthday(&quot;2010-11-22&quot;);
-bean.setBirthday(day);
-
-list.add(bean);
-listBean.setList(list);
-
-//将ListBean中的集合设置空元素，即不显示集合元素标签
-//xstream.addImplicitCollection(ListBean.class, &quot;list&quot;);
-
-//设置reference模型
-//xstream.setMode(XStream.NO_REFERENCES);//不引用
-
-xstream.setMode(XStream.ID_REFERENCES);//id引用
-//xstream.setMode(XStream.XPATH_ABSOLUTE_REFERENCES);//绝对路径引用
-
-//将name设置为父类（Student）的元素的属性
-xstream.useAttributeFor(Student.class, &quot;name&quot;);
-
-xstream.useAttributeFor(Birthday.class, &quot;birthday&quot;);
-//修改属性的name
-
-xstream.aliasAttribute(&quot;姓名&quot;, &quot;name&quot;);
-xstream.aliasField(&quot;生日&quot;, Birthday.class, &quot;birthday&quot;);
-
-fail(xstream.toXML(listBean));
-} catch (Exception e) {
-
-e.printStackTrace();
+        <h1 id="stackbylink">StackByLink</h1>
+<h1 id="-algorithm-gossip-c-"><a href="">Algorithm Gossip: 堆叠 - 使用链结实作（C 语言动态记忆体宣告）</a></h1>
+<h2 id="-">说明</h2>
+<p>使用阵列实作堆叠，会受到阵列大小必须事先宣告好的限制，我们可以使用链结（link）的方式来实作堆叠，以动态记忆体宣告的方式来新增每一个元素。</p>
+<h2 id="-">解法</h2>
+<p>链结（link）是由节点组成，每一个节点储存资料之外，还储存下一个节点的位置，如下图所示：
+<img src="&quot;Link&quot;" alt="Link">
+对堆叠而言，加入新节点与删除节点的方法如下图所示：
+新增节点：
+<img src="&quot;Link&quot;" alt="Link">
+删除节点：
+<img src="&quot;Link&quot;" alt="Link">
+链结也可以使用阵列来实作，不过在这边我们以动态记忆体宣告的方式来进行，在C语言中，这是实作链结的基本作法，可以不受阵列大小必须先行宣告的限制，所以使用链结实作堆叠时，就不会有堆叠已满的问题（除了记忆体用尽之外）。
+上面的图说只是个示意，在演算的时候，会需要一些暂存变数来协助节点新增与删除时的连结更动，请直接参照以下的程式实作。</p>
+<h2 id="-">实作</h2>
+<ul>
+<li>C
+/#include <stdio.h>
+/#include <stdlib.h>
+struct node {
+int data;
+struct node /<em>next;
+};
+typedef struct node getnode;
+getnode/</em> creates(void); // 建立堆叠
+int isEmpty(getnode/<em>); // 堆叠已空
+int stacktop(getnode/</em>); // 传回顶端元素
+getnode/<em> add(getnode/</em>, int); // 新增元素
+getnode/<em> delete(getnode/</em>); // 删除元素
+void list(getnode/<em>); // 显示所有内容
+int main(void) {
+getnode/</em> sTop;
+int input, select;
+sTop = creates();
+while(1) {
+printf(&quot;\n\n请输入选项(-1结束)：&quot;);
+printf(&quot;\n(1)插入值至堆叠&quot;);
+printf(&quot;\n(2)显示堆叠顶端&quot;);
+printf(&quot;\n(3)删除顶端值&quot;);
+printf(&quot;\n(4)显示所有内容&quot;);
+printf(&quot;\n$c&gt;&quot;);
+scanf(&quot;%d&quot;, &amp;select);
+if(select == -1)
+break;
+switch(select) {
+case 1:
+printf(&quot;\n输入值：&quot;);
+scanf(&quot;%d&quot;, &amp;input);
+sTop = add(sTop, input);
+break;
+case 2:
+printf(&quot;\n顶端值：%d&quot;, stacktop(sTop));
+break;
+case 3:
+sTop = delete(sTop);
+break;
+case 4:
+list(sTop);
+break;
+default:
+printf(&quot;\n选项错误！&quot;);
 }
-
 }
-
-上面的代码运行后，结果如下：
-
-----------List--&gt;XML----------
-
-<beans id="1">
-<name>this is a List Collection</name>
-
-<p><list id="2"></p>
-<student id="3" 姓名="jack">
-
-<id>1</id>
-<email>jack@email.com</email>
-
-<address>china</address>
-<birthday id="4" 生日="2010-11-22"/>
-
-</student>
-<student reference="3"/>
-
-<student id="5" 姓名="tom">
-<id>2</id>
-
-<email>tom@125.com</email>
-<address>china</address>
-
-<birthday id="6" 生日="2010-11-22"/>
-</student>
-
-<p></list>
-</beans></p>
-<p>如果不加xstream.addImplicitCollection(ListBean.<strong>class</strong>, &quot;list&quot;);</p>
-<p>这个设置的话，会出现一个List节点包裹着Student节点元素。添加addImplicitCollection可以忽略这个list节点元素。那么上面的list节点就不存在，只会在beans元素中出现name、student这2个xml元素标签；</p>
-<p>setMode是设置相同的对象的引用方式，如果设置XStream.NO_REFERENCES就是不引用，会输出2分相同的Student元素。如果是XStream.ID_REFERENCES会引用相同的那个对象的id属性，如果是XStream.XPATH_ABSOLUTE_REFERENCES引用，那么它将显示xpath路径。上面采用的id引用，<student reference="3"/>这个引用了id=3的那个student标签元素；</p>
-<p>useAttributeFor是设置某个节点显示到父节点的属性中，也就是将指定class中的指定属性，在这个class元素节点的属性中显示。</p>
-<p>如：<student><name>hoojo</name></student></p>
-<p>设置好后就是这样的结果：<student name=”hoojo”></student></p>
-<p>aliasAttribute是修改属性名称。</p>
-<p>3、 在JavaBean中添加Annotation注解进行重命名设置</p>
-<p>先看看JavaBean的代码
-package com.hoo.entity;</p>
-<p>import java.util.Arrays;
-import java.util.Calendar;</p>
-<p>import java.util.GregorianCalendar;
-import java.util.List;</p>
-<p>import com.thoughtworks.xstream.annotations.XStreamAlias;
-import com.thoughtworks.xstream.annotations.XStreamAsAttribute;</p>
-<p>import com.thoughtworks.xstream.annotations.XStreamConverter;
-import com.thoughtworks.xstream.annotations.XStreamImplicit;</p>
-<p>import com.thoughtworks.xstream.annotations.XStreamOmitField;
-@XStreamAlias(&quot;class&quot;)</p>
-<p>public class Classes {
-//*</p>
-<p>/<em> 设置属性显示
-/</em>/</p>
-<p>@XStreamAsAttribute
-@XStreamAlias(&quot;名称&quot;)</p>
-<p>private String name;
-//*</p>
-<p>/<em> 忽略
-/</em>/</p>
-<p>@XStreamOmitField
-private int number;</p>
-<p>@XStreamImplicit(itemFieldName = &quot;Students&quot;)
-private List<Student> students;</p>
-<p>@SuppressWarnings(&quot;unused&quot;)
-@XStreamConverter(SingleValueCalendarConverter.class)</p>
-<p>private Calendar created = new GregorianCalendar();
-public Classes(){}</p>
-<p>public Classes(String name, Student... stu) {
-this.name = name;</p>
-<p>this.students = Arrays.asList(stu);
-}</p>
-<p>//getter、setter
-}</p>
-<p>SingleValueCalendarConverter.java这个是一个类型转换器</p>
-<p>package com.hoo.entity;</p>
-<p>import java.util.Calendar;
-import java.util.Date;</p>
-<p>import java.util.GregorianCalendar;
-import com.thoughtworks.xstream.converters.Converter;</p>
-<p>import com.thoughtworks.xstream.converters.MarshallingContext;
-import com.thoughtworks.xstream.converters.UnmarshallingContext;</p>
-<p>import com.thoughtworks.xstream.io.HierarchicalStreamReader;
-import com.thoughtworks.xstream.io.HierarchicalStreamWriter;</p>
-<p>public class SingleValueCalendarConverter implements Converter {
-public void marshal(Object source, HierarchicalStreamWriter writer,</p>
-<p>MarshallingContext context) {
-Calendar calendar = (Calendar) source;</p>
-<p>writer.setValue(String.valueOf(calendar.getTime().getTime()));
-}</p>
-<p>public Object unmarshal(HierarchicalStreamReader reader,
-UnmarshallingContext context) {</p>
-<p>GregorianCalendar calendar = new GregorianCalendar();
-calendar.setTime(new Date(Long.parseLong(reader.getValue())));</p>
-<p>return calendar;
-}</p>
-<p>@SuppressWarnings(&quot;unchecked&quot;)
-public boolean canConvert(Class type) {</p>
-<p>return type.equals(GregorianCalendar.class);
-}</p>
-<p>}</p>
-<p>再看看测试用例代码</p>
-<p>@Test</p>
-<p>public void writeList2XML4Annotation() {
-try {</p>
-<p>failRed(&quot;---------annotation Bean --&gt; XML---------&quot;);
-Student stu = new Student();</p>
-<p>stu.setName(&quot;jack&quot;);
-Classes c = new Classes(&quot;一班&quot;, bean, stu);</p>
-<p>c.setNumber(2);
-//对指定的类使用Annotation</p>
-<p>//xstream.processAnnotations(Classes.class);
-//启用Annotation</p>
-<p>//xstream.autodetectAnnotations(true);
-xstream.alias(&quot;student&quot;, Student.class);</p>
-<p>fail(xstream.toXML(c));
-} catch (Exception e) {</p>
-<p>e.printStackTrace();
-}</p>
-<p>}</p>
-<p>当启用annotation或是对某个特定的类启用annotation时，上面的classes这个类才有效果。如果不启用annotation，运行后结果如下：</p>
-<p>---------annotation Bean --&gt; XML---------</p>
-<p><com.hoo.entity.Classes></p>
-<name>一班</name>
-
-<p><number>2</number></p>
-<students class="java.util.Arrays$ArrayList">
-
-<a class="student-array">
-<student>
-
-<id>1</id>
-<name>jack</name>
-
-<email>jack@email.com</email>
-<address>china</address>
-
-<birthday>
-<birthday>2010-11-22</birthday>
-
-</birthday>
-</student>
-
-<student>
-<id>0</id>
-
-<name>jack</name>
-</student>
-
-</a>
-</students>
-
-<created>
-<time>1303292056718</time>
-
-<timezone>Asia/Shanghai</timezone>
-</created>
-
-<p></com.hoo.entity.Classes></p>
-<p>当启用annotation后xstream.processAnnotations(Classes.class)，结果如下：</p>
-<p>---------annotation Bean --&gt; XML---------</p>
-<class 名称="一班">
-<Students>
-
-<id>1</id>
-<name>jack</name>
-
-<email>jack@email.com</email>
-<address>china</address>
-
-<birthday>
-<birthday>2010-11-22</birthday>
-
-</birthday>
-</Students>
-
-<Students>
-<id>0</id>
-
-<name>jack</name>
-</Students>
-
-<created>1303292242937</created>
-</class>
-
-<p>4、 Map集合转换xml文档</p>
-<p>//<em>/</em></p>
-<p>/<em> <b>function:</b>Java Map集合转XML
-/</em> @author hoojo</p>
-<p>/<em> @createDate Nov 27, 2010 1:13:26 PM
-/</em>/</p>
-<p>@Test
-public void writeMap2XML() {</p>
-<p>try {
-failRed(&quot;---------Map --&gt; XML---------&quot;);</p>
-<p>Map<String, Student> map = new HashMap<String, Student>();
-map.put(&quot;No.1&quot;, bean);//put</p>
-<p>bean = new Student();
-bean.setAddress(&quot;china&quot;);</p>
-<p>bean.setEmail(&quot;tom@125.com&quot;);
-bean.setId(2);</p>
-<p>bean.setName(&quot;tom&quot;);
-Birthday day = new Birthday(&quot;2010-11-22&quot;);</p>
-<p>bean.setBirthday(day);
-map.put(&quot;No.2&quot;, bean);//put</p>
-<p>bean = new Student();
-bean.setName(&quot;jack&quot;);</p>
-<p>map.put(&quot;No.3&quot;, bean);//put
-xstream.alias(&quot;student&quot;, Student.class);</p>
-<p>xstream.alias(&quot;key&quot;, String.class);
-xstream.useAttributeFor(Student.class, &quot;id&quot;);</p>
-<p>xstream.useAttributeFor(&quot;birthday&quot;, String.class);
-fail(xstream.toXML(map));</p>
-<p>} catch (Exception e) {
-e.printStackTrace();</p>
-<p>}
-}</p>
-<p>运行后结果如下：</p>
-<p>---------Map --&gt; XML---------</p>
-<map>
-<entry>
-
-<key>No.3</key>
-<student id="0">
-
-<name>jack</name>
-</student>
-
-</entry>
-<entry>
-
-<key>No.1</key>
-<student id="1">
-
-<name>jack</name>
-<email>jack@email.com</email>
-
-<address>china</address>
-<birthday birthday="2010-11-22"/>
-
-</student>
-</entry>
-
-<entry>
-<key>No.2</key>
-
-<student id="2">
-<name>tom</name>
-
-<email>tom@125.com</email>
-<address>china</address>
-
-<birthday birthday="2010-11-22"/>
-</student>
-
-</entry>
-</map>
-
-<p>5、 用OutStream输出流写XML</p>
-<p>//<em>/</em></p>
-<p>/<em> <b>function:</b>用OutStream输出流写XML
-/</em> @author hoojo</p>
-<p>/<em> @createDate Nov 27, 2010 1:13:48 PM
-/</em>/</p>
-<p>@Test
-public void writeXML4OutStream() {</p>
-<p>try {
-out = xstream.createObjectOutputStream(System.out);</p>
-<p>Student stu = new Student();
-stu.setName(&quot;jack&quot;);</p>
-<p>Classes c = new Classes(&quot;一班&quot;, bean, stu);
-c.setNumber(2);</p>
-<p>failRed(&quot;---------ObjectOutputStream /# JavaObject--&gt; XML---------&quot;);
-out.writeObject(stu);</p>
-<p>out.writeObject(new Birthday(&quot;2010-05-33&quot;));
-out.write(22);//byte</p>
-<p>out.writeBoolean(true);
-out.writeFloat(22.f);</p>
-<p>out.writeUTF(&quot;hello&quot;);
-} catch (Exception e) {</p>
-<p>e.printStackTrace();
-}</p>
-<p>}</p>
-<p>使用输出流后，可以通过流对象完成xml的构建，即使没有JavaBean对象，你可以用流来构建一个复杂的xml文档，运行后结果如下：</p>
-<p>---------ObjectOutputStream /# JavaObject--&gt; XML---------</p>
-<p><object-stream></p>
-<com.hoo.entity.Student>
-
-<p><id>0</id></p>
-<name>jack</name>
-
-<p></com.hoo.entity.Student></p>
-<com.hoo.entity.Birthday>
-
-<p><birthday>2010-05-33</birthday>
-</com.hoo.entity.Birthday></p>
-<p><byte>22</byte></p>
-<boolean>true</boolean>
-
-<p><float>22.0</float></p>
-<string>hello</string>
-
-<p></object-stream></p>
-<hr>
-<p><strong>三、**</strong>XML<strong><strong>内容转换</strong></strong>Java<strong><strong>对象**</strong></strong></p>
-<p>1、 用InputStream将XML文档转换成java对象
-//<em>/</em></p>
-<p>/<em> <b>function:</b>用InputStream将XML文档转换成java对象
-/</em> 需要额外的jar xpp3-main.jar</p>
-<p>/<em> @author hoojo
-/</em> @createDate Nov 27, 2010 1:14:52 PM</p>
-<p>/*/
-@Test</p>
-<p>public void readXML4InputStream() {
-try {</p>
-<p>String s = &quot;<object-stream><com.hoo.entity.Student><id>0</id><name>jack</name>&quot; +
-&quot;</com.hoo.entity.Student><com.hoo.entity.Birthday><birthday>2010-05-33</birthday>&quot; +</p>
-<p>&quot;</com.hoo.entity.Birthday><byte>22</byte><boolean>true</boolean><float>22.0</float>&quot; +
-&quot;<string>hello</string></object-stream>&quot;;</p>
-<p>failRed(&quot;---------ObjectInputStream/#/# XML --&gt; javaObject---------&quot;);
-StringReader reader = new StringReader(s);</p>
-<p>in = xstream.createObjectInputStream(reader);
-Student stu = (Student) in.readObject();</p>
-<p>Birthday b = (Birthday) in.readObject();
-byte i = in.readByte();</p>
-<p>boolean bo = in.readBoolean();
-float f = in.readFloat();</p>
-<p>String str = in.readUTF();
-System.out.println(stu);</p>
-<p>System.out.println(b);
-System.out.println(i);</p>
-<p>System.out.println(bo);
-System.out.println(f);</p>
-<p>System.out.println(str);
-} catch (Exception e) {</p>
-<p>e.printStackTrace();
-}</p>
-<p>}</p>
-<p>读取后，转换的Java对象，结果如下：</p>
-<p>---------ObjectInputStream/#/# XML --&gt; javaObject---------</p>
-<p>jack/#0/#null/#null/#null
-2010-05-33</p>
-<p>22
-true</p>
-<p>22.0
-hello</p>
-<p>2、 将xml文档转换成Java对象</p>
-<p>//<em>/</em></p>
-<p>/<em> <b>function:</b>将XML字符串转换成Java对象
-/</em> @author hoojo</p>
-<p>/<em> @createDate Nov 27, 2010 2:39:06 PM
-/</em>/</p>
-<p>@Test
-public void readXml2Object() {</p>
-<p>try {
-failRed(&quot;-----------Xml &gt;&gt;&gt; Bean--------------&quot;);</p>
-<p>Student stu = (Student) xstream.fromXML(xstream.toXML(bean));
-fail(stu.toString());</p>
-<p>List<Student> list = new ArrayList<Student>();
-list.add(bean);//add</p>
-<p>Map<String, Student> map = new HashMap<String, Student>();
-map.put(&quot;No.1&quot;, bean);//put</p>
-<p>bean = new Student();
-bean.setAddress(&quot;china&quot;);</p>
-<p>bean.setEmail(&quot;tom@125.com&quot;);
-bean.setId(2);</p>
-<p>bean.setName(&quot;tom&quot;);
-Birthday day = new Birthday(&quot;2010-11-22&quot;);</p>
-<p>bean.setBirthday(day);
-list.add(bean);//add</p>
-<p>map.put(&quot;No.2&quot;, bean);//put
-bean = new Student();</p>
-<p>bean.setName(&quot;jack&quot;);
-list.add(bean);//add</p>
-<p>map.put(&quot;No.3&quot;, bean);//put
-failRed(&quot;==========XML &gt;&gt;&gt; List===========&quot;);</p>
-<p>List<Student> studetns = (List<Student>) xstream.fromXML(xstream.toXML(list));
-fail(&quot;size:&quot; + studetns.size());//3</p>
-<p>for (Student s : studetns) {
-fail(s.toString());</p>
-<p>}
-failRed(&quot;==========XML &gt;&gt;&gt; Map===========&quot;);</p>
-<p>Map<String, Student> maps = (Map<String, Student>) xstream.fromXML(xstream.toXML(map));
-fail(&quot;size:&quot; + maps.size());//3</p>
-<p>Set<String> key = maps.keySet();
-Iterator<String> iter = key.iterator();</p>
-<p>while (iter.hasNext()) {
-String k = iter.next();</p>
-<p>fail(k + &quot;:&quot; + map.get(k));
-}</p>
-<p>} catch (Exception e) {
-e.printStackTrace();</p>
-<p>}
-}</p>
-<p>运行后结果如下：</p>
-<p>-----------Xml &gt;&gt;&gt; Bean--------------</p>
-<p>jack/#1/#china/#2010-11-22/#jack@email.com
-==========XML &gt;&gt;&gt; List===========</p>
-<p>size:3
-jack/#1/#china/#2010-11-22/#jack@email.com</p>
-<p>tom/#2/#china/#2010-11-22/#tom@125.com
-jack/#0/#null/#null/#null</p>
-<p>==========XML &gt;&gt;&gt; Map===========
-size:3</p>
-<p>No.3:jack/#0/#null/#null/#null
-No.1:jack/#1/#china/#2010-11-22/#jack@email.com</p>
-<p>No.2:tom/#2/#china/#2010-11-22/#tom@125.com</p>
-<p>怎么样，成功的完成XML到JavaBean、List、Map的转换，更多对象转换还需要大家一一尝试。用法类似~这里就不一样赘述。</p>
-<p><strong>四、**</strong>XStream<strong><strong>对</strong></strong>JSON<strong><strong>的支持**</strong></strong></p>
-<p>xStream对JSON也有非常好的支持，它提供了2个模型驱动。用这2个驱动可以完成Java对象到JSON的相互转换。使用JettisonMappedXmlDriver驱动，将Java对象转换成json，需要添加jettison.jar</p>
-<p>1、 用JettisonMappedXmlDriver完成Java对象到JSON的转换
-//<em>/</em></p>
-<p>/<em> <b>function:</b>XStream结合JettisonMappedXmlDriver驱动，转换Java对象到JSON
-/</em> 需要添加jettison jar</p>
-<p>/<em> @author hoojo
-/</em> @createDate Nov 27, 2010 1:23:18 PM</p>
-<p>/*/
-@Test</p>
-<p>public void writeEntity2JETTSON() {
-failRed(&quot;=======JettisonMappedXmlDriver===JavaObject &gt;&gt;&gt;&gt; JaonString=========&quot;);</p>
-<p>xstream = new XStream(new JettisonMappedXmlDriver());
-xstream.setMode(XStream.NO_REFERENCES);</p>
-<p>xstream.alias(&quot;student&quot;, Student.class);
-fail(xstream.toXML(bean));</p>
-<p>}</p>
-<p>运行后结果如下：</p>
-<p>=======JettisonMappedXmlDriver===JavaObject &gt;&gt;&gt;&gt; JaonString=========</p>
-<p>{&quot;student&quot;:{&quot;id&quot;:1,&quot;name&quot;:&quot;jack&quot;,&quot;email&quot;:&quot;jack@email.com&quot;,&quot;address&quot;:&quot;china&quot;,&quot;birthday&quot;:[{},&quot;2010-11-22&quot;]}}</p>
-<p>JSON的转换和XML的转换用法一样，只是创建XStream需要传递一个参数，这个参数就是xml到JSON映射转换的驱动。这里会降到两个驱动，分别是JettisonMappedXmlDriver、JsonHierarchicalStreamDriver。</p>
-<p>2、 JsonHierarchicalStreamDriver完成Java对象到JSON的转换
-//<em>/</em></p>
-<p>/<em> <b>function:</b>用XStream结合JsonHierarchicalStreamDriver驱动
-/</em> 转换java对象为JSON字符串</p>
-<p>/<em> @author hoojo
-/</em> @createDate Nov 27, 2010 1:16:46 PM</p>
-<p>/*/
-@Test</p>
-<p>public void writeEntiry2JSON() {
-failRed(&quot;======JsonHierarchicalStreamDriver====JavaObject &gt;&gt;&gt;&gt; JaonString=========&quot;);</p>
-<p>xstream = new XStream(new JsonHierarchicalStreamDriver());
-//xstream.setMode(XStream.NO_REFERENCES);</p>
-<p>xstream.alias(&quot;student&quot;, Student.class);
-failRed(&quot;-------Object &gt;&gt;&gt;&gt; JSON---------&quot;);</p>
-<p>fail(xstream.toXML(bean));
-//failRed(&quot;========JsonHierarchicalStreamDriver==删除根节点=========&quot;);</p>
-<p>//删除根节点
-xstream = new XStream(new JsonHierarchicalStreamDriver() {</p>
-<p>public HierarchicalStreamWriter createWriter(Writer out) {
-return new JsonWriter(out, JsonWriter.DROP_ROOT_MODE);</p>
-<p>}
-});</p>
-<p>//xstream.setMode(XStream.NO_REFERENCES);
-xstream.alias(&quot;student&quot;, Student.class);</p>
-<p>fail(xstream.toXML(bean));
-}</p>
-<p>运行后结果如下：</p>
-<p>======JsonHierarchicalStreamDriver====JavaObject &gt;&gt;&gt;&gt; JaonString=========</p>
-<p>-------Object &gt;&gt;&gt;&gt; JSON---------
-{&quot;student&quot;: {</p>
-<p>&quot;id&quot;: 1,
-&quot;name&quot;: &quot;jack&quot;,</p>
-<p>&quot;email&quot;: &quot;jack@email.com&quot;,
-&quot;address&quot;: &quot;china&quot;,</p>
-<p>&quot;birthday&quot;: {
-&quot;birthday&quot;: &quot;2010-11-22&quot;</p>
-<p>}
-}}</p>
-<p>{
-&quot;id&quot;: 1,</p>
-<p>&quot;name&quot;: &quot;jack&quot;,
-&quot;email&quot;: &quot;jack@email.com&quot;,</p>
-<p>&quot;address&quot;: &quot;china&quot;,
-&quot;birthday&quot;: {</p>
-<p>&quot;birthday&quot;: &quot;2010-11-22&quot;
-}</p>
-<p>}</p>
-<p>使用JsonHierarchicalStreamDriver转换默认会给转换后的对象添加一个根节点，但是在构建JsonHierarchicalStreamDriver驱动的时候，你可以重写createWriter方法，删掉根节点。</p>
-<p>看上面的结果，一个是默认带根节点的JSON对象，它只是将类名作为一个属性，将对象作为该属性的一个值。而另一个没有带根属性的JSON就是通过重写createWriter方法完成的。</p>
-<p>3、 将List集合转换成JSON字符串
-@Test</p>
-<p>public void writeList2JSON() {
-failRed(&quot;======JsonHierarchicalStreamDriver====JavaObject &gt;&gt;&gt;&gt; JaonString=========&quot;);</p>
-<p>JsonHierarchicalStreamDriver driver = new JsonHierarchicalStreamDriver();
-xstream = new XStream(driver);</p>
-<p>//xstream = new XStream(new JettisonMappedXmlDriver());//转换错误
-//xstream.setMode(XStream.NO_REFERENCES);</p>
-<p>xstream.alias(&quot;student&quot;, Student.class);
-List<Student> list = new ArrayList<Student>();</p>
-<p>list.add(bean);//add
-bean = new Student();</p>
-<p>bean.setAddress(&quot;china&quot;);
-bean.setEmail(&quot;tom@125.com&quot;);</p>
-<p>bean.setId(2);
-bean.setName(&quot;tom&quot;);</p>
-<p>Birthday day = new Birthday(&quot;2010-11-22&quot;);
-bean.setBirthday(day);</p>
-<p>list.add(bean);//add
-bean = new Student();</p>
-<p>bean.setName(&quot;jack&quot;);
-list.add(bean);//add</p>
-<p>fail(xstream.toXML(list));
-//failRed(&quot;========JsonHierarchicalStreamDriver==删除根节点=========&quot;);</p>
-<p>//删除根节点
-xstream = new XStream(new JsonHierarchicalStreamDriver() {</p>
-<p>public HierarchicalStreamWriter createWriter(Writer out) {
-return new JsonWriter(out, JsonWriter.DROP_ROOT_MODE);</p>
-<p>}
-});</p>
-<p>xstream.alias(&quot;student&quot;, Student.class);
-fail(xstream.toXML(list));</p>
-<p>}</p>
-<p>运行后结果如下</p>
-<p>======JsonHierarchicalStreamDriver====JavaObject &gt;&gt;&gt;&gt; JaonString=========</p>
-<p>/#/#{&quot;list&quot;: [
-{</p>
-<p>&quot;id&quot;: 1,
-&quot;name&quot;: &quot;jack&quot;,</p>
-<p>&quot;email&quot;: &quot;jack@email.com&quot;,
-&quot;address&quot;: &quot;china&quot;,</p>
-<p>&quot;birthday&quot;: {
-&quot;birthday&quot;: &quot;2010-11-22&quot;</p>
-<p>}
-},</p>
-<p>{
-&quot;id&quot;: 2,</p>
-<p>&quot;name&quot;: &quot;tom&quot;,
-&quot;email&quot;: &quot;tom@125.com&quot;,</p>
-<p>&quot;address&quot;: &quot;china&quot;,
-&quot;birthday&quot;: {</p>
-<p>&quot;birthday&quot;: &quot;2010-11-22&quot;
-}</p>
-<p>},
-{</p>
-<p>&quot;id&quot;: 0,
-&quot;name&quot;: &quot;jack&quot;</p>
-<p>}
-]}</p>
-<p>/#[
-{</p>
-<p>&quot;id&quot;: 1,
-&quot;name&quot;: &quot;jack&quot;,</p>
-<p>&quot;email&quot;: &quot;jack@email.com&quot;,
-&quot;address&quot;: &quot;china&quot;,</p>
-<p>&quot;birthday&quot;: {
-&quot;birthday&quot;: &quot;2010-11-22&quot;</p>
-<p>}
-},</p>
-<p>{
-&quot;id&quot;: 2,</p>
-<p>&quot;name&quot;: &quot;tom&quot;,
-&quot;email&quot;: &quot;tom@125.com&quot;,</p>
-<p>&quot;address&quot;: &quot;china&quot;,
-&quot;birthday&quot;: {</p>
-<p>&quot;birthday&quot;: &quot;2010-11-22&quot;
-}</p>
-<p>},
-{</p>
-<p>&quot;id&quot;: 0,
-&quot;name&quot;: &quot;jack&quot;</p>
-<p>}
-]</p>
-<p>上面的list1是使用JsonHierarchicalStreamDriver 转换的，当然你也可以使用JettisonMappedXmlDriver驱动进行转换；用JettisonMappedXmlDriver转换后，你会发现格式不同而且没有根属性。</p>
-<p>4、 Map转换json
-@Test</p>
-<p>public void writeMap2JSON() {
-failRed(&quot;======JsonHierarchicalStreamDriver==== Map &gt;&gt;&gt;&gt; JaonString=========&quot;);</p>
-<p>xstream = new XStream(new JsonHierarchicalStreamDriver());
-//xstream = new XStream(new JettisonMappedXmlDriver());</p>
-<p>xstream.alias(&quot;student&quot;, Student.class);
-Map<String, Student> map = new HashMap<String, Student>();</p>
-<p>map.put(&quot;No.1&quot;, bean);//put
-bean = new Student();</p>
-<p>bean.setAddress(&quot;china&quot;);
-bean.setEmail(&quot;tom@125.com&quot;);</p>
-<p>bean.setId(2);
-bean.setName(&quot;tom&quot;);</p>
-<p>bean.setBirthday(new Birthday(&quot;2010-11-21&quot;));
-map.put(&quot;No.2&quot;, bean);//put</p>
-<p>bean = new Student();
-bean.setName(&quot;jack&quot;);</p>
-<p>map.put(&quot;No.3&quot;, bean);//put
-fail(xstream.toXML(map));</p>
-<p>//failRed(&quot;========JsonHierarchicalStreamDriver==删除根节点=========&quot;);
-//删除根节点</p>
-<p>xstream = new XStream(new JsonHierarchicalStreamDriver() {
-public HierarchicalStreamWriter createWriter(Writer out) {</p>
-<p>return new JsonWriter(out, JsonWriter.DROP_ROOT_MODE);
-}</p>
-<p>});
-xstream.alias(&quot;student&quot;, Student.class);</p>
-<p>fail(xstream.toXML(map));
-}</p>
-<p>运行后结果如下：</p>
-<p>======JsonHierarchicalStreamDriver==== Map &gt;&gt;&gt;&gt; JaonString=========</p>
-<p>{&quot;map&quot;: [
-[</p>
-<p>&quot;No.3&quot;,
-{</p>
-<p>&quot;id&quot;: 0,
-&quot;name&quot;: &quot;jack&quot;</p>
-<p>}
-],</p>
-<p>[
-&quot;No.1&quot;,</p>
-<p>{
-&quot;id&quot;: 1,</p>
-<p>&quot;name&quot;: &quot;jack&quot;,
-&quot;email&quot;: &quot;jack@email.com&quot;,</p>
-<p>&quot;address&quot;: &quot;china&quot;,
-&quot;birthday&quot;: {</p>
-<p>&quot;birthday&quot;: &quot;2010-11-22&quot;
-}</p>
-<p>}
-],</p>
-<p>[
-&quot;No.2&quot;,</p>
-<p>{
-&quot;id&quot;: 2,</p>
-<p>&quot;name&quot;: &quot;tom&quot;,
-&quot;email&quot;: &quot;tom@125.com&quot;,</p>
-<p>&quot;address&quot;: &quot;china&quot;,
-&quot;birthday&quot;: {</p>
-<p>&quot;birthday&quot;: &quot;2010-11-21&quot;
-}</p>
-<p>}
-]</p>
-<p>]}
-[</p>
-<p>[
-&quot;No.3&quot;,</p>
-<p>{
-&quot;id&quot;: 0,</p>
-<p>&quot;name&quot;: &quot;jack&quot;
-}</p>
-<p>],
-[</p>
-<p>&quot;No.1&quot;,
-{</p>
-<p>&quot;id&quot;: 1,
-&quot;name&quot;: &quot;jack&quot;,</p>
-<p>&quot;email&quot;: &quot;jack@email.com&quot;,
-&quot;address&quot;: &quot;china&quot;,</p>
-<p>&quot;birthday&quot;: {
-&quot;birthday&quot;: &quot;2010-11-22&quot;</p>
-<p>}
-}</p>
-<p>],
-[</p>
-<p>&quot;No.2&quot;,
-{</p>
-<p>&quot;id&quot;: 2,
-&quot;name&quot;: &quot;tom&quot;,</p>
-<p>&quot;email&quot;: &quot;tom@125.com&quot;,
-&quot;address&quot;: &quot;china&quot;,</p>
-<p>&quot;birthday&quot;: {
-&quot;birthday&quot;: &quot;2010-11-21&quot;</p>
-<p>}
-}</p>
-<p>]
-]</p>
-<p>5、 将JSON转换java对象</p>
-<p>//<em>/</em></p>
-<p>/<em> <b>function:</b>JsonHierarchicalStreamDriver可以将简单的json字符串转换成java对象，list、map转换不成功；
-/</em> JsonHierarchicalStreamDriver读取JSON字符串到java对象出错</p>
-<p>/<em> @author hoojo
-/</em> @createDate Nov 27, 2010 1:22:26 PM</p>
-<p>/<em> @throws JSONException
-/</em>/</p>
-<p>@Test
-public void readJSON2Object() throws JSONException {</p>
-<p>String json = &quot;{\&quot;student\&quot;: {&quot; +
-&quot;\&quot;id\&quot;: 1,&quot; +</p>
-<p>&quot;\&quot;name\&quot;: \&quot;haha\&quot;,&quot; +
-&quot;\&quot;email\&quot;: \&quot;email\&quot;,&quot; +</p>
-<p>&quot;\&quot;address\&quot;: \&quot;address\&quot;,&quot; +
-&quot;\&quot;birthday\&quot;: {&quot; +</p>
-<p>&quot;\&quot;birthday\&quot;: \&quot;2010-11-22\&quot;&quot; +
-&quot;}&quot; +</p>
-<p>&quot;}}&quot;;
-//JsonHierarchicalStreamDriver读取JSON字符串到java对象出错，但JettisonMappedXmlDriver可以</p>
-<p>xstream = new XStream(new JettisonMappedXmlDriver());
-xstream.alias(&quot;student&quot;, Student.class);</p>
-<p>fail(xstream.fromXML(json).toString());
-//JettisonMappedXmlDriver转换List集合出错，但JsonHierarchicalStreamDriver可以转换正确</p>
-<p>//JettisonMappedXmlDriver 转换的字符串 {&quot;list&quot;:{&quot;student&quot;:[{&quot;id&quot;:1,&quot;name&quot;:&quot;haha&quot;,&quot;email&quot;:&quot;email&quot;,&quot;address&quot;:&quot;address&quot;,&quot;birthday&quot;:[{},&quot;2010-11-22&quot;]}]},&quot;student&quot;:{&quot;id&quot;:2,&quot;name&quot;:&quot;tom&quot;,&quot;email&quot;:&quot;tom@125.com&quot;,&quot;address&quot;:&quot;china&quot;,&quot;birthday&quot;:[{},&quot;2010-11-22&quot;]}}
-json = &quot;{\&quot;list\&quot;: [{&quot; +</p>
-<p>&quot;\&quot;id\&quot;: 1,&quot; +
-&quot;\&quot;name\&quot;: \&quot;haha\&quot;,&quot; +</p>
-<p>&quot;\&quot;email\&quot;: \&quot;email\&quot;,&quot; +
-&quot;\&quot;address\&quot;: \&quot;address\&quot;,&quot; +</p>
-<p>&quot;\&quot;birthday\&quot;: {&quot; +
-&quot;\&quot;birthday\&quot;: \&quot;2010-11-22\&quot;&quot; +</p>
-<p>&quot;}&quot; +
-&quot;},{&quot; +</p>
-<p>&quot;\&quot;id\&quot;: 2,&quot; +
-&quot;\&quot;name\&quot;: \&quot;tom\&quot;,&quot; +</p>
-<p>&quot;\&quot;email\&quot;: \&quot;tom@125.com\&quot;,&quot; +
-&quot;\&quot;address\&quot;: \&quot;china\&quot;,&quot; +</p>
-<p>&quot;\&quot;birthday\&quot;: {&quot; +
-&quot;\&quot;birthday\&quot;: \&quot;2010-11-22\&quot;&quot; +</p>
-<p>&quot;}&quot; +
-&quot;}]}&quot;;</p>
-<p>System.out.println(json);//用js转换成功
-List list = (List) xstream.fromXML(json);</p>
-<p>System.out.println(list.size());//0好像转换失败
-}</p>
-<p>运行后结果如下：</p>
-<p>haha/#1/#address/#2010-11-22/#email</p>
-<p>{&quot;list&quot;: [{&quot;id&quot;: 1,&quot;name&quot;: &quot;haha&quot;,&quot;email&quot;: &quot;email&quot;,&quot;address&quot;: &quot;address&quot;,&quot;birthday&quot;: {&quot;birthday&quot;: &quot;2010-11-22&quot;}},
-{&quot;id&quot;: 2,&quot;name&quot;: &quot;tom&quot;,&quot;email&quot;: &quot;tom@125.com&quot;,&quot;address&quot;: &quot;china&quot;,&quot;birthday&quot;: {&quot;birthday&quot;: &quot;2010-11-22&quot;}}]}</p>
-<p>0</p>
-<p>JSON到Java的转换是fromXML方法。</p>
-<p>作者：<a href="http://hoojo.cnblogs.com/" target="_blank">hoojo</a></p>
+printf(&quot;\n&quot;);
+return 0;
+}
+getnode/<em> creates() {
+return NULL;
+}
+int isEmpty(getnode/</em> top) {
+return (top == NULL);
+}
+int stacktop(getnode/<em> top) {
+return top-&gt;data;
+}
+getnode/</em> add(getnode/<em> top, int item) {
+getnode/</em> newnode;
+newnode = (getnode/<em>) malloc(sizeof(getnode));
+if(newnode == NULL) {
+printf(&quot;\n记忆体配置失败！&quot;);
+exit(1);
+}
+newnode-&gt;data = item;
+newnode-&gt;next = top;
+top = newnode;
+return top;
+}
+getnode/</em> delete(getnode/<em> top) {
+getnode/</em> tmpnode;
+tmpnode = top;
+if(tmpnode == NULL) {
+printf(&quot;\n堆叠已空！&quot;);
+return NULL;
+}
+top = top-&gt;next;
+free(tmpnode);
+return top;
+}
+void list(getnode/<em> top) {
+getnode/</em> tmpnode;
+tmpnode = top;
+printf(&quot;\n堆叠内容：&quot;);
+while(tmpnode != NULL) {
+printf(&quot;%d &quot;, tmpnode-&gt;data);
+tmpnode = tmpnode-&gt;next;
+}
+}</li>
+</ul>
 
       
     </div>
@@ -1650,8 +628,8 @@ List list = (List) xstream.fromXML(json);</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/xml/">xml</a></li></span><span class="breadcrumb"><li><a href="/categories/xml/">xml</a></li><li><a href="/categories/xml/xstream/">xstream</a></li></span></span> | <span class="tags">Tagged <a href="/tags/xml/" class="label label-primary">xml</a><a href="/tags/xstream/" class="label label-success">xstream</a></span> | <span class="time">recent updated:<time title="2014-04-07 16:47:11"datetime="2014-04-07 16:47:11"> abr. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-xml-xstream--xStream完美转换XML、JSON/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-xml-xstream--xStream完美转换XML、JSON" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 02:35:16"datetime="2014-03-07 02:35:16"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByLink/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByLink" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -1666,298 +644,153 @@ List list = (List) xstream.fromXML(json);</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-xml-jdom--jdom解析xml--JavaEye技术网站/">jdom解析xml </a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByObject/">StackByObject</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-xml-jdom--jdom解析xml--JavaEye技术网站/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T09:54:44.000Z"> <a href="/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByObject/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jdom-xml">jdom解析xml</h1>
-<p>jdom解析xml
-    xml是一种广为使用的可扩展标记语言，java中解析xml的方式有很多，最常用的像jdom、dom4j、sax等等。前两天刚好有个程序需要解析xml，就学了下jdom，写了个小例子，这里做个学习笔记。</p>
-<pre><code>要使用jdom解析xml文件，需要下载jdom的包，我使用的是jdom-1.1。解压之后，将lib文件夹下的.jar文件以及build文件夹下的jdom.jar拷贝到工程文件夹下，然后就可以使用jdom操作xml文件了。
-
-一、读取xml文件
-
-假设有这样一个xml文件：
-</code></pre><p>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;</p>
-<p><sys-config>
-    <jdbc-info>
-        <driver-class-name>oracle.jdbc.driver.OracleDriver</driver-class-name>
-        <url>jdbc:oracle:thin:@localhost:1521:database</url>
-        <user-name>why</user-name>
-        <password>why</password>
-    </jdbc-info>
-    <provinces-info>
-        <province id="hlj" name="黑龙江">
-            <city id="harb">哈尔滨</city>
-            <city id="nj">嫩江</city>
-        </province>
-        <province id="jl" name="吉林"></province>
-    </provinces-info>
-</sys-config></p>
-<pre><code>首先，用 org.jdom.input.SAXBuilder 这个类取得要操作的xml文件，会返回一个 org.jdom.Document 对象，这里需要做一下异常处理。然后，取得这个xml文件的根节点，org.jdom.Element 代表xml文件中的一个节点，取得跟节点后，便可以读取xml文件中的信息。利用 org.jdom.xpath.XPath 可以取得xml中的任意制定的节点中的信息。
-例如，要取得上面文件中的 &lt;jdbc-info&gt; 下的 &lt;driver-class-name&gt; 中的内容，先取得这个节点Element driverClassNameElement = (Element)XPath.selectSingleNode(rootEle, &quot;//sys-config/jdbc-info/driver-class-name&quot;)，注意，根节点前要使用两个 &quot;/&quot; ，然后，用 driverClassNameElement.getText() 便可以取得这个节点下的信息。
-如果一个节点下有多个名称相同的子节点，可以用XPath.selectNodes()方法取得多个子节点的List，遍历这个List就可以操作各个子节点的内容了。
-下面是我写的读取上面xml文件的例子，比起文字描述更直观一些吧：
-</code></pre><p>package com.why.jdom;</p>
-<p>import java.io.IOException;
-import java.util.Iterator;
-import java.util.List;</p>
-<p>import org.jdom.input.SAXBuilder;
-import org.jdom.xpath.XPath;
-import org.jdom.Document;
-import org.jdom.Element;
-import org.jdom.JDOMException;</p>
-<p>public class ReadXML {</p>
-<pre><code>/**
- * @param args
- */
-public static void main(String[] args) {
-    SAXBuilder sax = new SAXBuilder();
-    try {
-        Document doc = sax.build(&quot;src/config.xml&quot;);
-        Element rootEle = doc.getRootElement();
-        Element driverClassNameElement = (Element)XPath.selectSingleNode(rootEle, &quot;//sys-config/jdbc-info/driver-class-name&quot;);
-        String driverClassName = driverClassNameElement.getText();
-        System.out.println(&quot;driverClassName = &quot; + driverClassName);
-        List provinceList = XPath.selectNodes(rootEle, &quot;//sys-config/provinces-info/province&quot;);
-        for(Iterator it = provinceList.iterator();it.hasNext();){
-            Element provinceEle = (Element)it.next();
-            String proId = provinceEle.getAttributeValue(&quot;id&quot;);
-            String proName = provinceEle.getAttributeValue(&quot;name&quot;);
-
-            System.out.println(&quot;provinceId = &quot; + proId + &quot;   provinceName = &quot; + proName);
-            List cityEleList = (List)provinceEle.getChildren(&quot;city&quot;);
-            for(Iterator cityIt = cityEleList.iterator();cityIt.hasNext();){
-                Element cityEle = (Element)cityIt.next();
-                String cityId = cityEle.getAttributeValue(&quot;id&quot;);
-                String cityName = cityEle.getText();
-
-                System.out.println(&quot;    cityId = &quot; + cityId + &quot;   cityName = &quot; + cityName);
-            }
-        }
-    } catch (JDOMException e) {
-        // TODO 自动生成 catch 块
-        e.printStackTrace();
-    } catch (IOException e) {
-        // TODO 自动生成 catch 块
-        e.printStackTrace();
-    }
-
+        <h1 id="stackbyobject">StackByObject</h1>
+<h1 id="-algorithm-gossip-java-"><a href="">Algorithm Gossip: 堆叠 - 使用 Java 作物件封装</a></h1>
+<h2 id="-">说明</h2>
+<p>如果您使用C++或Java等支援物件导向的语言来实作堆叠，您可以使用类别的方式来包括堆叠的功能，将所有的堆叠操作由堆叠物件来处理，一旦包装完成，则使用堆叠物件的时候，只要呼叫加入、删除等方法，而无需处理堆叠的top或判断是否为空等细节。</p>
+<h2 id="-">解法</h2>
+<p>使用C++与使用Java来作类别包装其实是类似的，在这边我们使用Java实作，因为它的语法看来较简洁；Java虽然没有指标，但可以使用参考（Reference）来达到链结的效果，一个节点的类别包装方式如下：
+class Node {
+    private int data;   // 节点资料
+    private Node next;  // 下一个节点位置
+    public void setData(int data);  // 节点资料
+    public void setNext(Node next);  // 下一个节点位置
+    public int getData();  // 传回节点资料
+    public Node getNext();  // 传回下一个节点位置
+}</p>
+<p>其中next是个物件参考名称，它可以用来参考至（指向）下一个节点物件的记忆体位置，而堆叠类别可以如下包装：
+class Stack {
+    private Node top;    // 堆叠顶端
+    private String name;  // 只是个名称
+    // 利用建构子建立堆叠
+    public Stack();
+    public Stack(String name);
+    // 插入资料至顶端
+    public void add(int data);
+    // 传回顶端资料
+    public int printTop();
+    // 删除顶端资料
+    public void del();
+    // 列出堆叠内容
+    public void list();
+}</p>
+<p>利用物件导向来包装资料结构，虽然在设计时需要花较多的心思，但设计完成之后，日后呼叫使用就简单了，以后您只要注意主程式的逻辑设计就可以了。</p>
+<h2 id="-">实作</h2>
+<ul>
+<li>Java
+import java.io./*;
+// 节点
+class Node {
+private int data; // 节点资料
+private Node next; // 下一个节点位置
+public void setData(int data) { // 节点资料
+this.data = data;
 }
-</code></pre><p>}</p>
-<pre><code>二、写xml文件
-
-写xml文件与读取xml文件的操作类似，利用 org.jdom.output.XMLOutputter 就可以将处理好的xml输出到文件了。可以设置文件的编码方式，不过一般使用UTF-8就可以了。代码如下：
-</code></pre><p>package com.why.jdom;</p>
-<p>import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;</p>
-<p>import org.jdom.Document;
-import org.jdom.Element;
-import org.jdom.output.XMLOutputter;</p>
-<p>public class WriteXML {</p>
-<pre><code>/**
- * @param args
- */
-public static void main(String[] args) {
-    // TODO 自动生成方法存根
-    Element rootEle = new Element(&quot;sys-config&quot;);
-    Element provincesEle = new Element(&quot;provinces-info&quot;);
-    Element provinceEle = new Element(&quot;province&quot;);
-    provinceEle.setAttribute(&quot;id&quot;,&quot;hlj&quot;);
-    provinceEle.setAttribute(&quot;name&quot;,&quot;黑龙江省&quot;);
-    Element cityEle1 = new Element(&quot;city&quot;);
-    cityEle1.setAttribute(&quot;id&quot;,&quot;harb&quot;);
-    cityEle1.addContent(&quot;哈尔滨&quot;);
-    Element cityEle2 = new Element(&quot;city&quot;);
-    cityEle2.setAttribute(&quot;id&quot;,&quot;nj&quot;);
-    cityEle2.addContent(&quot;嫩江&quot;);
-    provinceEle.addContent(cityEle1);
-    provinceEle.addContent(cityEle2);
-    provincesEle.addContent(provinceEle);
-    rootEle.addContent(provincesEle);
-    Document doc = new Document(rootEle);
-    XMLOutputter out = new XMLOutputter();
-</code></pre><p>//        out.setFormat(Format.getCompactFormat().setEncoding(&quot;GBK&quot;));//设置文件编码，默认为UTF-8
-        String xmlStr = out.outputString(doc);
-        System.out.println(xmlStr);
-        try {
-            out.output(doc, new FileOutputStream(&quot;c:/test.xml&quot;));
-        } catch (FileNotFoundException e) {
-            // TODO 自动生成 catch 块
-            e.printStackTrace();
-        } catch (IOException e) {
-            // TODO 自动生成 catch 块
-            e.printStackTrace();
-        }
-    }</p>
-<p>}</p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/xml/">xml</a></li></span><span class="breadcrumb"><li><a href="/categories/xml/">xml</a></li><li><a href="/categories/xml/jdom/">jdom</a></li></span></span> | <span class="tags">Tagged <a href="/tags/jdom/" class="label label-primary">jdom</a><a href="/tags/xml/" class="label label-success">xml</a></span> | <span class="time">recent updated:<time title="2014-04-07 16:31:40"datetime="2014-04-07 16:31:40"> abr. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-xml-jdom--jdom解析xml--JavaEye技术网站/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-xml-jdom--jdom解析xml--JavaEye技术网站" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-TCPIP--浅析——SCTP协议/">浅析——SCTP协议</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:44.000Z"> <a href="/2014/02/02/2014-02-02-TCPIP--浅析——SCTP协议/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-sctp-">浅析——SCTP协议</h1>
-<h2 id="-sctp-http-www-cnblogs-com-qlee-archive-2011-07-13-2105717-html-"><a href="http://www.cnblogs.com/qlee/archive/2011/07/13/2105717.html" target="_blank">浅析——SCTP协议</a></h2>
-<p>Posted on 2011-07-13 21:26 <a href="http://www.cnblogs.com/qlee/" target="_blank">李大嘴</a> 阅读(2621) 评论(0) <a href="http://www.cnblogs.com/qlee/admin/EditPosts.aspx?postid=2105717" target="_blank">编辑</a> <a href="">收藏</a></p>
-<p>SCTP处于SCTP用户应用层与IP网络层之间，它运用“关联”（association）这个术语定义交换信息的两个对等SCTP用户间的协议状态 。SCTP也是面向连接的，但在概念上，SCTP“关联”比TCP连接更为广泛：TCP的连接只有一个源地址和一个目的地址，SCTP提供一种方式使得每 个SCTP端点能为另一个对等端点提供一组传输地址，即传输地址= 一组IP地址+端口号。
-在继承TCP特点的基础上，SCTP提供了一些额外的功能：</p>
-<ol>
-<li>在多个“流”（stream）中实现用户数据的有序发送
-“流” 在TCP中指一系列的字节，而在SCTP中是指发送到上层协议的一定系列的用户消息，这些消息的顺序与流内其他消息相关。SCTP用户在建立关联时，可以 规定关联支持的流的数目。这个数目是与源端商定的，用户消息与流数目关联。在链路中，SCTP为每个送到对等端的消息分配一个流序号。在接收端，SCTP 确保在给定流中消息按顺序发送。同时，当一个流正在等待下一个非顺序的用户消息时，其他流的发送会继续。</li>
-<li>根据已发现的路径MTU（最大传输单元）大小进行用户数据分片
-为了确保发送到下层的SCTP数据包与路径MTU一致，SCTP对用户消息分片。在接收端，分片被重组后传给上层SCTP用户。</li>
-<li>选择性确认（SACK）和拥塞控制
-选择性确认用于数据包丢失发现，TCP中确认序号返回的是发送方已成功收到数据字节序号（不包含确认序号所指的字节），而SCTP反馈给发送端的是丢失的并且要求重传的消息序号。
-SCTP运用了TCP中的拥塞控制技术，包括慢启动，拥塞避免和快速重传。因此，当和TCP应用共存时，SCTP应用可接收属于SCTP的网络资源部分。</li>
-<li>块（chunk）绑定
-即多个用户消息可选择地绑定到一个SCTP包上，通过将消息放到一个或多个SCTP数据结构——“块”中，SCTP保留了应用程序的消息框架边界。不同类型的块可绑定到一个SCTP包中，但是控制块必须放在任何一个数据块之前。</li>
-<li>路径管理
-SCTP 路径管理功能主要负责从远端提供的一组传输地址中选择目的传输地址，它根据两个方面来选择目的地址：SCTP用户指示和当前可达的合格目的地。当其他流控 制不能提供可达性信息时，路径管理功能定时地扫描链路的可达性，并向SCTP报告远端传输地址所发生的变化。SCTP 路径管理功能模块同时还负责在建立链路时，向远端报告可用的本地地址，并把远端返回的传输地址告诉SCTP用户。</li>
-<li>支持多宿
-当SCTP传送数据包给目的IP地址时，如果此IP地址是不可达的，SCTP可以将消息重路由给一个交替的IP地址。这样，在关联的一端甚至两端，可容忍网络级错误。</li>
-<li>防范拒绝服务（DoS）攻击
-DoS 的攻击方式有很多种，最基本的DoS攻击就是利用合理的服务请求来占用过多的服务资源，从而使合法用户无法得到服务的响应。SYN Flooding攻击是DoS攻击的一种实例，是目前效果最好的一种黑客攻击方式。为了抵抗SYN Flooding对目标主机攻击，SCTP在关联初始化阶段实施了一种安全的“Cookie”机制。</li>
-<li>支持多种传输模式
-严格有序传输（像TCP），部分有序传输（像per-stream）和无序传输（像UDP）。
-2 SCTP包结构
-SCTP 包的结构，一个数据包首部可跟一个或多个可变长的块。块采用“类型—长度—值”（TLV）的格式。源端口、目的端口、校验码的意义同TCP中的意义相似。 确认标签保存着在SCTP握手中第一次交换的初始标签的值。在关联中，任何SCTP数据包若不包含这样一个标签，当到达时会被接收端丢弃。
-在每个块中，TLV包括块类型、传输处理标记、块长度。不同的块类型可用来传输控制信息或数据。
-传输序列号（TSN）和流序列号（SSN）是两种不同的序列号，TSN保证整个关联的可靠性，而SSN保证整个流的有序性，这样，在传输中，将数据的可靠性与有序性独立分开。
-3 SCTP数据传输
-4.1 SCTP四路握手及抵抗SYN Flooding攻击的原理
-一个SCTP关联定义为：[主机A的一组IP地址]+[主机A的端口]+ [主机B的一组IP地址]+[主机B的端口]。 因此，每一端对应组中的任何一个IP地址都可作为相应的源/目的地址来标示本次关联，通过四路握手，两端SCTP主机交换通信状态。
-SYN Flooding利用了TCP/IP的固有漏洞，面向连接的TCP三次握手是SYN Flooding存在的基础。SYN Flooding攻击的原理是：恶意的攻击者大量向服务器发送SYN报文，服务器在发出SYN+ACK应答报文后无法收到客户端的ACK报文（第三次握手 无法完成），服务器端将为维护一个非常大的半连接列表而消耗非常多的CPU时间和内存资源，还要不断对这个列表中的IP进行SYN+ACK的重试。服务器 端将忙于处理攻击者伪造的TCP连接请求而无暇理睬客户的正常请求，此时从正常客户的角度看来，服务器失去响应。
-而在一次SCTP四路 握手中，INIT消息的接收端不必保存任何状态信息或者分配任何资源，这样就可防范SYN Flooding等DoS攻击。它在发送INIT-ACK消息时，采用了一种机制——“状态Cookie”，该Cookie具有发送端要建立自己状态所需 的全部信息。
-SCTP产生一个状态Cookie的过程如下：</li>
-<li>使用收到的INIT和发出的INIT- ACK块中的信息创建一个关联的TCB（传输控制块）。</li>
-<li>在TCB中，将当前日期设为创建日期，将协议参数“有效Cookie时间”设为生存期间。</li>
-<li>根据TCB，收集重建TCB所需的最小信息子集，将该子集和密钥产生一个MAC（信息认证编码）。</li>
-<li>结合上述最小信息子集和MAC产生状态Cookie。</li>
-<li>在发送完INIT ACK（包含状态Cookie参数）后，发送方必须删除TCB以及任何与新关联有关的本地资源。
-INIT 和INIT-ACK都必须包含建立初始状态所需的参数：一组IP地址，保证可靠传输的初始TSN，每个被接收的SCTP包中必须含有的初始标签，每一端请 求发出的流数目和每一端能支持接收的流数目。交换完这些消息之后，INIT的发送端以COOKIE-ECHO消息的方式发送回状态Cookie。接收端根 据所接收到的COOKIE-ECHO中的状态Cookie，完整地重建自己的状态，并回送COOKIE- ACK来确认关联已建立。COOKIE-ECHO和COOKIE-ACK都可将用户数据消息绑定到各自的包中。
-由此可见，采用以上这种 方式，即使接收再多的INIT消息, 接收端也没有任何资源的消耗：它既不分配任何系统资源，也不保存此次新关联的状态，它只是把相应重建状态所用的状态Cookie作为参数，包含在每一个回 送的INIT-ACK消息中，最后该状态Cookie会被COOKIE-ECHO消息发送回来。
-2.2 SCTP数据交换
-在两个SCTP主机间的正常数据交换。SCTP主机发送SACK块，用来确认每一个收到的SCTP包。因为SACK能完整地描述接收端的状态，因此,依据SACK,发送端能做出重传判决。SCTP支持类似于TCP中的快速重传和time-out重传算法。
-对于数据包丢失发现，SCTP和TCP采用截然不同的机制：当TCP发现接收序号有缺口时，会等到该缺口被填上后，才发送序列号高于丢失数据包的数据。然而，SCTP即使发现接收序号有缺口或顺序错乱，仍会发送后面的数据。
-3.3 SCTP关闭关联
-作 为面向连接的传输协议，SCTP也运用三路握手来关闭一个关联，但与TCP有一点不同：一个TCP终端在“关联关闭”的过程中能够保持连接开启，并从对端 接收新的数据，而SCTP不支持TCP的这种“半关闭”状态。 1. 主机A发出“关闭”（SHUTDOWN）块来终止与主机B的关联，主机A进入“SHUTDOWN- PENDING”状态，对应的动作是：不再接受上层应用的数据，只发送队列中剩余的数据，进入“SHUTDOWN-SENT”状态。</li>
-<li>主机B一旦接收到“关闭”块，就进入“SHUTDOWN-RECEIVED”状态，同主机A一样，不再接受上层应用的数据，只发送队列中剩余的数据。</li>
-<li>主机A再次发送“关闭”块，通知主机 B所发送的剩余数据已到达，并且重申了关联正在关闭。</li>
-<li>当第二次收到“关闭”块时，主机B发送“确认关闭”块。</li>
-<li>主机A随后发送“关闭结束”块，完成本次关联的关闭。
-4 结束语
-SCTP 是为传输信令业务流而开发的，但它所具有的一些优于TCP的先进协议机制，如选择性确认、快速重传、无序递交等，使它又满足高性能传输的需求，这会给它带 来更为宽广的应用需求。目前，已有各种操作系统支持SCTP, 如Linux、AIX、Solaris、Windows、FressBSD。在不同协议实现间的互操作性测试的成功，揭示着SCTP正走向商业产品之路。
-IEFT正在致力于SCTP进一步的修改，使其更能满足下一代应用的需求，例如支持IPv6地址，解决对端对于IPv6的site-local、link-local地址无连通性的问题，以及在已存在的关联中动态地增加或删除IP地址而无需重启该关联。
-此外，在第三代移动通信中，SCTP可作为信令承载层的备选方案之一，它的应用及其性能评估也有待研究。</li>
-</ol>
-<p>分类: <a href="http://www.cnblogs.com/qlee/category/309427.html" target="_blank">Network Programming</a></p>
-<p>绿色通道： <a href="">好文要顶</a> <a href="">关注我</a> <a href="">收藏该文</a><a href="http://space.cnblogs.com/msg/send/%e6%9d%8e%e5%a4%a7%e5%98%b4" target="_blank">与我联系</a> <a href="&quot;分享至新浪微博&quot;"><img src="" alt=""></a>
-<a href="http://home.cnblogs.com/u/qlee/" target="_blank"><img src="" alt=""></a></p>
-<p><a href="http://home.cnblogs.com/u/qlee/" target="_blank">李大嘴</a>
-<a href="http://home.cnblogs.com/u/qlee/followees" target="_blank">关注 - 7</a>
-<a href="http://home.cnblogs.com/u/qlee/followers" target="_blank">粉丝 - 27</a></p>
-<p><a href="">+加关注</a></p>
-<p>0</p>
-<p>0
-(请您对文章做出评价)</p>
-<p><a href="http://www.cnblogs.com/qlee/archive/2011/07/12/2104089.html" target="_blank">«</a> 上一篇：<a href="http://www.cnblogs.com/qlee/archive/2011/07/12/2104089.html" title="发布于2011-07-12 11:47" target="_blank">TCP状态转换图</a>
-<a href="http://www.cnblogs.com/qlee/archive/2011/07/13/2105720.html" target="_blank">»</a> 下一篇：<a href="http://www.cnblogs.com/qlee/archive/2011/07/13/2105720.html" title="发布于2011-07-13 21:28" target="_blank">MTU &amp; MSS 详解记录</a></p>
-<p>SCTP处于SCTP用户应用层与IP网络层之间，它运用“关联”（association）这个术语定义交换信息的两个对等SCTP用户间的协议状态 。SCTP也是面向连接的，但在概念上，SCTP“关联”比TCP连接更为广泛：TCP的连接只有一个源地址和一个目的地址，SCTP提供一种方式使得每 个SCTP端点能为另一个对等端点提供一组传输地址，即传输地址= 一组IP地址+端口号。
-在继承TCP特点的基础上，SCTP提供了一些额外的功能：</p>
-<ol>
-<li>在多个“流”（stream）中实现用户数据的有序发送
-“流” 在TCP中指一系列的字节，而在SCTP中是指发送到上层协议的一定系列的用户消息，这些消息的顺序与流内其他消息相关。SCTP用户在建立关联时，可以 规定关联支持的流的数目。这个数目是与源端商定的，用户消息与流数目关联。在链路中，SCTP为每个送到对等端的消息分配一个流序号。在接收端，SCTP 确保在给定流中消息按顺序发送。同时，当一个流正在等待下一个非顺序的用户消息时，其他流的发送会继续。</li>
-<li>根据已发现的路径MTU（最大传输单元）大小进行用户数据分片
-为了确保发送到下层的SCTP数据包与路径MTU一致，SCTP对用户消息分片。在接收端，分片被重组后传给上层SCTP用户。</li>
-<li>选择性确认（SACK）和拥塞控制
-选择性确认用于数据包丢失发现，TCP中确认序号返回的是发送方已成功收到数据字节序号（不包含确认序号所指的字节），而SCTP反馈给发送端的是丢失的并且要求重传的消息序号。
-SCTP运用了TCP中的拥塞控制技术，包括慢启动，拥塞避免和快速重传。因此，当和TCP应用共存时，SCTP应用可接收属于SCTP的网络资源部分。</li>
-<li>块（chunk）绑定
-即多个用户消息可选择地绑定到一个SCTP包上，通过将消息放到一个或多个SCTP数据结构——“块”中，SCTP保留了应用程序的消息框架边界。不同类型的块可绑定到一个SCTP包中，但是控制块必须放在任何一个数据块之前。</li>
-<li>路径管理
-SCTP 路径管理功能主要负责从远端提供的一组传输地址中选择目的传输地址，它根据两个方面来选择目的地址：SCTP用户指示和当前可达的合格目的地。当其他流控 制不能提供可达性信息时，路径管理功能定时地扫描链路的可达性，并向SCTP报告远端传输地址所发生的变化。SCTP 路径管理功能模块同时还负责在建立链路时，向远端报告可用的本地地址，并把远端返回的传输地址告诉SCTP用户。</li>
-<li>支持多宿
-当SCTP传送数据包给目的IP地址时，如果此IP地址是不可达的，SCTP可以将消息重路由给一个交替的IP地址。这样，在关联的一端甚至两端，可容忍网络级错误。</li>
-<li>防范拒绝服务（DoS）攻击
-DoS 的攻击方式有很多种，最基本的DoS攻击就是利用合理的服务请求来占用过多的服务资源，从而使合法用户无法得到服务的响应。SYN Flooding攻击是DoS攻击的一种实例，是目前效果最好的一种黑客攻击方式。为了抵抗SYN Flooding对目标主机攻击，SCTP在关联初始化阶段实施了一种安全的“Cookie”机制。</li>
-<li>支持多种传输模式
-严格有序传输（像TCP），部分有序传输（像per-stream）和无序传输（像UDP）。
-2 SCTP包结构
-SCTP 包的结构，一个数据包首部可跟一个或多个可变长的块。块采用“类型—长度—值”（TLV）的格式。源端口、目的端口、校验码的意义同TCP中的意义相似。 确认标签保存着在SCTP握手中第一次交换的初始标签的值。在关联中，任何SCTP数据包若不包含这样一个标签，当到达时会被接收端丢弃。
-在每个块中，TLV包括块类型、传输处理标记、块长度。不同的块类型可用来传输控制信息或数据。
-传输序列号（TSN）和流序列号（SSN）是两种不同的序列号，TSN保证整个关联的可靠性，而SSN保证整个流的有序性，这样，在传输中，将数据的可靠性与有序性独立分开。
-3 SCTP数据传输
-4.1 SCTP四路握手及抵抗SYN Flooding攻击的原理
-一个SCTP关联定义为：[主机A的一组IP地址]+[主机A的端口]+ [主机B的一组IP地址]+[主机B的端口]。 因此，每一端对应组中的任何一个IP地址都可作为相应的源/目的地址来标示本次关联，通过四路握手，两端SCTP主机交换通信状态。
-SYN Flooding利用了TCP/IP的固有漏洞，面向连接的TCP三次握手是SYN Flooding存在的基础。SYN Flooding攻击的原理是：恶意的攻击者大量向服务器发送SYN报文，服务器在发出SYN+ACK应答报文后无法收到客户端的ACK报文（第三次握手 无法完成），服务器端将为维护一个非常大的半连接列表而消耗非常多的CPU时间和内存资源，还要不断对这个列表中的IP进行SYN+ACK的重试。服务器 端将忙于处理攻击者伪造的TCP连接请求而无暇理睬客户的正常请求，此时从正常客户的角度看来，服务器失去响应。
-而在一次SCTP四路 握手中，INIT消息的接收端不必保存任何状态信息或者分配任何资源，这样就可防范SYN Flooding等DoS攻击。它在发送INIT-ACK消息时，采用了一种机制——“状态Cookie”，该Cookie具有发送端要建立自己状态所需 的全部信息。
-SCTP产生一个状态Cookie的过程如下：</li>
-<li>使用收到的INIT和发出的INIT- ACK块中的信息创建一个关联的TCB（传输控制块）。</li>
-<li>在TCB中，将当前日期设为创建日期，将协议参数“有效Cookie时间”设为生存期间。</li>
-<li>根据TCB，收集重建TCB所需的最小信息子集，将该子集和密钥产生一个MAC（信息认证编码）。</li>
-<li>结合上述最小信息子集和MAC产生状态Cookie。</li>
-<li>在发送完INIT ACK（包含状态Cookie参数）后，发送方必须删除TCB以及任何与新关联有关的本地资源。
-INIT 和INIT-ACK都必须包含建立初始状态所需的参数：一组IP地址，保证可靠传输的初始TSN，每个被接收的SCTP包中必须含有的初始标签，每一端请 求发出的流数目和每一端能支持接收的流数目。交换完这些消息之后，INIT的发送端以COOKIE-ECHO消息的方式发送回状态Cookie。接收端根 据所接收到的COOKIE-ECHO中的状态Cookie，完整地重建自己的状态，并回送COOKIE- ACK来确认关联已建立。COOKIE-ECHO和COOKIE-ACK都可将用户数据消息绑定到各自的包中。
-由此可见，采用以上这种 方式，即使接收再多的INIT消息, 接收端也没有任何资源的消耗：它既不分配任何系统资源，也不保存此次新关联的状态，它只是把相应重建状态所用的状态Cookie作为参数，包含在每一个回 送的INIT-ACK消息中，最后该状态Cookie会被COOKIE-ECHO消息发送回来。
-2.2 SCTP数据交换
-在两个SCTP主机间的正常数据交换。SCTP主机发送SACK块，用来确认每一个收到的SCTP包。因为SACK能完整地描述接收端的状态，因此,依据SACK,发送端能做出重传判决。SCTP支持类似于TCP中的快速重传和time-out重传算法。
-对于数据包丢失发现，SCTP和TCP采用截然不同的机制：当TCP发现接收序号有缺口时，会等到该缺口被填上后，才发送序列号高于丢失数据包的数据。然而，SCTP即使发现接收序号有缺口或顺序错乱，仍会发送后面的数据。
-3.3 SCTP关闭关联
-作 为面向连接的传输协议，SCTP也运用三路握手来关闭一个关联，但与TCP有一点不同：一个TCP终端在“关联关闭”的过程中能够保持连接开启，并从对端 接收新的数据，而SCTP不支持TCP的这种“半关闭”状态。 1. 主机A发出“关闭”（SHUTDOWN）块来终止与主机B的关联，主机A进入“SHUTDOWN- PENDING”状态，对应的动作是：不再接受上层应用的数据，只发送队列中剩余的数据，进入“SHUTDOWN-SENT”状态。</li>
-<li>主机B一旦接收到“关闭”块，就进入“SHUTDOWN-RECEIVED”状态，同主机A一样，不再接受上层应用的数据，只发送队列中剩余的数据。</li>
-<li>主机A再次发送“关闭”块，通知主机 B所发送的剩余数据已到达，并且重申了关联正在关闭。</li>
-<li>当第二次收到“关闭”块时，主机B发送“确认关闭”块。</li>
-<li>主机A随后发送“关闭结束”块，完成本次关联的关闭。
-4 结束语
-SCTP 是为传输信令业务流而开发的，但它所具有的一些优于TCP的先进协议机制，如选择性确认、快速重传、无序递交等，使它又满足高性能传输的需求，这会给它带 来更为宽广的应用需求。目前，已有各种操作系统支持SCTP, 如Linux、AIX、Solaris、Windows、FressBSD。在不同协议实现间的互操作性测试的成功，揭示着SCTP正走向商业产品之路。
-IEFT正在致力于SCTP进一步的修改，使其更能满足下一代应用的需求，例如支持IPv6地址，解决对端对于IPv6的site-local、link-local地址无连通性的问题，以及在已存在的关联中动态地增加或删除IP地址而无需重启该关联。
-此外，在第三代移动通信中，SCTP可作为信令承载层的备选方案之一，它的应用及其性能评估也有待研究。</li>
-</ol>
-<p>分类: <a href="http://www.cnblogs.com/qlee/category/309427.html" target="_blank">Network Programming</a></p>
-<p>绿色通道： <a href="">好文要顶</a> <a href="">关注我</a> <a href="">收藏该文</a><a href="http://space.cnblogs.com/msg/send/%e6%9d%8e%e5%a4%a7%e5%98%b4" target="_blank">与我联系</a> <a href="&quot;分享至新浪微博&quot;"><img src="" alt=""></a>
-<a href="http://home.cnblogs.com/u/qlee/" target="_blank"><img src="" alt=""></a></p>
-<p><a href="http://home.cnblogs.com/u/qlee/" target="_blank">李大嘴</a>
-<a href="http://home.cnblogs.com/u/qlee/followees" target="_blank">关注 - 7</a>
-<a href="http://home.cnblogs.com/u/qlee/followers" target="_blank">粉丝 - 27</a></p>
-<p><a href="">+加关注</a></p>
-<p>0</p>
-<p>0
-(请您对文章做出评价)</p>
-<p><a href="http://www.cnblogs.com/qlee/archive/2011/07/12/2104089.html" target="_blank">«</a> 上一篇：<a href="http://www.cnblogs.com/qlee/archive/2011/07/12/2104089.html" title="发布于2011-07-12 11:47" target="_blank">TCP状态转换图</a>
-<a href="http://www.cnblogs.com/qlee/archive/2011/07/13/2105720.html" target="_blank">»</a> 下一篇：<a href="http://www.cnblogs.com/qlee/archive/2011/07/13/2105720.html" title="发布于2011-07-13 21:28" target="_blank">MTU &amp; MSS 详解记录</a></p>
+public void setNext(Node next) { // 下一个节点位置
+this.next = next;
+}
+public int getData() { // 传回节点资料
+return data;
+}
+public Node getNext() { // 传回下一个节点位置
+return next;
+}
+}
+// 堆叠
+class Stack {
+private Node top;
+private String name; // 只是个名称
+public Stack() {
+this(&quot;list&quot;);
+}
+// 利用建构子建立堆叠
+public Stack(String name) {
+this.name = name;
+top = null;
+}
+// 插入资料至顶端
+public void add(int data) {
+Node newNode = new Node();
+newNode.setData(data);
+newNode.setNext(top);
+top = newNode;
+}
+// 传回顶端资料
+public int printTop() {
+return top.getData();
+}
+// 删除顶端资料
+public void del() {
+Node tmpNode;
+tmpNode = top;
+if(tmpNode == null) {
+System.out.println(&quot;\n堆叠已空！&quot;);
+return;
+}
+top = top.getNext();
+tmpNode = null;
+}
+// 列出堆叠内容
+public void list() {
+Node tmpNode;
+tmpNode = top;
+System.out.print(&quot;\n堆叠内容：&quot;);
+while(tmpNode != null) {
+System.out.print(tmpNode.getData() + &quot; &quot;);
+tmpNode = tmpNode.getNext();
+}
+}
+}
+public class StackShow {
+public static void main(String[] args)
+throws IOException {
+int input, select;
+BufferedReader buf;
+buf = new BufferedReader(
+new InputStreamReader(System.in));
+Stack s1 = new Stack(&quot;堆叠测试&quot;);
+while(true) {
+System.out.print(&quot;\n\n请输入选项(-1结束)：&quot;);
+System.out.print(&quot;\n(1)插入值至堆叠&quot;);
+System.out.print(&quot;\n(2)显示堆叠顶端&quot;);
+System.out.print(&quot;\n(3)删除顶端值&quot;);
+System.out.print(&quot;\n(4)显示所有内容&quot;);
+System.out.print(&quot;\n$c&gt;&quot;);
+select = Integer.parseInt(buf.readLine());
+if(select == -1)
+break;
+switch(select) {
+case 1:
+System.out.print(&quot;\n输入值：&quot;);
+input = Integer.parseInt(buf.readLine());
+s1.add(input);
+break;
+case 2:
+System.out.print(&quot;\n顶端值：&quot; +
+s1.printTop());
+break;
+case 3:
+s1.del();
+break;
+case 4:
+s1.list();
+break;
+default:
+System.out.print(&quot;\n选项错误！&quot;);
+}
+}
+System.out.println(&quot;&quot;);
+}
+}</li>
+</ul>
 
       
     </div>
@@ -1967,8 +800,8 @@ IEFT正在致力于SCTP进一步的修改，使其更能满足下一代应用的
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/TCPIP/">TCPIP</a></li></span></span> | <span class="tags">Tagged <a href="/tags/TCPIP/" class="label label-primary">TCPIP</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:44"datetime="2014-03-07 09:54:44"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-TCPIP--浅析——SCTP协议/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-TCPIP--浅析——SCTP协议" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/AlgorithmGossip/">AlgorithmGossip</a></li></span></span> | <span class="tags">Tagged <a href="/tags/AlgorithmGossip/" class="label label-primary">AlgorithmGossip</a></span> | <span class="time">recent updated:<time title="2014-03-07 02:35:20"datetime="2014-03-07 02:35:20"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByObject/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-AlgorithmGossip-AlgorithmGossip--StackByObject" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -2045,10 +878,12 @@ IEFT正在致力于SCTP进一步的修改，使其更能满足下一代应用的
 </span><span id='analytics-baidu'>
 <script>
 var _hmt = _hmt || [];
-_js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
+_js2load.push({src:"//hm.baidu.com/hm.js?eaa92c12166944fd3a160103e6c4a8cf"});
 </script>
+
+
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:25:39</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-14 12:45:07</em></span></div>
 </div>
 <div class="clearfix"></div>
 

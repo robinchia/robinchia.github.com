@@ -110,30 +110,1252 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">一次Java内存溢出异常的分析过程</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（八）——数字证书/">Java加密技术（八）——数字证书</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T09:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（八）——数字证书/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-java-">一次Java内存溢出异常的分析过程</h1>
-<p>前些天，<a href="http://server.chinabyte.com/" target="_blank">服务器</a>上一个服务跑了一个多月突然当掉了。看了下日志，程序抛出了java.lang.OutOfMemoryError，之前也出现过同样的错误，服务跑了三个月内存溢出。出现这个异常，初步判断是程序有内存泄漏，接下来需要利用一些工具来分析具体原因。</p>
-<p>首先使用jdk自带的工具jmap转储(dump)java内存堆数据到本地文件中。jmap转储(dump)命令格式如下：</p>
-<p>jmap -dump:</p>
-<p>表示dump选项，表示需要dump的java应用程序的进程ID</p>
-<p>dump-options可以有以下三种参数，参数之间用逗号隔开：</p>
-<p>live，只dump活动的object，如果没有指定，表示dump所有object</p>
-<p>format=b，字节流格式</p>
-<p>file=，是转储文件的保存路径</p>
-<p>下面是dump命令的一个例子:</p>
-<p>jmap -dump:format=b,file=heap.bin 8023</p>
-<p>dump完成后，用Eclipse Memory Analyzer打开转储文件进行分析。Eclipse Memory Analyzer是一个java内存堆转储文件分析工具，可以生成内存分析报告(包括内存泄露Leak Suspects )。下面是分析完成后查看Top Consumers所看到的图表:</p>
-<p><img src="" alt=""></p>
-<p><img src="" alt=""></p>
-<p>看到这两张图表，问题就比较明朗了。berkeley db中的数据结点com.sleepycat.je.tree.BIN占用了大量内存，导致内存溢出了。为了提高访问效率，berkeley db会缓存大量的结点，缓存大小限制可以在EnvironmentConfig设置，默认为jvm内存大小限制的60%。而这个应用程序中使用了5个EnvironmentImpl，并且都未单独设置缓存大小，总的缓存限制为jvm内存限制的300%(图表中BIN结点已经占用了94.55%的内存)，远远超出java的内存限制。随着服务的运行，缓存数据越来越多，最后导致内存溢出错误。因此，为每个EnvironmentImpl设置合适的缓存大小限制，就可以避免再次发生内存溢出。
-来源： <a href="[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)">[http://soft.chinabyte.com/database/475/12147475.shtml](http://soft.chinabyte.com/database/475/12147475.shtml)</a> </p>
+        <h1 id="java-">Java加密技术（八）——数字证书</h1>
+<pre><code>本篇的主要内容为Java证书体系的实现。![]()
+</code></pre><p><strong>请大家在阅读本篇内容时先阅读 <a href="http://snowolf.iteye.com/blog/381767" target="_blank">Java加密技术（四）</a>，预先了解RSA加密算法。</strong><img src="" alt="">
+在构建Java代码实现前，我们需要完成证书的制作。
+1.生成keyStroe文件
+在命令行下执行以下命令：
+Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>keytool -genkey -validity 36000 -alias www.zlex.org -keyalg RSA -keystore d:\zlex.keystore  </li>
+</ol>
+<p>keytool -genkey -validity 36000 -alias www.zlex.org -keyalg RSA -keystore d:\zlex.keystore
+其中
+<strong>-genkey</strong>表示生成密钥
+<strong>-validity</strong>指定证书有效期，这里是<strong>36000</strong>天
+<strong>-alias</strong>指定别名，这里是<strong>www.zlex.org</strong>
+<strong>-keyalg</strong>指定算法，这里是<strong>RSA</strong>
+<strong>-keystore</strong>指定存储位置，这里是<strong>d:\zlex.keystore</strong>
+在这里我使用的密码为 <strong>123456</strong>
+控制台输出：
+Console代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>输入keystore密码：  </li>
+<li>再次输入新密码:  </li>
+<li>您的名字与姓氏是什么？  </li>
+<li>[Unknown]：  www.zlex.org  </li>
+<li>您的组织单位名称是什么？  </li>
+<li>[Unknown]：  zlex  </li>
+<li>您的组织名称是什么？  </li>
+<li>[Unknown]：  zlex  </li>
+<li>您所在的城市或区域名称是什么？  </li>
+<li>[Unknown]：  BJ  </li>
+<li>您所在的州或省份名称是什么？  </li>
+<li>[Unknown]：  BJ  </li>
+<li>该单位的两字母国家代码是什么  </li>
+<li>[Unknown]：  CN  </li>
+<li>CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN 正确吗？  </li>
+<li>[否]：  Y  </li>
+<li></li>
+<li>输入<tomcat>的主密码  </li>
+<li>（如果和 keystore 密码相同，按回车）：  </li>
+<li>再次输入新密码:  </li>
+</ol>
+<p>输入keystore密码：</p>
+<p>再次输入新密码:
+您的名字与姓氏是什么？</p>
+<p>  [Unknown]：  www.zlex.org
+您的组织单位名称是什么？</p>
+<p>  [Unknown]：  zlex
+您的组织名称是什么？</p>
+<p>  [Unknown]：  zlex
+您所在的城市或区域名称是什么？</p>
+<p>  [Unknown]：  BJ
+您所在的州或省份名称是什么？</p>
+<p>  [Unknown]：  BJ
+该单位的两字母国家代码是什么</p>
+<p>  [Unknown]：  CN
+CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN 正确吗？</p>
+<p>  [否]：  Y</p>
+<p>输入<tomcat>的主密码
+        （如果和 keystore 密码相同，按回车）：</p>
+<p>再次输入新密码:</p>
+<p>这时，在D盘下会生成一个zlex.keystore的文件。
+2.生成自签名证书
+光有keyStore文件是不够的，还需要证书文件，证书才是直接提供给外界使用的公钥凭证。
+导出证书：
+Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>keytool -export -keystore d:\zlex.keystore -alias www.zlex.org -file d:\zlex.cer -rfc  </li>
+</ol>
+<p>keytool -export -keystore d:\zlex.keystore -alias www.zlex.org -file d:\zlex.cer -rfc
+其中
+<strong>-export</strong>指定为导出操作
+<strong>-keystore</strong>指定<strong>keystore文件</strong>
+<strong>-alias</strong>指定导出<strong>keystore文件中的别名</strong>
+<strong>-file</strong>指向<strong>导出路径</strong>
+<strong>-rfc</strong>以文本格式输出，也就是以<strong>BASE64编码</strong>输出
+这里的密码是 <strong>123456</strong>
+控制台输出：
+Console代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>输入keystore密码：  </li>
+<li>保存在文件中的认证 <d:\zlex.cer>  </li>
+</ol>
+<p>输入keystore密码：</p>
+<p>保存在文件中的认证 <d:\zlex.cer>
+当然，使用方是需要导入证书的！
+可以通过自签名证书完成CAS单点登录系统的构建！<img src="" alt="">
+Ok，准备工作完成，开始Java实现！
+通过java代码实现如下：<strong>Coder类见 <a href="http://snowolf.iteye.com/blog/379860" target="_blank">Java加密技术（一）</a></strong>
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>import java.io.FileInputStream;  </li>
+<li>import java.security.KeyStore;  </li>
+<li>import java.security.PrivateKey;  </li>
+<li>import java.security.PublicKey;  </li>
+<li>import java.security.Signature;  </li>
+<li>import java.security.cert.Certificate;  </li>
+<li>import java.security.cert.CertificateFactory;  </li>
+<li>import java.security.cert.X509Certificate;  </li>
+<li>import java.util.Date;  </li>
+<li></li>
+<li>import javax.crypto.Cipher;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 证书组件 </li>
+<li>/*  </li>
+<li>/* @author 梁栋 </li>
+<li>/* @version 1.0 </li>
+<li>/* @since 1.0 </li>
+<li>/*/  </li>
+<li>public abstract class CertificateCoder extends Coder {  </li>
+<li></li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* Java密钥库(Java Key Store，JKS)KEY_STORE </li>
+<li>/*/  </li>
+<li>public static final String KEY_STORE = &quot;JKS&quot;;  </li>
+<li></li>
+<li>public static final String X509 = &quot;X.509&quot;;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 由KeyStore获得私钥 </li>
+<li>/*  </li>
+<li>/* @param keyStorePath </li>
+<li>/* @param alias </li>
+<li>/* @param password </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>private static PrivateKey getPrivateKey(String keyStorePath, String alias,  </li>
+<li>String password) throws Exception {  </li>
+<li>KeyStore ks = getKeyStore(keyStorePath, password);  </li>
+<li>PrivateKey key = (PrivateKey) ks.getKey(alias, password.toCharArray());  </li>
+<li>return key;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 由Certificate获得公钥 </li>
+<li>/*  </li>
+<li>/* @param certificatePath </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>private static PublicKey getPublicKey(String certificatePath)  </li>
+<li>throws Exception {  </li>
+<li>Certificate certificate = getCertificate(certificatePath);  </li>
+<li>PublicKey key = certificate.getPublicKey();  </li>
+<li>return key;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 获得Certificate </li>
+<li>/*  </li>
+<li>/* @param certificatePath </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>private static Certificate getCertificate(String certificatePath)  </li>
+<li>throws Exception {  </li>
+<li>CertificateFactory certificateFactory = CertificateFactory  </li>
+<li>.getInstance(X509);  </li>
+<li>FileInputStream in = new FileInputStream(certificatePath);  </li>
+<li></li>
+<li>Certificate certificate = certificateFactory.generateCertificate(in);  </li>
+<li>in.close();  </li>
+<li></li>
+<li>return certificate;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 获得Certificate </li>
+<li>/*  </li>
+<li>/* @param keyStorePath </li>
+<li>/* @param alias </li>
+<li>/* @param password </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>private static Certificate getCertificate(String keyStorePath,  </li>
+<li>String alias, String password) throws Exception {  </li>
+<li>KeyStore ks = getKeyStore(keyStorePath, password);  </li>
+<li>Certificate certificate = ks.getCertificate(alias);  </li>
+<li></li>
+<li>return certificate;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 获得KeyStore </li>
+<li>/*  </li>
+<li>/* @param keyStorePath </li>
+<li>/* @param password </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>private static KeyStore getKeyStore(String keyStorePath, String password)  </li>
+<li>throws Exception {  </li>
+<li>FileInputStream is = new FileInputStream(keyStorePath);  </li>
+<li>KeyStore ks = KeyStore.getInstance(KEY_STORE);  </li>
+<li>ks.load(is, password.toCharArray());  </li>
+<li>is.close();  </li>
+<li>return ks;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 私钥加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @param keyStorePath </li>
+<li>/* @param alias </li>
+<li>/* @param password </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptByPrivateKey(byte[] data, String keyStorePath,  </li>
+<li>String alias, String password) throws Exception {  </li>
+<li>// 取得私钥  </li>
+<li>PrivateKey privateKey = getPrivateKey(keyStorePath, alias, password);  </li>
+<li></li>
+<li>// 对数据加密  </li>
+<li>Cipher cipher = Cipher.getInstance(privateKey.getAlgorithm());  </li>
+<li>cipher.init(Cipher.ENCRYPT_MODE, privateKey);  </li>
+<li></li>
+<li>return cipher.doFinal(data);  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 私钥解密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @param keyStorePath </li>
+<li>/* @param alias </li>
+<li>/* @param password </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] decryptByPrivateKey(byte[] data, String keyStorePath,  </li>
+<li>String alias, String password) throws Exception {  </li>
+<li>// 取得私钥  </li>
+<li>PrivateKey privateKey = getPrivateKey(keyStorePath, alias, password);  </li>
+<li></li>
+<li>// 对数据加密  </li>
+<li>Cipher cipher = Cipher.getInstance(privateKey.getAlgorithm());  </li>
+<li>cipher.init(Cipher.DECRYPT_MODE, privateKey);  </li>
+<li></li>
+<li>return cipher.doFinal(data);  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 公钥加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @param certificatePath </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptByPublicKey(byte[] data, String certificatePath)  </li>
+<li>throws Exception {  </li>
+<li></li>
+<li>// 取得公钥  </li>
+<li>PublicKey publicKey = getPublicKey(certificatePath);  </li>
+<li>// 对数据加密  </li>
+<li>Cipher cipher = Cipher.getInstance(publicKey.getAlgorithm());  </li>
+<li>cipher.init(Cipher.ENCRYPT_MODE, publicKey);  </li>
+<li></li>
+<li>return cipher.doFinal(data);  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 公钥解密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @param certificatePath </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] decryptByPublicKey(byte[] data, String certificatePath)  </li>
+<li>throws Exception {  </li>
+<li>// 取得公钥  </li>
+<li>PublicKey publicKey = getPublicKey(certificatePath);  </li>
+<li></li>
+<li>// 对数据加密  </li>
+<li>Cipher cipher = Cipher.getInstance(publicKey.getAlgorithm());  </li>
+<li>cipher.init(Cipher.DECRYPT_MODE, publicKey);  </li>
+<li></li>
+<li>return cipher.doFinal(data);  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 验证Certificate </li>
+<li>/*  </li>
+<li>/* @param certificatePath </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>public static boolean verifyCertificate(String certificatePath) {  </li>
+<li>return verifyCertificate(new Date(), certificatePath);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 验证Certificate是否过期或无效 </li>
+<li>/*  </li>
+<li>/* @param date </li>
+<li>/* @param certificatePath </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>public static boolean verifyCertificate(Date date, String certificatePath) {  </li>
+<li>boolean status = true;  </li>
+<li>try {  </li>
+<li>// 取得证书  </li>
+<li>Certificate certificate = getCertificate(certificatePath);  </li>
+<li>// 验证证书是否过期或无效  </li>
+<li>status = verifyCertificate(date, certificate);  </li>
+<li>} catch (Exception e) {  </li>
+<li>status = false;  </li>
+<li>}  </li>
+<li>return status;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 验证证书是否过期或无效 </li>
+<li>/*  </li>
+<li>/* @param date </li>
+<li>/* @param certificate </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>private static boolean verifyCertificate(Date date, Certificate certificate) {  </li>
+<li>boolean status = true;  </li>
+<li>try {  </li>
+<li>X509Certificate x509Certificate = (X509Certificate) certificate;  </li>
+<li>x509Certificate.checkValidity(date);  </li>
+<li>} catch (Exception e) {  </li>
+<li>status = false;  </li>
+<li>}  </li>
+<li>return status;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 签名 </li>
+<li>/*  </li>
+<li>/* @param keyStorePath </li>
+<li>/* @param alias </li>
+<li>/* @param password </li>
+<li>/*  </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static String sign(byte[] sign, String keyStorePath, String alias,  </li>
+<li>String password) throws Exception {  </li>
+<li>// 获得证书  </li>
+<li>X509Certificate x509Certificate = (X509Certificate) getCertificate(  </li>
+<li>keyStorePath, alias, password);  </li>
+<li>// 获取私钥  </li>
+<li>KeyStore ks = getKeyStore(keyStorePath, password);  </li>
+<li>// 取得私钥  </li>
+<li>PrivateKey privateKey = (PrivateKey) ks.getKey(alias, password  </li>
+<li>.toCharArray());  </li>
+<li></li>
+<li>// 构建签名  </li>
+<li>Signature signature = Signature.getInstance(x509Certificate  </li>
+<li>.getSigAlgName());  </li>
+<li>signature.initSign(privateKey);  </li>
+<li>signature.update(sign);  </li>
+<li>return encryptBASE64(signature.sign());  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 验证签名 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @param sign </li>
+<li>/* @param certificatePath </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static boolean verify(byte[] data, String sign,  </li>
+<li>String certificatePath) throws Exception {  </li>
+<li>// 获得证书  </li>
+<li>X509Certificate x509Certificate = (X509Certificate) getCertificate(certificatePath);  </li>
+<li>// 获得公钥  </li>
+<li>PublicKey publicKey = x509Certificate.getPublicKey();  </li>
+<li>// 构建签名  </li>
+<li>Signature signature = Signature.getInstance(x509Certificate  </li>
+<li>.getSigAlgName());  </li>
+<li>signature.initVerify(publicKey);  </li>
+<li>signature.update(data);  </li>
+<li></li>
+<li>return signature.verify(decryptBASE64(sign));  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 验证Certificate </li>
+<li>/*  </li>
+<li>/* @param keyStorePath </li>
+<li>/* @param alias </li>
+<li>/* @param password </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>public static boolean verifyCertificate(Date date, String keyStorePath,  </li>
+<li>String alias, String password) {  </li>
+<li>boolean status = true;  </li>
+<li>try {  </li>
+<li>Certificate certificate = getCertificate(keyStorePath, alias,  </li>
+<li>password);  </li>
+<li>status = verifyCertificate(date, certificate);  </li>
+<li>} catch (Exception e) {  </li>
+<li>status = false;  </li>
+<li>}  </li>
+<li>return status;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 验证Certificate </li>
+<li>/*  </li>
+<li>/* @param keyStorePath </li>
+<li>/* @param alias </li>
+<li>/* @param password </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>public static boolean verifyCertificate(String keyStorePath, String alias,  </li>
+<li>String password) {  </li>
+<li>return verifyCertificate(new Date(), keyStorePath, alias, password);  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>import java.io.FileInputStream;</p>
+<p>import java.security.KeyStore;
+import java.security.PrivateKey;</p>
+<p>import java.security.PublicKey;
+import java.security.Signature;</p>
+<p>import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;</p>
+<p>import java.security.cert.X509Certificate;
+import java.util.Date;</p>
+<p>import javax.crypto.Cipher;</p>
+<p>//<em>/</em></p>
+<p>/<em> 证书组件
+/</em></p>
+<p>/<em> @author 梁栋
+/</em> @version 1.0</p>
+<p>/<em> @since 1.0
+/</em>/</p>
+<p>public abstract class CertificateCoder extends Coder {</p>
+<pre><code>//*/*
+
+ /* Java密钥库(Java Key Store，JKS)KEY_STORE
+ /*/
+
+public static final String KEY_STORE = &quot;JKS&quot;;
+
+
+public static final String X509 = &quot;X.509&quot;;
+
+
+//*/*
+ /* 由KeyStore获得私钥
+
+ /*
+ /* @param keyStorePath
+
+ /* @param alias
+ /* @param password
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+private static PrivateKey getPrivateKey(String keyStorePath, String alias,
+
+        String password) throws Exception {
+    KeyStore ks = getKeyStore(keyStorePath, password);
+
+    PrivateKey key = (PrivateKey) ks.getKey(alias, password.toCharArray());
+    return key;
+
+}
+
+
+//*/*
+ /* 由Certificate获得公钥
+
+ /*
+ /* @param certificatePath
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+private static PublicKey getPublicKey(String certificatePath)
+
+        throws Exception {
+    Certificate certificate = getCertificate(certificatePath);
+
+    PublicKey key = certificate.getPublicKey();
+    return key;
+
+}
+
+
+//*/*
+ /* 获得Certificate
+
+ /*
+ /* @param certificatePath
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+private static Certificate getCertificate(String certificatePath)
+
+        throws Exception {
+    CertificateFactory certificateFactory = CertificateFactory
+
+            .getInstance(X509);
+    FileInputStream in = new FileInputStream(certificatePath);
+
+
+    Certificate certificate = certificateFactory.generateCertificate(in);
+
+    in.close();
+
+
+    return certificate;
+}
+
+
+//*/*
+
+ /* 获得Certificate
+ /*
+
+ /* @param keyStorePath
+ /* @param alias
+
+ /* @param password
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+private static Certificate getCertificate(String keyStorePath,
+        String alias, String password) throws Exception {
+
+    KeyStore ks = getKeyStore(keyStorePath, password);
+    Certificate certificate = ks.getCertificate(alias);
+
+
+    return certificate;
+
+}
+
+
+//*/*
+ /* 获得KeyStore
+
+ /*
+ /* @param keyStorePath
+
+ /* @param password
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+private static KeyStore getKeyStore(String keyStorePath, String password)
+        throws Exception {
+
+    FileInputStream is = new FileInputStream(keyStorePath);
+    KeyStore ks = KeyStore.getInstance(KEY_STORE);
+
+    ks.load(is, password.toCharArray());
+    is.close();
+
+    return ks;
+}
+
+
+//*/*
+
+ /* 私钥加密
+ /*
+
+ /* @param data
+ /* @param keyStorePath
+
+ /* @param alias
+ /* @param password
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static byte[] encryptByPrivateKey(byte[] data, String keyStorePath,
+
+        String alias, String password) throws Exception {
+    // 取得私钥
+
+    PrivateKey privateKey = getPrivateKey(keyStorePath, alias, password);
+
+
+    // 对数据加密
+    Cipher cipher = Cipher.getInstance(privateKey.getAlgorithm());
+
+    cipher.init(Cipher.ENCRYPT_MODE, privateKey);
+
+
+    return cipher.doFinal(data);
+
+
+}
+
+
+//*/*
+ /* 私钥解密
+
+ /*
+ /* @param data
+
+ /* @param keyStorePath
+ /* @param alias
+
+ /* @param password
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+public static byte[] decryptByPrivateKey(byte[] data, String keyStorePath,
+        String alias, String password) throws Exception {
+
+    // 取得私钥
+    PrivateKey privateKey = getPrivateKey(keyStorePath, alias, password);
+
+
+    // 对数据加密
+
+    Cipher cipher = Cipher.getInstance(privateKey.getAlgorithm());
+    cipher.init(Cipher.DECRYPT_MODE, privateKey);
+
+
+    return cipher.doFinal(data);
+
+
+}
+
+
+//*/*
+
+ /* 公钥加密
+ /*
+
+ /* @param data
+ /* @param certificatePath
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static byte[] encryptByPublicKey(byte[] data, String certificatePath)
+
+        throws Exception {
+
+
+    // 取得公钥
+    PublicKey publicKey = getPublicKey(certificatePath);
+
+    // 对数据加密
+    Cipher cipher = Cipher.getInstance(publicKey.getAlgorithm());
+
+    cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+
+
+    return cipher.doFinal(data);
+
+
+}
+
+
+//*/*
+ /* 公钥解密
+
+ /*
+ /* @param data
+
+ /* @param certificatePath
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+public static byte[] decryptByPublicKey(byte[] data, String certificatePath)
+        throws Exception {
+
+    // 取得公钥
+    PublicKey publicKey = getPublicKey(certificatePath);
+
+
+    // 对数据加密
+
+    Cipher cipher = Cipher.getInstance(publicKey.getAlgorithm());
+    cipher.init(Cipher.DECRYPT_MODE, publicKey);
+
+
+    return cipher.doFinal(data);
+
+
+}
+
+
+//*/*
+
+ /* 验证Certificate
+ /*
+
+ /* @param certificatePath
+ /* @return
+
+ /*/
+public static boolean verifyCertificate(String certificatePath) {
+
+    return verifyCertificate(new Date(), certificatePath);
+}
+
+
+//*/*
+
+ /* 验证Certificate是否过期或无效
+ /*
+
+ /* @param date
+ /* @param certificatePath
+
+ /* @return
+ /*/
+
+public static boolean verifyCertificate(Date date, String certificatePath) {
+    boolean status = true;
+
+    try {
+        // 取得证书
+
+        Certificate certificate = getCertificate(certificatePath);
+        // 验证证书是否过期或无效
+
+        status = verifyCertificate(date, certificate);
+    } catch (Exception e) {
+
+        status = false;
+    }
+
+    return status;
+}
+
+
+//*/*
+
+ /* 验证证书是否过期或无效
+ /*
+
+ /* @param date
+ /* @param certificate
+
+ /* @return
+ /*/
+
+private static boolean verifyCertificate(Date date, Certificate certificate) {
+    boolean status = true;
+
+    try {
+        X509Certificate x509Certificate = (X509Certificate) certificate;
+
+        x509Certificate.checkValidity(date);
+    } catch (Exception e) {
+
+        status = false;
+    }
+
+    return status;
+}
+
+
+//*/*
+
+ /* 签名
+ /*
+
+ /* @param keyStorePath
+ /* @param alias
+
+ /* @param password
+ /*
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static String sign(byte[] sign, String keyStorePath, String alias,
+
+        String password) throws Exception {
+    // 获得证书
+
+    X509Certificate x509Certificate = (X509Certificate) getCertificate(
+            keyStorePath, alias, password);
+
+    // 获取私钥
+    KeyStore ks = getKeyStore(keyStorePath, password);
+
+    // 取得私钥
+    PrivateKey privateKey = (PrivateKey) ks.getKey(alias, password
+
+            .toCharArray());
+
+
+    // 构建签名
+    Signature signature = Signature.getInstance(x509Certificate
+
+            .getSigAlgName());
+    signature.initSign(privateKey);
+
+    signature.update(sign);
+    return encryptBASE64(signature.sign());
+
+}
+
+
+//*/*
+ /* 验证签名
+
+ /*
+ /* @param data
+
+ /* @param sign
+ /* @param certificatePath
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static boolean verify(byte[] data, String sign,
+
+        String certificatePath) throws Exception {
+    // 获得证书
+
+    X509Certificate x509Certificate = (X509Certificate) getCertificate(certificatePath);
+    // 获得公钥
+
+    PublicKey publicKey = x509Certificate.getPublicKey();
+    // 构建签名
+
+    Signature signature = Signature.getInstance(x509Certificate
+            .getSigAlgName());
+
+    signature.initVerify(publicKey);
+    signature.update(data);
+
+
+    return signature.verify(decryptBASE64(sign));
+
+
+}
+
+
+//*/*
+
+ /* 验证Certificate
+ /*
+
+ /* @param keyStorePath
+ /* @param alias
+
+ /* @param password
+ /* @return
+
+ /*/
+public static boolean verifyCertificate(Date date, String keyStorePath,
+
+        String alias, String password) {
+    boolean status = true;
+
+    try {
+        Certificate certificate = getCertificate(keyStorePath, alias,
+
+                password);
+        status = verifyCertificate(date, certificate);
+
+    } catch (Exception e) {
+        status = false;
+
+    }
+    return status;
+
+}
+
+
+//*/*
+ /* 验证Certificate
+
+ /*
+ /* @param keyStorePath
+
+ /* @param alias
+ /* @param password
+
+ /* @return
+ /*/
+
+public static boolean verifyCertificate(String keyStorePath, String alias,
+        String password) {
+
+    return verifyCertificate(new Date(), keyStorePath, alias, password);
+}
+</code></pre><p>}
+再给出一个测试类：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>import static org.junit.Assert./*;  </li>
+<li></li>
+<li>import org.junit.Test;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/*  </li>
+<li>/* @author 梁栋 </li>
+<li>/* @version 1.0 </li>
+<li>/* @since 1.0 </li>
+<li>/*/  </li>
+<li>public class CertificateCoderTest {  </li>
+<li>private String password = &quot;123456&quot;;  </li>
+<li>private String alias = &quot;www.zlex.org&quot;;  </li>
+<li>private String certificatePath = &quot;d:/zlex.cer&quot;;  </li>
+<li>private String keyStorePath = &quot;d:/zlex.keystore&quot;;  </li>
+<li></li>
+<li>@Test  </li>
+<li>public void test() throws Exception {  </li>
+<li>System.err.println(&quot;公钥加密——私钥解密&quot;);  </li>
+<li>String inputStr = &quot;Ceritifcate&quot;;  </li>
+<li>byte[] data = inputStr.getBytes();  </li>
+<li></li>
+<li>byte[] encrypt = CertificateCoder.encryptByPublicKey(data,  </li>
+<li>certificatePath);  </li>
+<li></li>
+<li>byte[] decrypt = CertificateCoder.decryptByPrivateKey(encrypt,  </li>
+<li>keyStorePath, alias, password);  </li>
+<li>String outputStr = new String(decrypt);  </li>
+<li></li>
+<li>System.err.println(&quot;加密前: &quot; + inputStr + &quot;\n\r&quot; + &quot;解密后: &quot; + outputStr);  </li>
+<li></li>
+<li>// 验证数据一致  </li>
+<li>assertArrayEquals(data, decrypt);  </li>
+<li></li>
+<li>// 验证证书有效  </li>
+<li>assertTrue(CertificateCoder.verifyCertificate(certificatePath));  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>@Test  </li>
+<li>public void testSign() throws Exception {  </li>
+<li>System.err.println(&quot;私钥加密——公钥解密&quot;);  </li>
+<li></li>
+<li>String inputStr = &quot;sign&quot;;  </li>
+<li>byte[] data = inputStr.getBytes();  </li>
+<li></li>
+<li>byte[] encodedData = CertificateCoder.encryptByPrivateKey(data,  </li>
+<li>keyStorePath, alias, password);  </li>
+<li></li>
+<li>byte[] decodedData = CertificateCoder.decryptByPublicKey(encodedData,  </li>
+<li>certificatePath);  </li>
+<li></li>
+<li>String outputStr = new String(decodedData);  </li>
+<li>System.err.println(&quot;加密前: &quot; + inputStr + &quot;\n\r&quot; + &quot;解密后: &quot; + outputStr);  </li>
+<li>assertEquals(inputStr, outputStr);  </li>
+<li></li>
+<li>System.err.println(&quot;私钥签名——公钥验证签名&quot;);  </li>
+<li>// 产生签名  </li>
+<li>String sign = CertificateCoder.sign(encodedData, keyStorePath, alias,  </li>
+<li>password);  </li>
+<li>System.err.println(&quot;签名:\r&quot; + sign);  </li>
+<li></li>
+<li>// 验证签名  </li>
+<li>boolean status = CertificateCoder.verify(encodedData, sign,  </li>
+<li>certificatePath);  </li>
+<li>System.err.println(&quot;状态:\r&quot; + status);  </li>
+<li>assertTrue(status);  </li>
+<li></li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>import static org.junit.Assert./*;</p>
+<p>import org.junit.Test;</p>
+<p>//<em>/</em></p>
+<p>/<em>
+/</em> @author 梁栋</p>
+<p>/<em> @version 1.0
+/</em> @since 1.0</p>
+<p>/*/
+public class CertificateCoderTest {</p>
+<pre><code>private String password = &quot;123456&quot;;
+private String alias = &quot;www.zlex.org&quot;;
+
+private String certificatePath = &quot;d:/zlex.cer&quot;;
+private String keyStorePath = &quot;d:/zlex.keystore&quot;;
+
+
+@Test
+
+public void test() throws Exception {
+    System.err.println(&quot;公钥加密——私钥解密&quot;);
+
+    String inputStr = &quot;Ceritifcate&quot;;
+    byte[] data = inputStr.getBytes();
+
+
+    byte[] encrypt = CertificateCoder.encryptByPublicKey(data,
+
+            certificatePath);
+
+
+    byte[] decrypt = CertificateCoder.decryptByPrivateKey(encrypt,
+            keyStorePath, alias, password);
+
+    String outputStr = new String(decrypt);
+
+
+    System.err.println(&quot;加密前: &quot; + inputStr + &quot;\n\r&quot; + &quot;解密后: &quot; + outputStr);
+
+
+    // 验证数据一致
+    assertArrayEquals(data, decrypt);
+
+
+    // 验证证书有效
+
+    assertTrue(CertificateCoder.verifyCertificate(certificatePath));
+
+
+}
+
+
+@Test
+public void testSign() throws Exception {
+
+    System.err.println(&quot;私钥加密——公钥解密&quot;);
+
+
+    String inputStr = &quot;sign&quot;;
+    byte[] data = inputStr.getBytes();
+
+
+    byte[] encodedData = CertificateCoder.encryptByPrivateKey(data,
+
+            keyStorePath, alias, password);
+
+
+    byte[] decodedData = CertificateCoder.decryptByPublicKey(encodedData,
+            certificatePath);
+
+
+    String outputStr = new String(decodedData);
+
+    System.err.println(&quot;加密前: &quot; + inputStr + &quot;\n\r&quot; + &quot;解密后: &quot; + outputStr);
+    assertEquals(inputStr, outputStr);
+
+
+    System.err.println(&quot;私钥签名——公钥验证签名&quot;);
+
+    // 产生签名
+    String sign = CertificateCoder.sign(encodedData, keyStorePath, alias,
+
+            password);
+    System.err.println(&quot;签名:\r&quot; + sign);
+
+
+    // 验证签名
+
+    boolean status = CertificateCoder.verify(encodedData, sign,
+            certificatePath);
+
+    System.err.println(&quot;状态:\r&quot; + status);
+    assertTrue(status);
+
+
+}
+</code></pre><p>}
+控制台输出：
+Console代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>公钥加密——私钥解密  </li>
+<li>加密前: Ceritificate  </li>
+<li></li>
+<li>解密后: Ceritificate  </li>
+<li></li>
+<li>私钥加密——公钥解密  </li>
+<li>加密前: sign  </li>
+<li></li>
+<li>解密后: sign  </li>
+<li>私钥签名——公钥验证签名  </li>
+<li>签名:  </li>
+<li>pqBn5m6PJlfOjH0A6U2o2mUmBsfgyEY1NWCbiyA/I5Gc3gaVNVIdj/zkGNZRqTjhf3+J9a9z9EI7  </li>
+<li>6F2eWYd7punHx5oh6hfNgcKbVb52EfItl4QEN+djbXiPynn07+Lbg1NOjULnpEd6ZhLP1YwrEAuM  </li>
+<li>OfvX0e7/wplxLbySaKQ=  </li>
+<li></li>
+<li>状态:  </li>
+<li>true  </li>
+</ol>
+<p>公钥加密——私钥解密</p>
+<p>加密前: Ceritificate</p>
+<p>解密后: Ceritificate</p>
+<p>私钥加密——公钥解密
+加密前: sign</p>
+<p>解密后: sign</p>
+<p>私钥签名——公钥验证签名
+签名:</p>
+<p>pqBn5m6PJlfOjH0A6U2o2mUmBsfgyEY1NWCbiyA/I5Gc3gaVNVIdj/zkGNZRqTjhf3+J9a9z9EI7
+6F2eWYd7punHx5oh6hfNgcKbVb52EfItl4QEN+djbXiPynn07+Lbg1NOjULnpEd6ZhLP1YwrEAuM</p>
+<p>OfvX0e7/wplxLbySaKQ=</p>
+<p>状态:
+true
+由此完成了证书验证体系！<img src="" alt="">
+同样，我们可以对代码做签名——代码签名！<img src="" alt="">
+通过工具JarSigner可以完成代码签名。
+这里我们对tools.jar做代码签名，命令如下：
+Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>jarsigner -storetype jks -keystore zlex.keystore -verbose tools.jar www.zlex.org  </li>
+</ol>
+<p>jarsigner -storetype jks -keystore zlex.keystore -verbose tools.jar www.zlex.org
+控制台输出：
+Console代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>输入密钥库的口令短语：  </li>
+<li>正在更新： META-INF/WWW_ZLEX.SF  </li>
+<li>正在更新： META-INF/WWW_ZLEX.RSA  </li>
+<li>正在签名： org/zlex/security/Security.class  </li>
+<li>正在签名： org/zlex/tool/Main$1.class  </li>
+<li>正在签名： org/zlex/tool/Main$2.class  </li>
+<li>正在签名： org/zlex/tool/Main.class  </li>
+<li></li>
+<li>警告：  </li>
+<li>签名者证书将在六个月内过期。  </li>
+</ol>
+<p>输入密钥库的口令短语：</p>
+<p>正在更新： META-INF/WWW_ZLEX.SF
+正在更新： META-INF/WWW_ZLEX.RSA</p>
+<p>  正在签名： org/zlex/security/Security.class
+  正在签名： org/zlex/tool/Main$1.class</p>
+<p>  正在签名： org/zlex/tool/Main$2.class
+  正在签名： org/zlex/tool/Main.class</p>
+<p>警告：</p>
+<p>签名者证书将在六个月内过期。
+此时，我们可以对签名后的jar做验证！<img src="" alt="">
+验证tools.jar，命令如下：
+Shell代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>jarsigner -verify -verbose -certs tools.jar  </li>
+</ol>
+<p>jarsigner -verify -verbose -certs tools.jar
+控制台输出：
+Console代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>402 Sat Jun 20 16:25:14 CST 2009 META-INF/MANIFEST.MF  </li>
+<li>532 Sat Jun 20 16:25:14 CST 2009 META-INF/WWW_ZLEX.SF  </li>
+<li>889 Sat Jun 20 16:25:14 CST 2009 META-INF/WWW_ZLEX.RSA  </li>
+<li>sm       590 Wed Dec 10 13:03:42 CST 2008 org/zlex/security/Security.class  </li>
+<li></li>
+<li>X.509, CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN  </li>
+<li>[证书将在 09-9-18 下午3:27 到期]  </li>
+<li></li>
+<li>sm       705 Tue Dec 16 18:00:56 CST 2008 org/zlex/tool/Main$1.class  </li>
+<li></li>
+<li>X.509, CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN  </li>
+<li>[证书将在 09-9-18 下午3:27 到期]  </li>
+<li></li>
+<li>sm       779 Tue Dec 16 18:00:56 CST 2008 org/zlex/tool/Main$2.class  </li>
+<li></li>
+<li>X.509, CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN  </li>
+<li>[证书将在 09-9-18 下午3:27 到期]  </li>
+<li></li>
+<li>sm     12672 Tue Dec 16 18:00:56 CST 2008 org/zlex/tool/Main.class  </li>
+<li></li>
+<li>X.509, CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN  </li>
+<li>[证书将在 09-9-18 下午3:27 到期]  </li>
+<li></li>
+<li></li>
+<li>s = 已验证签名  </li>
+<li>m = 在清单中列出条目  </li>
+<li>k = 在密钥库中至少找到了一个证书  </li>
+<li>i = 在身份作用域内至少找到了一个证书  </li>
+<li></li>
+<li>jar 已验证。  </li>
+<li></li>
+<li>警告：  </li>
+<li><p>此 jar 包含签名者证书将在六个月内过期的条目。  </p>
+<pre><code>  402 Sat Jun 20 16:25:14 CST 2009 META-INF/MANIFEST.MF
+
+  532 Sat Jun 20 16:25:14 CST 2009 META-INF/WWW_ZLEX.SF
+  889 Sat Jun 20 16:25:14 CST 2009 META-INF/WWW_ZLEX.RSA
+</code></pre></li>
+</ol>
+<p>sm       590 Wed Dec 10 13:03:42 CST 2008 org/zlex/security/Security.class</p>
+<pre><code>  X.509, CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN
+  [证书将在 09-9-18 下午3:27 到期]
+</code></pre><p>sm       705 Tue Dec 16 18:00:56 CST 2008 org/zlex/tool/Main$1.class</p>
+<pre><code>  X.509, CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN
+
+  [证书将在 09-9-18 下午3:27 到期]
+</code></pre><p>sm       779 Tue Dec 16 18:00:56 CST 2008 org/zlex/tool/Main$2.class</p>
+<pre><code>  X.509, CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN
+  [证书将在 09-9-18 下午3:27 到期]
+</code></pre><p>sm     12672 Tue Dec 16 18:00:56 CST 2008 org/zlex/tool/Main.class</p>
+<pre><code>  X.509, CN=www.zlex.org, OU=zlex, O=zlex, L=BJ, ST=BJ, C=CN
+
+  [证书将在 09-9-18 下午3:27 到期]
+</code></pre><p>  s = 已验证签名</p>
+<p>  m = 在清单中列出条目
+  k = 在密钥库中至少找到了一个证书</p>
+<p>  i = 在身份作用域内至少找到了一个证书</p>
+<p>jar 已验证。</p>
+<p>警告：
+此 jar 包含签名者证书将在六个月内过期的条目。
+代码签名认证的用途主要是对发布的软件做验证，支持 Sun Java .jar (Java Applet) 文件(J2SE)和 J2ME MIDlet Suite 文件。
+<img src="" alt="">
+<strong>相关链接：
+<a href="http://snowolf.iteye.com/blog/379860" target="_blank">Java加密技术（一）——BASE64与单向加密算法MD5&amp;SHA&amp;MAC</a>
+<a href="http://snowolf.iteye.com/blog/380034" target="_blank">Java加密技术（二）——对称加密DES&amp;AES</a>
+<a href="http://snowolf.iteye.com/blog/380761" target="_blank">Java加密技术（三）——PBE算法</a>
+<a href="http://snowolf.iteye.com/blog/381767" target="_blank">Java加密技术（四）——非对称加密算法RSA</a>
+<a href="http://snowolf.iteye.com/blog/382422" target="_blank">Java加密技术（五）——非对称加密算法的由来</a>
+<a href="http://snowolf.iteye.com/blog/382749" target="_blank">Java加密技术（六）——数字签名算法DSA</a>
+<a href="http://snowolf.iteye.com/blog/383412" target="_blank">Java加密技术（七）——非对称加密算法最高ECC</a>
+<a href="http://snowolf.iteye.com/blog/391931" target="_blank">Java加密技术（八）——数字证书</a>
+<a href="http://snowolf.iteye.com/blog/397693" target="_blank">Java加密技术（九）——初探SSL</a>
+<a href="http://snowolf.iteye.com/blog/398198" target="_blank">Java加密技术（十）——单向认证</a>
+<a href="http://snowolf.iteye.com/blog/510985" target="_blank">Java加密技术（十一）——双向认证</a>
+<a href="http://snowolf.iteye.com/blog/735294" target="_blank">Java加密技术（十二）——/<em>.PFX(/</em>.p12)&amp;个人信息交换文件</a>
+</strong></p>
 
       
     </div>
@@ -143,8 +1365,8 @@ var _js2load = [];
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--一次Java内存溢出异常的分析过程" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/加解密/">加解密</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/加解密/" class="label label-success">加解密</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 01:54:40"datetime="2014-03-07 01:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（八）——数字证书/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（八）——数字证书" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -159,39 +1381,477 @@ var _js2load = [];
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/">内存离线分析——jhat命令(Java Heap Analyse Tool)</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（二）——对称加密算法DESAES/">Java加密技术（二）——对称加密算法DES&AES</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T09:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（二）——对称加密算法DESAES/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="-jhat-java-heap-analyse-tool-">内存离线分析——jhat命令(Java Heap Analyse Tool)</h1>
-<p><strong>jhat命令 -- Java Head Analyse Tool</strong>
-用途：是用来分析java堆的命令，可以将堆中的对象以html的形式显示出来，包括对象的数量，大小等等，并支持对象查询语言
-第一步：导出堆
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290844064DW4R.gif" alt="">
-第二步：分析堆文件
-<img src="http://hi.csdn.net/attachment/201011/27/0_12908442022NhZ.gif" alt="">
-第三步：查看html
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290844795NW5d.gif" alt=""></p>
-<p>有时你dump出来的堆很大，在启动时会报堆空间不足的错误，可以使用如下参数：
-<strong>jhat -J-Xmx512m <heap dump file>
-对于jhat启动后显示的html页面中功能：
-（1）显示出堆中所包含的所有的类
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290845808988Q.gif" alt="">
-（2）从根集能引用到的对象
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290846435q4Lt.gif" alt="">
-（3）显示平台包括的所有类的实例数量
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290846620I6qt.gif" alt="">
-（4）堆实例的分布表
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290846932gSmq.gif" alt=""></strong></p>
-<p><strong>（5）执行对象查询语句
-<img src="http://hi.csdn.net/attachment/201011/27/0_1290847142bSbC.gif" alt="">
-更多关于对象查询语言的信息，见这篇文章：
-<a href="http://blog.csdn.net/gtuu0123/archive/2010/11/27/6039592.aspx" target="_blank">http://blog.csdn.net/gtuu0123/archive/2010/11/27/6039592.aspx</a></strong>
-done</p>
+        <h1 id="java-des-aes">Java加密技术（二）——对称加密算法DES&amp;AES</h1>
+<pre><code>接下来我们介绍对称加密算法，最常用的莫过于DES数据加密算法。
+</code></pre><p><strong>DES</strong>
+DES-Data Encryption Standard,即数据加密算法。是IBM公司于1975年研究成功并公开发表的。DES算法的入口参数有三个:Key、Data、Mode。其中Key为8个字节共64位,是DES算法的工作密钥;Data也为8个字节64位,是要被加密或被解密的数据;Mode为DES的工作方式,有两种:加密或解密。
+DES算法把64位的明文输入块变为64位的密文输出块,它所使用的密钥也是64位。
+<img src="" alt="">
+通过java代码实现如下：<strong>Coder类见 <a href="http://snowolf.iteye.com/blog/379860" target="_blank">Java加密技术（一）</a></strong>
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>import java.security.Key;  </li>
+<li>import java.security.SecureRandom;  </li>
+<li></li>
+<li>import javax.crypto.Cipher;  </li>
+<li>import javax.crypto.KeyGenerator;  </li>
+<li>import javax.crypto.SecretKey;  </li>
+<li>import javax.crypto.SecretKeyFactory;  </li>
+<li>import javax.crypto.spec.DESKeySpec;  </li>
+<li></li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* DES安全编码组件 </li>
+<li>/*  </li>
+<li>/* <pre> </li>
+<li>/* 支持 DES、DESede(TripleDES,就是3DES)、AES、Blowfish、RC2、RC4(ARCFOUR) </li>
+<li>/* DES                  key size must be equal to 56 </li>
+<li>/* DESede(TripleDES)    key size must be equal to 112 or 168 </li>
+<li>/* AES                  key size must be equal to 128, 192 or 256,but 192 and 256 bits may not be available </li>
+<li>/* Blowfish             key size must be multiple of 8, and can only range from 32 to 448 (inclusive) </li>
+<li>/* RC2                  key size must be between 40 and 1024 bits </li>
+<li>/* RC4(ARCFOUR)         key size must be between 40 and 1024 bits </li>
+<li>/* 具体内容 需要关注 JDK Document <a href="http://.../docs/technotes/guides/security/SunProviders.html" target="_blank">http://.../docs/technotes/guides/security/SunProviders.html</a> </li>
+<li>/* </pre> </li>
+<li>/*  </li>
+<li>/* @author 梁栋 </li>
+<li>/* @version 1.0 </li>
+<li>/* @since 1.0 </li>
+<li>/*/  </li>
+<li>public abstract class DESCoder extends Coder {  </li>
+<li>//<em>/</em> </li>
+<li>/* ALGORITHM 算法 <br> </li>
+<li>/* 可替换为以下任意一种算法，同时key值的size相应改变。 </li>
+<li>/*  </li>
+<li>/* <pre> </li>
+<li>/* DES                  key size must be equal to 56 </li>
+<li>/* DESede(TripleDES)    key size must be equal to 112 or 168 </li>
+<li>/* AES                  key size must be equal to 128, 192 or 256,but 192 and 256 bits may not be available </li>
+<li>/* Blowfish             key size must be multiple of 8, and can only range from 32 to 448 (inclusive) </li>
+<li>/* RC2                  key size must be between 40 and 1024 bits </li>
+<li>/* RC4(ARCFOUR)         key size must be between 40 and 1024 bits </li>
+<li>/* </pre> </li>
+<li>/*  </li>
+<li>/* 在Key toKey(byte[] key)方法中使用下述代码 </li>
+<li>/* <code>SecretKey secretKey = new SecretKeySpec(key, ALGORITHM);</code> 替换 </li>
+<li></li>
+<li>/* <code> </li>
+<li>/* DESKeySpec dks = new DESKeySpec(key); </li>
+<li>/* SecretKeyFactory keyFactory = SecretKeyFactory.getInstance(ALGORITHM); </li>
+<li>/* SecretKey secretKey = keyFactory.generateSecret(dks); </li>
+<li>/* </code> </li>
+<li>/*/  </li>
+<li>public static final String ALGORITHM = &quot;DES&quot;;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 转换密钥<br> </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>private static Key toKey(byte[] key) throws Exception {  </li>
+<li>DESKeySpec dks = new DESKeySpec(key);  </li>
+<li>SecretKeyFactory keyFactory = SecretKeyFactory.getInstance(ALGORITHM);  </li>
+<li>SecretKey secretKey = keyFactory.generateSecret(dks);  </li>
+<li></li>
+<li>// 当使用其他对称加密算法时，如AES、Blowfish等算法时，用下述代码替换上述三行代码  </li>
+<li>// SecretKey secretKey = new SecretKeySpec(key, ALGORITHM);  </li>
+<li></li>
+<li>return secretKey;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 解密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] decrypt(byte[] data, String key) throws Exception {  </li>
+<li>Key k = toKey(decryptBASE64(key));  </li>
+<li></li>
+<li>Cipher cipher = Cipher.getInstance(ALGORITHM);  </li>
+<li>cipher.init(Cipher.DECRYPT_MODE, k);  </li>
+<li></li>
+<li>return cipher.doFinal(data);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encrypt(byte[] data, String key) throws Exception {  </li>
+<li>Key k = toKey(decryptBASE64(key));  </li>
+<li>Cipher cipher = Cipher.getInstance(ALGORITHM);  </li>
+<li>cipher.init(Cipher.ENCRYPT_MODE, k);  </li>
+<li></li>
+<li>return cipher.doFinal(data);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 生成密钥 </li>
+<li>/*  </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static String initKey() throws Exception {  </li>
+<li>return initKey(null);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 生成密钥 </li>
+<li>/*  </li>
+<li>/* @param seed </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static String initKey(String seed) throws Exception {  </li>
+<li>SecureRandom secureRandom = null;  </li>
+<li></li>
+<li>if (seed != null) {  </li>
+<li>secureRandom = new SecureRandom(decryptBASE64(seed));  </li>
+<li>} else {  </li>
+<li>secureRandom = new SecureRandom();  </li>
+<li>}  </li>
+<li></li>
+<li>KeyGenerator kg = KeyGenerator.getInstance(ALGORITHM);  </li>
+<li>kg.init(secureRandom);  </li>
+<li></li>
+<li>SecretKey secretKey = kg.generateKey();  </li>
+<li></li>
+<li>return encryptBASE64(secretKey.getEncoded());  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>import java.security.Key;</p>
+<p>import java.security.SecureRandom;</p>
+<p>import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;</p>
+<p>import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;</p>
+<p>import javax.crypto.spec.DESKeySpec;</p>
+<p>//<em>/</em></p>
+<p>/<em> DES安全编码组件
+/</em></p>
+<p>/<em> <pre>
+/</em> 支持 DES、DESede(TripleDES,就是3DES)、AES、Blowfish、RC2、RC4(ARCFOUR)</p>
+<p> /<em> DES                  key size must be equal to 56
+ /</em> DESede(TripleDES)     key size must be equal to 112 or 168</p>
+<p> /<em> AES                  key size must be equal to 128, 192 or 256,but 192 and 256 bits may not be available
+ /</em> Blowfish             key size must be multiple of 8, and can only range from 32 to 448 (inclusive)</p>
+<p> /<em> RC2                  key size must be between 40 and 1024 bits
+ /</em> RC4(ARCFOUR)         key size must be between 40 and 1024 bits</p>
+<p>/<em> 具体内容 需要关注 JDK Document <a href="http://.../docs/technotes/guides/security/SunProviders.html" target="_blank">http://.../docs/technotes/guides/security/SunProviders.html</a>
+/</em> </pre></p>
+<p>/<em>
+/</em> @author 梁栋</p>
+<p>/<em> @version 1.0
+/</em> @since 1.0</p>
+<p>/*/
+public abstract class DESCoder extends Coder {</p>
+<pre><code>//*/*
+ /* ALGORITHM 算法 &lt;br&gt;
+
+ /* 可替换为以下任意一种算法，同时key值的size相应改变。
+ /*
+
+ /* &lt;pre&gt;
+ /* DES                  key size must be equal to 56
+
+ /* DESede(TripleDES)     key size must be equal to 112 or 168
+ /* AES                  key size must be equal to 128, 192 or 256,but 192 and 256 bits may not be available
+
+ /* Blowfish             key size must be multiple of 8, and can only range from 32 to 448 (inclusive)
+ /* RC2                  key size must be between 40 and 1024 bits
+
+ /* RC4(ARCFOUR)         key size must be between 40 and 1024 bits
+ /* &lt;/pre&gt;
+
+ /*
+ /* 在Key toKey(byte[] key)方法中使用下述代码
+
+ /* &lt;code&gt;SecretKey secretKey = new SecretKeySpec(key, ALGORITHM);&lt;/code&gt; 替换
+
+
+ /* &lt;code&gt;
+ /* DESKeySpec dks = new DESKeySpec(key);
+
+ /* SecretKeyFactory keyFactory = SecretKeyFactory.getInstance(ALGORITHM);
+ /* SecretKey secretKey = keyFactory.generateSecret(dks);
+
+ /* &lt;/code&gt;
+ /*/
+
+public static final String ALGORITHM = &quot;DES&quot;;
+
+
+//*/*
+ /* 转换密钥&lt;br&gt;
+
+ /*
+ /* @param key
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+private static Key toKey(byte[] key) throws Exception {
+
+    DESKeySpec dks = new DESKeySpec(key);
+    SecretKeyFactory keyFactory = SecretKeyFactory.getInstance(ALGORITHM);
+
+    SecretKey secretKey = keyFactory.generateSecret(dks);
+
+
+    // 当使用其他对称加密算法时，如AES、Blowfish等算法时，用下述代码替换上述三行代码
+    // SecretKey secretKey = new SecretKeySpec(key, ALGORITHM);
+
+
+    return secretKey;
+
+}
+
+
+//*/*
+ /* 解密
+
+ /*
+ /* @param data
+
+ /* @param key
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+public static byte[] decrypt(byte[] data, String key) throws Exception {
+    Key k = toKey(decryptBASE64(key));
+
+
+    Cipher cipher = Cipher.getInstance(ALGORITHM);
+
+    cipher.init(Cipher.DECRYPT_MODE, k);
+
+
+    return cipher.doFinal(data);
+}
+
+
+//*/*
+
+ /* 加密
+ /*
+
+ /* @param data
+ /* @param key
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static byte[] encrypt(byte[] data, String key) throws Exception {
+
+    Key k = toKey(decryptBASE64(key));
+    Cipher cipher = Cipher.getInstance(ALGORITHM);
+
+    cipher.init(Cipher.ENCRYPT_MODE, k);
+
+
+    return cipher.doFinal(data);
+}
+
+
+//*/*
+
+ /* 生成密钥
+ /*
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static String initKey() throws Exception {
+
+    return initKey(null);
+}
+
+
+//*/*
+
+ /* 生成密钥
+ /*
+
+ /* @param seed
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+public static String initKey(String seed) throws Exception {
+    SecureRandom secureRandom = null;
+
+
+    if (seed != null) {
+
+        secureRandom = new SecureRandom(decryptBASE64(seed));
+    } else {
+
+        secureRandom = new SecureRandom();
+    }
+
+
+    KeyGenerator kg = KeyGenerator.getInstance(ALGORITHM);
+
+    kg.init(secureRandom);
+
+
+    SecretKey secretKey = kg.generateKey();
+
+
+    return encryptBASE64(secretKey.getEncoded());
+}
+</code></pre><p>}
+延续上一个类的实现，我们通过MD5以及SHA对字符串加密生成密钥，这是比较常见的密钥生成方式。
+再给出一个测试类：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>import static org.junit.Assert./*;  </li>
+<li></li>
+<li></li>
+<li>import org.junit.Test;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/*  </li>
+<li>/* @author 梁栋 </li>
+<li>/* @version 1.0 </li>
+<li>/* @since 1.0 </li>
+<li>/*/  </li>
+<li>public class DESCoderTest {  </li>
+<li></li>
+<li>@Test  </li>
+<li>public void test() throws Exception {  </li>
+<li>String inputStr = &quot;DES&quot;;  </li>
+<li>String key = DESCoder.initKey();  </li>
+<li>System.err.println(&quot;原文:\t&quot; + inputStr);  </li>
+<li></li>
+<li>System.err.println(&quot;密钥:\t&quot; + key);  </li>
+<li></li>
+<li>byte[] inputData = inputStr.getBytes();  </li>
+<li>inputData = DESCoder.encrypt(inputData, key);  </li>
+<li></li>
+<li>System.err.println(&quot;加密后:\t&quot; + DESCoder.encryptBASE64(inputData));  </li>
+<li></li>
+<li>byte[] outputData = DESCoder.decrypt(inputData, key);  </li>
+<li>String outputStr = new String(outputData);  </li>
+<li></li>
+<li>System.err.println(&quot;解密后:\t&quot; + outputStr);  </li>
+<li></li>
+<li>assertEquals(inputStr, outputStr);  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>import static org.junit.Assert./*;</p>
+<p>import org.junit.Test;</p>
+<p>//<em>/</em>
+/*</p>
+<p>/<em> @author 梁栋
+/</em> @version 1.0</p>
+<p>/<em> @since 1.0
+/</em>/</p>
+<p>public class DESCoderTest {</p>
+<pre><code>@Test
+public void test() throws Exception {
+
+    String inputStr = &quot;DES&quot;;
+    String key = DESCoder.initKey();
+
+    System.err.println(&quot;原文:\t&quot; + inputStr);
+
+
+    System.err.println(&quot;密钥:\t&quot; + key);
+
+
+    byte[] inputData = inputStr.getBytes();
+    inputData = DESCoder.encrypt(inputData, key);
+
+
+    System.err.println(&quot;加密后:\t&quot; + DESCoder.encryptBASE64(inputData));
+
+
+    byte[] outputData = DESCoder.decrypt(inputData, key);
+
+    String outputStr = new String(outputData);
+
+
+    System.err.println(&quot;解密后:\t&quot; + outputStr);
+
+
+    assertEquals(inputStr, outputStr);
+}
+</code></pre><p>}
+得到的输出内容如下：
+Console代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>原文: DES  </li>
+<li>密钥: f3wEtRrV6q0=  </li>
+<li></li>
+<li>加密后:    C6qe9oNIzRY=  </li>
+<li></li>
+<li>解密后:    DES  </li>
+</ol>
+<p>原文:    DES</p>
+<p>密钥:    f3wEtRrV6q0=</p>
+<p>加密后:    C6qe9oNIzRY=</p>
+<p>解密后:    DES
+    由控制台得到的输出，我们能够比对加密、解密后结果一致。这是一种简单的加密解密方式，只有一个密钥。
+    其实DES有很多同胞兄弟，如DESede(TripleDES)、AES、Blowfish、RC2、RC4(ARCFOUR)。这里就不过多阐述了，大同小异，只要换掉ALGORITHM换成对应的值，同时做一个代码替换<strong>SecretKey secretKey = new SecretKeySpec(key, ALGORITHM);</strong>就可以了，此外就是密钥长度不同了。
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>//<em>/</em> </li>
+<li>/* DES          key size must be equal to 56 </li>
+<li>/* DESede(TripleDES) key size must be equal to 112 or 168 </li>
+<li>/* AES          key size must be equal to 128, 192 or 256,but 192 and 256 bits may not be available </li>
+<li>/* Blowfish     key size must be multiple of 8, and can only range from 32 to 448 (inclusive) </li>
+<li>/* RC2          key size must be between 40 and 1024 bits </li>
+<li>/* RC4(ARCFOUR) key size must be between 40 and 1024 bits </li>
+<li>/<em>/</em>/  </li>
+</ol>
+<p>//<em>/</em></p>
+<p> /<em> DES          key size must be equal to 56
+/</em> DESede(TripleDES) key size must be equal to 112 or 168</p>
+<p> /<em> AES          key size must be equal to 128, 192 or 256,but 192 and 256 bits may not be available
+ /</em> Blowfish     key size must be multiple of 8, and can only range from 32 to 448 (inclusive)</p>
+<p> /<em> RC2          key size must be between 40 and 1024 bits
+/</em> RC4(ARCFOUR) key size must be between 40 and 1024 bits</p>
+<p>/<em>/</em>/
+<strong>相关链接：
+<a href="http://snowolf.iteye.com/blog/379860" target="_blank">Java加密技术（一）——BASE64与单向加密算法MD5&amp;SHA&amp;MAC</a>
+<a href="http://snowolf.iteye.com/blog/380034" target="_blank">Java加密技术（二）——对称加密算法DES&amp;AES</a>
+<a href="http://snowolf.iteye.com/blog/380761" target="_blank">Java加密技术（三）——PBE算法</a>
+<a href="http://snowolf.iteye.com/blog/381767" target="_blank">Java加密技术（四）——非对称加密算法RSA</a>
+<a href="http://snowolf.iteye.com/blog/382422" target="_blank">Java加密技术（五）——非对称加密算法的由来</a>
+<a href="http://snowolf.iteye.com/blog/382749" target="_blank">Java加密技术（六）——数字签名算法DSA</a>
+<a href="http://snowolf.iteye.com/blog/383412" target="_blank">Java加密技术（七）——非对称加密算法最高ECC</a>
+<a href="http://snowolf.iteye.com/blog/391931" target="_blank">Java加密技术（八）——数字证书</a>
+<a href="http://snowolf.iteye.com/blog/397693" target="_blank">Java加密技术（九）——初探SSL</a>
+<a href="http://snowolf.iteye.com/blog/398198" target="_blank">Java加密技术（十）——单向认证</a>
+<a href="http://snowolf.iteye.com/blog/510985" target="_blank">Java加密技术（十一）——双向认证</a>
+<a href="http://snowolf.iteye.com/blog/735294" target="_blank">Java加密技术（十二）——/<em>.PFX(/</em>.p12)&amp;个人信息交换文件</a>
+</strong></p>
 
       
     </div>
@@ -201,8 +1861,8 @@ done</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-30 13:27:37"datetime="2014-03-30 13:27:37"> mar. 30 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--内存离线分析——jhat命令JavaHeapAnalyseTool" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/加解密/">加解密</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/加解密/" class="label label-success">加解密</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 01:54:40"datetime="2014-03-07 01:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（二）——对称加密算法DESAES/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（二）——对称加密算法DESAES" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -217,211 +1877,1241 @@ done</p>
   <div class="post-content">
     <header class="well-sm">
       <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">jvm crash 的崩溃日志详细分析及注意点</a></h1>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC/">Java加密技术（一）——BASE64与单向加密算法MD5&SHA&MAC</a></h1>
       
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/">feb. 2 2014</a></time></span>      
+        <span>Posted on<time datetime="2014-02-02T09:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC/">feb. 2 2014</a></time></span>      
     </header>
     
     
     <div class="entry">
       
-        <h1 id="jvm-crash-">jvm crash 的崩溃日志详细分析及注意点</h1>
-<h2 id="-">生成</h2>
-<ol>
-<li><p>生成error 文件的路径：你可以通过参数设置-XX:ErrorFile=/path/hs_error%p.log, 默认是在java运行的当前目录 [default: ./hs_err_pid%p.log]</p>
+        <h1 id="java-base64-md5-sha-mac">Java加密技术（一）——BASE64与单向加密算法MD5&amp;SHA&amp;MAC</h1>
+<pre><code>加密解密，曾经是我一个毕业设计的重要组件。在工作了多年以后回想当时那个加密、解密算法，实在是太单纯了。![]()
+言归正传，这里我们主要描述Java已经实现的一些加密解密算法，最后介绍数字证书。
+如基本的单向加密算法：
+</code></pre><ul>
+<li>BASE64 严格地说，属于编码格式，而非加密算法</li>
+<li>MD5(Message Digest algorithm 5，信息摘要算法)</li>
+<li>SHA(Secure Hash Algorithm，安全散列算法)</li>
+<li><p>HMAC(Hash Message Authentication Code，散列消息鉴别码)
+  复杂的对称加密（DES、PBE）、非对称加密算法：</p>
 </li>
-<li><p>参数-XX:OnError  可以在crash退出的时候执行命令，格式是-XX:OnError=“string”,  <string> 可以是命令的集合，用分号做分隔符, 可以用&quot;%p&quot;来取到当前进程的ID.
-例如：</p>
+<li><p>DES(Data Encryption Standard，数据加密算法)</p>
 </li>
-</ol>
-<p>// -XX:OnError=&quot;pmap %p&quot;                // show memory map</p>
-<p>// -XX:OnError=&quot;gcore %p; dbx - %p&quot;     // dump core and launch debugger</p>
-<p>在linux中系统会fork出一个子进程去执行shell的命令，因为是用fork可能会内存不够的情况，注意修改你的 /proc/sys/vm/overcommit_memory 参数,不清楚为什么这里不使用vfork</p>
-<ol>
-<li>-XX:+ShowMessageBoxOnError 参数，当jvm crash的时候在linux里会启动gdb 去分析和调式，适合在测试环境中使用。</li>
-</ol>
-<h2 id="-error-"><a href=""></a>什么情况下不会生成error文件</h2>
-<p>linux 内核在发生OOM的时候会强制kill一些进程, 可以在/var/logs/messages中查找</p>
-<h2 id="-error-crash-"><a href=""></a>Error crash 文件的几个重要部分</h2>
-<p><strong>a.  错误信息概要</strong></p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>/# A fatal error has been detected by the Java Runtime Environment:  </li>
-<li>/#  </li>
-<li>/#  SIGSEGV (0xb) at pc=0x0000000000043566, pid=32046, tid=1121192256  </li>
-<li>/#  </li>
-<li>/# JRE version: 6.0_17-b04  </li>
-<li>/# Java VM: Java HotSpot(TM) 64-Bit Server VM (14.3-b01 mixed mode linux-amd64 )  </li>
-<li>/# Problematic frame:  </li>
-<li>/# C  0x0000000000043566  </li>
-<li>/#  </li>
-<li>/# If you would like to submit a bug report, please visit:  </li>
-<li>/#   <a href="http://java.sun.com/webapps/bugreport/crash.jsp" target="_blank">http://java.sun.com/webapps/bugreport/crash.jsp</a>  </li>
-<li>/# The crash happened outside the Java Virtual Machine in native code.  </li>
-<li>/# See problematic frame for where to report the bug.<br>SIGSEGV 错误的信号类型 </li>
-</ol>
-<p>pc 就是IP/PC寄存器值也就是执行指令的代码地址</p>
-<p>pid 就是进程id</p>
-<p>/# Problematic frame:</p>
-<p>/# V  [libjvm.so+0x593045]</p>
-<p>就是导致问题的动态链接库函数的地址</p>
-<p>pc 和 +0x593045 指的是同一个地址，只是一个是动态的偏移地址，一个是运行的虚拟地址</p>
-<p><strong>b.信号信息</strong></p>
-<p>Java中在linux 中注册的信号处理函数，中间有2个参数info, ucvoid</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>static void crash_handler(int sig, siginfo_t/<em> info, void/</em> ucVoid) {  </li>
-<li>// unmask current signal  </li>
-<li>sigset_t newset;  </li>
-<li>sigemptyset(&amp;newset);  </li>
-<li>sigaddset(&amp;newset, sig);  </li>
-<li>sigprocmask(SIG_UNBLOCK, &amp;newset, NULL);  </li>
-<li></li>
-<li>VMError err(NULL, sig, NULL, info, ucVoid);  </li>
-<li>err.report_and_die();  </li>
-<li>}<br>在crash report中的信号错误提示</li>
-</ol>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>siginfo:si_signo=SIGSEGV: si_errno=0, si_code=1 (SEGV_MAPERR), si_addr=0x0000000000043566<br>信号的详细信息和si_addr 出错误的内存，都保存在siginfo_t的结构体中，也就是信号注册函数crash_handler里的参数info,内核会保存导致错误的内存地址在用户空间的信号结构体中siginfo_t，这样在进程在注册的信号处理函数中可以取得导致错误的地址。</li>
-</ol>
-<p><strong>c.寄存器信息</strong></p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>Registers:  </li>
-<li>RAX=0x00002aacb5ae5de2, RBX=0x00002aaaaf46aa48, RCX=0x0000000000000219, RDX=0x00002aaaaf46b920  </li>
-<li>RSP=0x0000000042d3f968, RBP=0x0000000042d3f9c8, RSI=0x0000000042d3f9e8, RDI=0x0000000045aef9b8  </li>
-<li>R8 =0x0000000000000f80, R9 =0x00002aaab3d30ce8, R10=0x00002aaaab138ea1, R11=0x00002b017ae65110  </li>
-<li>R12=0x0000000042d3f6f0, R13=0x00002aaaaf46aa48, R14=0x0000000042d3f9e8, R15=0x0000000045aef800  </li>
-<li>RIP=0x0000000000043566, EFL=0x0000000000010202, CSGSFS=0x0000000000000033, ERR=0x0000000000000014  </li>
-<li>TRAPNO=0x000000000000000e<br>寄存器的信息就保存在b部分的信号处理函数参数 (ucontext_t/*)usVoid中</li>
-</ol>
-<p>在X86架构下：</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>void os::print_context(outputStream /<em>st, void /</em>context) {  </li>
-<li>if (context == NULL) return;  </li>
-<li></li>
-<li>ucontext_t /<em>uc = (ucontext_t/</em>)context;  </li>
-<li>st-&gt;print_cr(&quot;Registers:&quot;);  </li>
-<li>/#ifdef AMD64  </li>
-<li>st-&gt;print(  &quot;RAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RAX]);  </li>
-<li>st-&gt;print(&quot;, RBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBX]);  </li>
-<li>st-&gt;print(&quot;, RCX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RCX]);  </li>
-<li>st-&gt;print(&quot;, RDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDX]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;RSP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSP]);  </li>
-<li>st-&gt;print(&quot;, RBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RBP]);  </li>
-<li>st-&gt;print(&quot;, RSI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RSI]);  </li>
-<li>st-&gt;print(&quot;, RDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RDI]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;R8 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R8]);  </li>
-<li>st-&gt;print(&quot;, R9 =&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R9]);  </li>
-<li>st-&gt;print(&quot;, R10=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R10]);  </li>
-<li>st-&gt;print(&quot;, R11=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R11]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;R12=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R12]);  </li>
-<li>st-&gt;print(&quot;, R13=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R13]);  </li>
-<li>st-&gt;print(&quot;, R14=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R14]);  </li>
-<li>st-&gt;print(&quot;, R15=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_R15]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;RIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_RIP]);  </li>
-<li>st-&gt;print(&quot;, EFL=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
-<li>st-&gt;print(&quot;, CSGSFS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_CSGSFS]);  </li>
-<li>st-&gt;print(&quot;, ERR=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ERR]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(&quot;  TRAPNO=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_TRAPNO]);  </li>
-<li>/#else  </li>
-<li>st-&gt;print(  &quot;EAX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EAX]);  </li>
-<li>st-&gt;print(&quot;, EBX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBX]);  </li>
-<li>st-&gt;print(&quot;, ECX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ECX]);  </li>
-<li>st-&gt;print(&quot;, EDX=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDX]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;ESP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_UESP]);  </li>
-<li>st-&gt;print(&quot;, EBP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EBP]);  </li>
-<li>st-&gt;print(&quot;, ESI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_ESI]);  </li>
-<li>st-&gt;print(&quot;, EDI=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EDI]);  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;print(  &quot;EIP=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EIP]);  </li>
-<li>st-&gt;print(&quot;, CR2=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.cr2);  </li>
-<li>st-&gt;print(&quot;, EFLAGS=&quot; INTPTR_FORMAT, uc-&gt;uc_mcontext.gregs[REG_EFL]);  </li>
-<li>/#endif // AMD64  </li>
-<li>st-&gt;cr();  </li>
-<li>st-&gt;cr();  </li>
-<li></li>
-<li>intptr_t /<em>sp = (intptr_t /</em>)os::Linux::ucontext_get_sp(uc);  </li>
-<li>st-&gt;print_cr(&quot;Top of Stack: (sp=&quot; PTR_FORMAT &quot;)&quot;, sp);  </li>
-<li>print_hex_dump(st, (address)sp, (address)(sp + 8/*sizeof(intptr_t)), sizeof(intptr_t));  </li>
-<li>st-&gt;cr();  </li>
-<li></li>
-<li>// Note: it may be unsafe to inspect memory near pc. For example, pc may  </li>
-<li>// point to garbage if entry point in an nmethod is corrupted. Leave  </li>
-<li>// this at the end, and hope for the best.  </li>
-<li>address pc = os::Linux::ucontext_get_pc(uc);  </li>
-<li>st-&gt;print_cr(&quot;Instructions: (pc=&quot; PTR_FORMAT &quot;)&quot;, pc);  </li>
-<li>print_hex_dump(st, pc - 16, pc + 16, sizeof(char));  </li>
-<li>}<br>寄存器的信息在分析出错的时候是非常重要的
-打印出执行附近的部分机器码</li>
-</ol>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>Instructions: (pc=0x00007f48f14ef51a)  </li>
-<li>0x00007f48f14ef4fa:   90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd  </li>
-<li>0x00007f48f14ef50a:   f8 5f ff ff 48 89 b5 f0 5f ff ff b8 00 00 00 00  </li>
-<li>0x00007f48f14ef51a:   c7 00 01 00 00 00 c6 85 00 60 ff ff ff c9 c3 90  </li>
-<li>0x00007f48f14ef52a:   90 90 90 90 90 90 55 48 89 e5 53 48 8d 1d 94 00<br>在instruction 部分中会打印出部分的机器码</li>
-</ol>
-<p>格式是</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>地址：机器码<br>第一种使用udis库里带的udcli工具来反汇编</li>
-</ol>
-<p>命令：</p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>echo &#39;90 90 55 48 89 e5 48 81 ec 98 9f 00 00 48 89 bd&#39; | udcli -intel -x -64 -o 0x00007f48f14ef4fa<br>显示出对应的汇编</li>
-</ol>
-<p>第二种可以用</p>
-<p><strong>[plain]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>objectdump -d -C libjvm.so &gt;&gt; jvmsodisass.dump   </li>
-</ol>
-<p>查找偏移地址  0x593045， 就是当时的执行的汇编，然后结合上下文，源码推测出问题的语句。</p>
-<p><strong>d.寄存器对应的内存的值</strong></p>
-<p><strong>[cpp]</strong> <a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="view plain" target="_blank">view plain</a><a href="http://blog.csdn.net/raintungli/article/details/7642575#" title="copy" target="_blank">copy</a></p>
-<ol>
-<li>RAX=0x0000000000000000 is an unknown value  </li>
-<li>RBX=0x000000041a07d1e8 is an oop  </li>
-<li>{method}  </li>
-<li><ul>
-<li>klass: {other class}  </li>
+<li>PBE(Password-based encryption，基于密码验证)</li>
+<li>RSA(算法的名字以发明者的名字命名：Ron Rivest, AdiShamir 和Leonard Adleman)</li>
+<li>DH(Diffie-Hellman算法，密钥一致协议)</li>
+<li>DSA(Digital Signature Algorithm，数字签名)</li>
+<li>ECC(Elliptic Curves Cryptography，椭圆曲线密码编码学)
+  本篇内容简要介绍<strong>BASE64</strong>、<strong>MD5</strong>、<strong>SHA</strong>、<strong>HMAC</strong>几种方法。
+  <strong>MD5</strong>、<strong>SHA</strong>、<strong>HMAC</strong>这三种加密算法，可谓是非可逆加密，就是不可解密的加密方法。我们通常只把他们作为加密的基础。单纯的以上三种的加密并不可靠。
+<strong>BASE64</strong>
+按照RFC2045的定义，Base64被定义为：Base64内容传送编码被设计用来把任意序列的8位字节描述为一种不易被人直接识别的形式。（The Base64 Content-Transfer-Encoding is designed to represent arbitrary sequences of octets in a form that need not be humanly readable.）
+常见于邮件、http加密，截取http信息，你就会发现登录操作的用户名、密码字段通过BASE64加密的。
+<img src="" alt="">
+通过java代码实现如下：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></li>
 </ul>
+<ol>
+<li>//<em>/</em> </li>
+<li>/* BASE64解密 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] decryptBASE64(String key) throws Exception {  </li>
+<li>return (new BASE64Decoder()).decodeBuffer(key);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* BASE64加密 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static String encryptBASE64(byte[] key) throws Exception {  </li>
+<li>return (new BASE64Encoder()).encodeBuffer(key);  </li>
+<li><p>}  </p>
+<p> //<em>/</em></p>
+<p>  /<em> BASE64解密
+  /</em></p>
+<p>  /<em> @param key
+  /</em> @return</p>
+<p>  /<em> @throws Exception
+  /</em>/</p>
+<p> public static byte[] decryptBASE64(String key) throws Exception {</p>
+<pre><code> return (new BASE64Decoder()).decodeBuffer(key);
+</code></pre><p> }</p>
 </li>
-<li>RCX=0x0000000000000000 is an unknown value  </li>
-<li>RDX=0x0000000040111800 is a thread  </li>
-<li>RSP=0x0000000041261b88 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RBP=0x000000004126bb20 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RSI=0x000000004126bb80 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>RDI=0x00000000401119d0 is an unknown value  </li>
-<li>R8 =0x0000000040111c40 is an unknown value  </li>
-<li>R9 =0x00007f48fcc8b550: <offset 0xa85550> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
-<li>R10=0x00007f48f8ca7d41 is an Interpreter codelet  </li>
-<li>method entry point (kind = native)  [0x00007f48f8ca7ae0, 0x00007f48f8ca8320]  2112 bytes  </li>
-<li>R11=0x00007f48fc98f270: <offset 0x789270> in /usr/java/jdk1.6.0_30/jre/lib/amd64/server/libjvm.so at 0x00007f48fc206000  </li>
-<li>R12=0x0000000000000000 is an unknown value  </li>
-<li>R13=0x000000041a07d1e8 is an oop  </li>
-<li>{method}  </li>
-<li><ul>
-<li>klass: {other class}  </li>
+</ol>
+<pre><code>//*/*
+ /* BASE64加密
+
+ /*
+ /* @param key
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static String encryptBASE64(byte[] key) throws Exception {
+
+    return (new BASE64Encoder()).encodeBuffer(key);
+}
+</code></pre><p>主要就是BASE64Encoder、BASE64Decoder两个类，我们只需要知道使用对应的方法即可。另，BASE加密后产生的字节位数是8的倍数，如果不够位数以<strong>=</strong>符号填充。
+<strong>MD5</strong>
+MD5 -- message-digest algorithm 5 （信息-摘要算法）缩写，广泛用于加密和解密技术，常用于文件校验。校验？不管文件多大，经过MD5后都能生成唯一的MD5值。好比现在的ISO校验，都是MD5校验。怎么用？当然是把ISO经过MD5后产生MD5的值。一般下载linux-ISO的朋友都见过下载链接旁边放着MD5的串。就是用来验证文件是否一致的。
+<img src="" alt="">
+通过java代码实现如下：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>//<em>/</em> </li>
+<li>/* MD5加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptMD5(byte[] data) throws Exception {  </li>
+<li></li>
+<li>MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);  </li>
+<li>md5.update(data);  </li>
+<li></li>
+<li>return md5.digest();  </li>
+<li></li>
+<li><p>}  </p>
+<p> //<em>/</em></p>
+<p>  /<em> MD5加密
+  /</em></p>
+<p>  /<em> @param data
+  /</em> @return</p>
+<p>  /<em> @throws Exception
+  /</em>/</p>
+<p> public static byte[] encryptMD5(byte[] data) throws Exception {</p>
+</li>
+</ol>
+<pre><code>    MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);
+    md5.update(data);
+
+
+    return md5.digest();
+
+
+}
+</code></pre><p>通常我们不直接使用上述MD5加密。通常将MD5产生的字节数组交给BASE64再加密一把，得到相应的字符串。
+<strong>SHA</strong>
+SHA(Secure Hash Algorithm，安全散列算法），数字签名等密码学应用中重要的工具，被广泛地应用于电子商务等信息安全领域。虽然，SHA与MD5通过碰撞法都被破解了，<img src="" alt=""> 但是SHA仍然是公认的安全加密算法，较之MD5更为安全。<img src="" alt="">
+<img src="" alt="">
+通过java代码实现如下：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>//<em>/</em> </li>
+<li>/* SHA加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptSHA(byte[] data) throws Exception {  </li>
+<li></li>
+<li>MessageDigest sha = MessageDigest.getInstance(KEY_SHA);  </li>
+<li>sha.update(data);  </li>
+<li></li>
+<li>return sha.digest();  </li>
+<li></li>
+<li>}  </li>
+<li><p>}  </p>
+<p> //<em>/</em></p>
+<p>  /<em> SHA加密
+  /</em></p>
+<p>  /<em> @param data
+  /</em> @return</p>
+<p>  /<em> @throws Exception
+  /</em>/</p>
+<p> public static byte[] encryptSHA(byte[] data) throws Exception {</p>
+</li>
+</ol>
+<pre><code>    MessageDigest sha = MessageDigest.getInstance(KEY_SHA);
+    sha.update(data);
+
+
+    return sha.digest();
+
+
+}
+</code></pre><p>}
+<strong>HMAC</strong>
+HMAC(Hash Message Authentication Code，散列消息鉴别码，基于密钥的Hash算法的认证协议。消息鉴别码实现鉴别的原理是，用公开函数和密钥产生一个固定长度的值作为认证标识，用这个标识鉴别消息的完整性。使用一个密钥生成一个固定大小的小数据块，即MAC，并将其加入到消息中，然后传输。接收方利用与发送方共享的密钥进行鉴别认证等。
+<img src="" alt="">
+通过java代码实现如下：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>//<em>/</em> </li>
+<li>/* 初始化HMAC密钥 </li>
+<li>/*  </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static String initMacKey() throws Exception {  </li>
+<li>KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);  </li>
+<li></li>
+<li>SecretKey secretKey = keyGenerator.generateKey();  </li>
+<li>return encryptBASE64(secretKey.getEncoded());  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* HMAC加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptHMAC(byte[] data, String key) throws Exception {  </li>
+<li></li>
+<li>SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);  </li>
+<li>Mac mac = Mac.getInstance(secretKey.getAlgorithm());  </li>
+<li>mac.init(secretKey);  </li>
+<li></li>
+<li>return mac.doFinal(data);  </li>
+<li></li>
+<li><p>}  </p>
+<p> //<em>/</em></p>
+<p>  /<em> 初始化HMAC密钥
+  /</em></p>
+<p>  /<em> @return
+  /</em> @throws Exception</p>
+<p>  /*/
+ public static String initMacKey() throws Exception {</p>
+<pre><code> KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);
+</code></pre></li>
+</ol>
+<pre><code>    SecretKey secretKey = keyGenerator.generateKey();
+    return encryptBASE64(secretKey.getEncoded());
+
+}
+
+
+//*/*
+ /* HMAC加密
+
+ /*
+ /* @param data
+
+ /* @param key
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+public static byte[] encryptHMAC(byte[] data, String key) throws Exception {
+
+
+    SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);
+    Mac mac = Mac.getInstance(secretKey.getAlgorithm());
+
+    mac.init(secretKey);
+
+
+    return mac.doFinal(data);
+
+
+}
+</code></pre><p>给出一个完整类，如下：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>import java.security.MessageDigest;  </li>
+<li></li>
+<li>import javax.crypto.KeyGenerator;  </li>
+<li>import javax.crypto.Mac;  </li>
+<li>import javax.crypto.SecretKey;  </li>
+<li></li>
+<li>import sun.misc.BASE64Decoder;  </li>
+<li>import sun.misc.BASE64Encoder;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 基础加密组件 </li>
+<li>/*  </li>
+<li>/* @author 梁栋 </li>
+<li>/* @version 1.0 </li>
+<li>/* @since 1.0 </li>
+<li>/*/  </li>
+<li>public abstract class Coder {  </li>
+<li>public static final String KEY_SHA = &quot;SHA&quot;;  </li>
+<li>public static final String KEY_MD5 = &quot;MD5&quot;;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* MAC算法可选以下多种算法 </li>
+<li>/*  </li>
+<li>/* <pre> </li>
+<li>/* HmacMD5  </li>
+<li>/* HmacSHA1  </li>
+<li>/* HmacSHA256  </li>
+<li>/* HmacSHA384  </li>
+<li>/* HmacSHA512 </li>
+<li>/* </pre> </li>
+<li>/*/  </li>
+<li>public static final String KEY_MAC = &quot;HmacMD5&quot;;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* BASE64解密 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] decryptBASE64(String key) throws Exception {  </li>
+<li>return (new BASE64Decoder()).decodeBuffer(key);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* BASE64加密 </li>
+<li>/*  </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static String encryptBASE64(byte[] key) throws Exception {  </li>
+<li>return (new BASE64Encoder()).encodeBuffer(key);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* MD5加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptMD5(byte[] data) throws Exception {  </li>
+<li></li>
+<li>MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);  </li>
+<li>md5.update(data);  </li>
+<li></li>
+<li>return md5.digest();  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* SHA加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptSHA(byte[] data) throws Exception {  </li>
+<li></li>
+<li>MessageDigest sha = MessageDigest.getInstance(KEY_SHA);  </li>
+<li>sha.update(data);  </li>
+<li></li>
+<li>return sha.digest();  </li>
+<li></li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 初始化HMAC密钥 </li>
+<li>/*  </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static String initMacKey() throws Exception {  </li>
+<li>KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);  </li>
+<li></li>
+<li>SecretKey secretKey = keyGenerator.generateKey();  </li>
+<li>return encryptBASE64(secretKey.getEncoded());  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* HMAC加密 </li>
+<li>/*  </li>
+<li>/* @param data </li>
+<li>/* @param key </li>
+<li>/* @return </li>
+<li>/* @throws Exception </li>
+<li>/*/  </li>
+<li>public static byte[] encryptHMAC(byte[] data, String key) throws Exception {  </li>
+<li></li>
+<li>SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);  </li>
+<li>Mac mac = Mac.getInstance(secretKey.getAlgorithm());  </li>
+<li>mac.init(secretKey);  </li>
+<li></li>
+<li>return mac.doFinal(data);  </li>
+<li></li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>import java.security.MessageDigest;</p>
+<p>import javax.crypto.KeyGenerator;</p>
+<p>import javax.crypto.Mac;
+import javax.crypto.SecretKey;</p>
+<p>import sun.misc.BASE64Decoder;</p>
+<p>import sun.misc.BASE64Encoder;</p>
+<p>//<em>/</em>
+/* 基础加密组件</p>
+<p>/<em>
+/</em> @author 梁栋</p>
+<p>/<em> @version 1.0
+/</em> @since 1.0</p>
+<p>/*/
+public abstract class Coder {</p>
+<pre><code>public static final String KEY_SHA = &quot;SHA&quot;;
+public static final String KEY_MD5 = &quot;MD5&quot;;
+
+
+//*/*
+
+ /* MAC算法可选以下多种算法
+ /*
+
+ /* &lt;pre&gt;
+ /* HmacMD5
+
+ /* HmacSHA1
+ /* HmacSHA256
+
+ /* HmacSHA384
+ /* HmacSHA512
+
+ /* &lt;/pre&gt;
+ /*/
+
+public static final String KEY_MAC = &quot;HmacMD5&quot;;
+
+
+//*/*
+ /* BASE64解密
+
+ /*
+ /* @param key
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static byte[] decryptBASE64(String key) throws Exception {
+
+    return (new BASE64Decoder()).decodeBuffer(key);
+}
+
+
+//*/*
+
+ /* BASE64加密
+ /*
+
+ /* @param key
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+public static String encryptBASE64(byte[] key) throws Exception {
+    return (new BASE64Encoder()).encodeBuffer(key);
+
+}
+
+
+//*/*
+ /* MD5加密
+
+ /*
+ /* @param data
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static byte[] encryptMD5(byte[] data) throws Exception {
+
+
+    MessageDigest md5 = MessageDigest.getInstance(KEY_MD5);
+
+    md5.update(data);
+
+
+    return md5.digest();
+
+
+}
+
+
+//*/*
+ /* SHA加密
+
+ /*
+ /* @param data
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static byte[] encryptSHA(byte[] data) throws Exception {
+
+
+    MessageDigest sha = MessageDigest.getInstance(KEY_SHA);
+
+    sha.update(data);
+
+
+    return sha.digest();
+
+
+}
+
+
+//*/*
+ /* 初始化HMAC密钥
+
+ /*
+ /* @return
+
+ /* @throws Exception
+ /*/
+
+public static String initMacKey() throws Exception {
+    KeyGenerator keyGenerator = KeyGenerator.getInstance(KEY_MAC);
+
+
+    SecretKey secretKey = keyGenerator.generateKey();
+
+    return encryptBASE64(secretKey.getEncoded());
+}
+
+
+//*/*
+
+ /* HMAC加密
+ /*
+
+ /* @param data
+ /* @param key
+
+ /* @return
+ /* @throws Exception
+
+ /*/
+public static byte[] encryptHMAC(byte[] data, String key) throws Exception {
+
+
+    SecretKey secretKey = new SecretKeySpec(decryptBASE64(key), KEY_MAC);
+
+    Mac mac = Mac.getInstance(secretKey.getAlgorithm());
+    mac.init(secretKey);
+
+
+    return mac.doFinal(data);
+
+
+}
+</code></pre><p>}
+再给出一个测试类：
+Java代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>import static org.junit.Assert./*;  </li>
+<li></li>
+<li>import org.junit.Test;  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/*  </li>
+<li>/* @author 梁栋 </li>
+<li>/* @version 1.0 </li>
+<li>/* @since 1.0 </li>
+<li>/*/  </li>
+<li>public class CoderTest {  </li>
+<li></li>
+<li>@Test  </li>
+<li>public void test() throws Exception {  </li>
+<li>String inputStr = &quot;简单加密&quot;;  </li>
+<li>System.err.println(&quot;原文:\n&quot; + inputStr);  </li>
+<li></li>
+<li>byte[] inputData = inputStr.getBytes();  </li>
+<li>String code = Coder.encryptBASE64(inputData);  </li>
+<li></li>
+<li>System.err.println(&quot;BASE64加密后:\n&quot; + code);  </li>
+<li></li>
+<li>byte[] output = Coder.decryptBASE64(code);  </li>
+<li></li>
+<li>String outputStr = new String(output);  </li>
+<li></li>
+<li>System.err.println(&quot;BASE64解密后:\n&quot; + outputStr);  </li>
+<li></li>
+<li>// 验证BASE64加密解密一致性  </li>
+<li>assertEquals(inputStr, outputStr);  </li>
+<li></li>
+<li>// 验证MD5对于同一内容加密是否一致  </li>
+<li>assertArrayEquals(Coder.encryptMD5(inputData), Coder  </li>
+<li>.encryptMD5(inputData));  </li>
+<li></li>
+<li>// 验证SHA对于同一内容加密是否一致  </li>
+<li>assertArrayEquals(Coder.encryptSHA(inputData), Coder  </li>
+<li>.encryptSHA(inputData));  </li>
+<li></li>
+<li>String key = Coder.initMacKey();  </li>
+<li>System.err.println(&quot;Mac密钥:\n&quot; + key);  </li>
+<li></li>
+<li>// 验证HMAC对于同一内容，同一密钥加密是否一致  </li>
+<li>assertArrayEquals(Coder.encryptHMAC(inputData, key), Coder.encryptHMAC(  </li>
+<li>inputData, key));  </li>
+<li></li>
+<li>BigInteger md5 = new BigInteger(Coder.encryptMD5(inputData));  </li>
+<li>System.err.println(&quot;MD5:\n&quot; + md5.toString(16));  </li>
+<li></li>
+<li>BigInteger sha = new BigInteger(Coder.encryptSHA(inputData));  </li>
+<li>System.err.println(&quot;SHA:\n&quot; + sha.toString(32));  </li>
+<li></li>
+<li>BigInteger mac = new BigInteger(Coder.encryptHMAC(inputData, inputStr));  </li>
+<li>System.err.println(&quot;HMAC:\n&quot; + mac.toString(16));  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>import static org.junit.Assert./*;</p>
+<p>import org.junit.Test;</p>
+<p>//<em>/</em></p>
+<p>/<em>
+/</em> @author 梁栋</p>
+<p>/<em> @version 1.0
+/</em> @since 1.0</p>
+<p>/*/
+public class CoderTest {</p>
+<pre><code>@Test
+
+public void test() throws Exception {
+    String inputStr = &quot;简单加密&quot;;
+
+    System.err.println(&quot;原文:\n&quot; + inputStr);
+
+
+    byte[] inputData = inputStr.getBytes();
+    String code = Coder.encryptBASE64(inputData);
+
+
+    System.err.println(&quot;BASE64加密后:\n&quot; + code);
+
+
+    byte[] output = Coder.decryptBASE64(code);
+
+
+    String outputStr = new String(output);
+
+
+    System.err.println(&quot;BASE64解密后:\n&quot; + outputStr);
+
+
+    // 验证BASE64加密解密一致性
+
+    assertEquals(inputStr, outputStr);
+
+
+    // 验证MD5对于同一内容加密是否一致
+    assertArrayEquals(Coder.encryptMD5(inputData), Coder
+
+            .encryptMD5(inputData));
+
+
+    // 验证SHA对于同一内容加密是否一致
+    assertArrayEquals(Coder.encryptSHA(inputData), Coder
+
+            .encryptSHA(inputData));
+
+
+    String key = Coder.initMacKey();
+    System.err.println(&quot;Mac密钥:\n&quot; + key);
+
+
+    // 验证HMAC对于同一内容，同一密钥加密是否一致
+
+    assertArrayEquals(Coder.encryptHMAC(inputData, key), Coder.encryptHMAC(
+            inputData, key));
+
+
+    BigInteger md5 = new BigInteger(Coder.encryptMD5(inputData));
+
+    System.err.println(&quot;MD5:\n&quot; + md5.toString(16));
+
+
+    BigInteger sha = new BigInteger(Coder.encryptSHA(inputData));
+    System.err.println(&quot;SHA:\n&quot; + sha.toString(32));
+
+
+    BigInteger mac = new BigInteger(Coder.encryptHMAC(inputData, inputStr));
+
+    System.err.println(&quot;HMAC:\n&quot; + mac.toString(16));
+}
+</code></pre><p>}
+控制台输出：
+Console代码 <a href="&quot;复制代码&quot;"><img src="" alt="复制代码"></a> <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"><img src="" alt=""></a></p>
+<ol>
+<li>原文:  </li>
+<li>简单加密  </li>
+<li>BASE64加密后:  </li>
+<li>566A5Y2V5Yqg5a+G  </li>
+<li></li>
+<li>BASE64解密后:  </li>
+<li>简单加密  </li>
+<li>Mac密钥:  </li>
+<li>uGxdHC+6ylRDaik++leFtGwiMbuYUJ6mqHWyhSgF4trVkVBBSQvY/a22xU8XT1RUemdCWW155Bke  </li>
+<li>pBIpkd7QHg==  </li>
+<li></li>
+<li>MD5:  </li>
+<li>-550b4d90349ad4629462113e7934de56  </li>
+<li>SHA:  </li>
+<li>91k9vo7p400cjkgfhjh0ia9qthsjagfn  </li>
+<li>HMAC:  </li>
+<li>2287d192387e95694bdbba2fa941009a  </li>
+</ol>
+<p>原文:</p>
+<p>简单加密
+BASE64加密后:</p>
+<p>566A5Y2V5Yqg5a+G</p>
+<p>BASE64解密后:
+简单加密</p>
+<p>Mac密钥:
+uGxdHC+6ylRDaik++leFtGwiMbuYUJ6mqHWyhSgF4trVkVBBSQvY/a22xU8XT1RUemdCWW155Bke</p>
+<p>pBIpkd7QHg==</p>
+<p>MD5:
+-550b4d90349ad4629462113e7934de56</p>
+<p>SHA:
+91k9vo7p400cjkgfhjh0ia9qthsjagfn</p>
+<p>HMAC:
+2287d192387e95694bdbba2fa941009a</p>
+<p>注意
+编译时，可能会看到如下提示：
+引用</p>
+<p>警告：sun.misc.BASE64Decoder 是 Sun 的专用 API，可能会在未来版本中删除
+import sun.misc.BASE64Decoder;
+               ^
+警告：sun.misc.BASE64Encoder 是 Sun 的专用 API，可能会在未来版本中删除
+import sun.misc.BASE64Encoder;
+               ^
+BASE64Encoder和BASE64Decoder是非官方JDK实现类。虽然可以在JDK里能找到并使用，但是在API里查不到。JRE 中 sun 和 com.sun 开头包的类都是未被文档化的，他们属于 java, javax 类库的基础，其中的实现大多数与底层平台有关，一般来说是不推荐使用的。
+    BASE64的加密解密是双向的，可以求反解。
+    MD5、SHA以及HMAC是单向加密，任何数据加密后只会产生唯一的一个加密串，通常用来校验数据在传输过程中是否被修改。其中HMAC算法有一个密钥，增强了数据传输过程中的安全性，强化了算法外的不可控因素。<img src="" alt="">
+    单向加密的用途主要是为了校验数据在传输过程中是否被修改。
+<strong>相关链接：
+<a href="http://snowolf.iteye.com/blog/379860" target="_blank">Java加密技术（一）——BASE64与单向加密算法MD5&amp;SHA&amp;MAC</a>
+<a href="http://snowolf.iteye.com/blog/380034" target="_blank">Java加密技术（二）——对称加密DES&amp;AES</a>
+<a href="http://snowolf.iteye.com/blog/380761" target="_blank">Java加密技术（三）——PBE算法</a>
+<a href="http://snowolf.iteye.com/blog/381767" target="_blank">Java加密技术（四）——非对称加密算法RSA</a>
+<a href="http://snowolf.iteye.com/blog/382422" target="_blank">Java加密技术（五）——非对称加密算法的由来DH</a>
+<a href="http://snowolf.iteye.com/blog/382749" target="_blank">Java加密技术（六）——数字签名算法DSA</a>
+<a href="http://snowolf.iteye.com/blog/383412" target="_blank">Java加密技术（七）——非对称加密算法最高ECC</a>
+<a href="http://snowolf.iteye.com/blog/391931" target="_blank">Java加密技术（八）——数字证书</a>
+<a href="http://snowolf.iteye.com/blog/397693" target="_blank">Java加密技术（九）——初探SSL</a>
+<a href="http://snowolf.iteye.com/blog/398198" target="_blank">Java加密技术（十）——单向认证</a>
+<a href="http://snowolf.iteye.com/blog/510985" target="_blank">Java加密技术（十一）——双向认证</a>
+<a href="http://snowolf.iteye.com/blog/735294" target="_blank">Java加密技术（十二）——/<em>.PFX(/</em>.p12)&amp;个人信息交换文件</a>
+</strong></p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/加解密/">加解密</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/加解密/" class="label label-success">加解密</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 01:54:40"datetime="2014-03-07 01:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-加解密--Java加密技术（一）——BASE64与单向加密算法MD5SHAMAC" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--跟我一起阅读Java源代码之HashMap/">跟我一起阅读Java源代码之HashMap</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T09:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--跟我一起阅读Java源代码之HashMap/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-java-hashmap">跟我一起阅读Java源代码之HashMap</h1>
+<p>最近闲的很，想和大家一起学习并讨论下Java的一些源代码以及其实现的数据结构，</p>
+<p>不是什么高水平的东西，有兴趣的随便看看</p>
+<ol>
+<li><p>为什么要用Map，以HashMap为例</p>
+<p> 很多时候我们有这样的需求，我们需要将数据成键值对的方式存储起来，根据key来获取value(value可以是简单值，也可以是自定义对象)</p>
+<p> 当然用对象数组也能实现这个目的，查找时可以遍历数组，比较关键字来获取对应的value</p>
+<p> 从性能上来讲，遍历大数组会消耗性能</p>
+<p> 从API易用性来讲，需要自己实现查找的逻辑</p>
+<p> 所以用HashMap是必要的    </p>
+</li>
+</ol>
+<ol>
+<li>HashMap的数据结构是怎么样的</li>
+</ol>
+<pre><code>我一直对HashMap的内部结构很好奇，看了源码之后发现他是用散列实现的，即基于hashcode
+
+大体思想是这样的
+
+1. 首先建立一个数组用来存取数据，假设我们定义一个Object[] table用来存取map的value
+</code></pre><p>这个很容易理解，key存在哪里呢？暂时我不想存储key</p>
+<pre><code>2. 获得key的hashcode经过一定算法转成一个整数
+
+    index，这个index的取值范围必须是0=&lt;index&lt;table.length，然后我将其作为数组元素的下标
+
+    比如执行这样的操作：table[index] = value;
+
+    这样存储的问题解决了
+
+3. 如何通过key去获取这个value呢
+
+    这个太简单了，首先获取key的hashcode，然后通过刚才一样的算法得出元素下标index
+
+    然后value = table[index]
+</code></pre><p>简单的HashTable实现如下</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>public class SimpleHashMap {  </li>
+<li></li>
+<li>private Object[] table;  </li>
+<li></li>
+<li>public SimpleHashMap() {  </li>
+<li>table = new Object[10];  </li>
+<li>}  </li>
+<li></li>
+<li>public Object get(Object key) {  </li>
+<li>int index = indexFor(hash(key.hashCode()), 10);  </li>
+<li>return table[index];  </li>
+<li>}  </li>
+<li></li>
+<li>public void put(Object key, Object value) {  </li>
+<li>int index = indexFor(hash(key.hashCode()), 10);  </li>
+<li>table[index] = value;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过hash code 和table的length得到对应的数组下标 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @param length </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int indexFor(int h, int length) {  </li>
+<li>return h &amp; (length - 1);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过一定算法计算出新的hash值 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int hash(int h) {  </li>
+<li>h ^= (h &gt;&gt;&gt; 20) ^ (h &gt;&gt;&gt; 12);  </li>
+<li>return h ^ (h &gt;&gt;&gt; 7) ^ (h &gt;&gt;&gt; 4);  </li>
+<li>}  </li>
+<li></li>
+<li></li>
+<li>public static void main(String[] args){  </li>
+<li>SimpleHashMap hashMap = new SimpleHashMap();  </li>
+<li>hashMap.put(&quot;key&quot;, &quot;value&quot;);  </li>
+<li>System.out.println(hashMap.get(&quot;key&quot;));  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>这个简单的例子大概描述了散列实现hashmap的过程</p>
+<p>但是还很不成熟，我发现至少存在以下两个问题</p>
+<ol>
+<li><p>hashmap的size是固定的</p>
+</li>
+<li><p>如果不同的key通过hashcode得出的index相同呢，这样的情况是存在的，如何解决？
+来源： <a href="[http://tangyanbo.iteye.com/blog/1755636](http://tangyanbo.iteye.com/blog/1755636)">[http://tangyanbo.iteye.com/blog/1755636](http://tangyanbo.iteye.com/blog/1755636)</a> 由于table的大小是有限的，而key的集合范围是无限大的，所以寄希望于hashcode散落，肯定会出现多个key散落在同一个数组下标下面，</p>
+</li>
+</ol>
+<p>因此我们要引入另外一个概念，将key和value同时存入table[index]中，即将key和value构成一个对象放在table[index]，而且可能存放多个，他们的key对应的index相同，但是key本身不同</p>
+<p>现在我们就该讨论以什么样的方式存储这些散落在同一个数组下标的元素</p>
+<p>可以考虑数组？</p>
+<p>也可以考虑链表存储</p>
+<p>源码里面是用链表存储的，其实我也没明白这两种方式在这里有什么区别</p>
+<p>，感觉无论在检索和存储上都是差不多的效率，</p>
+<p>检索都是需要遍历的方式，而存储也可以是顺序的</p>
+<p>那这个问题留给大家吧。</p>
+<p>我们来实现链式存储的方式，首先定义一个链表数据结构Entry：</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>public class Entry<K, V> {  </li>
+<li>//存储key  </li>
+<li>final K key;  </li>
+<li>//存储value  </li>
+<li>V value;  </li>
+<li>//存储指向下一个节点的指针  </li>
+<li>Entry<K, V> next;  </li>
+<li>//存储key映射的hash  </li>
+<li>final int hash;  </li>
+<li>}  </li>
+</ol>
+<p>新的EntryHashMap实现方式</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>public class EntryHashMap<K, V> {  </li>
+<li></li>
+<li>transient Entry[] table;  </li>
+<li></li>
+<li>transient int size;  </li>
+<li></li>
+<li>public V put(K key, V value) {  </li>
+<li>//计算出新的hash  </li>
+<li>int hash = hash(key.hashCode());  </li>
+<li>//计算出数组小标i  </li>
+<li>int i = indexFor(hash, table.length);  </li>
+<li>//遍历table[i]，如果table[i]没有与新加入的key相等的，则新加入  </li>
+<li>//一个value到table[i]中的entry，否则将新的value覆盖旧的value并返回旧的value  </li>
+<li>for (Entry<K, V> e = table[i]; e != null; e = e.next) {  </li>
+<li>Object k;  </li>
+<li>if (e.hash == hash &amp;&amp; ((k = e.key) == key || key.equals(k))) {  </li>
+<li>V oldValue = e.value;  </li>
+<li>e.value = value;  </li>
+<li>return oldValue;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>addEntry(hash, key, value, i);  </li>
+<li>return null;  </li>
+<li>}  </li>
+<li></li>
+<li>public void addEntry(int hash, K key, V value, int bucketIndex) {  </li>
+<li>Entry<K, V> e = table[bucketIndex];  </li>
+<li>//将新的元素插入链表前端  </li>
+<li>table[bucketIndex] = new Entry&lt;&gt;(hash, key, value, e);  </li>
+<li>size++;  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过hash code 和table的length得到对应的数组下标 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @param length </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int indexFor(int h, int length) {  </li>
+<li>return h &amp; (length - 1);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过一定算法计算出新的hash值 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int hash(int h) {  </li>
+<li>h ^= (h &gt;&gt;&gt; 20) ^ (h &gt;&gt;&gt; 12);  </li>
+<li>return h ^ (h &gt;&gt;&gt; 7) ^ (h &gt;&gt;&gt; 4);  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>来源： <a href="[http://tangyanbo.iteye.com/blog/1756074](http://tangyanbo.iteye.com/blog/1756074)">[http://tangyanbo.iteye.com/blog/1756074](http://tangyanbo.iteye.com/blog/1756074)</a> 为什么要用链表而不是数组</p>
+<p>链表的作用有如下两点好处</p>
+<ol>
+<li><p>remove操作时效率高，只维护指针的变化即可，无需进行移位操作</p>
+</li>
+<li><p>重新散列时，原来散落在同一个槽中的元素可能会被散落在不同的地方，对于数组需要进行移位操作，而链表只需维护指针</p>
+</li>
+</ol>
+<p>今天研究下数组长度不够时的处理办法</p>
+<p>table为散列数组</p>
+<ol>
+<li><p>首先定义一个不可修改的静态变量存储table的初始大小 DEFAULT_INITIAL_CAPACITY</p>
+</li>
+<li><p>定义一个全局变量存储table的实际元素长度，size</p>
+</li>
+<li><p>定义一个全局变量存储临界点，即元素的size&gt;=threshold这个临界点时，扩大table的容量</p>
+</li>
+<li><p>因为index是根据hash和table的长度计算得到的，所以还需要重新对所有元素进行散列</p>
+</li>
+</ol>
+<p>实现如下：</p>
+<p>Java代码  <a href="&quot;收藏这段代码&quot;"><img src="" alt="收藏代码"></a></p>
+<ol>
+<li>package sourcecoderead.collection.map;  </li>
+<li></li>
+<li></li>
+<li>public class EntryHashMap<K, V> {  </li>
+<li></li>
+<li>//<em>/</em> 初始容量 /*/  </li>
+<li>static final int DEFAULT_INITIAL_CAPACITY = 16;  </li>
+<li></li>
+<li>static final float DEFAULT_LOAD_FACTOR = 0.75f;  </li>
+<li></li>
+<li>//<em>/</em> 下次扩容的临界值 /*/  </li>
+<li>int threshold;  </li>
+<li></li>
+<li>transient int size;  </li>
+<li></li>
+<li>final float loadFactor;  </li>
+<li></li>
+<li>transient Entry[] table;  </li>
+<li></li>
+<li>public EntryHashMap() {  </li>
+<li>this.loadFactor = DEFAULT_LOAD_FACTOR;  </li>
+<li>threshold = (int) (DEFAULT_INITIAL_CAPACITY /* DEFAULT_LOAD_FACTOR);  </li>
+<li>table = new Entry[DEFAULT_INITIAL_CAPACITY];  </li>
+<li>}  </li>
+<li></li>
+<li>public V put(K key, V value) {  </li>
+<li>// 计算出新的hash  </li>
+<li>int hash = hash(key.hashCode());  </li>
+<li>// 计算出数组小标i  </li>
+<li>int i = indexFor(hash, table.length);  </li>
+<li>// 遍历table[i]，如果table[i]没有与新加入的key相等的，则新加入  </li>
+<li>// 一个value到table[i]中的entry，否则将新的value覆盖旧的value并返回旧的value  </li>
+<li>for (Entry<K, V> e = table[i]; e != null; e = e.next) {  </li>
+<li>Object k;  </li>
+<li>if (e.hash == hash &amp;&amp; ((k = e.key) == key || key.equals(k))) {  </li>
+<li>V oldValue = e.value;  </li>
+<li>e.value = value;  </li>
+<li>return oldValue;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>addEntry(hash, key, value, i);  </li>
+<li>return null;  </li>
+<li>}  </li>
+<li></li>
+<li>public V get(K key) {  </li>
+<li>// 计算出新的hash  </li>
+<li>int hash = hash(key.hashCode());  </li>
+<li>// 计算出数组小标i  </li>
+<li>int i = indexFor(hash, table.length);  </li>
+<li>for (Entry<K, V> e = table[i]; e != null; e = e.next) {  </li>
+<li>Object k;  </li>
+<li>if (e.hash == hash &amp;&amp; ((k = e.key) == key || key.equals(k))) {  </li>
+<li>return e.value;  </li>
+<li>}  </li>
+<li>}  </li>
+<li>return null;  </li>
+<li>}  </li>
+<li></li>
+<li>private void addEntry(int hash, K key, V value, int bucketIndex) {  </li>
+<li>Entry<K, V> e = table[bucketIndex];  </li>
+<li>// 将新的元素插入链表前端  </li>
+<li>table[bucketIndex] = new Entry&lt;&gt;(hash, key, value, e);  </li>
+<li>if (size++ &gt;= threshold)  </li>
+<li>resize(2 /* table.length);  </li>
+<li>}  </li>
+<li></li>
+<li>void resize(int newCapacity) {  </li>
+<li>Entry[] oldTable = table;  </li>
+<li>int oldCapacity = oldTable.length;  </li>
+<li>Entry[] newTable = new Entry[newCapacity];  </li>
+<li>transfer(newTable);  </li>
+<li>table = newTable;  </li>
+<li>threshold = (int) (newCapacity /* loadFactor);  </li>
+<li>}  </li>
+<li></li>
+<li>void transfer(Entry[] newTable) {  </li>
+<li>Entry[] src = table;  </li>
+<li>int newCapacity = newTable.length;  </li>
+<li>for (int j = 0; j &lt; src.length; j++) {  </li>
+<li>Entry<K, V> e = src[j];  </li>
+<li>if (e != null) {  </li>
+<li>src[j] = null;  </li>
+<li>do {  </li>
+<li>Entry<K, V> next = e.next;  </li>
+<li>int i = indexFor(e.hash, newCapacity);  </li>
+<li>e.next = newTable[i];  </li>
+<li>newTable[i] = e;  </li>
+<li>e = next;  </li>
+<li>} while (e != null);  </li>
+<li>}  </li>
+<li>}  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过hash code 和table的length得到对应的数组下标 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @param length </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int indexFor(int h, int length) {  </li>
+<li>return h &amp; (length - 1);  </li>
+<li>}  </li>
+<li></li>
+<li>//<em>/</em> </li>
+<li>/* 通过一定算法计算出新的hash值 </li>
+<li>/*  </li>
+<li>/* @param h </li>
+<li>/* @return </li>
+<li>/*/  </li>
+<li>static int hash(int h) {  </li>
+<li>h ^= (h &gt;&gt;&gt; 20) ^ (h &gt;&gt;&gt; 12);  </li>
+<li>return h ^ (h &gt;&gt;&gt; 7) ^ (h &gt;&gt;&gt; 4);  </li>
+<li>}  </li>
+<li></li>
+<li>public static void main(String[] args) {  </li>
+<li>EntryHashMap<String, String> hashMap = new EntryHashMap<String, String>();  </li>
+<li>hashMap.put(&quot;key&quot;, &quot;value&quot;);  </li>
+<li>System.out.println(hashMap.get(&quot;key&quot;));  </li>
+<li>}  </li>
+<li>}  </li>
+</ol>
+<p>来源： <a href="[http://tangyanbo.iteye.com/blog/1756536](http://tangyanbo.iteye.com/blog/1756536)">[http://tangyanbo.iteye.com/blog/1756536](http://tangyanbo.iteye.com/blog/1756536)</a> </p>
+
+      
+    </div>
+    
+    
+      
+    
+    
+        <footer id="post-meta">
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/数组&集合/">数组&集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/数组&集合/" class="label label-success">数组&集合</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 01:54:40"datetime="2014-03-07 01:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--跟我一起阅读Java源代码之HashMap/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-数组集合--跟我一起阅读Java源代码之HashMap" data-count-type="comments">暂无评论</a></span>
+        </footer>
+    
+    <div class="clearfix"></div>
+  </div>
+</div>
+</article>
+
+
+
+  <article>
+<div id="post" class="post well">
+  <div class="post-content">
+    <header class="well-sm">
+      <i class="fa icon fa-5x pull-left"></i>
+      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--通过分析JDK源代码研究Hash存储机制/">通过分析 JDK 源代码研究 Hash 存储机制</a></h1>
+      
+        <span>Posted on<time datetime="2014-02-02T09:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--通过分析JDK源代码研究Hash存储机制/">feb. 2 2014</a></time></span>      
+    </header>
+    
+    
+    <div class="entry">
+      
+        <h1 id="-jdk-hash-">通过分析 JDK 源代码研究 Hash 存储机制</h1>
+<p><a href="http://www.ibm.com/cn/" target="_blank"><img src="" alt="IBM®"></a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main" target="_blank"><img src="" alt="跳转到主要内容"></a>     <strong>中国</strong> [<a href="http://www.ibm.com/developerworks/cn/country/" target="_blank">选择</a>]      <a href="http://www.ibm.com/legal/cn/" target="_blank">使用条款</a>   <img src="" alt=""> <img src="" alt="">   <img src="" alt="Select a scope:"> dW 全部内容 -----------------   AIX and UNIX   Information management   Lotus   Rational   WebSphere -----------------   Architecture   Grid computing   Java 技术   Linux   Multicore acceleration   Open source   Security   SOA &amp; Web services   Web development   XML ----------------- IBM 全部内容 <img src="" alt="Search for:">      <a href=""></a>        <a href="http://www.ibm.com/cn/">首页</a>      <a href="http://www.ibm.com/products/cn/" target="_blank">产品</a>      <a href="http://www.ibm.com/servicessolutions/cn/" target="_blank">服务与解决方案</a>      <a href="http://www.ibm.com/support/cn/" target="_blank">支持与下载</a>      <a href="http://www.ibm.com/account/cn/" target="_blank">个性化服务</a>      <a href="http://www.ibm.com/developerworks/cn/" target="_blank"> </a> <a href="http://www.ibm.com/developerworks/cn/">developerWorks
+中国</a> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#" target="_blank">本文内容包括：</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#major1" target="_blank">通过 HashMap、HashSet 的源代码分析其 Hash 存储机制</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#major2" target="_blank">HashMap 的存储实现</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#major3" target="_blank">Hash 算法的性能选项</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#major4" target="_blank">HashMap 的读取实现</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#major5" target="_blank">HashSet 的实现</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#resources" target="_blank">参考资料</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#author" target="_blank">关于作者</a> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#rate" target="_blank">对本文的评价</a> <img src="" alt=""> <img src="" alt="">
+<strong>相关链接：</strong> <img src="" alt=""> <a href="http://www.ibm.com/developerworks/cn/views/java/libraryview.jsp" target="_blank">Java technology 技术文档库</a> <img src="" alt=""> <img src="" alt=""> <a href=""><img src="" alt="跳转到主要内容"></a> <img src="" alt=""> <img src="" alt="">
+<a href="http://www.ibm.com/developerworks/cn/" target="_blank">developerWorks 中国</a>  &gt;  <a href="http://www.ibm.com/developerworks/cn/java/" target="_blank">Java technology</a>  &gt;<img src="" alt=""></p>
+<h1 id="-jdk-hash-">通过分析 JDK 源代码研究 Hash 存储机制</h1>
+<p><img src="" alt=""> <img src="" alt="developerWorks"> <img src="" alt=""> <img src="" alt=""> 文档选项 <img src="" alt=""> <img src="" alt=""> 
+未显示需要 JavaScript 的文档选项</p>
+<p>级别： 中级</p>
+<p><a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#author" target="_blank">李 刚</a>, 自由撰稿人</p>
+<p>2009 年 11 月 26 日
+HashMap 和 HashSet 是 Java Collection Framework 的两个重要成员，其中 HashMap 是 Map 接口的常用实现类，HashSet 是 Set 接口的常用实现类。虽然 HashMap 和 HashSet 实现的接口规范不同，但它们底层的 Hash 存储机制完全一样，甚至 HashSet 本身就采用 HashMap 来实现的。</p>
+<p><a href="">通过 HashMap、HashSet 的源代码分析其 Hash 存储机制</a></p>
+<p><img src="" alt=""> <a href=""><strong>集合和引用</strong></a></p>
+<p>就像引用类型的数组一样，当我们把 Java 对象放入数组之时，并不是真正的把 Java 对象放入数组中，只是把对象的引用放入数组中，每个数组元素都是一个引用变量。</p>
+<p>实际上，HashSet 和 HashMap 之间有很多相似之处，对于 HashSet 而言，系统采用 Hash 算法决定集合元素的存储位置，这样可以保证能快速存、取集合元素；对于 HashMap 而言，系统 key-value 当成一个整体进行处理，系统总是根据 Hash 算法来计算 key-value 的存储位置，这样可以保证能快速存、取 Map 的 key-value 对。</p>
+<p>在介绍集合存储之前需要指出一点：虽然集合号称存储的是 Java 对象，但实际上并不会真正将 Java 对象放入 Set 集合中，只是在 Set 集合中保留这些对象的引用而言。也就是说：Java 集合实际上是多个引用变量所组成的集合，这些引用变量指向实际的 Java 对象。
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">HashMap 的存储实现</a></p>
+<p>当程序试图将多个 key-value 放入 HashMap 中时，以如下代码片段为例：
+HashMap<String , Double> map = new HashMap<String , Double>(); map.put(&quot;语文&quot; , 80.0); map.put(&quot;数学&quot; , 89.0); map.put(&quot;英语&quot; , 78.2);</p>
+<p>HashMap 采用一种所谓的“Hash 算法”来决定每个元素的存储位置。</p>
+<p>当程序执行 map.put(&quot;语文&quot; , 80.0); 时，系统将调用&quot;语文&quot;的 hashCode() 方法得到其 hashCode 值——每个 Java 对象都有 hashCode() 方法，都可通过该方法获得它的 hashCode 值。得到这个对象的 hashCode 值之后，系统会根据该 hashCode 值来决定该元素的存储位置。</p>
+<p>我们可以看 HashMap 类的 put(K key , V value) 方法的源代码：
+public V put(K key, V value) { // 如果 key 为 null，调用 putForNullKey 方法进行处理 if (key == null) return putForNullKey(value); // 根据 key 的 keyCode 计算 Hash 值 int hash = hash(key.hashCode()); // 搜索指定 hash 值在对应 table 中的索引  int i = indexFor(hash, table.length); // 如果 i 索引处的 Entry 不为 null，通过循环不断遍历 e 元素的下一个元素 for (Entry<K,V> e = table[i]; e != null; e = e.next) { Object k; // 找到指定 key 与需要放入的 key 相等（hash 值相同 // 通过 equals 比较放回 true） if (e.hash == hash &amp;&amp; ((k = e.key) == key || key.equals(k))) { V oldValue = e.value; e.value = value; e.recordAccess(this); return oldValue; } } // 如果 i 索引处的 Entry 为 null，表明此处还没有 Entry modCount++; // 将 key、value 添加到 i 索引处 addEntry(hash, key, value, i); return null; }
+<img src="" alt=""> <a href=""><strong>JDK 源码</strong></a></p>
+<p>在 JDK 安装目录下可以找到一个 src.zip 压缩文件，该文件里包含了 Java 基础类库的所有源文件。只要读者有学习兴趣，随时可以打开这份压缩文件来阅读 Java 类库的源代码，这对提高读者的编程能力是非常有帮助的。需要指出的是：src.zip 中包含的源代码并没有包含像上文中的中文注释，这些注释是笔者自己添加进去的。</p>
+<p>上面程序中用到了一个重要的内部接口：Map.Entry，每个 Map.Entry 其实就是一个 key-value 对。从上面程序中可以看出：当系统决定存储 HashMap 中的 key-value 对时，完全没有考虑 Entry 中的 value，仅仅只是根据 key 来计算并决定每个 Entry 的存储位置。这也说明了前面的结论：我们完全可以把 Map 集合中的 value 当成 key 的附属，当系统决定了 key 的存储位置之后，value 随之保存在那里即可。</p>
+<p>上面方法提供了一个根据 hashCode() 返回值来计算 Hash 码的方法：hash()，这个方法是一个纯粹的数学计算，其方法如下：
+static int hash(int h) { h ^= (h &gt;&gt;&gt; 20) ^ (h &gt;&gt;&gt; 12); return h ^ (h &gt;&gt;&gt; 7) ^ (h &gt;&gt;&gt; 4); }</p>
+<p>对于任意给定的对象，只要它的 hashCode() 返回值相同，那么程序调用 hash(int h) 方法所计算得到的 Hash 码值总是相同的。接下来程序会调用 indexFor(int h, int length) 方法来计算该对象应该保存在 table 数组的哪个索引处。indexFor(int h, int length) 方法的代码如下：
+static int indexFor(int h, int length) { return h &amp; (length-1); }</p>
+<p>这个方法非常巧妙，它总是通过 h</p>
+<p>&amp;
+(table.length -1) 来得到该对象的保存位置——而 HashMap 底层数组的长度总是 2 的 n 次方，这一点可参看后面关于 HashMap 构造器的介绍。</p>
+<p>当 length 总是 2 的倍数时，h</p>
+<p>&amp; (length-1)</p>
+<p>将是一个非常巧妙的设计：假设 h=5,length=16, 那么 h &amp; length - 1 将得到 5；如果 h=6,length=16, 那么 h &amp; length - 1 将得到 6 ……如果 h=15,length=16, 那么 h &amp; length - 1 将得到 15；但是当 h=16 时 , length=16 时，那么 h &amp; length - 1 将得到 0 了；当 h=17 时 , length=16 时，那么 h &amp; length - 1 将得到 1 了……这样保证计算得到的索引值总是位于 table 数组的索引之内。</p>
+<p>根据上面 put 方法的源代码可以看出，当程序试图将一个 key-value 对放入 HashMap 中时，程序首先根据该 key 的 hashCode() 返回值决定该 Entry 的存储位置：如果两个 Entry 的 key 的 hashCode() 返回值相同，那它们的存储位置相同。如果这两个 Entry 的 key 通过 equals 比较返回 true，新添加 Entry 的 value 将覆盖集合中原有 Entry 的 value，但 key 不会覆盖。如果这两个 Entry 的 key 通过 equals 比较返回 false，新添加的 Entry 将与集合中原有 Entry 形成 Entry 链，而且新添加的 Entry 位于 Entry 链的头部——具体说明继续看 addEntry() 方法的说明。</p>
+<p>当向 HashMap 中添加 key-value 对，由其 key 的 hashCode() 返回值决定该 key-value 对（就是 Entry 对象）的存储位置。当两个 Entry 对象的 key 的 hashCode() 返回值相同时，将由 key 通过 eqauls() 比较值决定是采用覆盖行为（返回 true），还是产生 Entry 链（返回 false）。</p>
+<p>上面程序中还调用了 addEntry(hash, key, value, i); 代码，其中 addEntry 是 HashMap 提供的一个包访问权限的方法，该方法仅用于添加一个 key-value 对。下面是该方法的代码：
+void addEntry(int hash, K key, V value, int bucketIndex) { // 获取指定 bucketIndex 索引处的 Entry Entry<K,V> e = table[bucketIndex]; // ① // 将新创建的 Entry 放入 bucketIndex 索引处，并让新的 Entry 指向原来的 Entry table[bucketIndex] = new Entry<K,V>(hash, key, value, e); // 如果 Map 中的 key-value 对的数量超过了极限 if (size++ &gt;= threshold) // 把 table 对象的长度扩充到 2 倍。 resize(2 /* table.length); // ② }</p>
+<p>上面方法的代码很简单，但其中包含了一个非常优雅的设计：系统总是将新添加的 Entry 对象放入 table 数组的 bucketIndex 索引处——如果 bucketIndex 索引处已经有了一个 Entry 对象，那新添加的 Entry 对象指向原有的 Entry 对象（产生一个 Entry 链），如果 bucketIndex 索引处没有 Entry 对象，也就是上面程序①号代码的 e 变量是 null，也就是新放入的 Entry 对象指向 null，也就是没有产生 Entry 链。
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">Hash 算法的性能选项</a></p>
+<p>根据上面代码可以看出，在同一个 bucket 存储 Entry 链的情况下，新放入的 Entry 总是位于 bucket 中，而最早放入该 bucket 中的 Entry 则位于这个 Entry 链的最末端。</p>
+<p>上面程序中还有这样两个变量：</p>
+<ul>
+<li>size：该变量保存了该 HashMap 中所包含的 key-value 对的数量。</li>
+<li>threshold：该变量包含了 HashMap 能容纳的 key-value 对的极限，它的值等于 HashMap 的容量乘以负载因子（load factor）。</li>
 </ul>
-</li>
-<li>R14=0x000000004126bb88 is pointing into the stack for thread: 0x0000000040111800  </li>
-<li>R15=0x0000000040111800 is a thread<br>jvm 会通过寄存器的值对找对应的对象，也是一个比较好的参考</li>
-</ol>
-<p><strong>e. 其他的信息</strong></p>
-<p>error 里面还有一些线程信息，还有当时内存映像信息，这些都可以作为分析的部分参考</p>
-<p>crash 报告可以大概的反应出一个当时的情况，特别是在没有core dump的时候，是比较有助于帮助分析的，但如果有core dump的话，最终还是core dump能快速准确的发现问题原因。
-来源： <a href="[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)">[http://blog.csdn.net/raintungli/article/details/7642575/#comments](http://blog.csdn.net/raintungli/article/details/7642575#comments)</a> </p>
+<p>从上面程序中②号代码可以看出，当 size++ &gt;= threshold 时，HashMap 会自动调用 resize 方法扩充 HashMap 的容量。每扩充一次，HashMap 的容量就增大一倍。</p>
+<p>上面程序中使用的 table 其实就是一个普通数组，每个数组都有一个固定的长度，这个数组的长度就是 HashMap 的容量。HashMap 包含如下几个构造器：</p>
+<ul>
+<li>HashMap()：构建一个初始容量为 16，负载因子为 0.75 的 HashMap。</li>
+<li>HashMap(int initialCapacity)：构建一个初始容量为 initialCapacity，负载因子为 0.75 的 HashMap。</li>
+<li>HashMap(int initialCapacity, float loadFactor)：以指定初始容量、指定的负载因子创建一个 HashMap。</li>
+</ul>
+<p>当创建一个 HashMap 时，系统会自动创建一个 table 数组来保存 HashMap 中的 Entry，下面是 HashMap 中一个构造器的代码：
+// 以指定初始化容量、负载因子创建 HashMap public HashMap(int initialCapacity, float loadFactor) { // 初始容量不能为负数 if (initialCapacity &lt; 0) throw new IllegalArgumentException( &quot;Illegal initial capacity: &quot; + initialCapacity); // 如果初始容量大于最大容量，让出示容量 if (initialCapacity &gt; MAXIMUM_CAPACITY) initialCapacity = MAXIMUM_CAPACITY; // 负载因子必须大于 0 的数值 if (loadFactor &lt;= 0 || Float.isNaN(loadFactor)) throw new IllegalArgumentException( loadFactor); // 计算出大于 initialCapacity 的最小的 2 的 n 次方值。 int capacity = 1; while (capacity &lt; initialCapacity) capacity &lt;&lt;= 1; this.loadFactor = loadFactor; // 设置容量极限等于容量 /<em> 负载因子 threshold = (int)(capacity /</em> loadFactor); // 初始化 table 数组 table = new Entry[capacity]; // ① init(); }</p>
+<p>上面代码中粗体字代码包含了一个简洁的代码实现：找出大于 initialCapacity 的、最小的 2 的 n 次方值，并将其作为 HashMap 的实际容量（由 capacity 变量保存）。例如给定 initialCapacity 为 10，那么该 HashMap 的实际容量就是 16。
+<img src="" alt=""> <a href=""><strong>initialCapacity 与 HashTable 的容量</strong></a></p>
+<p>创建 HashMap 时指定的 initialCapacity 并不等于 HashMap 的实际容量，通常来说，HashMap 的实际容量总比 initialCapacity 大一些，除非我们指定的 initialCapacity 参数值恰好是 2 的 n 次方。当然，掌握了 HashMap 容量分配的知识之后，应该在创建 HashMap 时将 initialCapacity 参数值指定为 2 的 n 次方，这样可以减少系统的计算开销。</p>
+<p>程序①号代码处可以看到：table 的实质就是一个数组，一个长度为 capacity 的数组。</p>
+<p>对于 HashMap 及其子类而言，它们采用 Hash 算法来决定集合中元素的存储位置。当系统开始初始化 HashMap 时，系统会创建一个长度为 capacity 的 Entry 数组，这个数组里可以存储元素的位置被称为“桶（bucket）”，每个 bucket 都有其指定索引，系统可以根据其索引快速访问该 bucket 里存储的元素。</p>
+<p>无论何时，HashMap 的每个“桶”只存储一个元素（也就是一个 Entry），由于 Entry 对象可以包含一个引用变量（就是 Entry 构造器的的最后一个参数）用于指向下一个 Entry，因此可能出现的情况是：HashMap 的 bucket 中只有一个 Entry，但这个 Entry 指向另一个 Entry ——这就形成了一个 Entry 链。如图 1 所示：
+<a href=""><strong>图 1. HashMap 的存储示意</strong></a>
+<img src="" alt="图 1. HashMap 的存储示意">
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ <a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main" target="_blank"><strong>回页首</strong></a></p>
+<p><a href="">HashMap 的读取实现</a></p>
+<p>当 HashMap 的每个 bucket 里存储的 Entry 只是单个 Entry ——也就是没有通过指针产生 Entry 链时，此时的 HashMap 具有最好的性能：当程序通过 key 取出对应 value 时，系统只要先计算出该 key 的 hashCode() 返回值，在根据该 hashCode 返回值找出该 key 在 table 数组中的索引，然后取出该索引处的 Entry，最后返回该 key 对应的 value 即可。看 HashMap 类的 get(K key) 方法代码：
+public V get(Object key) { // 如果 key 是 null，调用 getForNullKey 取出对应的 value if (key == null) return getForNullKey(); // 根据该 key 的 hashCode 值计算它的 hash 码 int hash = hash(key.hashCode()); // 直接取出 table 数组中指定索引处的值， for (Entry<K,V> e = table[indexFor(hash, table.length)]; e != null; // 搜索该 Entry 链的下一个 Entr e = e.next) // ① { Object k; // 如果该 Entry 的 key 与被搜索 key 相同 if (e.hash == hash &amp;&amp; ((k = e.key) == key || key.equals(k))) return e.value; } return null; }</p>
+<p>从上面代码中可以看出，如果 HashMap 的每个 bucket 里只有一个 Entry 时，HashMap 可以根据索引、快速地取出该 bucket 里的 Entry；在发生“Hash 冲突”的情况下，单个 bucket 里存储的不是一个 Entry，而是一个 Entry 链，系统只能必须按顺序遍历每个 Entry，直到找到想搜索的 Entry 为止——如果恰好要搜索的 Entry 位于该 Entry 链的最末端（该 Entry 是最早放入该 bucket 中），那系统必须循环到最后才能找到该元素。</p>
+<p>归纳起来简单地说，HashMap 在底层将 key-value 当成一个整体进行处理，这个整体就是一个 Entry 对象。HashMap 底层采用一个 Entry[] 数组来保存所有的 key-value 对，当需要存储一个 Entry 对象时，会根据 Hash 算法来决定其存储位置；当需要取出一个 Entry 时，也会根据 Hash 算法找到其存储位置，直接取出该 Entry。由此可见：HashMap 之所以能快速存、取它所包含的 Entry，完全类似于现实生活中母亲从小教我们的：不同的东西要放在不同的位置，需要时才能快速找到它。</p>
+<p>当创建 HashMap 时，有一个默认的负载因子（load factor），其默认值为 0.75，这是时间和空间成本上一种折衷：增大负载因子可以减少 Hash 表（就是那个 Entry 数组）所占用的内存空间，但会增加查询数据的时间开销，而查询是最频繁的的操作（HashMap 的 get() 与 put() 方法都要用到查询）；减小负载因子会提高数据查询的性能，但会增加 Hash 表所占用的内存空间。</p>
+<p>掌握了上面知识之后，我们可以在创建 HashMap 时根据实际需要适当地调整 load factor 的值；如果程序比较关心空间开销、内存比较紧张，可以适当地增加负载因子；如果程序比较关心时间开销，内存比较宽裕则可以适当的减少负载因子。通常情况下，程序员无需改变负载因子的值。</p>
+<p>如果开始就知道 HashMap 会保存多个 key-value 对，可以在创建时就使用较大的初始化容量，如果 HashMap 中 Entry 的数量一直不会超过极限容量（capacity /<em> load factor），HashMap 就无需调用 resize() 方法重新分配 table 数组，从而保证较好的性能。当然，开始就将初始容量设置太高可能会浪费空间（系统需要创建一个长度为 capacity 的 Entry 数组），因此创建 HashMap 时初始化容量设置也需要小心对待。
+<img src="" alt="">
+<img src="" alt=""> <img src="" alt="">
+<img src="" alt="">
+ [<em>*回页首</em></em>](<a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main" target="_blank">http://www.ibm.com/developerworks/cn/java/j-lo-hash/?open&amp;cm_mmc=6505-_-n-_-vrm_newsletter-_-10104_142587&amp;cmibm_em=dm:0:10631101#main</a>)</p>
+<p><a href="">HashSet 的实现</a></p>
+<p>对于 HashSet 而言，它是基于 HashMap 实现的，HashSet 底层采用 HashMap 来保存所有元素，因此 HashSet 的实现比较简单，查看 HashSet 的源代码，可以看到如下代码：
+public class HashSet<E> extends AbstractSet<E> implements Set<E>, Cloneable, java.io.Serializable { // 使用 HashMap 的 key 保存 HashSet 中所有元素 private transient HashMap<E,Object> map; // 定义一个虚拟的 Object 对象作为 HashMap 的 value private static final Object PRESENT = new Object(); ... // 初始化 HashSet，底层会初始化一个 HashMap public HashSet() { map = new HashMap<E,Object>(); } // 以指定的 initialCapacity、loadFactor 创建 HashSet // 其实就是以相应的参数创建 HashMap public HashSet(int initialCapacity, float loadFactor) { map = new HashMap<E,Object>(initialCapacity, loadFactor); } public HashSet(int initialCapacity) { map = new HashMap<E,Object>(initialCapacity); } HashSet(int initialCapacity, float loadFactor, boolean dummy) { map = new LinkedHashMap<E,Object>(initialCapacity , loadFactor); } // 调用 map 的 keySet 来返回所有的 key public Iterator<E> iterator() { return map.keySet().iterator(); } // 调用 HashMap 的 size() 方法返回 Entry 的数量，就得到该 Set 里元素的个数 public int size() { return map.size(); } // 调用 HashMap 的 isEmpty() 判断该 HashSet 是否为空， // 当 HashMap 为空时，对应的 HashSet 也为空 public boolean isEmpty() { return map.isEmpty(); } // 调用 HashMap 的 containsKey 判断是否包含指定 key //HashSet 的所有元素就是通过 HashMap 的 key 来保存的 public boolean contains(Object o) { return map.containsKey(o); } // 将指定元素放入 HashSet 中，也就是将该元素作为 key 放入 HashMap public boolean add(E e) { return map.put(e, PRESENT) == null; } // 调用 HashMap 的 remove 方法删除指定 Entry，也就删除了 HashSet 中对应的元素 public boolean remove(Object o) { return map.remove(o)==PRESENT; } // 调用 Map 的 clear 方法清空所有 Entry，也就清空了 HashSet 中所有元素 public void clear() { map.clear(); } ... }</p>
+<p>由上面源程序可以看出，HashSet 的实现其实非常简单，它只是封装了一个 HashMap 对象来存储所有的集合元素，所有放入 HashSet 中的集合元素实际上由 HashMap 的 key 来保存，而 HashMap 的 value 则存储了一个 PRESENT，它是一个静态的 Object 对象。</p>
+<p>HashSet 的绝大部分方法都是通过调用 HashMap 的方法来实现的，因此 HashSet 和 HashMap 两个集合在实现本质上是相同的。
+<img src="" alt=""> <a href=""><strong>HashMap 的 put 与 HashSet 的 add</strong></a></p>
+<p>由于 HashSet 的 add() 方法添加集合元素时实际上转变为调用 HashMap 的 put() 方法来添加 key-value 对，当新放入 HashMap 的 Entry 中 key 与集合中原有 Entry 的 key 相同（hashCode() 返回值相等，通过 equals 比较也返回 true），新添加的 Entry 的 value 将覆盖原来 Entry 的 value，但 key 不会有任何改变，因此如果向 HashSet 中添加一个已经存在的元素，新添加的集合元素（底层由 HashMap 的 key 保存）不会覆盖已有的集合元素。</p>
+<p>掌握上面理论知识之后，接下来看一个示例程序，测试一下自己是否真正掌握了 HashMap 和 HashSet 集合的功能。
+class Name { private String first; private String last; public Name(String first, String last) { this.first = first; this.last = last; } public boolean equals(Object o) { if (this == o) { return true; } if (o.getClass() == Name.class) { Name n = (Name)o; return n.first.equals(first) &amp;&amp; n.last.equals(last); } return false; } } public class HashSetTest { public static void main(String[] args) { Set<Name> s = new HashSet<Name>(); s.add(new Name(&quot;abc&quot;, &quot;123&quot;)); System.out.println( s.contains(new Name(&quot;abc&quot;, &quot;123&quot;))); } }</p>
+<p>上面程序中向 HashSet 里添加了一个 new Name(&quot;abc&quot;, &quot;123&quot;) 对象之后，立即通过程序判断该 HashSet 是否包含一个 new Name(&quot;abc&quot;, &quot;123&quot;) 对象。粗看上去，很容易以为该程序会输出 true。</p>
+<p>实际运行上面程序将看到程序输出 false，这是因为 HashSet 判断两个对象相等的标准除了要求通过 equals() 方法比较返回 true 之外，还要求两个对象的 hashCode() 返回值相等。而上面程序没有重写 Name 类的 hashCode() 方法，两个 Name 对象的 hashCode() 返回值并不相同，因此 HashSet 会把它们当成 2 个对象处理，因此程序返回 false。</p>
+<p>由此可见，当我们试图把某个类的对象当成 HashMap 的 key，或试图将这个类的对象放入 HashSet 中保存时，重写该类的 equals(Object obj) 方法和 hashCode() 方法很重要，而且这两个方法的返回值必须保持一致：当该类的两个的 hashCode() 返回值相同时，它们通过 equals() 方法比较也应该返回 true。通常来说，所有参与计算 hashCode() 返回值的关键属性，都应该用于作为 equals() 比较的标准。
+<img src="" alt=""> <a href=""><strong>hashCode() 和 equals()</strong></a></p>
+<p>关于如何正确地重写某个类的 hashCode() 方法和 equals() 方法，请参考疯狂 Java 体系的《疯狂 Java 讲义》一书中相关内容。</p>
+<p>如下程序就正确重写了 Name 类的 hashCode() 和 equals() 方法，程序如下：
+class Name { private String first; private String last; public Name(String first, String last) { this.first = first; this.last = last; } // 根据 first 判断两个 Name 是否相等 public boolean equals(Object o) { if (this == o) { return true; } if (o.getClass() == Name.class) { Name n = (Name)o; return n.first.equals(first); } return false; } // 根据 first 计算 Name 对象的 hashCode() 返回值 public int hashCode() { return first.hashCode(); } public String toString() { return &quot;Name[first=&quot; + first + &quot;, last=&quot; + last + &quot;]&quot;; } } public class HashSetTest2 { public static void main(String[] args) { HashSet<Name> set = new HashSet<Name>(); set.add(new Name(&quot;abc&quot; , &quot;123&quot;)); set.add(new Name(&quot;abc&quot; , &quot;456&quot;)); System.out.println(set); } }</p>
+<p>上面程序中提供了一个 Name 类，该 Name 类重写了 equals() 和 toString() 两个方法，这两个方法都是根据 Name 类的 first 实例变量来判断的，当两个 Name 对象的 first 实例变量相等时，这两个 Name 对象的 hashCode() 返回值也相同，通过 equals() 比较也会返回 true。</p>
+<p>程序主方法先将第一个 Name 对象添加到 HashSet 中，该 Name 对象的 first 实例变量值为&quot;abc&quot;，接着程序再次试图将一个 first 为&quot;abc&quot;的 Name 对象添加到 HashSet 中，很明显，此时没法将新的 Name 对象添加到该 HashSet 中，因为此处试图添加的 Name 对象的 first 也是&quot; abc&quot;，HashSet 会判断此处新增的 Name 对象与原有的 Name 对象相同，因此无法添加进入，程序在①号代码处输出 set 集合时将看到该集合里只包含一个 Name 对象，就是第一个、last 为&quot;123&quot;的 Name 对象。</p>
+<p><a href="">参考资料</a></p>
+<ul>
+<li>“<a href="http://www.ibm.com/developerworks/cn/java/j-jtp05273/" target="_blank">Java 理论与实践: 哈希</a>”（developerWorks，2003 年 8 月）：介绍在创建 Java 类以有效和准确定义 hashCode() 和 equals() 时应遵循的规则和指南。</li>
+<li>“<a href="http://www.ibm.com/developerworks/cn/java/j-jtp08223/" target="_blank">Java 理论与实践: 构建一个更好的 HashMap</a>”（developerWorks，2003 年 8 月）：BrianGoetz 仔细分析了 ConcurrentHashMap 的代码，并探讨 Doug Lea 是如何在不损失线程安全的情况下取得这么骄人成绩的。</li>
+<li>“<a href="http://www.ibm.com/developerworks/cn/java/j-lo-hash/" target="_blank">Merlin 的魔力：维护插入顺序使用新链接的 HashSet 和 HashMap 实现</a>”（developerWorks，2001 年 10 月）：学习如何按插入顺序迭代散列集合中的各个元素，以及如何使用 J2SE，版本 1.4 中的新 Collections Framework 按存取顺序维护元素。</li>
+<li>在 <a href="http://www.ibm.com/developerworks/cn/java/" target="_blank">developerWorks Java 技术专区</a> 上可以找到数百篇其他的 Java 参考资料。</li>
+</ul>
+<p><a href="">关于作者</a>
+<img src="" alt=""> <img src="" alt="李刚照片">
+ <img src="" alt=""> 
+李刚，从事 Java EE 应用开发近 10 年。曾任 LITEON 公司的 J2EE 技术主管，负责该公司的企业信息化平台的架构设计。曾任广州电信、广东龙泉科技等公司的技术培训教师。疯狂 Java 联盟（<a href="http://www.crazyit.org）站长。疯狂" target="_blank">http://www.crazyit.org）站长。疯狂</a> Java 实训营创始人，疯狂 Java 体系图书作者，曾任东方标准广州中心软件教学总监，曾兼任广东技术师范学院计算机科学系的兼职副教授。国内知名IT技术作家，已出版《疯狂 Java 讲义》、《轻量级 Java EE 企业应用实战》、《疯狂 Ajax 讲义》、《Struts 2.1 权威指南》、《Ruby On Rails 敏捷开发最佳实践》等著作。</p>
+<p><a href="">对本文的评价</a>
+<img src="" alt=""> 太差！ (1) 需提高 (2) 一般；尚可 (3) 好文章 (4) 真棒！(5)
+<strong>建议？</strong>
+  <img src="" alt=""></p>
+<p> <img src="" alt="">IBM 公司保留在 developerWorks 网站上发表的内容的著作权。未经IBM公司或原始作者的书面明确许可，请勿转载。如果您希望转载，请通过 <a href="https://www.ibm.com/developerworks/secure/reprintreq.jsp?domain=dwchina" target="_blank">提交转载请求表单</a> 联系我们的编辑团队。     <a href="http://www.ibm.com/cn/ibm/index.shtml" target="_blank">关于 IBM</a>      <a href="http://www.ibm.com/cn/ibm/privacy/index.shtml" target="_blank">隐私条约</a>      <a href="http://www.ibm.com/contact/cn/" target="_blank">联系 IBM</a>      <a href="http://www.ibm.com/legal/cn/zh/" target="_blank">使用条款</a>  <img src="" alt=""></p>
 
       
     </div>
@@ -431,217 +3121,8 @@ done</p>
     
     
         <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-07 09:54:40"datetime="2014-03-07 09:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--jvmcrash的崩溃日志详细分析及注意点" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/">离线分析—— MAT(Memory Analyzer Tool)工具入门介绍</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-mat-memory-analyzer-tool-">离线分析—— MAT(Memory Analyzer Tool)工具入门介绍</h1>
-<p>1、MAT是什么？</p>
-<pre><code>MAT(Memory Analyzer Tool)，一个基于Eclipse的内存分析工具，是一个快速、功能丰富的JAVA heap分析工具，它可以帮助我们查找内存泄漏和减少内存消耗。使用内存分析工具从众多的对象中进行分析，快速的计算出在内存中对象的占用大小，看看是谁阻止了垃圾收集器的回收工作，并可以通过报表直观的查看到可能造成这种结果的对象。
-
-![](http://hi.csdn.net/attachment/201104/2/0_13017260876isZ.gif)
-</code></pre><p>2.为什么使用MAT？
-    当服务器应用占用了过多内存的时候，会遇到OutOfMemoryError。如何快速定位问题呢？Eclipse MAT的出现使这个问题变得非常简单。它能够离线分析dump的文件数据。
-    Eclipse MAT是SAP公司贡献的一个工具，可以在Eclipse网站下载到它，完全免费的。它可比Sun提供的内存镜像分析工具jhat要强太多了。
-3.
-首页：<a href="http://www.eclipse.org/mat/" target="_blank"><a href="http://www.eclipse.org/mat/![](http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif">http://www.eclipse.org/mat/![](http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif</a>)</a> 
-插件更新地址：
-<a href="http://download.eclipse.org/mat/1.0/update-site/" target="_blank"><a href="http://download.eclipse.org/mat/1.0/update-site/">http://download.eclipse.org/mat/1.0/update-site/</a></a><a href="http://d/" target="_blank"><img src="http://blog.csdn.net/fenglibing/article/details/images/icons/linkext7.gif" alt=""></a></p>
-<p>先调用jdk的工具得到heap使用情况</p>
-<p>我安装的是jdk1.6</p>
-<p>C:/&gt;java -version</p>
-<p>java version &quot;1.6.0_11&quot;</p>
-<p>Java(TM) SE Runtime Environment (build 1.6.0_11-b03)</p>
-<p>Java HotSpot(TM) Client VM (build 11.0-b16, mixed mode, sharing)</p>
-<p>调用jdk工具jps查看当前的java进程</p>
-<p>C:/&gt;jps</p>
-<p>3504 Jps</p>
-<p>3676 Bootstrap</p>
-<p>3496 org.eclipse.equinox.launcher_1.0.201.R35x_v20090715.jar</p>
-<p>调用jmap工具得到信息</p>
-<p>C:/&gt;jmap -dump:format=b,file=heap.bin 3676</p>
-<p>Dumping heap to C:/heap.bin ...</p>
-<p>Heap dump file created</p>
-<p>这时，我们的C盘根目录，就生成了heap.bin文件，用eclipse的file----&gt;open打开这个文件，首先是一个启动图：</p>
-<p><img src="http://hi.csdn.net/attachment/201104/2/0_13017267038hni.gif" alt=""></p>
-<p>这里可以选择查看</p>
-<p>1、内存泄露报表，自动检查可能存在内存泄露的对象，通过报表展示存活的对象以及为什么他们没有被垃圾收集；</p>
-<p>2、对象报表，对可颖对象的分析，如字符串是否定义重了，空的collection、finalizer以及弱引用等。</p>
-<p>我这里选择的是查看内存报表，以下是截的简略图：</p>
-<p><img src="http://hi.csdn.net/attachment/201104/2/0_1301726708zY2a.gif" alt=""></p>
-<p> <img src="http://hi.csdn.net/attachment/201104/2/0_1301726708zY2a.gif" alt=""></p>
-<p>通过报表展示，蛮清楚的，下面还有详细的说明，这里就没有帖图了，有兴趣的可以继续探究。
-来源： <a href="[http://blog.csdn.net/fenglibing/article/details/6298326](http://blog.csdn.net/fenglibing/article/details/6298326)">[http://blog.csdn.net/fenglibing/article/details/6298326](http://blog.csdn.net/fenglibing/article/details/6298326)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-30 13:04:07"datetime="2014-03-30 13:04:07"> mar. 30 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--离线分析——MATMemoryAnalyzerTool工具入门介绍" data-count-type="comments">暂无评论</a></span>
-        </footer>
-    
-    <div class="clearfix"></div>
-  </div>
-</div>
-</article>
-
-
-
-  <article>
-<div id="post" class="post well">
-  <div class="post-content">
-    <header class="well-sm">
-      <i class="fa icon fa-5x pull-left"></i>
-      <h1 class="title"><a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析java内存/">离线分析java内存</a></h1>
-      
-        <span>Posted on<time datetime="2014-02-02T01:54:40.000Z"> <a href="/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析java内存/">feb. 2 2014</a></time></span>      
-    </header>
-    
-    
-    <div class="entry">
-      
-        <h1 id="-java-">离线分析java内存</h1>
-<p> 如题，我这里简单说下我现在离线分析java内存的方式，所谓离线，就是需要dump出正在运行的java系统中的一些运行时堆栈数据，然后拿到线下来分析，分析可以包括内存，线程，GC等等，同时不会对正在运行的生产环境的机器造成很大的影响，对应着离线分析，当然是在线分析了，这个我在后面会尝试下，因为离线分析有些场景还是模拟不出来，需要借助LR来模拟压力，查看在线的java程序运行情况了。</p>
-<pre><code>        首先一个简单的问题，如何dump出java运行时堆栈，这个SUN就提供了很好的工具，位于JAVA_HOME/bin目录下的jmap（java memory map之意），如果需要dump出当前运行的java进程的堆栈数据，则首先需要获得该java进程的进程ID,在linux下可以使用
-</code></pre><p>Java代码  </p>
-<ol>
-<li>ps -aux  </li>
-<li></li>
-<li>ps -ef | grep java  </li>
-</ol>
-<p>或者使用jdk自带的一个工具jps，例如</p>
-<p>Java代码  </p>
-<ol>
-<li>/JAVA_HOME/bin/jps  </li>
-</ol>
-<p>找到了当前运行的java进程的id后，就可以对正在运行的java进程使用jmap工具进行dump了，例如使用以下命令：</p>
-<p>Java代码  </p>
-<ol>
-<li>JAVA_HOME/bin/jmap  -dump:format=b,file=heap.bin <pid>   </li>
-</ol>
-<p>其中file = heap.bin的意思是dump出的文件名叫heap.bin, 当然你可以选择你喜欢的名字，我这里选择叫/*.bin是为了后面使用方便，<pid>表示你需要dump的java进程的id。</p>
-<p>这里需要注意的是，记住dump的进程是java进程，不会是jboss的进程，weblogic的进程等。dump过程中机器load可能会升高，但是在我这里测试发现load升的不是特别快，同时dump时需要的磁盘空间也比较大，例如我这里测试的几个系统，分别是500M 800M 1500M  3000M，所以确保你运行jmap命令时所在的目录中的磁盘空间足够，当然现在的系统磁盘空间都比较大。</p>
-<p>以上是在java进程还存活的时候进行的dump，有的时候我们的java进程crash后，会生成一个core.pid文件，这个core.pid文件还不能直接被我们的java 内存分析工具使用，需要将其转换为java 内存分析工具可以读的文件（例如使用jmap工具dump出的heap.bin文件就是很多java 内存分析工具可以读的文件格式）。将core.pid文件转换为jmap工具dump出的文件格式还可以继续使用jmap工具，这个的说明可以见我前几篇中的一个转载（<a href="http://dikar.iteye.com/blog/643196" target="_blank">Create Java heapdumps with the help of core dumps</a>），这里我在补充点</p>
-<p>Java代码  </p>
-<ol>
-<li>jmap -heap:format=b [java binary] [core dump file]  </li>
-<li></li>
-<li></li>
-<li>64位下可以指定使用64位模式  </li>
-<li></li>
-<li>jmap -d64  -dump:format=b [java binary] [core dump file]  </li>
-</ol>
-<p>需要说明一下，使用jmap转换core.pid文件时，当文件格式比较大时，可能大于2G的时候就不能执行成功（我转换3G文件大小的时候没有成功）而报出</p>
-<p>Error attaching to core file: Can&#39;t attach to the core file</p>
-<p>查过sun的bug库中，这个bug还没有被修复，我想还是由于32位下用户进程寻址大小限制在2G的范围内引起的，在64位系统和64位jdk版本中，转换3G文件应该没有什么大的问题（有机会有环境得需要测试下）。如果有兴趣分析jmap转换不成功的同学，可以使用如下命令来分析跟踪命令的执行轨迹，例如使用</p>
-<p>Java代码  </p>
-<ol>
-<li>strace  jmap -heap:format=b [java binary] [core dum  </li>
-<li><p>p]  </p>
-<p>对于strace的命令的说明，同样可以参考我前几篇文章中的一个<a href="http://dikar.iteye.com/blog/643201" target="_blank"> strace命令用法</a></p>
-</li>
-</ol>
-<p>同时对于core.pid文件的调试我也补充一下, 其中&gt;&gt;表示命令提示符</p>
-<p>Java代码  </p>
-<ol>
-<li><blockquote>
-<blockquote>
-<p>gdb JAVA_HOME/bin/java  core.pid  </p>
-</blockquote>
-</blockquote>
-</li>
-<li></li>
-<li><blockquote>
-<blockquote>
-<p>bt  </p>
-</blockquote>
-</blockquote>
-</li>
-</ol>
-<p>bt后就可以看到生成core.pid文件时，系统正在执行的一个操作，例如是哪个so文件正在执行等。</p>
-<p>好了说了这么多，上面都是怎么生成java 运行期DUMP文件的，接下来我们就进入分析阶段，为了分析这个dump出的文件，需要将这个文件弄到你的分析程序所在的机器上，例如可以是windows上，linux上，这个和你使用的分析工具以及使用的操作系统有关。不管使用什么系统，总是需要把生产环境下打出的dump文件搞到你的分析机器上，由于dump出的文件经常会比较大，例如达到2G，这么大的文件不是很好的从生产环境拉下来，因此使用FTP的方式把文件拖到分析机器上，同时由于单个文件很大，因此为了快速的将文件下载到分析机器，我们可以使用分而治之的思想，先将文件切割为小文件下载，然后在合并为一个大文件即可，还好linux提供了很方便的工具，例如使用如下命令</p>
-<p>Java代码  </p>
-<ol>
-<li>$ split -b 300m heap.bin  </li>
-<li></li>
-<li>$ cat x/* &gt; heap.bin  </li>
-</ol>
-<p>在上面的 split 命令行中的 “300m” 表示分割后的每个文件为 300MB，“heap.bin” 为待分割的dump文件，分割后的文件自动命名为 xaa，xab，xac等 
-cat 命令可将这些分割后的文件合并为一个文件，例如将所有x开头的文件合并为heap.bin</p>
-<p>如果我们是利用一个中间层的FTP服务器来保存数据的，那么我们还需要连接这个FTP服务器把合并后的文件拉下来，在windows下我推荐使用一个工具，速度很快而且简单，</p>
-<p>winscp   <a href="http://winscp.net/eng/docs/lang:chs" target="_blank">http://winscp.net/eng/docs/lang:chs</a></p>
-<p>好了分析的文件终于经过一翻周折到了你的分析机器上，现在我们就可以使用分析工具来分析这个dump出的程序了，这里我主要是分析内存的问题，所以我说下我选择的内存分析工具，我这里使用的是开源的由SAP 和IBM 支持的一个内存分析工具</p>
-<h1 id="memory-analyzer-mat-">Memory Analyzer (MAT)</h1>
-<p><a href="http://www.eclipse.org/mat/" target="_blank">http://www.eclipse.org/mat/</a></p>
-<p>我建议下载 Stand-alone Eclipse RCP 版本，不要装成eclipse的插件，因为这个分析起来还是很耗内存。<em>**</em></p>
-<p>下载好了，解压开来就可以直接使用了（基于eclipse的），打开以后，在菜单栏中选择打开文件，选择你刚刚的dump文件，然后一路的next就可以了，最后你会看到一个报告，这个报告里会告诉你可能的内存泄露的点，以及内存中对象的一个分布，关于mat的使用请参考官方说明，当然你也可以自己徜徉在学习的海洋中 。</p>
-<p>对于dump文件的分析还可以使用jdk中提供的一个jhat工具来查看，不过这个很耗内存，而且默认的内存大小不够，还需要增加参数设置内存大小才能分析出，不过我看了下分析出的结果不是很满意，而且这个用起来很慢。还是推荐使用mat 。
-来源： <a href="[http://dikar.iteye.com/blog/643436](http://dikar.iteye.com/blog/643436)">[http://dikar.iteye.com/blog/643436](http://dikar.iteye.com/blog/643436)</a> </p>
-<p> 摘文：<a href="http://dikar.iteye.com/blog/643196" target="_blank">Create Java heapdumps with the help of core dumps</a></p>
-<p>转载自：<a href="http://devops-abyss.blogspot.com/2010/03/create-java-heapdumps-with-help-of-core.html" target="_blank">http://devops-abyss.blogspot.com/2010/03/create-java-heapdumps-with-help-of-core.html</a></p>
-<p>Hi,
-for some time I had the problem, that taking Java heap dumps with jmap took too long. When one of my tomcats crashed by an OutOfMemoryException, I had no time to do a heap dump because it took some hours and the server had to be back online.
-Now I found a sollution to my problem. The initial idea came from <a href="https://proxy.evlit.net/browse.php?u=http%3A%2F%2Fserverfault.com%2Fquestions%2F110153%2Fhow-to-reliably-take-java-heap-dumps%2F12545&amp;b=4#125451" target="_blank">this</a> post. It had a solution for Solaris, but with some googling and try and error I found a solution for linux too.</p>
-<ol>
-<li>create a core dump of your java process with gdb
-gdb --pid=[java pid] 
-gcore [file name] 
-detach 
-quit</li>
-<li>restart the tomcat or do whatever you like with the java process</li>
-<li>attach jmap to the core dump and create a Java heap dump
-jmap -heap:format=b [java binary] [core dump file]</li>
-<li><p>analyze your Java heap dump with your prefered tool</p>
-<p>When you get the following error in step three:
-Error attaching to core file: Can&#39;t attach to the core file</p>
-</li>
-</ol>
-<p>This might help:
-In my case the error apeared because I used the wrong java binary in the jmap call. When you are not sure about your java binary, open the core dump with gdb:</p>
-<p>gdb --core=[core dump file]</p>
-<p>You will get an output similar to this one:</p>
-<p>GNU gdb 6.6 Copyright (C) 2006 Free Software Foundation, Inc. GDB is free software, covered by the GNU General Public License, and you are welcome to change it and/or distribute copies of it under certain conditions. Type &quot;show copying&quot; to see the conditions. There is absolutely no warranty for GDB.  Type &quot;show warranty&quot; for details. This GDB was configured as &quot;i586-suse-linux&quot;... (no debugging symbols found) Using host libthread_db library &quot;/lib/libthread_db.so.1&quot;. 
-warning: core file may not match specified executable file. (no debugging symbols found) Failed to read a valid object file image from memory. Core was generated by `/opt/tomcat/bin/jsvc&#39;. /#0  0xffffe410 in _start ()</p>
-<p> What you are looking for is in this line:</p>
-<p>Core was generated by `/opt/tomcat/bin/jsvc&#39;.</p>
-<p> Call jmap with this binary and you will get a heapdump.</p>
-<p>来源： <a href="[http://dikar.iteye.com/blog/643196](http://dikar.iteye.com/blog/643196)">[http://dikar.iteye.com/blog/643196](http://dikar.iteye.com/blog/643196)</a> </p>
-
-      
-    </div>
-    
-    
-      
-    
-    
-        <footer id="post-meta">
-        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/内存分析/">内存分析</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/内存分析/" class="label label-success">内存分析</a></span> | <span class="time">recent updated:<time title="2014-03-30 13:05:07"datetime="2014-03-30 13:05:07"> mar. 30 2014</time></span> | <span class="comment-link">
-<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-内存分析--离线分析java内存/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-内存分析--离线分析java内存" data-count-type="comments">暂无评论</a></span>
+        <span class="categories">Posted in<span class="breadcrumb fa fa-folder"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li></span><span class="breadcrumb"><li><a href="/categories/Java&J2EE/">Java&J2EE</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/">算法&数组&优化</a></li><li><a href="/categories/Java&J2EE/算法&数组&优化/数组&集合/">数组&集合</a></li></span></span> | <span class="tags">Tagged <a href="/tags/Java&J2EE/" class="label label-primary">Java&J2EE</a><a href="/tags/数组&集合/" class="label label-success">数组&集合</a><a href="/tags/算法&数组&优化/" class="label label-info">算法&数组&优化</a></span> | <span class="time">recent updated:<time title="2014-03-07 01:54:40"datetime="2014-03-07 01:54:40"> mar. 7 2014</time></span> | <span class="comment-link">
+<a href="http://itsolife.com/2014/02/02/2014-02-02-JavaJ2EE-算法数组优化-数组集合--通过分析JDK源代码研究Hash存储机制/#comments" class="ds-thread-count comment-link" data-thread-key="2014-02-02-JavaJ2EE-算法数组优化-数组集合--通过分析JDK源代码研究Hash存储机制" data-count-type="comments">暂无评论</a></span>
         </footer>
     
     <div class="clearfix"></div>
@@ -718,10 +3199,12 @@ warning: core file may not match specified executable file. (no debugging symbol
 </span><span id='analytics-baidu'>
 <script>
 var _hmt = _hmt || [];
-_js2load.push({src:"//hm.baidu.com/hm.js?1442f50724afc42380b51f097c43082c"});
+_js2load.push({src:"//hm.baidu.com/hm.js?eaa92c12166944fd3a160103e6c4a8cf"});
 </script>
+
+
 </span>  </div>
-  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-07 19:25:39</em></span></div>
+  <div id="copyright">Site powered by <a href='http://zespia.tw/hexo/'><strong>hexo</strong></a>  update time: <em>2014-04-14 12:45:08</em></span></div>
 </div>
 <div class="clearfix"></div>
 
